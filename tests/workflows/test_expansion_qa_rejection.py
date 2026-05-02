@@ -36,7 +36,9 @@ async def test_missing_row_triggers_rejection(
     action = result["review_action"]
     notes = action["arguments"]["rejection_notes"]
     assert result["passed"] is False
-    assert action["tool"] == "mark_task_review_rejected"
+    assert action["server"] == "gobby-tasks-ops"
+    assert action["tool"] == "reject_review"
+    assert action["arguments"]["stage_name"] == "expansion"
     assert "section_id=A1" in notes
     assert "item_id=A1.1" in notes
     assert "status=invalid" in notes
@@ -59,5 +61,7 @@ async def test_zero_missing_invalid_triggers_approval(
 
     action = result["review_action"]
     assert result["passed"] is True
-    assert action["tool"] == "mark_task_review_approved"
+    assert action["server"] == "gobby-tasks-ops"
+    assert action["tool"] == "approve_review"
+    assert action["arguments"]["stage_name"] == "expansion"
     assert result["manifest_path"] in action["arguments"]["approval_notes"]

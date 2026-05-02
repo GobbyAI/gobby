@@ -150,8 +150,8 @@ rules:
           - "gobby-tasks:create_task"
           - "gobby-tasks:claim_task"
           - "gobby-tasks:close_task"
-          - "gobby-tasks:mark_task_needs_review"
-          - "gobby-tasks:mark_task_review_approved"
+          - "gobby-tasks-ops:submit_for_review"
+          - "gobby-tasks-ops:approve_review"
         reason: |
           Native subagents should use CC's native task tools (TaskCreate, TaskUpdate)
           for lightweight coordination. gobby-tasks is for project-level task management

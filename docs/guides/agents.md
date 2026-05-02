@@ -181,8 +181,8 @@ steps:
       - "gobby-tasks:close_task"
       - "gobby-agents:kill_agent"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_needs_review
+      - server: gobby-tasks-ops
+        tool: submit_for_review
         action: set_variable
         variable: review_submitted
         value: true

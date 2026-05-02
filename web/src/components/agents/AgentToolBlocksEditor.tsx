@@ -70,7 +70,7 @@ export function AgentToolBlocksEditor({
           <ChipInput
             values={blockedMcpTools}
             onChange={onBlockedMcpToolsChange}
-            placeholder="e.g. gobby-tasks:mark_task_needs_review"
+            placeholder="e.g. gobby-tasks-ops:submit_for_review"
           />
         </div>
       )}

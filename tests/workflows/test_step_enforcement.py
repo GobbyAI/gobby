@@ -92,14 +92,14 @@ _DEVELOPER_WORKFLOW = {
             "allowed_tools": "all",
             "blocked_mcp_tools": [
                 "gobby-tasks:close_task",
-                "gobby-tasks:mark_task_review_approved",
+                "gobby-tasks-ops:approve_review",
                 "gobby-agents:spawn_agent",
                 "gobby-agents:kill_agent",
             ],
             "on_mcp_success": [
                 {
-                    "server": "gobby-tasks",
-                    "tool": "mark_task_needs_review",
+                    "server": "gobby-tasks-ops",
+                    "tool": "submit_for_review",
                     "action": "set_variable",
                     "variable": "review_submitted",
                     "value": True,
@@ -447,15 +447,15 @@ class TestStepTransitions:
     async def test_implement_to_terminate_transition(
         self, db, manager, engine, instance_mgr
     ) -> None:
-        """mark_task_needs_review in implement step should transition to terminate."""
+        """submit_for_review in implement step should transition to terminate."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
         event = _make_event(
             event_type=HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "mark_task_needs_review",
+                    "server_name": "gobby-tasks-ops",
+                    "tool_name": "submit_for_review",
                 },
             },
         )
@@ -534,8 +534,8 @@ class TestStepTransitions:
                     "allowed_tools": "all",
                     "on_mcp_success": [
                         {
-                            "server": "gobby-tasks",
-                            "tool": "mark_task_needs_review",
+                            "server": "gobby-tasks-ops",
+                            "tool": "submit_for_review",
                             "action": "set_variable",
                             "variable": "done",
                             "value": True,
@@ -559,8 +559,8 @@ class TestStepTransitions:
             data={
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "mark_task_needs_review",
+                    "server_name": "gobby-tasks-ops",
+                    "tool_name": "submit_for_review",
                 },
             },
         )

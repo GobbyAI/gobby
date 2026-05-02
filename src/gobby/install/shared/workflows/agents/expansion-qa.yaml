@@ -29,9 +29,9 @@ instructions: |
   - Any deliverable item with status missing or invalid rejects the run
     mechanically. Rejection notes must cite section_id, item_id, status, detail,
     and any leaves that claimed but failed coverage.
-  - If coverage returns no missing or invalid rows, call mark_task_review_approved
+  - If coverage returns no missing or invalid rows, call approve_review with `stage_name="expansion"`
     with approval_notes that include the manifest path.
-  - If coverage returns missing or invalid rows, call mark_task_review_rejected
+  - If coverage returns missing or invalid rows, call reject_review with `stage_name="expansion"`
     with the rejection_notes returned by run_expansion_qa_coverage.
 
   LIFECYCLE MODEL:
@@ -68,7 +68,7 @@ steps:
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:delete_task"
       - "gobby-tasks:escalate_task"
-      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
@@ -78,13 +78,13 @@ steps:
         action: set_variable
         variable: coverage_result_saved
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         action: set_variable
         variable: review_complete
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_rejected
+      - server: gobby-tasks-ops
+        tool: reject_review
         action: set_variable
         variable: review_complete
         value: true
@@ -113,7 +113,7 @@ steps:
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:delete_task"
       - "gobby-tasks:escalate_task"
-      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
@@ -123,13 +123,13 @@ steps:
         action: set_variable
         variable: qa_result_saved
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         action: set_variable
         variable: review_complete
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_rejected
+      - server: gobby-tasks-ops
+        tool: reject_review
         action: set_variable
         variable: review_complete
         value: true

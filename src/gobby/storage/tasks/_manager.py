@@ -94,6 +94,9 @@ from gobby.storage.tasks._search import TaskFTS5Searcher
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageManifestSpec, StageStatesManager
 from gobby.storage.tasks._transitions import (
+    approve_review as _approve_review,
+)
+from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
 )
 from gobby.storage.tasks._transitions import (
@@ -103,19 +106,16 @@ from gobby.storage.tasks._transitions import (
     escalate_task as _escalate_task,
 )
 from gobby.storage.tasks._transitions import (
-    mark_task_needs_review as _mark_task_needs_review,
-)
-from gobby.storage.tasks._transitions import (
-    mark_task_review_approved as _mark_task_review_approved,
-)
-from gobby.storage.tasks._transitions import (
-    mark_task_review_rejected as _mark_task_review_rejected,
-)
-from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
 )
 from gobby.storage.tasks._transitions import (
+    reject_review as _reject_review,
+)
+from gobby.storage.tasks._transitions import (
     release_task_claim as _release_task_claim,
+)
+from gobby.storage.tasks._transitions import (
+    submit_for_review as _submit_for_review,
 )
 
 logger = logging.getLogger(__name__)
@@ -600,63 +600,67 @@ class LocalTaskManager:
         self._notify_listeners()
         return task
 
-    def mark_task_needs_review(
+    def submit_for_review(
         self,
         task_id: str,
+        stage_name: str | None = None,
         review_notes: str | None = None,
         *,
         by_session_id: str | None = None,
     ) -> Task:
-        """Mark a task as ready for review and release ownership."""
-        task = _mark_task_needs_review(
+        """Submit a stage for review and release ownership."""
+        task = _submit_for_review(
             self.db,
             task_id=task_id,
+            stage_name=stage_name,
             review_notes=review_notes,
             by_session_id=by_session_id,
         )
         self._notify_listeners()
         return task
 
-    def mark_task_review_approved(
+    def approve_review(
         self,
         task_id: str,
+        stage_name: str | None = None,
         approval_notes: str | None = None,
         *,
         by_session_id: str | None = None,
     ) -> Task:
-        """Mark a task as review-approved and release ownership."""
-        task = _mark_task_review_approved(
+        """Approve review on a stage and release ownership."""
+        task = _approve_review(
             self.db,
             task_id=task_id,
+            stage_name=stage_name,
             approval_notes=approval_notes,
             by_session_id=by_session_id,
         )
         self._notify_listeners()
         return task
 
-    def mark_task_review_rejected(
+    def reject_review(
         self,
         task_id: str,
+        stage_name: str | None = None,
         rejection_notes: str | None = None,
         round_number: int | None = None,
         *,
         by_session_id: str | None = None,
         **legacy_kwargs: Any,
     ) -> Task:
-        """Reject a task after review and return the current stage to ready."""
+        """Reject review on a stage and return it to ready."""
         legacy_round = legacy_kwargs.pop("round", None)
         if legacy_kwargs:
             unexpected = ", ".join(sorted(legacy_kwargs))
-            raise TypeError(
-                f"mark_task_review_rejected() got unexpected keyword arguments: {unexpected}"
-            )
+            raise TypeError(f"reject_review() got unexpected keyword arguments: {unexpected}")
         if round_number is not None and legacy_round is not None:
-            raise TypeError("mark_task_review_rejected() received both round and round_number")
+            raise TypeError("reject_review() received both round and round_number")
         if round_number is None:
             round_number = legacy_round
-        task = _mark_task_review_rejected(
+        task = _reject_review(
             self.db,
             task_id=task_id,
+            stage_name=stage_name,
             rejection_notes=rejection_notes,
             round_number=round_number,
             by_session_id=by_session_id,

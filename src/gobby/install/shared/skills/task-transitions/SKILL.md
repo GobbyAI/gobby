@@ -117,34 +117,39 @@ Do NOT create memories for bugs or errors — create tasks instead.
 ## Review Flow (autonomous/pipeline agents)
 
 Autonomous agents **must** use the review flow — they cannot close tasks directly. The same gates apply.
+Review tools live on `gobby-tasks-ops` and require the explicit `stage_name`
+being reviewed, such as `planning`, `expansion`, `development`, or `holistic_qa`.
 
-### mark_task_needs_review — submit work for review
+### submit_for_review — submit work for review
 
 ```python
-call_tool("gobby-tasks", "mark_task_needs_review", {
+call_tool("gobby-tasks-ops", "submit_for_review", {
     "task_id": "#N",
+    "stage_name": "development",
     "review_notes": "What was done and what to verify"
 }, session_id="#2333")
 ```
 
 Commits are auto-linked from your session. All four gates still apply before this call succeeds.
 
-### mark_task_review_approved — approve after review
+### approve_review — approve after review
 
 ```python
-call_tool("gobby-tasks", "mark_task_review_approved", {
+call_tool("gobby-tasks-ops", "approve_review", {
     "task_id": "#N",
+    "stage_name": "development",
     "approval_notes": "Verified: tests pass, changes match spec"
 }, session_id="#2333")
 ```
 
 Used by QA agents after reviewing work. Same gates apply — if the reviewer made fixes and committed, those commits are auto-linked.
 
-### mark_task_review_rejected — send reviewed stage work back to ready
+### reject_review — send reviewed stage work back to ready
 
 ```python
-call_tool("gobby-tasks", "mark_task_review_rejected", {
+call_tool("gobby-tasks-ops", "reject_review", {
     "task_id": "#N",
+    "stage_name": "development",
     "rejection_notes": "Blocking findings that must be addressed before the next review",
     "round_number": 2
 }, session_id="#2333")
@@ -159,10 +164,10 @@ rejection notes for numbered review loops.
 | Context | Use | Why |
 |---------|-----|-----|
 | Interactive (user present) | `close_task` | User is the reviewer — no separate review step needed |
-| Autonomous (pipeline/agent) | `mark_task_needs_review` | **Required** — autonomous agents cannot close tasks directly |
-| QA review agent | `mark_task_review_approved` | Moves reviewed stage work to `review_approved` |
+| Autonomous (pipeline/agent) | `submit_for_review` | **Required** — autonomous agents cannot close tasks directly |
+| QA review agent | `approve_review` | Moves reviewed stage work to `review_approved` |
 
-`mark_task_needs_review`, `mark_task_review_approved`, and `mark_task_review_rejected`
+`submit_for_review`, `approve_review`, and `reject_review`
 are blocked in interactive sessions — use `close_task` directly. Conversely,
 autonomous agents must use the review flow.
 
@@ -190,4 +195,4 @@ Gates 3-4 still apply. `changes_summary` is still required — explain why no ch
 | File task instead of fixing error | Gate 3 blocks — `errors_resolved` not set | Investigate and fix first |
 | Skip memory review | Gate 4 blocks — `memory_review_completed` not set | Review or explicitly clear |
 | Omit `changes_summary` | close_task rejects — required for leaf tasks | Describe what changed and why |
-| Use mark_task_* in interactive session | Blocked by rule | Use `close_task` — user is the reviewer |
+| Use review tools in interactive session | Blocked by rule | Use `close_task` — user is the reviewer |

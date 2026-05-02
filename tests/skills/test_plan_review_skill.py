@@ -108,9 +108,9 @@ class TestPlanReviewContent:
     # --- escalation ---------------------------------------------------------
 
     def test_blocking_findings_use_review_rejection(self, body: str) -> None:
-        """Routine revision rounds should use mark_task_review_rejected and
+        """Routine revision rounds should use reject_review and
         return the planning task to open."""
-        assert "mark_task_review_rejected" in body
+        assert "reject_review" in body
         assert "round_number" in body
         assert "returns the anchor to `open`" in body
 
@@ -124,7 +124,7 @@ class TestPlanReviewContent:
         assert "session_id" not in body
 
     def test_autonomous_exit_allows_review_rejection_before_end_agent_run(self, body: str) -> None:
-        assert "mark_task_review_rejected" in body
+        assert "reject_review" in body
 
     def test_nits_do_not_block_approval(self, body: str) -> None:
         """Severity distinction: blocking vs nit. Nits alone approve."""

@@ -62,8 +62,7 @@ def create_task_registry(
     # Merge CRUD tools
     registry.merge_from(create_crud_registry(ctx))
 
-    # Merge lifecycle tools, including mark_task_needs_review,
-    # mark_task_review_approved, and mark_task_review_rejected on gobby-tasks.
+    # Merge lifecycle tools (review stage transitions live in gobby-tasks-ops).
     registry.merge_from(create_lifecycle_registry(ctx))
 
     # Merge session tools

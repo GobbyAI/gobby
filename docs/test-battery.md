@@ -85,7 +85,7 @@
 
 **Should fix:**
 - Zombie agent cleanup: agents should unregister on clean exit, not just on kill
-- Commit validation: dev agent step workflow should verify non-trivial diffs before allowing `mark_task_needs_review`
+- Commit validation: dev agent step workflow should verify non-trivial diffs before allowing `submit_for_review`
 - `annotate_observed` worktree support (or make it non-fatal)
 
 **Design considerations for unified comms test:**

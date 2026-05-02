@@ -189,9 +189,9 @@ class TestRequireErrorTriage:
         mcp_tools = body.effects[0].mcp_tools
         assert "gobby-tasks:close_task" in mcp_tools
         assert "gobby-tasks:de_escalate_task" in mcp_tools
-        assert "gobby-tasks:mark_task_needs_review" in mcp_tools
-        assert "gobby-tasks:mark_task_review_approved" in mcp_tools
-        assert "gobby-tasks:mark_task_review_rejected" in mcp_tools
+        assert "gobby-tasks-ops:submit_for_review" in mcp_tools
+        assert "gobby-tasks-ops:approve_review" in mcp_tools
+        assert "gobby-tasks-ops:reject_review" in mcp_tools
 
     def test_when_checks_triage_flag(self, db, manager) -> None:
         """Should check errors_resolved."""
@@ -1046,16 +1046,30 @@ def _make_task(
     """Create a minimal Task dataclass for reconciliation tests."""
     from gobby.storage.tasks import Task
 
+    stage_state = {
+        "open": "ready",
+        "closed": "done",
+        "escalated": "ready",
+    }.get(status, status)
     return Task(
         id=task_id,
         project_id="proj-1",
         title="Test task",
-        status=status,
         priority=1,
         task_type="task",
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:00:00Z",
+        closed_at="2026-01-02T00:00:00Z" if status == "closed" else None,
         assignee=assignee,
+        escalated_at="2026-01-02T00:00:00Z" if status == "escalated" else None,
+        is_escalated=status == "escalated",
+        stages=(
+            {
+                "stage_name": "development",
+                "position": 0,
+                "state": stage_state,
+            },
+        ),
     )
 
 
@@ -1254,12 +1268,11 @@ class TestClaimedTaskReconciliation:
         task_manager.list_tasks.assert_called_once()
         call_kwargs = task_manager.list_tasks.call_args.kwargs
         assert call_kwargs["claimed_by_session_id"] == "sess-1"
-        assert set(call_kwargs["status"]) == {
-            "open",
+        assert set(call_kwargs["current_stage_state"]) == {
+            "ready",
             "in_progress",
             "needs_review",
             "review_approved",
-            "escalated",
         }
 
     def test_reconcile_rebuilds_with_no_seq_num(self) -> None:

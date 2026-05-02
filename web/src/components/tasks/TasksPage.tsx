@@ -321,8 +321,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     updateTask,
     claimTask,
     releaseTaskClaim,
-    markTaskNeedsReview,
-    markTaskReviewApproved,
     escalateTask,
     deEscalateTask,
     advanceStage,
@@ -674,8 +672,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         actions={{
           claimTask,
           releaseTaskClaim,
-          markTaskNeedsReview,
-          markTaskReviewApproved,
+          advanceStage,
           escalateTask,
           deEscalateTask,
           closeTask,

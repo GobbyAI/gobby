@@ -10,9 +10,9 @@ rules:
     effects:
       - type: block
         mcp_tools:
-          - "gobby-tasks:mark_task_needs_review"
-          - "gobby-tasks:mark_task_review_approved"
-          - "gobby-tasks:mark_task_review_rejected"
+          - "gobby-tasks-ops:submit_for_review"
+          - "gobby-tasks-ops:approve_review"
+          - "gobby-tasks-ops:reject_review"
         reason: |
           Interactive sessions should use close_task directly — the user is already present.
           Review status transitions (needs_review, review_approved, review_rejected) are for spawned/pipeline

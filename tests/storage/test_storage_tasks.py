@@ -136,8 +136,8 @@ class TestLocalTaskManager:
         """Closed tasks keep their last lifecycle stage as latent context."""
         task = task_manager.create_task(project_id=project_id, title="To Close Cleanly")
         _start_current_stage(task_manager, task.id)
-        task_manager.mark_task_needs_review(task.id)
-        reviewed = task_manager.mark_task_review_approved(task.id)
+        task_manager.submit_for_review(task.id)
+        reviewed = task_manager.approve_review(task.id)
 
         closed = task_manager.close_task(reviewed.id, reason="Merged")
 
@@ -413,13 +413,13 @@ class TestLocalTaskManager:
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
         _start_current_stage(task_manager, blocker.id)
-        task_manager.mark_task_needs_review(blocker.id)
+        task_manager.submit_for_review(blocker.id)
         assert blocked.id not in {
             t.id for t in task_manager.list_ready_tasks(project_id=project_id)
         }
         assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
 
-        task_manager.mark_task_review_approved(blocker.id)
+        task_manager.approve_review(blocker.id)
         assert blocked.id not in {
             t.id for t in task_manager.list_ready_tasks(project_id=project_id)
         }
@@ -856,7 +856,7 @@ class TestLocalTaskManager:
         )
         task = task_manager.create_task(project_id, "Needs review")
         _start_current_stage(task_manager, task.id, session.id)
-        task_manager.mark_task_needs_review(task.id)
+        task_manager.submit_for_review(task.id)
 
         claimed = task_manager.claim_task(task.id, session.id)
 
@@ -883,7 +883,7 @@ class TestLocalTaskManager:
         assert released.assignee is None
         assert released.claimed_by_session_id is None
 
-    def test_mark_task_needs_review_clears_canonical_owner(
+    def test_submit_for_review_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
         """Submitting work for review should release the active claim."""
@@ -897,13 +897,13 @@ class TestLocalTaskManager:
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.claim_task(task.id, session.id)
 
-        reviewed = task_manager.mark_task_needs_review(task.id, review_notes="Ready for QA")
+        reviewed = task_manager.submit_for_review(task.id, review_notes="Ready for QA")
 
         _assert_stage_state(reviewed, "needs_review")
         assert reviewed.assignee is None
         assert reviewed.claimed_by_session_id is None
 
-    def test_mark_task_review_approved_clears_canonical_owner(
+    def test_approve_review_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
         """Approving work should release the active claim."""
@@ -916,9 +916,9 @@ class TestLocalTaskManager:
         task = task_manager.create_task(project_id, "Approve me")
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.claim_task(task.id, session.id)
-        task_manager.mark_task_needs_review(task.id, review_notes="Ready")
+        task_manager.submit_for_review(task.id, review_notes="Ready")
 
-        approved = task_manager.mark_task_review_approved(
+        approved = task_manager.approve_review(
             task.id,
             approval_notes="LGTM",
         )
@@ -927,7 +927,7 @@ class TestLocalTaskManager:
         assert approved.assignee is None
         assert approved.claimed_by_session_id is None
 
-    def test_mark_task_review_rejected_reopens_and_clears_canonical_owner(
+    def test_reject_review_reopens_and_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:
         """Rejecting review should reopen work and release the active claim."""
@@ -943,10 +943,10 @@ class TestLocalTaskManager:
         )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
-        task_manager.mark_task_needs_review(task.id, review_notes="Ready for adversary")
+        task_manager.submit_for_review(task.id, review_notes="Ready for adversary")
         task_manager.claim_task(task.id, session.id)
 
-        rejected = task_manager.mark_task_review_rejected(
+        rejected = task_manager.reject_review(
             task.id,
             rejection_notes="Needs another planning round",
             round=1,
@@ -958,7 +958,7 @@ class TestLocalTaskManager:
         assert "## Adversary Findings — Round 1" in (rejected.description or "")
         assert not any(label.startswith("planning-round:") for label in rejected.labels or [])
 
-    def test_mark_task_review_rejected_requires_review_state(
+    def test_reject_review_requires_review_state(
         self, task_manager, project_id, session_manager
     ) -> None:
         """Rejecting outside the review state raises and preserves ownership."""
@@ -976,7 +976,7 @@ class TestLocalTaskManager:
         _start_current_stage(task_manager, task.id, session.id)
 
         with pytest.raises(ValueError):
-            task_manager.mark_task_review_rejected(
+            task_manager.reject_review(
                 task.id,
                 rejection_notes="Needs another planning round",
                 round=1,
@@ -986,10 +986,10 @@ class TestLocalTaskManager:
         _assert_stage_state(unchanged, "in_progress")
         assert unchanged.claimed_by_session_id == session.id
 
-    def test_mark_task_review_rejected_dedups_same_round_heading(
+    def test_reject_review_dedups_same_round_heading(
         self, task_manager, project_id, session_manager
     ) -> None:
-        """Re-running mark_task_review_rejected with the same round_number must
+        """Re-running reject_review with the same round_number must
         replace the existing `## Adversary Findings — Round N` section instead
         of stacking.
         """
@@ -1002,10 +1002,10 @@ class TestLocalTaskManager:
         task = task_manager.create_task(project_id, "Dedup me")
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
-        task_manager.mark_task_needs_review(task.id, review_notes="Ready")
+        task_manager.submit_for_review(task.id, review_notes="Ready")
 
         # First rejection at round 7.
-        first = task_manager.mark_task_review_rejected(
+        first = task_manager.reject_review(
             task.id, rejection_notes="initial findings", round=7
         )
         assert (first.description or "").count("## Adversary Findings — Round 7") == 1
@@ -1014,8 +1014,8 @@ class TestLocalTaskManager:
         # Re-claim and reject the same round again with different notes.
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
-        task_manager.mark_task_needs_review(task.id, review_notes="Ready again")
-        second = task_manager.mark_task_review_rejected(
+        task_manager.submit_for_review(task.id, review_notes="Ready again")
+        second = task_manager.reject_review(
             task.id, rejection_notes="updated findings", round=7
         )
 
@@ -1024,7 +1024,7 @@ class TestLocalTaskManager:
         assert "updated findings" in (second.description or "")
         assert "initial findings" not in (second.description or "")
 
-    def test_mark_task_review_rejected_preserves_other_round_headings(
+    def test_reject_review_preserves_other_round_headings(
         self, task_manager, project_id, session_manager
     ) -> None:
         """Dedup is per-round: re-running round 7 must not touch round 6's section."""
@@ -1037,20 +1037,20 @@ class TestLocalTaskManager:
         task = task_manager.create_task(project_id, "Multi-round target")
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
-        task_manager.mark_task_needs_review(task.id, review_notes="r6 ready")
-        task_manager.mark_task_review_rejected(task.id, rejection_notes="round six body", round=6)
+        task_manager.submit_for_review(task.id, review_notes="r6 ready")
+        task_manager.reject_review(task.id, rejection_notes="round six body", round=6)
 
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
-        task_manager.mark_task_needs_review(task.id, review_notes="r7 ready")
-        task_manager.mark_task_review_rejected(
+        task_manager.submit_for_review(task.id, review_notes="r7 ready")
+        task_manager.reject_review(
             task.id, rejection_notes="round seven first", round=7
         )
 
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
-        task_manager.mark_task_needs_review(task.id, review_notes="r7 retry")
-        result = task_manager.mark_task_review_rejected(
+        task_manager.submit_for_review(task.id, review_notes="r7 retry")
+        result = task_manager.reject_review(
             task.id, rejection_notes="round seven second", round=7
         )
 

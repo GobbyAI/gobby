@@ -191,7 +191,7 @@ class TestListTasks:
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
         _start_current_stage(task_manager, sample_task["id"], session_id)
-        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        task_manager.submit_for_review(sample_task["id"], review_notes="Ready for QA")
         response = client.get("/api/tasks?current_stage_state=needs_review")
         assert response.status_code == 200
         ids = [t["id"] for t in response.json()["tasks"]]
@@ -544,7 +544,7 @@ class TestLifecycleMutations:
         assert data["claimed_by_session_id"] is None
         assert data["state"]["is_claimed"] is False
 
-    def test_mark_task_needs_review(
+    def test_submit_for_review(
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
@@ -553,18 +553,16 @@ class TestLifecycleMutations:
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
         _start_current_stage(task_manager, sample_task["id"], session_id)
-        response = client.post(
-            f"/api/tasks/{sample_task['id']}/needs-review",
-            json={"notes": "Ready for QA"},
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}/stages/development",
+            json={"action": "submit_for_review", "notes": "Ready for QA"},
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["state"]["current_stage"] == {
-            "name": "development",
-            "state": "needs_review",
-        }
+        assert data["stage"]["stage_name"] == "development"
+        assert data["stage"]["state"] == "needs_review"
 
-    def test_mark_task_review_approved(
+    def test_approve_review(
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
@@ -573,20 +571,17 @@ class TestLifecycleMutations:
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
         _start_current_stage(task_manager, sample_task["id"], session_id)
-        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready")
-        response = client.post(
-            f"/api/tasks/{sample_task['id']}/review-approved",
-            json={"notes": "Looks good"},
+        task_manager.submit_for_review(sample_task["id"], review_notes="Ready")
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}/stages/development",
+            json={"action": "approve_review", "notes": "Looks good"},
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["state"]["current_stage"] == {
-            "name": "development",
-            "state": "review_approved",
-        }
-        assert data["state"]["is_merge_ready"] is True
+        assert data["stage"]["stage_name"] == "development"
+        assert data["stage"]["state"] == "review_approved"
 
-    def test_mark_task_review_rejected(
+    def test_reject_review(
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
@@ -595,16 +590,20 @@ class TestLifecycleMutations:
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
         _start_current_stage(task_manager, sample_task["id"], session_id)
-        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready")
-        response = client.post(
-            f"/api/tasks/{sample_task['id']}/review-rejected",
-            json={"notes": "Need another pass", "round": 1},
+        task_manager.submit_for_review(sample_task["id"], review_notes="Ready")
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}/stages/development",
+            json={
+                "action": "reject_review",
+                "reason": "Need another pass",
+                "notes": "Need another pass",
+            },
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
-        assert "## Adversary Findings — Round 1" in (data["description"] or "")
-        assert not any(label.startswith("planning-round:") for label in data["labels"] or [])
+        assert data["stage"]["stage_name"] == "development"
+        assert data["stage"]["state"] == "ready"
+        assert data["stage"]["review_round_count"] == 1
 
     def test_escalate_task(self, client: TestClient, sample_task: dict) -> None:
         response = client.post(
@@ -730,7 +729,7 @@ class TestDeEscalateTask:
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
         _start_current_stage(task_manager, sample_task["id"], session_id)
-        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        task_manager.submit_for_review(sample_task["id"], review_notes="Ready for QA")
         task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
 
         response = client.get(f"/api/tasks/{sample_task['id']}")
@@ -769,7 +768,7 @@ class TestDeEscalateTask:
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
         _start_current_stage(task_manager, sample_task["id"], session_id)
-        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        task_manager.submit_for_review(sample_task["id"], review_notes="Ready for QA")
         task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
 
         response = client.post(

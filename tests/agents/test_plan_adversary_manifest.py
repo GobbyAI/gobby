@@ -1,7 +1,7 @@
 """Wiring tests for plan-adversary.yaml manifest-emission contract (§2.22.1, §2.22.3).
 
 The plan-adversary agent must emit the ``## M1 Task Manifest`` YAML at the end
-of the plan file before calling ``mark_task_review_approved``. The act of
+of the plan file before calling ``approve_review``. The act of
 writing the manifest forces the adversary to confront ambiguity it might
 otherwise wave through.
 
@@ -38,14 +38,14 @@ def agent() -> AgentDefinitionBody:
 
 
 class TestManifestEmissionOnApproval:
-    """§2.22.1 — manifest emitted before mark_task_review_approved on clean review."""
+    """§2.22.1 — manifest emitted before approve_review on clean review."""
 
     def test_instructions_describe_manifest_emission_on_approval(
         self, agent: AgentDefinitionBody
     ) -> None:
         instructions = agent.instructions or ""
         assert "Task Manifest" in instructions
-        assert "mark_task_review_approved" in instructions
+        assert "approve_review" in instructions
 
     def test_instructions_reference_M1_heading_id(self, agent: AgentDefinitionBody) -> None:
         """The canonical heading regex (§2.21) requires M1 as section ID."""
@@ -56,7 +56,7 @@ class TestManifestEmissionOnApproval:
         """Manifest write must come BEFORE the approval call in instruction order."""
         instructions = agent.instructions or ""
         manifest_index = instructions.find("M1 Task Manifest")
-        approval_index = instructions.find("mark_task_review_approved")
+        approval_index = instructions.find("approve_review")
         assert manifest_index >= 0
         assert approval_index >= 0
         assert manifest_index < approval_index, (
@@ -68,7 +68,7 @@ class TestManifestEmissionOnApproval:
         review = find_step(agent.steps or [], "review")
         assert review is not None
         blocked = review.blocked_mcp_tools or []
-        assert "gobby-tasks:mark_task_review_approved" not in blocked
+        assert "gobby-tasks-ops:approve_review" not in blocked
 
 
 class TestScopedEditWriteSurface:

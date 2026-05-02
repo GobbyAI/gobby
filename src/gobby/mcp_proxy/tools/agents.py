@@ -126,7 +126,7 @@ async def _complete_self_terminated_run(
         return result
 
     # Read the agent's adversary_verdict session variable (written by
-    # mark_task_review_approved / mark_task_review_rejected). When present,
+    # approve_review / reject_review). When present,
     # forward it as signoff_message — the wake dispatcher prefers
     # result.get("signoff_message") for the parent's completion P2P content.
     notify_result: dict[str, Any] = {"status": "success", "run_id": run.id}

@@ -166,20 +166,20 @@ WORKFLOW:
 - Review the plan artifact referenced in your prompt against the parent task
   and any supporting context (the parent description is the canonical source;
   there is no requirement for a literal `## Requirements` heading).
-- Format rejection findings so `mark_task_review_rejected` can append them
+- Format rejection findings so `reject_review` can append them
   under `## Adversary Findings — Round N` (use the display round number from
   your prompt; do NOT overwrite prior rounds).
-- If blocking findings remain, call `mark_task_review_rejected` with the
+- If blocking findings remain, call `reject_review` with the
   rejection notes and the display round from your prompt.
 - If context is insufficient, escalate with `needs_requirements:` plus the
   specific questions you cannot answer.
 - If the plan is sound and only nits remain (or no findings), approve with
-  `mark_task_review_approved`.
+  `approve_review`.
 
 CRITICAL RULES:
 - Do NOT call close_task. The conductor closes approved stage tasks.
 - Do NOT call reopen_task or de_escalate_task.
-- Do NOT call mark_task_needs_review.
+- Do NOT call submit_for_review.
 - Do NOT spawn other agents.
 - Do NOT terminate without calling `end_agent_run`.
 - Always use `uv run` for Python commands.

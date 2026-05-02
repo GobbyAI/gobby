@@ -10,17 +10,25 @@ rules:
       (
         (
           event.data.get('mcp_server') == 'gobby-tasks'
-          and event.data.get('mcp_tool') in ('close_task', 'mark_task_needs_review',
-            'mark_task_review_approved', 'mark_task_review_rejected', 'reopen_task',
+          and event.data.get('mcp_tool') in ('close_task', 'reopen_task',
             'escalate_task', 'de_escalate_task')
+        )
+        or (
+          event.data.get('mcp_server') == 'gobby-tasks-ops'
+          and event.data.get('mcp_tool') in ('submit_for_review',
+            'approve_review', 'reject_review')
         )
         or (
           event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
           and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
           and (tool_input.get('tool_name') or tool_input.get('tool')) in ('close_task',
-            'mark_task_needs_review', 'mark_task_review_approved',
-            'mark_task_review_rejected', 'reopen_task', 'escalate_task',
-            'de_escalate_task')
+            'reopen_task', 'escalate_task', 'de_escalate_task')
+        )
+        or (
+          event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+          and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks-ops'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) in (
+            'submit_for_review', 'approve_review', 'reject_review')
         )
       )
       and not skill_loaded('task-transitions')

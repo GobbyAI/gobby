@@ -110,8 +110,8 @@ so its own coverage is provable.
 ### Phase C — Lifecycle transition tools (plan §1.5, §1.8)
 
 - `advance_lifecycle(db, task_id, to, reason, by_actor)` tool.
-- Lifecycle-aware `mark_task_review_approved` (plan_review→test_arch, etc.).
-- Lifecycle-aware `mark_task_review_rejected` with `cited_subtasks` for
+- Lifecycle-aware `approve_review` (plan_review→test_arch, etc.).
+- Lifecycle-aware `reject_review` with `cited_subtasks` for
   holistic; `expansion` clears `expansion_run_id` and increments attempts;
   `merging` keeps lifecycle and resets status=open.
 - `de_escalate_task` extension with optional `lifecycle` and `reason`.
@@ -148,7 +148,7 @@ so its own coverage is provable.
 - Expansion: stage-driven tree shape + Agent Selection step.
 - Expansion-agent-selection skill.
 - Expansion-QA transition contract: success calls
-  `mark_task_review_approved`; failure calls `mark_task_review_rejected`
+  `approve_review`; failure calls `reject_review`
   with findings.
 - Merge agent lifecycle integration: clean merge, conflict non-yolo,
   conflict yolo retries, yolo retries-exhausted force-advance with

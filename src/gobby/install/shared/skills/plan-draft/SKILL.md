@@ -575,7 +575,7 @@ requires rejecting the premise or re-engineering a section, call
 
 After a revision, append one concise bullet to `## Plan Changelog` describing
 the surgical fixes for that round, then resubmit with one atomic
-`mark_task_needs_review(task_id=..., review_notes=...)` call. That transition
+`submit_for_review(task_id=..., stage_name="planning", review_notes=...)` call. That transition
 clears `planning-current-verdict:rejected`; do not clear the label separately.
 
 Planners author narrative sections only. The `## M1 Task Manifest` is emitted

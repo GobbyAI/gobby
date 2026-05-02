@@ -59,9 +59,9 @@ instructions: |
 # Interactive sessions should not use pipeline-only review gates.
 # Human-driven lifecycle resets such as reopen/de_escalate remain allowed when explicitly requested.
 blocked_mcp_tools:
-  - "gobby-tasks:mark_task_needs_review"
-  - "gobby-tasks:mark_task_review_approved"
-  - "gobby-tasks:mark_task_review_rejected"
+  - "gobby-tasks-ops:submit_for_review"
+  - "gobby-tasks-ops:approve_review"
+  - "gobby-tasks-ops:reject_review"
 
 workflows:
   rule_selectors:

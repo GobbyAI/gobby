@@ -27,6 +27,9 @@ LEGACY_REVIEW_TOOLS = (
     "mark_task_merged",
     "mark_task_merge_failed",
     "advance_lifecycle",
+    "mark_task_" + "needs_review",
+    "mark_task_review_" + "approved",
+    "mark_task_review_" + "rejected",
 )
 
 

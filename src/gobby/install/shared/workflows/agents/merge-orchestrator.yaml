@@ -190,7 +190,7 @@ steps:
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:reopen_task"
-      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks-ops:submit_for_review"
       - "gobby-agents:kill_agent"
       - "gobby-agents:end_agent_run"
       - "gobby-merge:merge_resolve"

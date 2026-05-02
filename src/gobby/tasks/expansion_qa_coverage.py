@@ -235,10 +235,11 @@ def _fail_plan_hash_drift(
         "input_plan_hash": input_plan_hash,
         "actual_plan_hash": actual_plan_hash,
         "review_action": {
-            "server": "gobby-tasks",
-            "tool": "mark_task_review_rejected",
+            "server": "gobby-tasks-ops",
+            "tool": "reject_review",
             "arguments": {
                 "task_id": root_task_ref,
+                "stage_name": "expansion",
                 "rejection_notes": f"plan_hash_drift for {plan_path}: {detail}",
             },
         },
@@ -438,10 +439,11 @@ def _review_action(
 ) -> dict[str, Any]:
     if not failures:
         return {
-            "server": "gobby-tasks",
-            "tool": "mark_task_review_approved",
+            "server": "gobby-tasks-ops",
+            "tool": "approve_review",
             "arguments": {
                 "task_id": root_task_ref,
+                "stage_name": "expansion",
                 "approval_notes": f"Plan coverage passed. Manifest: {manifest_path}",
             },
         }
@@ -458,10 +460,11 @@ def _review_action(
             f"leaves={leaves}"
         )
     return {
-        "server": "gobby-tasks",
-        "tool": "mark_task_review_rejected",
+        "server": "gobby-tasks-ops",
+        "tool": "reject_review",
         "arguments": {
             "task_id": root_task_ref,
+            "stage_name": "expansion",
             "rejection_notes": "\n".join(notes),
         },
     }

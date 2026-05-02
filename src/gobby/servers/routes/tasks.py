@@ -116,22 +116,6 @@ class TaskReleaseClaimRequest(BaseModel):
     pass
 
 
-class TaskReviewRequest(BaseModel):
-    """Request body for review-stage transitions."""
-
-    notes: str | None = Field(default=None, description="Review notes or approval notes")
-
-
-class TaskReviewRejectionRequest(BaseModel):
-    """Request body for review rejection transitions."""
-
-    notes: str | None = Field(default=None, description="Review findings or rejection notes")
-    round: int | None = Field(
-        default=None,
-        description="Optional planning round number used for round-scoped rejection notes",
-    )
-
-
 class TaskEscalateRequest(BaseModel):
     """Request body for escalation."""
 
@@ -605,8 +589,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                     status_code=400,
                     detail=(
                         "Use dedicated task endpoints instead of PATCH for ownership changes: "
-                        "/claim, /release-claim, /needs-review, /review-approved, /escalate, "
-                        "/de-escalate, /close, or /reopen."
+                        "/claim, /release-claim, /escalate, /de-escalate, /close, /reopen, "
+                        "or the stage PATCH route."
                     ),
                 )
 
@@ -689,70 +673,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             released = server.task_manager.release_task_claim(resolved_id)
             result = released.to_dict()
             await _broadcast_task("task_claim_released", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/needs-review")
-    async def mark_task_needs_review(
-        task_id: str, request_data: TaskReviewRequest | None = None
-    ) -> Any:
-        """Move the current stage into review."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReviewRequest()
-            updated = server.task_manager.mark_task_needs_review(
-                resolved_id,
-                review_notes=body.notes,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_needs_review", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/review-approved")
-    async def mark_task_review_approved(
-        task_id: str, request_data: TaskReviewRequest | None = None
-    ) -> Any:
-        """Mark a task as review-approved."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReviewRequest()
-            updated = server.task_manager.mark_task_review_approved(
-                resolved_id,
-                approval_notes=body.notes,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_review_approved", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/review-rejected")
-    async def mark_task_review_rejected(
-        task_id: str, request_data: TaskReviewRejectionRequest | None = None
-    ) -> Any:
-        """Reject a task after review."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReviewRejectionRequest()
-            updated = server.task_manager.mark_task_review_rejected(
-                resolved_id,
-                rejection_notes=body.notes,
-                round_number=body.round,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_review_rejected", result)
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

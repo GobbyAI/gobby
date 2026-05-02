@@ -118,8 +118,8 @@ def test_planner_path_blocks_until_task_reaches_review_approved(
     )
 
     task_manager.stage_states.start_stage(task.id, "development", by_session_id=None)
-    task_manager.mark_task_needs_review(task.id)
-    task_manager.mark_task_review_approved(task.id)
+    task_manager.submit_for_review(task.id)
+    task_manager.approve_review(task.id)
     assert (
         _evaluate_when(
             engine,

@@ -79,7 +79,7 @@ Recent history uses task-linked commits like `[gobby-#11184] fix: stop retrying 
 Before editing files, create or claim a Gobby task and work under that task. For AI agents, use the `gobby-tasks` MCP server for task lifecycle operations, not the `gobby tasks` CLI and not direct storage/SQL/REST mutations. The MCP path updates workflow/session state such as claims, session links, and `task_claimed`; bypassing it can leave the repo in an inconsistent state.
 
 When working task state as an agent:
-- Prefer lifecycle MCP tools such as `create_task` with `claim=true`, `claim_task`, `mark_task_needs_review`, `close_task`, `reopen_task`, and `escalate_task`.
+- Prefer lifecycle MCP tools such as `create_task` with `claim=true`, `claim_task`, `close_task`, `reopen_task`, and `escalate_task`; use `gobby-tasks-ops` review tools such as `submit_for_review(stage_name="...")` when handing a stage to review.
 - When code changes are complete and the task is ready to finish, prefer `close_task(task_id, commit_sha="...")` so the commit is linked and the task is closed in one step.
 - Use `link_commit` only when you intentionally need to attach a commit while keeping the task open, such as handing work off for review or continuing follow-up changes later.
 - Do not claim work by setting generic `status`/`assignee` fields through `update_task`, CLI commands, database writes, or ad hoc scripts.

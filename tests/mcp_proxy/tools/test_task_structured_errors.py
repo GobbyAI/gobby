@@ -22,17 +22,31 @@ def _make_task(
     status: str = "open",
     assignee: str | None = None,
 ) -> Task:
+    stage_state = {
+        "open": "ready",
+        "closed": "done",
+        "escalated": "ready",
+    }.get(status, status)
     return Task(
         id=task_id,
         project_id="proj-1",
         title="Test Task",
-        status=status,
         priority=2,
         task_type="task",
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
+        closed_at="2024-01-02T00:00:00Z" if status == "closed" else None,
         assignee=assignee,
+        escalated_at="2024-01-02T00:00:00Z" if status == "escalated" else None,
+        is_escalated=status == "escalated",
         seq_num=42,
+        stages=(
+            {
+                "stage_name": "development",
+                "position": 0,
+                "state": stage_state,
+            },
+        ),
     )
 
 
@@ -103,11 +117,8 @@ async def test_claim_task_conflict_returns_claim_conflict(
 @pytest.mark.parametrize(
     ("tool_name", "extra_args", "error_fragment"),
     [
-        ("escalate_task", {"reason": "blocked"}, "Cannot escalate task with status 'closed'."),
-        ("mark_task_review_approved", {}, "Cannot approve task with status 'closed'."),
-        ("mark_task_review_rejected", {}, "Cannot reject review for task with status 'closed'."),
-        ("mark_task_needs_review", {}, "Cannot mark task with status 'closed' as needs_review."),
-        ("de_escalate_task", {"reason": "resolved"}, "current status: closed"),
+        ("escalate_task", {"reason": "blocked"}, "Cannot escalate task in state 'closed'."),
+        ("de_escalate_task", {"reason": "resolved"}, "current state: closed"),
     ],
 )
 async def test_lifecycle_closed_task_returns_task_closed(
@@ -135,9 +146,6 @@ async def test_lifecycle_closed_task_returns_task_closed(
     ("tool_name", "status", "extra_args"),
     [
         ("escalate_task", "escalated", {"reason": "blocked"}),
-        ("mark_task_review_approved", "open", {}),
-        ("mark_task_review_rejected", "open", {}),
-        ("mark_task_needs_review", "escalated", {}),
         ("de_escalate_task", "open", {"reason": "resolved"}),
     ],
 )

@@ -10,6 +10,7 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._stage_states import StageState
 from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
 
@@ -36,21 +37,63 @@ def _make_task(
     seq_num: int | None = 42,
     description: str | None = "Test desc",
 ) -> Task:
+    stage_state = {
+        "open": "ready",
+        "escalated": "ready",
+        "closed": "done",
+    }.get(status, status)
     return Task(
         id=id,
         project_id=project_id,
         title=title,
-        status=status,
         priority=priority,
         task_type=task_type,
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
+        closed_at="2024-01-02T00:00:00Z" if status == "closed" else None,
         assignee=assignee,
         labels=labels or [],
         validation_criteria=validation_criteria,
         commits=commits,
         seq_num=seq_num,
         description=description,
+        escalated_at="2024-01-02T00:00:00Z" if status == "escalated" else None,
+        is_escalated=status == "escalated",
+        stages=(
+            {
+                "stage_name": "development",
+                "position": 0,
+                "state": stage_state,
+            },
+        ),
+    )
+
+
+def _make_stage_state(
+    *,
+    task_id: str = "550e8400-e29b-41d4-a716-446655440000",
+    stage_name: str = "planning",
+    state: str = "needs_review",
+) -> StageState:
+    return StageState(
+        task_id=task_id,
+        stage_name=stage_name,
+        position=0,
+        state=state,  # type: ignore[arg-type]
+        review_policy="required",
+        reviewer_agent="plan-adversary",
+        entered_at=None,
+        entered_by_session_id=None,
+        completed_at=None,
+        completed_by_session_id=None,
+        completed_commit_sha=None,
+        work_attempt_count=1,
+        review_round_count=0,
+        max_work_attempts=None,
+        max_review_rounds=None,
+        artifact_refs=None,
+        notes=None,
+        updated_at="2024-01-01T00:00:00Z",
     )
 
 
@@ -58,6 +101,8 @@ def _make_task(
 def mock_task_manager() -> MagicMock:
     mgr = MagicMock(spec=LocalTaskManager)
     mgr.db = MagicMock()
+    mgr.stage_states = MagicMock()
+    mgr.stage_states.get.return_value = _make_stage_state()
     return mgr
 
 
@@ -76,6 +121,23 @@ def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
         mock_sm.resolve_session_reference.return_value = "resolved-session"
         MockSM.return_value = mock_sm
         return create_task_registry(task_manager, sync_manager)
+
+
+def _create_stage_ops_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
+    """Create the gobby-tasks-ops stage registry with patched context managers."""
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+    from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
+    ):
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "resolved-session"
+        mock_sm.get.return_value = None
+        MockSM.return_value = mock_sm
+        ctx = RegistryContext(task_manager=task_manager, sync_manager=sync_manager)
+        return create_stage_ops_registry(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -624,12 +686,12 @@ class TestEscalateTask:
 
 
 # ---------------------------------------------------------------------------
-# mark_task_review_approved tests
+# approve_review tests
 # ---------------------------------------------------------------------------
 
 
 class TestMarkTaskReviewApproved:
-    """Tests for mark_task_review_approved tool."""
+    """Tests for approve_review tool."""
 
     @pytest.fixture(autouse=True)
     def _set_session_context(self):
@@ -640,12 +702,12 @@ class TestMarkTaskReviewApproved:
     async def test_approve_needs_review(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="needs_review")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.update_task.return_value = task
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.approve_review.return_value = task
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_review_approved",
-            {"task_id": task.id},
+            "approve_review",
+            {"task_id": task.id, "stage_name": "planning"},
         )
         assert "error" not in result
 
@@ -653,12 +715,12 @@ class TestMarkTaskReviewApproved:
     async def test_approve_wrong_status(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="closed")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_review_approved.side_effect = ValueError("No current stage")
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.approve_review.side_effect = ValueError("No current stage")
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_review_approved",
-            {"task_id": task.id},
+            "approve_review",
+            {"task_id": task.id, "stage_name": "planning"},
         )
         assert "error" in result
         assert "No current stage" in result["error"]
@@ -667,19 +729,21 @@ class TestMarkTaskReviewApproved:
     async def test_approve_with_notes(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="needs_review", description="Original desc")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_review_approved.return_value = task
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.approve_review.return_value = task
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_review_approved",
+            "approve_review",
             {
                 "task_id": task.id,
+                "stage_name": "planning",
                 "approval_notes": "Looks good",
             },
         )
         assert "error" not in result
-        mock_task_manager.mark_task_review_approved.assert_called_once_with(
+        mock_task_manager.approve_review.assert_called_once_with(
             task.id,
+            "planning",
             approval_notes="Looks good",
             by_session_id=ANY,
         )
@@ -688,12 +752,12 @@ class TestMarkTaskReviewApproved:
     async def test_approve_update_fails(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="needs_review")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_review_approved.return_value = None
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.approve_review.return_value = None
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_review_approved",
-            {"task_id": task.id},
+            "approve_review",
+            {"task_id": task.id, "stage_name": "planning"},
         )
         assert "error" in result
         assert "Failed to approve" in result["error"]
@@ -707,7 +771,7 @@ class TestMarkTaskReviewApproved:
         session_id = "session-abc"
         task = _make_task(id=task_id, status="needs_review", assignee=session_id)
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_review_approved.return_value = task
+        mock_task_manager.approve_review.return_value = task
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
@@ -721,10 +785,10 @@ class TestMarkTaskReviewApproved:
             MockSVM.return_value = mock_svm
             mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
 
-            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
             result = await registry.call(
-                "mark_task_review_approved",
-                {"task_id": task_id},
+                "approve_review",
+                {"task_id": task_id, "stage_name": "planning"},
             )
 
         assert "error" not in result
@@ -736,12 +800,12 @@ class TestMarkTaskReviewApproved:
 
 
 # ---------------------------------------------------------------------------
-# mark_task_needs_review tests
+# submit_for_review tests
 # ---------------------------------------------------------------------------
 
 
 class TestMarkTaskNeedsReview:
-    """Tests for mark_task_needs_review tool."""
+    """Tests for submit_for_review tool."""
 
     @pytest.fixture(autouse=True)
     def _set_session_context(self):
@@ -752,12 +816,12 @@ class TestMarkTaskNeedsReview:
     async def test_mark_needs_review_success(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_needs_review.return_value = task
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.submit_for_review.return_value = task
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_needs_review",
-            {"task_id": task.id},
+            "submit_for_review",
+            {"task_id": task.id, "stage_name": "planning"},
         )
         assert "error" not in result
 
@@ -765,44 +829,47 @@ class TestMarkTaskNeedsReview:
     async def test_mark_needs_review_with_notes(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="in_progress", description="Original")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_needs_review.return_value = task
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.submit_for_review.return_value = task
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_needs_review",
+            "submit_for_review",
             {
                 "task_id": task.id,
+                "stage_name": "planning",
                 "review_notes": "Please check the output",
             },
         )
         assert "error" not in result
-        mock_task_manager.mark_task_needs_review.assert_called_once_with(
+        mock_task_manager.submit_for_review.assert_called_once_with(
             task.id,
+            "planning",
             review_notes="Please check the output",
+            by_session_id=ANY,
         )
 
     @pytest.mark.asyncio
     async def test_mark_needs_review_update_fails(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_needs_review.return_value = None
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.submit_for_review.return_value = None
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_needs_review",
-            {"task_id": task.id},
+            "submit_for_review",
+            {"task_id": task.id, "stage_name": "planning"},
         )
         assert "error" in result
-        assert "Failed to mark" in result["error"]
+        assert "Failed to submit" in result["error"]
 
     @pytest.mark.asyncio
     async def test_mark_needs_review_not_found(self, mock_task_manager, mock_sync_manager):
         mock_task_manager.get_task.return_value = None
-        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "mark_task_needs_review",
-            {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
+            "submit_for_review",
+            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "stage_name": "planning"},
         )
         assert "error" in result
 
@@ -815,7 +882,7 @@ class TestMarkTaskNeedsReview:
         session_id = "session-abc"
         task = _make_task(id=task_id, status="in_progress", assignee=session_id)
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.mark_task_needs_review.return_value = task
+        mock_task_manager.submit_for_review.return_value = task
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
@@ -829,10 +896,10 @@ class TestMarkTaskNeedsReview:
             MockSVM.return_value = mock_svm
             mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
 
-            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
             result = await registry.call(
-                "mark_task_needs_review",
-                {"task_id": task_id},
+                "submit_for_review",
+                {"task_id": task_id, "stage_name": "planning"},
             )
 
         assert "error" not in result

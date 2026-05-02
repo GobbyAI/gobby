@@ -212,12 +212,12 @@ Sequence on clean review (no blocking findings):
    will reject the plan when it parses in `expansion` mode, surfacing the
    issue at expansion time when a human can intervene.
 5. On success (clean parse or yolo force-approve), the adversary calls
-   `mark_task_review_approved` with `approval_notes` documenting the
+   `approve_review(stage_name="planning")` with `approval_notes` documenting the
    manifest outcome.
 
 On rejection rounds the adversary MUST NOT edit the plan file — plan edits
 between rounds are the planner's responsibility. Findings are routed through
-`mark_task_review_rejected(rejection_notes=...)` only.
+`reject_review(stage_name="planning", rejection_notes=...)` only.
 
 ## Coverage CLI
 

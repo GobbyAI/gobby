@@ -24,8 +24,8 @@ def test_three_outcomes() -> None:
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
 
     assert {
-        "mark_task_review_approved",
-        "mark_task_review_rejected",
+        "approve_review",
+        "reject_review",
         "escalate_task",
     } <= success_tools
 

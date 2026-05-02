@@ -757,7 +757,7 @@ class TestInjectTransitionSkill:
         assert "reopen_task" in (body.when or "")
         assert "escalate_task" in (body.when or "")
         assert "de_escalate_task" in (body.when or "")
-        assert "mark_task_review_rejected" in (body.when or "")
+        assert "reject_review" in (body.when or "")
 
     def test_emits_task_transitions_directive(self, db, manager) -> None:
         """The rule should emit a directive without writing skill ledgers."""

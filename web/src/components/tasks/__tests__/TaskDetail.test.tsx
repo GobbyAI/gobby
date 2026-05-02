@@ -84,8 +84,7 @@ describe('TaskDetail', () => {
     actions: {
       claimTask: vi.fn().mockResolvedValue(null),
       releaseTaskClaim: vi.fn().mockResolvedValue(null),
-      markTaskNeedsReview: vi.fn().mockResolvedValue(null),
-      markTaskReviewApproved: vi.fn().mockResolvedValue(null),
+      advanceStage: vi.fn().mockResolvedValue(undefined),
       escalateTask: vi.fn().mockResolvedValue(null),
       deEscalateTask: vi.fn().mockResolvedValue(null),
       closeTask: vi.fn().mockResolvedValue(null),

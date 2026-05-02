@@ -15,7 +15,7 @@ instructions: |
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
   2. REVIEW AND FIX: Check diff, run tests, fix any issues you find, commit your fixes
   3. DECIDE:
-     - APPROVE: Call mark_task_review_approved if code is good (after any fixes)
+     - APPROVE: Call approve_review with `stage_name="development"` if code is good (after any fixes)
      - ESCALATE: Call escalate_task if issues cannot be resolved without human intervention
   4. TERMINATE: Call kill_agent to shut down
 
@@ -84,7 +84,7 @@ steps:
       2. Run tests: uv run pytest <test_file> -v
       3. Fix any issues found — you have full edit access in this clone
       4. Commit your fixes if you made changes
-      5. APPROVE: call mark_task_review_approved if code is good
+      5. APPROVE: call approve_review with stage_name="development" if code is good
       6. ESCALATE (cannot resolve): call escalate_task with detailed reason
     allowed_tools: "all"
     blocked_mcp_tools:
@@ -94,8 +94,8 @@ steps:
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         action: set_variable
         variable: review_complete
         value: true

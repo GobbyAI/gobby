@@ -181,22 +181,25 @@ def de_escalate_task(
     return get_task(db, task_id)
 
 
-def mark_task_needs_review(
+def submit_for_review(
     db: DatabaseProtocol,
     task_id: str,
+    stage_name: str | None = None,
     *,
     review_notes: str | None = None,
     by_session_id: str | None = None,
 ) -> Task:
-    """Submit the current stage for review and release ownership."""
+    """Submit a stage for review and release ownership."""
     task = get_task(db, task_id)
     stages = _stage_states(db)
-    current = stages.current_stage(task_id)
-    if current is None:
-        raise NoCurrentStageError(task_id)
+    if stage_name is None:
+        current = stages.current_stage(task_id)
+        if current is None:
+            raise NoCurrentStageError(task_id)
+        stage_name = current.stage_name
     stages.submit_for_review(
         task_id,
-        current.stage_name,
+        stage_name,
         by_session_id=by_session_id,
         notes=review_notes,
     )
@@ -218,22 +221,25 @@ def mark_task_needs_review(
     return get_task(db, task_id)
 
 
-def mark_task_review_approved(
+def approve_review(
     db: DatabaseProtocol,
     task_id: str,
+    stage_name: str | None = None,
     *,
     approval_notes: str | None = None,
     by_session_id: str | None = None,
 ) -> Task:
-    """Approve review on the current stage and release ownership."""
+    """Approve review on a stage and release ownership."""
     task = get_task(db, task_id)
     stages = _stage_states(db)
-    current = stages.current_stage(task_id)
-    if current is None:
-        raise NoCurrentStageError(task_id)
+    if stage_name is None:
+        current = stages.current_stage(task_id)
+        if current is None:
+            raise NoCurrentStageError(task_id)
+        stage_name = current.stage_name
     stages.approve_review(
         task_id,
-        current.stage_name,
+        stage_name,
         by_session_id=by_session_id,
         notes=approval_notes,
     )
@@ -251,9 +257,10 @@ def mark_task_review_approved(
     return get_task(db, task_id)
 
 
-def mark_task_review_rejected(
+def reject_review(
     db: DatabaseProtocol,
     task_id: str,
+    stage_name: str | None = None,
     *,
     rejection_notes: str | None = None,
     round_number: int | None = None,
@@ -261,7 +268,7 @@ def mark_task_review_rejected(
     cited_subtasks: list[str] | None = None,
     by_session_id: str | None = None,
 ) -> Task:
-    """Reject review on the current stage and release ownership."""
+    """Reject review on a stage and release ownership."""
     task = get_task(db, task_id)
     normalized_round = None
     if round_number is not None:
@@ -271,9 +278,11 @@ def mark_task_review_rejected(
             raise ValueError("round must be >= 1 when provided")
 
     stages = _stage_states(db)
-    current = stages.current_stage(task_id)
-    if current is None:
-        raise NoCurrentStageError(task_id)
+    if stage_name is None:
+        current = stages.current_stage(task_id)
+        if current is None:
+            raise NoCurrentStageError(task_id)
+        stage_name = current.stage_name
     notes = rejection_notes
     if plan_hash:
         notes = f"{notes or ''}\n\nplan_hash: {plan_hash}".strip()
@@ -281,7 +290,7 @@ def mark_task_review_rejected(
         notes = f"{notes or ''}\n\ncited_subtasks: {', '.join(cited_subtasks)}".strip()
     stages.reject_review(
         task_id,
-        current.stage_name,
+        stage_name,
         reason=rejection_notes or "review_rejected",
         by_session_id=by_session_id,
         notes=notes,

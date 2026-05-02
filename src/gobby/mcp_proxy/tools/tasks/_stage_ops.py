@@ -10,6 +10,7 @@ from typing import Any, Literal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
 from gobby.storage.tasks._stage_states import (
     IllegalManifestMutationError,
     StageManifestSpec,
@@ -196,6 +197,8 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         required=["task_id", "stage_name", "reason"],
         func=fail_stage,
     )
+
+    register_review_stage_tools(registry, ctx)
 
     def add_stage(task_id: str, stage_name: str, position: int) -> dict[str, Any]:
         """Insert a future ready stage into a task manifest."""

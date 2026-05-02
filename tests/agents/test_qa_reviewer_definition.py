@@ -36,10 +36,10 @@ def test_emits_review_verdict() -> None:
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
     allowed_mcp_tools = set(review_step.get("allowed_mcp_tools", []))
 
-    assert "mark_task_review_approved" in instructions
-    assert "mark_task_review_rejected" in instructions
-    assert {"mark_task_review_approved", "mark_task_review_rejected"} <= success_tools
+    assert "approve_review" in instructions
+    assert "reject_review" in instructions
+    assert {"approve_review", "reject_review"} <= success_tools
     assert {
-        "gobby-tasks:mark_task_review_approved",
-        "gobby-tasks:mark_task_review_rejected",
+        "gobby-tasks-ops:approve_review",
+        "gobby-tasks-ops:reject_review",
     } <= allowed_mcp_tools

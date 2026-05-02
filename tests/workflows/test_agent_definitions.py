@@ -68,7 +68,7 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     assert {
         "gobby-tasks:close_task",
         "gobby-tasks:de_escalate_task",
-        "gobby-tasks:mark_task_needs_review",
+        "gobby-tasks-ops:submit_for_review",
         "gobby-tasks:reopen_task",
     }.issubset(_blocked_mcp_tools(review))
     assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
@@ -96,8 +96,8 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     transitions = review["transitions"]
 
     instructions = agent["instructions"]
-    assert "mark_task_review_approved" in instructions
-    assert "mark_task_review_rejected" in instructions
+    assert "approve_review" in instructions
+    assert "reject_review" in instructions
     assert "escalate_task" in instructions
     assert 'reason="qa_approved"' not in instructions
     assert "Do NOT call close_task" in instructions
@@ -106,8 +106,8 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     assert "gobby-tasks:close_task" in blocked_tools
 
     success_hooks = review["on_mcp_success"]
-    assert any(hook["tool"] == "mark_task_review_approved" for hook in success_hooks)
-    assert any(hook["tool"] == "mark_task_review_rejected" for hook in success_hooks)
+    assert any(hook["tool"] == "approve_review" for hook in success_hooks)
+    assert any(hook["tool"] == "reject_review" for hook in success_hooks)
     assert not any(hook["tool"] == "close_task" for hook in success_hooks)
     assert transitions == [{"to": "terminate", "when": "vars.review_complete"}]
 
@@ -139,7 +139,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "_skipped_stages" not in implement["status_message"]
     assert "manifest" in implement["status_message"]
     assert "close_task" in implement["status_message"]
-    assert "mark_task_needs_review" in implement["status_message"]
+    assert "submit_for_review" in implement["status_message"]
     assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
     assert "gobby-agents:kill_agent" not in _allowed_mcp_tools(terminate)
 
@@ -175,6 +175,6 @@ def test_backend_developer_documents_default_fallback_audit_marker() -> None:
 def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> None:
     instructions = " ".join(_agent("planner")["instructions"].split())
 
-    assert "mark_task_needs_review" in instructions
+    assert "submit_for_review" in instructions
     assert "Do not call remove_label for `planning-current-verdict:rejected`" in instructions
     assert "clears it atomically with the resubmission" in instructions

@@ -3,7 +3,7 @@
 When emitting findings (rejection rounds), the adversary must NOT edit the
 plan file. Plan edits between rounds are the planner's responsibility (§2.23).
 The adversary writes only into the planning task's description (via
-``mark_task_review_rejected``).
+``reject_review``).
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ def test_instructions_forbid_plan_edits_on_rejection(agent: AgentDefinitionBody)
 def test_instructions_route_rejection_through_findings_only(
     agent: AgentDefinitionBody,
 ) -> None:
-    """Rejections go through mark_task_review_rejected with rejection_notes;
+    """Rejections go through reject_review with rejection_notes;
     plan-file content stays untouched."""
     instructions = agent.instructions or ""
-    assert "mark_task_review_rejected" in instructions
+    assert "reject_review" in instructions
     assert "rejection_notes" in instructions
 
 

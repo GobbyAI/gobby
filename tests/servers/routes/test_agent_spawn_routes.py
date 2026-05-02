@@ -158,7 +158,7 @@ class TestSpawnAgent:
     ) -> None:
         """Web chat spawn on needs_review should set assignee without regressing status."""
         task = _create_task(task_manager, test_project.id, "Review task")
-        task_manager.mark_task_needs_review(task.id)
+        task_manager.submit_for_review(task.id)
 
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -190,7 +190,7 @@ class TestSpawnAgent:
             project_id=test_project.id,
         )
         task = _create_task(task_manager, test_project.id, "Claimed review task")
-        task_manager.mark_task_needs_review(task.id)
+        task_manager.submit_for_review(task.id)
         task_manager.claim_task(task.id, existing_owner.id)
 
         with patch(

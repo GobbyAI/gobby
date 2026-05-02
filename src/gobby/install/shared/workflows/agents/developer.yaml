@@ -50,7 +50,7 @@ instructions: |
   Inspect the assigned task's stage manifest. If the current development row has
   no review gate, commit the implementation and self-close with close_task using
   the commit_sha. If review is enabled, commit the implementation and call
-  mark_task_needs_review so rule_qa can dispatch a reviewer.
+  submit_for_review with `stage_name="development"` so rule_qa can dispatch a reviewer.
 
   CRITICAL RULES:
   - Do NOT call reopen_task or de_escalate_task.
@@ -127,7 +127,7 @@ steps:
     status_message: |
       Implement the developer leaf. Commit changes, then inspect the assigned
       task manifest. If development review is disabled, close_task with
-      commit_sha; otherwise mark_task_needs_review for QA.
+      commit_sha; otherwise submit_for_review(stage_name="development") for QA.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:de_escalate_task"
@@ -141,8 +141,8 @@ steps:
         action: set_variable
         variable: implementation_complete
         value: true
-      - server: gobby-tasks
-        tool: mark_task_needs_review
+      - server: gobby-tasks-ops
+        tool: submit_for_review
         action: set_variable
         variable: implementation_complete
         value: true

@@ -23,7 +23,7 @@ def test_task_state_in_matches_current_stage_state(temp_db, sample_project) -> N
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
     manager.stage_states.start_stage(task.id, "development", by_session_id=None)
-    manager.mark_task_needs_review(task.id)
+    manager.submit_for_review(task.id)
 
     assert task_state_in(manager, task.id, "needs_review", "closed") is True
     assert task_state_in(manager, task.id, "ready", "review_approved") is False

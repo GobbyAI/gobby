@@ -334,7 +334,7 @@ steps:
     allowed_tools: "all"
     blocked_mcp_tools: ["gobby-tasks:close_task", "gobby-agents:kill_agent"]
     on_mcp_success:
-      - { server: gobby-tasks, tool: mark_task_needs_review, action: set_variable, variable: review_submitted, value: true }
+      - { server: gobby-tasks-ops, tool: submit_for_review, action: set_variable, variable: review_submitted, value: true }
     transitions:
       - { to: terminate, when: "vars.review_submitted" }
   - name: terminate
@@ -351,7 +351,7 @@ steps:
     allowed_tools: "all"
     blocked_mcp_tools: ["gobby-tasks:close_task", "gobby-agents:kill_agent"]
     on_mcp_success:
-      - { server: gobby-tasks, tool: mark_task_review_approved, action: set_variable, variable: review_complete, value: true }
+      - { server: gobby-tasks-ops, tool: approve_review, action: set_variable, variable: review_complete, value: true }
       - { server: gobby-tasks, tool: reopen_task, action: set_variable, variable: review_complete, value: true }
     transitions:
       - { to: terminate, when: "vars.review_complete" }

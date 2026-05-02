@@ -573,11 +573,17 @@ class TestReviewStepE2E:
         result = unwrap_result(raw_result)
         task_id = result["id"]
 
-        # Set to needs_review status via mark_task_needs_review
         mcp_client.call_tool(
-            server_name="gobby-tasks",
-            tool_name="mark_task_needs_review",
-            arguments={"task_id": task_id},
+            server_name="gobby-tasks-ops",
+            tool_name="start_stage",
+            arguments={"task_id": task_id, "stage_name": "development"},
+        )
+
+        # Set to needs_review via the explicit stage review tool
+        mcp_client.call_tool(
+            server_name="gobby-tasks-ops",
+            tool_name="submit_for_review",
+            arguments={"task_id": task_id, "stage_name": "development"},
         )
 
         # Verify in needs_review
@@ -587,7 +593,16 @@ class TestReviewStepE2E:
             arguments={"task_id": task_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "needs_review", f"Task should be in needs_review: {result}"
+        assert result.get("state", {}).get("current_stage") == {
+            "name": "development",
+            "state": "needs_review",
+        }, f"Task should be in needs_review: {result}"
+
+        mcp_client.call_tool(
+            server_name="gobby-tasks-ops",
+            tool_name="approve_review",
+            arguments={"task_id": task_id, "stage_name": "development"},
+        )
 
         # Use close_task to transition from review to closed (simulating user approval)
         # Note: update_task no longer allows status="closed", must use close_task

@@ -1,11 +1,11 @@
-"""Tests for mark_task_review_rejected MCP tool."""
+"""Tests for reject_review MCP tool."""
 
-from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.storage.tasks import Task
+from gobby.storage.tasks._stage_states import StageState
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -15,7 +15,73 @@ pytestmark = pytest.mark.unit
 def mock_task_manager():
     manager = MagicMock()
     manager.db = MagicMock()
+    manager.stage_states = MagicMock()
+    manager.stage_states.get.return_value = _stage_state(
+        "550e8400-e29b-41d4-a716-446655440000",
+        state="ready",
+    )
     return manager
+
+
+def _stage_state(
+    task_id: str,
+    *,
+    stage_name: str = "planning",
+    state: str = "ready",
+) -> StageState:
+    return StageState(
+        task_id=task_id,
+        stage_name=stage_name,
+        position=0,
+        state=state,  # type: ignore[arg-type]
+        review_policy="required",
+        reviewer_agent="plan-adversary",
+        entered_at=None,
+        entered_by_session_id=None,
+        completed_at=None,
+        completed_by_session_id=None,
+        completed_commit_sha=None,
+        work_attempt_count=1,
+        review_round_count=1,
+        max_work_attempts=None,
+        max_review_rounds=None,
+        artifact_refs=None,
+        notes=None,
+        updated_at="2024-01-01T00:00:00Z",
+    )
+
+
+def _task(
+    *,
+    status: str,
+    description: str | None = None,
+    labels: list[str] | None = None,
+    seq_num: int | None = None,
+    assignee: str | None = None,
+    claimed_by_session_id: str | None = None,
+) -> Task:
+    stage_state = {"open": "ready"}.get(status, status)
+    return Task(
+        id="550e8400-e29b-41d4-a716-446655440000",
+        project_id="proj-1",
+        title="Planning Task",
+        priority=2,
+        task_type="task",
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        description=description,
+        labels=labels,
+        seq_num=seq_num,
+        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
+        stages=(
+            {
+                "stage_name": "planning",
+                "position": 0,
+                "state": stage_state,
+            },
+        ),
+    )
 
 
 @pytest.fixture
@@ -25,15 +91,8 @@ def mock_sync_manager():
 
 @pytest.fixture
 def sample_task_needs_review():
-    return Task(
-        id="550e8400-e29b-41d4-a716-446655440000",
-        project_id="proj-1",
-        title="Planning Task",
+    return _task(
         status="needs_review",
-        priority=2,
-        task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
         description="Existing description",
         labels=["planning-round:0"],
         seq_num=42,
@@ -42,29 +101,13 @@ def sample_task_needs_review():
 
 @pytest.fixture
 def sample_task_open():
-    return Task(
-        id="550e8400-e29b-41d4-a716-446655440000",
-        project_id="proj-1",
-        title="Planning Task",
-        status="open",
-        priority=2,
-        task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
-    )
+    return _task(status="open")
 
 
 @pytest.fixture
 def sample_task_in_progress():
-    return Task(
-        id="550e8400-e29b-41d4-a716-446655440000",
-        project_id="proj-1",
-        title="Planning Task",
+    return _task(
         status="in_progress",
-        priority=2,
-        task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
         description="Existing description",
         labels=["planning-round:0"],
         seq_num=42,
@@ -74,18 +117,20 @@ def sample_task_in_progress():
 
 
 @pytest.fixture
-def lifecycle_registry(mock_task_manager, mock_sync_manager):
+def stage_ops_registry(mock_task_manager, mock_sync_manager):
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-    from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
+    from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 
     ctx = RegistryContext(
         task_manager=mock_task_manager,
         sync_manager=mock_sync_manager,
     )
     ctx.resolve_session_id = MagicMock(return_value="resolved-session-abc")
+    ctx.session_manager = MagicMock()
+    ctx.session_manager.get.return_value = None
     ctx.session_task_manager = MagicMock()
     ctx.session_var_manager = MagicMock()
-    return create_lifecycle_registry(ctx), ctx
+    return create_stage_ops_registry(ctx), ctx
 
 
 class TestMarkTaskReviewRejected:
@@ -96,42 +141,46 @@ class TestMarkTaskReviewRejected:
 
     @pytest.mark.asyncio
     async def test_reject_needs_review_task(
-        self, lifecycle_registry, mock_task_manager, sample_task_needs_review
+        self, stage_ops_registry, mock_task_manager, sample_task_needs_review
     ) -> None:
-        registry, ctx = lifecycle_registry
+        registry, ctx = stage_ops_registry
         mock_task_manager.get_task.side_effect = (
             lambda task_id: sample_task_needs_review
             if task_id == sample_task_needs_review.id
             else None
         )
-        rejected_task = replace(
-            sample_task_needs_review,
+        rejected_task = _task(
             status="open",
             labels=["planning-round:1"],
+            description=sample_task_needs_review.description,
+            seq_num=sample_task_needs_review.seq_num,
         )
-        mock_task_manager.mark_task_review_rejected.return_value = rejected_task
+        mock_task_manager.reject_review.return_value = rejected_task
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_status.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
                 return_value=sample_task_needs_review.id,
             ),
-            patch("gobby.mcp_proxy.tools.tasks._lifecycle_status.notify_parent_on_status_change"),
+            patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
         ):
             result = await registry.call(
-                "mark_task_review_rejected",
+                "reject_review",
                 {
                     "task_id": "#42",
+                    "stage_name": "planning",
                     "rejection_notes": "Need better sequencing",
                     "round_number": 1,
                 },
             )
 
         assert "error" not in result
-        mock_task_manager.mark_task_review_rejected.assert_called_once_with(
+        mock_task_manager.reject_review.assert_called_once_with(
             sample_task_needs_review.id,
+            "planning",
             rejection_notes="Need better sequencing",
             round_number=1,
+            by_session_id="resolved-session-abc",
         )
         ctx.session_task_manager.link_task.assert_called_once_with(
             "resolved-session-abc",
@@ -141,94 +190,102 @@ class TestMarkTaskReviewRejected:
 
     @pytest.mark.asyncio
     async def test_reject_in_progress_task(
-        self, lifecycle_registry, mock_task_manager, sample_task_in_progress
+        self, stage_ops_registry, mock_task_manager, sample_task_in_progress
     ) -> None:
-        registry, _ = lifecycle_registry
+        registry, _ = stage_ops_registry
         mock_task_manager.get_task.side_effect = (
             lambda task_id: sample_task_in_progress
             if task_id == sample_task_in_progress.id
             else None
         )
-        rejected_task = replace(
-            sample_task_in_progress,
+        rejected_task = _task(
             status="open",
             labels=["planning-round:1"],
             claimed_by_session_id=None,
             assignee=None,
+            description=sample_task_in_progress.description,
+            seq_num=sample_task_in_progress.seq_num,
         )
-        mock_task_manager.mark_task_review_rejected.return_value = rejected_task
+        mock_task_manager.reject_review.return_value = rejected_task
 
         with (
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_status.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
                 return_value=sample_task_in_progress.id,
             ),
-            patch("gobby.mcp_proxy.tools.tasks._lifecycle_status.notify_parent_on_status_change"),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_status._clear_prior_claim_session_variables"
-            ),
+            patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
+            patch("gobby.mcp_proxy.tools.tasks._stage_review._clear_prior_claim_session_variables"),
         ):
             result = await registry.call(
-                "mark_task_review_rejected",
+                "reject_review",
                 {
                     "task_id": "#42",
+                    "stage_name": "planning",
                     "rejection_notes": "Need better sequencing",
                     "round_number": 1,
                 },
             )
 
         assert "error" not in result
-        mock_task_manager.mark_task_review_rejected.assert_called_once_with(
+        mock_task_manager.reject_review.assert_called_once_with(
             sample_task_in_progress.id,
+            "planning",
             rejection_notes="Need better sequencing",
             round_number=1,
+            by_session_id="resolved-session-abc",
         )
 
     @pytest.mark.asyncio
     async def test_reject_rejects_open_task(
-        self, lifecycle_registry, mock_task_manager, sample_task_open
+        self, stage_ops_registry, mock_task_manager, sample_task_open
     ) -> None:
-        registry, _ = lifecycle_registry
+        registry, _ = stage_ops_registry
         mock_task_manager.get_task.side_effect = (
             lambda task_id: sample_task_open if task_id == sample_task_open.id else None
         )
+        mock_task_manager.reject_review.side_effect = ValueError("Cannot reject review")
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_status.resolve_task_id_for_mcp",
+            "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
             return_value=sample_task_open.id,
         ):
-            result = await registry.call("mark_task_review_rejected", {"task_id": "#42"})
+            result = await registry.call(
+                "reject_review",
+                {"task_id": "#42", "stage_name": "planning"},
+            )
 
         assert "error" in result
         assert "Cannot reject review" in result["error"]
-        mock_task_manager.mark_task_review_rejected.assert_not_called()
+        mock_task_manager.reject_review.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_reject_writes_explicit_signoff_summary_to_session_var(
-        self, lifecycle_registry, mock_task_manager, sample_task_needs_review
+        self, stage_ops_registry, mock_task_manager, sample_task_needs_review
     ) -> None:
-        registry, ctx = lifecycle_registry
+        registry, ctx = stage_ops_registry
         mock_task_manager.get_task.side_effect = (
             lambda task_id: sample_task_needs_review
             if task_id == sample_task_needs_review.id
             else None
         )
-        mock_task_manager.mark_task_review_rejected.return_value = replace(
-            sample_task_needs_review,
+        mock_task_manager.reject_review.return_value = _task(
             status="open",
             labels=["planning-round:7"],
+            description=sample_task_needs_review.description,
+            seq_num=sample_task_needs_review.seq_num,
         )
         with (
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_status.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
                 return_value=sample_task_needs_review.id,
             ),
-            patch("gobby.mcp_proxy.tools.tasks._lifecycle_status.notify_parent_on_status_change"),
+            patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
         ):
             result = await registry.call(
-                "mark_task_review_rejected",
+                "reject_review",
                 {
                     "task_id": "#42",
+                    "stage_name": "planning",
                     "rejection_notes": "stuff",
                     "round_number": 7,
                     "signoff_summary": "REJECTED: round 7, 2 blocking (alpha, beta)",
@@ -243,29 +300,35 @@ class TestMarkTaskReviewRejected:
 
     @pytest.mark.asyncio
     async def test_reject_synthesizes_stock_signoff_when_omitted(
-        self, lifecycle_registry, mock_task_manager, sample_task_needs_review
+        self, stage_ops_registry, mock_task_manager, sample_task_needs_review
     ) -> None:
-        registry, ctx = lifecycle_registry
+        registry, ctx = stage_ops_registry
         mock_task_manager.get_task.side_effect = (
             lambda task_id: sample_task_needs_review
             if task_id == sample_task_needs_review.id
             else None
         )
-        mock_task_manager.mark_task_review_rejected.return_value = replace(
-            sample_task_needs_review,
+        mock_task_manager.reject_review.return_value = _task(
             status="open",
             labels=["planning-round:3"],
+            description=sample_task_needs_review.description,
+            seq_num=sample_task_needs_review.seq_num,
         )
         with (
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_status.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
                 return_value=sample_task_needs_review.id,
             ),
-            patch("gobby.mcp_proxy.tools.tasks._lifecycle_status.notify_parent_on_status_change"),
+            patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
         ):
             result = await registry.call(
-                "mark_task_review_rejected",
-                {"task_id": "#42", "rejection_notes": "stuff", "round_number": 3},
+                "reject_review",
+                {
+                    "task_id": "#42",
+                    "stage_name": "planning",
+                    "rejection_notes": "stuff",
+                    "round_number": 3,
+                },
             )
         assert "error" not in result
         ctx.session_var_manager.set_variable.assert_called_once_with(

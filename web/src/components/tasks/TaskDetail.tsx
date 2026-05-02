@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import './task-execution.css'
-import type { GobbyTask, GobbyTaskDetail, DependencyTree } from '../../hooks/useTasks'
+import type {
+  DependencyTree,
+  GobbyTask,
+  GobbyTaskDetail,
+  StageAdvanceAction,
+} from '../../hooks/useTasks'
 import { PriorityBadge, TypeBadge, StatusDot, TaskStateBadges } from './TaskBadges'
 import { ReasoningTimeline } from './ReasoningTimeline'
 import { ActionFeed } from './ActionFeed'
@@ -22,8 +27,12 @@ import {
 interface TaskActions {
   claimTask: (id: string, sessionId: string, force?: boolean) => Promise<GobbyTaskDetail | null>
   releaseTaskClaim: (id: string, status?: string) => Promise<GobbyTaskDetail | null>
-  markTaskNeedsReview: (id: string, notes?: string) => Promise<GobbyTaskDetail | null>
-  markTaskReviewApproved: (id: string, notes?: string) => Promise<GobbyTaskDetail | null>
+  advanceStage: (
+    id: string,
+    stageName: string,
+    action: StageAdvanceAction,
+    notes?: string,
+  ) => Promise<void>
   escalateTask: (id: string, reason: string) => Promise<GobbyTaskDetail | null>
   deEscalateTask: (
     id: string,
@@ -161,17 +170,18 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
     }
   }, [taskId, fetchDetail])
 
-  const handleAction = useCallback(async (action: () => Promise<GobbyTaskDetail | null>) => {
+  const handleAction = useCallback(async (action: () => Promise<GobbyTaskDetail | null | void>) => {
     setActionLoading(true)
     try {
       const updated = await action()
       if (updated) setTask(updated)
+      else if (taskId) await fetchDetail(taskId)
     } catch (e) {
       console.error('Failed to perform action:', e)
     } finally {
       setActionLoading(false)
     }
-  }, [])
+  }, [fetchDetail, taskId])
 
   const taskState = task ? getCanonicalTaskState(task) : null
 
@@ -269,7 +279,12 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
                         actions.deEscalateTask(task.id, 'Resolved from reasoning timeline', 'open')
                       )
                     } else {
-                      handleAction(() => actions.markTaskNeedsReview(task.id))
+                      const currentStage = getCanonicalTaskState(task).current_stage
+                      if (currentStage) {
+                        handleAction(() =>
+                          actions.advanceStage(task.id, currentStage.name, 'submit_for_review')
+                        )
+                      }
                     }
                   } else if (action === 'edit_and_run') {
                     handleAction(() => actions.reopenTask(task.id))
@@ -453,7 +468,7 @@ interface StatusOption {
   value: string
   label: string
   reasonRequired: boolean
-  call: (reason: string) => Promise<GobbyTaskDetail | null>
+  call: (reason: string) => Promise<GobbyTaskDetail | null | void>
 }
 
 function getStatusOptions(task: GobbyTaskDetail, actions: TaskActions): StatusOption[] {
@@ -492,20 +507,36 @@ function getStatusOptions(task: GobbyTaskDetail, actions: TaskActions): StatusOp
         call: () => actions.releaseTaskClaim(id),
       })
     }
-    if (state.current_stage?.state !== 'needs_review' && !state.is_merge_ready) {
+    if (
+      state.current_stage?.name &&
+      state.current_stage.state !== 'needs_review' &&
+      !state.is_merge_ready
+    ) {
       options.push({
         value: 'needs_review',
         label: 'Send to Review',
         reasonRequired: false,
-        call: (reason) => actions.markTaskNeedsReview(id, reason || undefined),
+        call: (reason) =>
+          actions.advanceStage(
+            id,
+            state.current_stage!.name,
+            'submit_for_review',
+            reason || undefined,
+          ),
       })
     }
-    if (state.current_stage?.state === 'needs_review') {
+    if (state.current_stage?.name && state.current_stage.state === 'needs_review') {
       options.push({
         value: 'review_approved',
         label: 'Approve Review',
         reasonRequired: false,
-        call: (reason) => actions.markTaskReviewApproved(id, reason || undefined),
+        call: (reason) =>
+          actions.advanceStage(
+            id,
+            state.current_stage!.name,
+            'approve_review',
+            reason || undefined,
+          ),
       })
     }
     options.push({
@@ -535,7 +566,7 @@ function StatusChange({
   task: GobbyTaskDetail
   actions: TaskActions
   loading: boolean
-  onAction: (action: () => Promise<GobbyTaskDetail | null>) => Promise<void>
+  onAction: (action: () => Promise<GobbyTaskDetail | null | void>) => Promise<void>
 }) {
   const options = getStatusOptions(task, actions)
   const [target, setTarget] = useState('')

@@ -69,7 +69,7 @@ class TestIsTaskComplete:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         manager.stage_states.start_stage(task.id, "development", by_session_id=None)
-        reviewed = manager.mark_task_needs_review(task.id)
+        reviewed = manager.submit_for_review(task.id)
 
         assert is_task_complete(reviewed) is False
 
@@ -219,7 +219,7 @@ class TestTaskNeedsHumanReview:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         manager.stage_states.start_stage(task.id, "development", by_session_id=None)
-        manager.mark_task_needs_review(task.id)
+        manager.submit_for_review(task.id)
 
         assert task_needs_human_review(manager, task.id) is False
 

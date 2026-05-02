@@ -396,7 +396,7 @@ Then proceed to Step 7.
 
 The parent session **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (see `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so plan-mode + plan-file editing alone do not require a claim. The parent's role from Step 7 onward is pure orchestration.
 
-Each adversary round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `mark_task_review_approved` (clean) / `mark_task_review_rejected` (with findings) / `escalate_task` on the anchor.
+Each adversary round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `approve_review(stage_name="planning")` (clean) / `reject_review(stage_name="planning")` (with findings) / `escalate_task` on the anchor.
 
 **Coordinator owns plan revision between rounds.** The coordinator (this chat session) acts as the planner for all revision rounds in both interactive and delegated modes — there is no separate `planner` agent spawn. The compact-self call after each adversary spawn (Step 7.4) summarizes the coordinator's context so the next round's revision starts fresh, replacing the prior fresh-context guarantee that a planner-agent spawn provided.
 
@@ -609,7 +609,7 @@ The adversary's findings live in `anchor.description` under the heading `## Adve
 After reading the verdict, **close the anchor** so it does not linger. Then branch:
 
 - **`review_approved`** → close the anchor with reason "round approved"; go to Step 8.
-- **current stage `ready`** after `mark_task_review_rejected`
+- **current stage `ready`** after `reject_review`
   1. Extract `## Adversary Findings — Round {current_round + 1}` from the anchor description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
   2. Close the anchor with reason "round rejected; findings captured".
   3. If `current_round + 1 >= max_rounds` → go to Step 9.

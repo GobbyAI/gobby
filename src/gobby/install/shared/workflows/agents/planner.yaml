@@ -76,15 +76,16 @@ instructions: |
     `gobby tasks expand validate-plan` here unless you are explicitly working
     inside the task-expansion workflow.
   - When the plan is ready for review, append one concise bullet to
-    `## Plan Changelog`, then call `mark_task_needs_review` on the planning
-    task and mention the plan artifact path in your review notes. Do not call
+    `## Plan Changelog`, then call `submit_for_review` on the planning
+    task with `stage_name="planning"` and mention the plan artifact path in
+    your review notes. Do not call
     remove_label for `planning-current-verdict:rejected`; the transition tool
     clears it atomically with the resubmission.
 
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call mark_task_review_approved or mark_task_review_rejected.
+  - Do NOT call approve_review or reject_review.
   - Do NOT spawn other agents.
   - Do NOT terminate without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -155,19 +156,20 @@ steps:
     status_message: |
       Draft or revise the requested plan artifact. If requirements are insufficient,
       escalate the planning task with a `needs_requirements:` reason. Otherwise
-      submit the planning task for adversarial review with mark_task_needs_review.
+      submit the planning task for adversarial review with
+      submit_for_review(stage_name="planning").
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks:mark_task_review_approved"
-      - "gobby-tasks:mark_task_review_rejected"
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_needs_review
+      - server: gobby-tasks-ops
+        tool: submit_for_review
         action: set_variable
         variable: plan_handoff_complete
         value: true

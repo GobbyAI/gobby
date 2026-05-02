@@ -101,8 +101,8 @@ class TestPlannerInstructionsPreserveContracts:
         for rule in (
             "close_task",
             "reopen_task",
-            "mark_task_review_approved",
-            "mark_task_review_rejected",
+            "approve_review",
+            "reject_review",
             "spawn",
             "kill_agent",
             "uv run",

@@ -11,9 +11,9 @@ from gobby.storage.tasks._stage_states import (
     StageStatesManager,
 )
 from gobby.storage.tasks._transitions import (
-    mark_task_needs_review,
-    mark_task_review_approved,
-    mark_task_review_rejected,
+    submit_for_review,
+    approve_review,
+    reject_review,
 )
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
@@ -48,7 +48,7 @@ def _planning_task(temp_db, sample_project, *, state: str = "in_progress"):
 def test_needs_review_submits_for_review_on_same_row(temp_db, sample_project) -> None:
     task = _planning_task(temp_db, sample_project, state="in_progress")
 
-    updated = mark_task_needs_review(temp_db, task.id, review_notes="ready")
+    updated = submit_for_review(temp_db, task.id, review_notes="ready")
 
     _assert_open_task(updated)
     assert stage_row(temp_db, task.id, "planning")["state"] == "needs_review"
@@ -58,7 +58,7 @@ def test_needs_review_submits_for_review_on_same_row(temp_db, sample_project) ->
 def test_approved_advances_to_review_approved_on_same_row(temp_db, sample_project) -> None:
     task = _planning_task(temp_db, sample_project, state="needs_review")
 
-    updated = mark_task_review_approved(temp_db, task.id, approval_notes="approved")
+    updated = approve_review(temp_db, task.id, approval_notes="approved")
 
     _assert_open_task(updated)
     assert stage_row(temp_db, task.id, "planning")["state"] == "review_approved"
@@ -67,7 +67,7 @@ def test_approved_advances_to_review_approved_on_same_row(temp_db, sample_projec
 def test_approved_does_not_advance_to_next_stage(temp_db, sample_project) -> None:
     task = _planning_task(temp_db, sample_project, state="needs_review")
 
-    mark_task_review_approved(temp_db, task.id)
+    approve_review(temp_db, task.id)
 
     rows = stage_rows(temp_db, task.id)
     assert [(row["stage_name"], row["state"]) for row in rows] == [
@@ -79,7 +79,7 @@ def test_approved_does_not_advance_to_next_stage(temp_db, sample_project) -> Non
 def test_rejected_returns_to_ready_increments_review_rounds(temp_db, sample_project) -> None:
     task = _planning_task(temp_db, sample_project, state="needs_review")
 
-    mark_task_review_rejected(temp_db, task.id, rejection_notes="missing acceptance criteria")
+    reject_review(temp_db, task.id, rejection_notes="missing acceptance criteria")
 
     row = stage_row(temp_db, task.id, "planning")
     assert row["state"] == "ready"
@@ -89,7 +89,7 @@ def test_rejected_returns_to_ready_increments_review_rounds(temp_db, sample_proj
 def test_rejected_does_not_increment_work_attempts(temp_db, sample_project) -> None:
     task = _planning_task(temp_db, sample_project, state="needs_review")
 
-    mark_task_review_rejected(temp_db, task.id, rejection_notes="redo")
+    reject_review(temp_db, task.id, rejection_notes="redo")
 
     row = stage_row(temp_db, task.id, "planning")
     assert row["work_attempt_count"] == 0
@@ -101,7 +101,7 @@ def test_rejected_over_cap_escalates(temp_db, sample_project) -> None:
     initialize_manifest(temp_db, task.id, [spec("planning", 1, max_review_rounds=1)])
     set_stage_state(temp_db, task.id, "planning", "needs_review")
 
-    updated = mark_task_review_rejected(temp_db, task.id, rejection_notes="blocked")
+    updated = reject_review(temp_db, task.id, rejection_notes="blocked")
 
     assert updated.is_escalated
     assert updated.escalated_at is not None
@@ -114,7 +114,7 @@ def test_needs_review_rejected_on_policy_none(temp_db, sample_project) -> None:
     set_stage_state(temp_db, task.id, "test_arch", "in_progress")
 
     with pytest.raises(IllegalStageTransitionError):
-        mark_task_needs_review(temp_db, task.id)
+        submit_for_review(temp_db, task.id)
 
 
 def test_approved_rejected_on_policy_none(temp_db, sample_project) -> None:
@@ -123,7 +123,7 @@ def test_approved_rejected_on_policy_none(temp_db, sample_project) -> None:
     set_stage_state(temp_db, task.id, "test_arch", "needs_review", review_policy="none")
 
     with pytest.raises(IllegalStageTransitionError):
-        mark_task_review_approved(temp_db, task.id)
+        approve_review(temp_db, task.id)
 
 
 def test_no_current_stage_errors(temp_db, sample_project) -> None:
@@ -134,9 +134,9 @@ def test_no_current_stage_errors(temp_db, sample_project) -> None:
     )
 
     for tool in (
-        mark_task_needs_review,
-        mark_task_review_approved,
-        mark_task_review_rejected,
+        submit_for_review,
+        approve_review,
+        reject_review,
     ):
         with pytest.raises(NoCurrentStageError):
             tool(temp_db, task.id)
@@ -146,7 +146,7 @@ def test_wrong_source_state_errors_no_mutation(temp_db, sample_project) -> None:
     task = _planning_task(temp_db, sample_project, state="ready")
 
     with pytest.raises(IllegalStageTransitionError):
-        mark_task_review_approved(temp_db, task.id)
+        approve_review(temp_db, task.id)
 
     assert stage_row(temp_db, task.id, "planning")["state"] == "ready"
 
@@ -171,7 +171,7 @@ def test_fresh_feature_task_planning_review_path_uses_registry_policy(
     assert rows["pr"]["reviewer_agent"] is None
 
     manager.stage_states.start_stage(task.id, "planning", by_session_id=None)
-    updated = manager.mark_task_needs_review(task.id)
+    updated = manager.submit_for_review(task.id)
 
     _assert_open_task(updated)
     assert stage_row(temp_db, task.id, "planning")["state"] == "needs_review"
@@ -190,7 +190,7 @@ def test_needs_review_calls_submit_for_review_no_legacy_writes(
 
     monkeypatch.setattr(StageStatesManager, "submit_for_review", spy)
 
-    mark_task_needs_review(temp_db, task.id)
+    submit_for_review(temp_db, task.id)
 
     assert calls == ["planning"]
     assert "status" not in _task_columns(temp_db)
@@ -209,7 +209,7 @@ def test_approved_calls_approve_review_no_legacy_writes(
 
     monkeypatch.setattr(StageStatesManager, "approve_review", spy)
 
-    mark_task_review_approved(temp_db, task.id)
+    approve_review(temp_db, task.id)
 
     assert calls == ["planning"]
     assert "status" not in _task_columns(temp_db)
@@ -228,7 +228,7 @@ def test_rejected_calls_reject_review_no_legacy_writes(
 
     monkeypatch.setattr(StageStatesManager, "reject_review", spy)
 
-    mark_task_review_rejected(temp_db, task.id, rejection_notes="redo")
+    reject_review(temp_db, task.id, rejection_notes="redo")
 
     assert calls == ["planning"]
     assert "status" not in _task_columns(temp_db)
@@ -238,7 +238,7 @@ register_contract_tests(
     globals(),
     {
         "test_approved_advances_to_review_approved_on_same_row": (
-            "mark_task_review_approved transitions current stage needs_review to review_approved"
+            "approve_review transitions current stage needs_review to review_approved"
         ),
         "test_approved_calls_approve_review_no_legacy_writes": (
             "approval calls StageStatesManager.approve_review without writing legacy statuses"
@@ -256,7 +256,7 @@ register_contract_tests(
             "needs-review raises IllegalStageTransitionError for policy-none rows"
         ),
         "test_needs_review_submits_for_review_on_same_row": (
-            "mark_task_needs_review transitions current stage in_progress to needs_review"
+            "submit_for_review transitions current stage in_progress to needs_review"
         ),
         "test_no_current_stage_errors": (
             "review tools raise NoCurrentStageError on exhausted manifests"

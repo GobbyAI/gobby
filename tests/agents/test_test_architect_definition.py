@@ -42,9 +42,9 @@ def test_design_step_enforces_test_architect_contract() -> None:
     blocked_tools = set(design.get("blocked_mcp_tools", []))
     success_tools = {item["tool"] for item in design.get("on_mcp_success", [])}
 
-    assert "mark_task_review_approved" in agent["instructions"]
+    assert "complete_stage" in agent["instructions"]
     assert "gobby-tasks:close_task" in blocked_tools
     assert "gobby-agents:spawn_agent" in blocked_tools
     assert "gobby-agents:dispatch_batch" in blocked_tools
-    assert "mark_task_review_approved" in success_tools
+    assert "complete_stage" in success_tools
     assert "escalate_task" in success_tools

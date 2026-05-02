@@ -3,8 +3,7 @@
 Thin orchestration shim that delegates to focused submodules:
 - _lifecycle_close: close_task
 - _lifecycle_claim: claim_task
-- _lifecycle_status: reopen, escalate, de_escalate, review approval/rejection,
-  needs_review
+- _lifecycle_status: reopen, escalate, de_escalate
 - _lifecycle_delete: delete_task
 - _lifecycle_labels: add_label, remove_label
 """
@@ -22,9 +21,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_labels import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
     register_de_escalate_task,
     register_escalate_task,
-    register_mark_task_needs_review,
-    register_mark_task_review_approved,
-    register_mark_task_review_rejected,
     register_reopen_task,
 )
 
@@ -51,8 +47,5 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
     register_claim_task(registry, ctx)
     register_escalate_task(registry, ctx)
     register_de_escalate_task(registry, ctx)
-    register_mark_task_review_approved(registry, ctx)
-    register_mark_task_review_rejected(registry, ctx)
-    register_mark_task_needs_review(registry, ctx)
 
     return registry

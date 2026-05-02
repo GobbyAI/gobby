@@ -181,7 +181,7 @@ Types: `fix`, `feat`, `refactor`, `chore`.
 Before editing files, **create or claim a Gobby task** and work under that task. Use the `gobby-tasks` MCP server for task lifecycle operations — **never** use the `gobby tasks` CLI or direct storage/SQL/REST mutations for agent task writes. The MCP path is the only path that correctly updates workflow/session state.
 
 When working task state:
-- Use lifecycle MCP tools: `create_task` (with `claim=true`), `claim_task`, `mark_task_needs_review`, `close_task`, `reopen_task`, `escalate_task`
+- Use lifecycle MCP tools: `create_task` (with `claim=true`), `claim_task`, `close_task`, `reopen_task`, `escalate_task`; use `gobby-tasks-ops` review tools such as `submit_for_review(stage_name="...")`
 - Do NOT set generic `status`/`assignee` fields through `update_task`, CLI, or DB writes
 - If `gobby-tasks` MCP is unavailable, stop and surface that as the blocker
 

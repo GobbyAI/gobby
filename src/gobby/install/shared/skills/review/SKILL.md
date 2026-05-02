@@ -40,8 +40,8 @@ The holistic review loop checks the approved plan, aggregate implementation
 diff, validation evidence, and child task outcomes. The reviewer emits exactly
 one verdict:
 
-- approve with `mark_task_review_approved`
-- reject with `mark_task_review_rejected`
+- approve with `approve_review(stage_name="holistic_qa")`
+- reject with `reject_review(stage_name="holistic_qa")`
 - escalate with `escalate_task`
 
 Use the explicit user-facing summary `approve / reject / escalate` when

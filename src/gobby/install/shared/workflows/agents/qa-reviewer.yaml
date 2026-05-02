@@ -15,8 +15,8 @@ instructions: |
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
   2. REVIEW: Check diff, verify tests, check code quality
   3. DECIDE:
-     - APPROVE: Call mark_task_review_approved if code is good
-     - REJECT: Call mark_task_review_rejected with concrete blocking findings if code
+     - APPROVE: Call approve_review with `stage_name="development"` if code is good
+     - REJECT: Call reject_review with `stage_name="development"` and concrete blocking findings if code
        needs changes before approval
      - ESCALATE: Call escalate_task only for human-intervention blockers
   4. TERMINATE: Call kill_agent to shut down
@@ -31,7 +31,8 @@ instructions: |
   Human triage can later de_escalate the task to the appropriate next lifecycle stage.
 
   CRITICAL RULES:
-  - Emit exactly one verdict: mark_task_review_approved, mark_task_review_rejected, or escalate_task.
+  - Emit exactly one verdict: approve_review(stage_name="development"),
+    reject_review(stage_name="development"), or escalate_task.
   - Do NOT edit files, write files, or commit changes. This agent is read-only.
   - Do NOT call close_task — dispatcher lifecycle transitions own task closure.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
@@ -84,8 +85,8 @@ steps:
       Review the code changes for the assigned task.
       1. Check diff: git diff, git log
       2. Run tests: uv run pytest <test_file> -v
-      3. APPROVE: call mark_task_review_approved
-      4. REJECT: call mark_task_review_rejected with blocking findings
+      3. APPROVE: call approve_review with stage_name="development"
+      4. REJECT: call reject_review with stage_name="development" and blocking findings
       5. ESCALATE: call escalate_task for human-intervention blockers
     allowed_tools:
       - Bash
@@ -100,29 +101,29 @@ steps:
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     allowed_mcp_tools:
       - "gobby-tasks:get_task"
       - "gobby-tasks:get_task_diff"
-      - "gobby-tasks:mark_task_review_approved"
-      - "gobby-tasks:mark_task_review_rejected"
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
       - "gobby-tasks:escalate_task"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         action: set_variable
         variable: review_approved
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         action: set_variable
         variable: review_complete
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_rejected
+      - server: gobby-tasks-ops
+        tool: reject_review
         action: set_variable
         variable: review_complete
         value: true

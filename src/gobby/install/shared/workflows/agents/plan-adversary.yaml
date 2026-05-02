@@ -63,16 +63,16 @@ instructions: |
   `## M1 Task Manifest` section on approval (see MANIFEST EMISSION below).
   Findings rounds (rejection) MUST NOT edit the plan file — planner handles
   edits between rounds (§2.23). When emitting findings, route them through
-  `mark_task_review_rejected(rejection_notes=...)` only.
+  `reject_review(stage_name="planning", rejection_notes=...)` only.
 
   WORKFLOW:
   - Review the plan artifact referenced in your prompt against the parent task
     and any supporting context (the parent description is the canonical source;
     there is no requirement for a literal `## Requirements` heading).
-  - Format rejection findings so `mark_task_review_rejected` can append them
+  - Format rejection findings so `reject_review(stage_name="planning", ...)` can append them
     under `## Adversary Findings — Round N` (use the display round number from
     your prompt; do NOT overwrite prior rounds).
-  - If blocking findings remain, call `mark_task_review_rejected` with the
+  - If blocking findings remain, call `reject_review` with `stage_name="planning"`,
     rejection notes, the display round from your prompt, AND a
     `signoff_summary` (see SIGNOFF SUMMARY below). Do NOT edit the plan file
     on rejection — planner owns plan edits between rounds (§2.23).
@@ -80,9 +80,13 @@ instructions: |
     specific questions you cannot answer.
   - If the plan is sound and only nits remain (or no findings), follow
     MANIFEST EMISSION below — the manifest write happens BEFORE
-    `mark_task_review_approved`.
+    `approve_review`.
+    Pass `stage_name="planning"` to every approve/reject review call.
   - The review step has `allowed_tools: all`; the allowed parser callable is
     `gobby.plans.parser.parse_plan`. Do not replace that with ad hoc parsing.
+  - Planner-side `validate_plan_file` has already run before this adversary
+    spawn. Do NOT re-run the parser pre-verdict; only run the post-emission
+    expansion-mode self-check described below.
 
   MANIFEST EMISSION (§2.22.1, §2.22.4):
   On clean review (no blocking findings), the act of writing the manifest is
@@ -113,18 +117,18 @@ instructions: |
        c. If the stub also fails (deliverable schema in the plan itself is
           malformed beyond the emitter's reach), append a second
           `## Yolo Fallbacks` audit marker and force-approve the plan with
-          `mark_task_review_approved(approval_notes="yolo: manifest emission
+          `approve_review(stage_name="planning", approval_notes="yolo: manifest emission
           exhausted; stub fallback also failed; force-approved with no
           manifest — downstream gobby expand will reject this plan, requiring
           human intervention at expansion time")`.
 
   5. On success (any path that yields a parser-clean manifest, or the yolo
-     force-approve path), call `mark_task_review_approved` with
+     force-approve path), call `approve_review` with `stage_name="planning"` and
      `approval_notes` that document the manifest outcome (e.g., "approved
      with N manifest entries" or the force-approve note above).
 
   SIGNOFF SUMMARY:
-  Both `mark_task_review_rejected` and `mark_task_review_approved` accept an
+  Both `reject_review` and `approve_review` accept an
   optional `signoff_summary` kwarg — a one-line tldr that surfaces to the
   parent session as your run's completion P2P content. Without it, the parent
   gets a stock template ("Rejected #N round M" / "Approved #N") which is
@@ -147,7 +151,7 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call mark_task_needs_review.
+  - Do NOT call submit_for_review.
   - Do NOT spawn other agents.
   - Do NOT terminate without calling `end_agent_run`.
   - Always use `uv run` for Python commands.
@@ -229,26 +233,26 @@ steps:
     description: "Review the implementation plan and decide"
     status_message: |
       Review the plan artifact. If blocking issues remain, reject review with
-      mark_task_review_rejected. If the plan is sound, approve it with
-      mark_task_review_approved. Use escalate_task only for
+      reject_review(stage_name="planning"). If the plan is sound, approve it with
+      approve_review(stage_name="planning"). Use escalate_task only for
       `needs_requirements:` or true human-intervention blockers.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:end_agent_run"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         action: set_variable
         variable: review_complete
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_rejected
+      - server: gobby-tasks-ops
+        tool: reject_review
         action: set_variable
         variable: review_complete
         value: true
@@ -258,14 +262,14 @@ steps:
         variable: review_complete
         value: true
     on_mcp_error:
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: review_complete
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_rejected
+      - server: gobby-tasks-ops
+        tool: reject_review
         when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: review_complete

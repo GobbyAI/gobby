@@ -433,8 +433,13 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   )
 
   const advanceStage = useCallback(
-    async (taskId: string, stageName: string, action: StageAdvanceAction): Promise<void> => {
-      await patchStage(taskId, stageName, { action })
+    async (
+      taskId: string,
+      stageName: string,
+      action: StageAdvanceAction,
+      notes?: string,
+    ): Promise<void> => {
+      await patchStage(taskId, stageName, notes ? { action, notes } : { action })
     },
     [patchStage]
   )
@@ -462,18 +467,6 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   const releaseTaskClaim = useCallback(
     async (taskId: string, status?: string): Promise<GobbyTaskDetail | null> =>
       postTaskTransition(taskId, 'release-claim', status ? { status } : {}),
-    [postTaskTransition]
-  )
-
-  const markTaskNeedsReview = useCallback(
-    async (taskId: string, notes?: string): Promise<GobbyTaskDetail | null> =>
-      postTaskTransition(taskId, 'needs-review', notes ? { notes } : {}),
-    [postTaskTransition]
-  )
-
-  const markTaskReviewApproved = useCallback(
-    async (taskId: string, notes?: string): Promise<GobbyTaskDetail | null> =>
-      postTaskTransition(taskId, 'review-approved', notes ? { notes } : {}),
     [postTaskTransition]
   )
 
@@ -640,8 +633,6 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     updateTask,
     claimTask,
     releaseTaskClaim,
-    markTaskNeedsReview,
-    markTaskReviewApproved,
     escalateTask,
     deEscalateTask,
     advanceStage,

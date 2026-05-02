@@ -8,7 +8,7 @@ retries up to 3 times. After the cap is exhausted, behavior splits:
   - yolo: NEVER escalate; write a ``## Yolo Fallbacks`` audit, fall back to
     ``emit_stub_manifest(plan_path)`` from §2.21a, re-run the strict parse.
     If the stub also fails, append a second audit marker and force-approve
-    with ``mark_task_review_approved``.
+    with ``approve_review``.
 
 Pre-verdict draft-mode parsing happens upstream in ``validate_plan_file``
 before each adversary spawn; the adversary itself does NOT re-parse
@@ -94,7 +94,7 @@ class TestYoloFallback:
 
     def test_force_approve_when_stub_also_fails(self, agent: AgentDefinitionBody) -> None:
         """If even the stub-emitter fallback fails, append a second audit
-        marker and approve the plan with mark_task_review_approved."""
+        marker and approve the plan with approve_review."""
         instructions = agent.instructions or ""
         assert "force-approve" in instructions or "force_approve" in instructions
         assert "downstream gobby expand will reject" in instructions

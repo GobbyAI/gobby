@@ -218,7 +218,7 @@ class TestUpdateTaskTool:
         """Test update_task with all updatable fields.
 
         Note: All status transitions are blocked by production code.
-        Must use claim_task, close_task, reopen_task, or mark_task_needs_review.
+        Must use claim_task, close_task, reopen_task, or submit_for_review.
         """
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -306,7 +306,7 @@ class TestUpdateTaskTool:
 
         assert "error" in result
         assert "Cannot set status to 'needs_review'" in result["error"]
-        assert "mark_task_needs_review" in result["error"]
+        assert "submit_for_review" in result["error"]
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
@@ -323,7 +323,7 @@ class TestUpdateTaskTool:
 
         assert "error" in result
         assert "Cannot set status to 'needs_review'" in result["error"]
-        assert "mark_task_needs_review" in result["error"]
+        assert "submit_for_review" in result["error"]
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio

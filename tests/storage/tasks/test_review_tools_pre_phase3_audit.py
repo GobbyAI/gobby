@@ -54,7 +54,7 @@ register_contract_tests(
             "test-architect YAML does not call mark_task review tools"
         ),
         "test_test_architect_yaml_drops_review_rejected_block_and_prose": (
-            "test-architect removes the obsolete mark_task_review_rejected block/prose"
+            "test-architect removes the obsolete reject_review block/prose"
         ),
         "test_test_architect_yaml_workflow_reaches_terminate_after_complete_stage": (
             "test-architect workflow can terminate after the complete_stage success hook"
@@ -68,8 +68,8 @@ register_contract_tests(
     },
     forbidden_text={
         "src/gobby/install/shared/workflows/agents/test-architect.yaml": (
-            "mark_task_review_rejected",
-            "mark_task_review_approved",
+            "reject_review",
+            "approve_review",
         )
     },
 )

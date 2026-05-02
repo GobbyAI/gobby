@@ -885,7 +885,7 @@ class TestWorkflowBeforeToolEnforcement:
 
         mock_hook_manager._workflow_handler.evaluate.return_value = HookResponse(
             decision="block",
-            reason="MCP tool 'gobby-tasks:mark_task_needs_review' is blocked",
+            reason="MCP tool 'gobby-tasks-ops:submit_for_review' is blocked",
         )
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
@@ -894,9 +894,9 @@ class TestWorkflowBeforeToolEnforcement:
 
         with session_context_for_test("session-from-context"):
             result = await tool_proxy_with_hooks.call_tool(
-                server_name="gobby-tasks",
-                tool_name="mark_task_needs_review",
-                arguments={"task_id": "#123"},
+                server_name="gobby-tasks-ops",
+                tool_name="submit_for_review",
+                arguments={"task_id": "#123", "stage_name": "development"},
             )
 
         assert result["success"] is False

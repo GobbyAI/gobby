@@ -45,7 +45,7 @@ def _register_agent_workflow(
     *,
     session_id: str = "agent-session",
     workflow_name: str = "plan-adversary-steps",
-    review_tool: str = "mark_task_review_approved",
+    review_tool: str = "approve_review",
     review_success_handlers: list[dict[str, object]] | None = None,
     review_error_handlers: list[dict[str, object]] | None = None,
 ) -> WorkflowInstanceManager:
@@ -65,7 +65,7 @@ def _register_agent_workflow(
                 "on_mcp_success": review_success_handlers
                 or [
                     {
-                        "server": "gobby-tasks",
+                        "server": "gobby-tasks-ops",
                         "tool": review_tool,
                         "action": "set_variable",
                         "variable": "review_complete",
@@ -115,8 +115,8 @@ def _after_tool_event(
     *,
     session_id: str = "agent-session",
     source: SessionSource = SessionSource.CLAUDE,
-    mcp_server: str = "gobby-tasks",
-    mcp_tool: str = "mark_task_review_approved",
+    mcp_server: str = "gobby-tasks-ops",
+    mcp_tool: str = "approve_review",
     tool_arguments: dict[str, object] | None = None,
     tool_output: object | None = None,
     tool_response: object | None = None,
@@ -204,7 +204,7 @@ class TestAgentWorkflowCompletion:
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
-            review_tool="mark_task_review_rejected",
+            review_tool="reject_review",
         )
         runner = MagicMock()
         runner.run_storage = MagicMock()
@@ -219,7 +219,7 @@ class TestAgentWorkflowCompletion:
 
         failed_event = _after_tool_event(
             source=SessionSource.CODEX,
-            mcp_tool="mark_task_review_rejected",
+            mcp_tool="reject_review",
             tool_response={
                 "content": [
                     {
@@ -249,7 +249,7 @@ class TestAgentWorkflowCompletion:
 
         success_event = _after_tool_event(
             source=SessionSource.CODEX,
-            mcp_tool="mark_task_review_rejected",
+            mcp_tool="reject_review",
             tool_response={
                 "content": [{"type": "text", "text": json.dumps({"success": True})}],
                 "structuredContent": {"success": True},
@@ -276,11 +276,11 @@ class TestAgentWorkflowCompletion:
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
-            review_tool="mark_task_review_rejected",
+            review_tool="reject_review",
             review_error_handlers=[
                 {
-                    "server": "gobby-tasks",
-                    "tool": "mark_task_review_rejected",
+                    "server": "gobby-tasks-ops",
+                    "tool": "reject_review",
                     "when": "'closed' in str(tool_output)",
                     "action": "set_variable",
                     "variable": "review_complete",
@@ -301,7 +301,7 @@ class TestAgentWorkflowCompletion:
 
         event = _after_tool_event(
             source=SessionSource.CODEX,
-            mcp_tool="mark_task_review_rejected",
+            mcp_tool="reject_review",
             tool_output={
                 "success": True,
                 "result": {

@@ -97,9 +97,9 @@ evidence. Use `Drift` for extra or divergent implementation.
 
 Map the verdict to task lifecycle tools exactly:
 
-- `approve` means call `mark_task_review_approved` on the epic with the verdict
+- `approve` means call `approve_review(stage_name="holistic_qa")` on the epic with the verdict
   block as approval notes.
-- `request_changes` means call `mark_task_review_rejected` with
+- `request_changes` means call `reject_review(stage_name="holistic_qa")` with
   `rejection_notes` and `cited_subtasks`. At least one cited subtask is required.
 - `needs_discussion` means call `escalate_task` with a reason that starts with
   `needs_human:` and names the concrete decision needed.

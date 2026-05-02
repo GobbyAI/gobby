@@ -256,11 +256,11 @@ When no blocking findings remain (zero findings or only nits):
        parse_mode="expansion")`.
      - If the stub also fails (the deliverable schema in the plan is malformed
        beyond the emitter's reach), append a second `## Yolo Fallbacks` audit
-       marker and force-approve with `mark_task_review_approved` whose
+       marker and force-approve with `approve_review(stage_name="planning")` whose
        `approval_notes` document that downstream `gobby expand` will reject
        the plan and require human intervention at expansion time.
 5. On success (any path that yields a parser-clean manifest, or the yolo
-   force-approve path), call `mark_task_review_approved` with `approval_notes`
+   force-approve path), call `approve_review` with `stage_name="planning"` and `approval_notes`
    that document the manifest outcome (e.g. "approved with N manifest
    entries").
 
@@ -273,7 +273,7 @@ contract. The only legitimate plan-file write is appending the
 
 **Rejection rounds MUST NOT edit the plan file.** Plan edits between rounds
 are the planner's responsibility (§2.23). When emitting findings, route them
-through `mark_task_review_rejected(rejection_notes=...)` only — the rejection
+through `reject_review(stage_name="planning", rejection_notes=...)` only — the rejection
 tool appends `## Adversary Findings — Round N` to the anchor task description
 without touching the plan.
 
@@ -292,13 +292,13 @@ Escalate **only when context is insufficient or a true human-intervention blocke
 For routine revision rounds, reject review instead:
 
 - If ≥1 `blocking` finding after the second pass → call
-  `mark_task_review_rejected(task_id=<anchor_task_id>, rejection_notes="<formatted findings>", round_number=N)`.
+  `reject_review(task_id=<anchor_task_id>, stage_name="planning", rejection_notes="<formatted findings>", round_number=N)`.
   Use the Output Format below for `rejection_notes`; the tool appends the
   `## Adversary Findings — Round N` section to the anchor description and
   returns the anchor to `open`. The parent closes the anchor on next wake.
 - If only `nit` findings remain → record them in the findings section so the
   drafter can see them, but **approve** the plan with
-  `mark_task_review_approved(task_id=<anchor_task_id>, approval_notes="...")`.
+  `approve_review(task_id=<anchor_task_id>, stage_name="planning", approval_notes="...")`.
 - If zero findings after the second pass → approve cleanly on the anchor.
 
 Use the `anchor_task_id` value passed in the spawn prompt; do not infer or fall back to the planning epic.
@@ -310,7 +310,7 @@ Non-blocking nits never trigger escalation on their own.
 ## Output Format
 
 When rejecting review, pass findings in `rejection_notes` so
-`mark_task_review_rejected` can append them under a **round-scoped** heading:
+`reject_review` can append them under a **round-scoped** heading:
 
 ```text
 ## Adversary Findings — Round N
@@ -384,5 +384,5 @@ specific questions rather than manufacturing findings or rubber-stamping.
 ## Autonomous Exit
 
 When running as spawned `plan-adversary`, finish the verdict first
-(`mark_task_review_approved`, `mark_task_review_rejected`, or `escalate_task`), then call
+(`approve_review`, `reject_review`, or `escalate_task`), then call
 `end_agent_run` on `gobby-agents` with **no arguments** to finish the run.
