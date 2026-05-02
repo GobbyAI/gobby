@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react'
-import '../workflows/LaunchAgentModal.css'
 import { useAgentSpawn } from '../../hooks/useAgentSpawn'
 import type { AgentDefinition, SpawnResult } from '../../hooks/useAgentSpawn'
 import {
@@ -9,10 +8,6 @@ import {
   getReasoningOptionsForModel,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface LaunchAgentDialogProps {
   isOpen: boolean
@@ -24,7 +19,6 @@ interface LaunchAgentDialogProps {
   onSpawned?: (result: SpawnResult) => void
 }
 
-// Batch variant props
 interface BatchLaunchAgentDialogProps {
   isOpen: boolean
   tasks: Array<{ id: string; title: string; category?: string | null }>
@@ -35,9 +29,55 @@ interface BatchLaunchAgentDialogProps {
 
 type Isolation = 'none' | 'worktree' | 'clone'
 
-// ---------------------------------------------------------------------------
-// Icons
-// ---------------------------------------------------------------------------
+const BACKDROP_CLS = 'fixed inset-0 z-[300] bg-[var(--surface-scrim)]'
+const MODAL_CLS =
+  'fixed left-1/2 top-1/2 z-[310] flex max-h-[85vh] w-[480px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-xl)]'
+const MODAL_BATCH_CLS = 'w-[540px]'
+const HEADER_CLS =
+  'flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-3.5'
+const TITLE_CLS =
+  'flex items-center gap-2 text-[length:calc(var(--font-size-base)*1.05)] font-semibold'
+const CLOSE_CLS =
+  'flex cursor-pointer items-center rounded border-none bg-transparent p-1 text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+const BODY_CLS = 'flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4'
+const TASK_CONTEXT_CLS =
+  'rounded-md border border-[color-mix(in_srgb,var(--accent)_30%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_8%,var(--bg-tertiary))] px-3 py-2 text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)]'
+const FIELD_CLS = 'flex flex-col gap-[0.3rem]'
+const LABEL_CLS = 'font-medium text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const SELECT_CLS =
+  'rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[0.6rem] py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+const TEXTAREA_CLS =
+  'min-h-20 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[0.6rem] py-2 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+const RADIO_GROUP_CLS = 'flex gap-1'
+const RADIO_CLS =
+  'pointer-coarse:min-h-11 flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] [&_input]:hidden'
+const RADIO_ACTIVE_CLS =
+  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] font-medium text-[var(--accent)]'
+const PROMPT_TOGGLE_CLS =
+  'flex cursor-pointer items-center gap-[0.35rem] border-none bg-transparent py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+const PROMPT_TOGGLE_ICON_CLS = 'text-[0.7em]'
+const LOADING_DOT_CLS = 'text-[var(--text-muted)]'
+const CHECKBOX_CLS =
+  'pointer-coarse:min-h-11 flex min-h-11 cursor-pointer items-center gap-2 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] [&_input]:h-4 [&_input]:w-4 [&_input]:[accent-color:var(--accent)]'
+const FIELD_HINT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const ERROR_CLS = 'py-1 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--color-error)]'
+const FOOTER_CLS =
+  'flex shrink-0 justify-end gap-2 border-t border-[var(--border)] px-5 py-3'
+const BTN_CLS =
+  'pointer-coarse:min-h-11 cursor-pointer rounded-md border border-[var(--border)] px-4 py-2 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50'
+const BTN_PRIMARY_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)] disabled:hover:bg-[var(--accent)]'
+const BTN_DEFAULT_CLS =
+  'bg-[var(--bg-tertiary)] text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] disabled:hover:bg-[var(--bg-tertiary)]'
+const SUCCESS_CLS = 'flex flex-col items-center gap-3 px-5 py-8 text-center'
+const SUCCESS_ICON_CLS = 'text-[length:var(--text-4xl)] text-[var(--color-success-foreground)]'
+const SUCCESS_TEXT_CLS = 'text-[length:calc(var(--font-size-base)*0.9)] text-[var(--text-secondary)]'
+const TASK_LIST_CLS =
+  'flex max-h-[200px] flex-col gap-px overflow-y-auto rounded-md border border-[var(--border)] p-1'
+const TASK_ITEM_CLS =
+  'pointer-coarse:min-h-11 flex min-h-11 cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] [&_input]:h-4 [&_input]:w-4 [&_input]:[accent-color:var(--accent)]'
+const TASK_ITEM_EXCLUDED_CLS = 'opacity-40 [&>span]:line-through'
+const TASK_ITEM_TITLE_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
 
 function CloseIcon() {
   return (
@@ -58,10 +98,6 @@ function RocketIcon() {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Single Launch Dialog
-// ---------------------------------------------------------------------------
-
 export function LaunchAgentDialog({
   isOpen,
   taskId,
@@ -73,7 +109,6 @@ export function LaunchAgentDialog({
 }: LaunchAgentDialogProps) {
   const { spawn, spawning, fetchDefinitions, previewPrompt, getDefaults, saveDefaults } = useAgentSpawn()
 
-  // Form state
   const [agentName, setAgentName] = useState('default')
   const [isolation, setIsolation] = useState<Isolation>('none')
   const [model, setModel] = useState<string>('')
@@ -83,16 +118,13 @@ export function LaunchAgentDialog({
   const [promptExpanded, setPromptExpanded] = useState(false)
   const [rememberDefaults, setRememberDefaults] = useState(false)
 
-  // Data
   const [definitions, setDefinitions] = useState<AgentDefinition[]>([])
   const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([])
   const [loadingPrompt, setLoadingPrompt] = useState(false)
 
-  // Result
   const [result, setResult] = useState<SpawnResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Load agent definitions and defaults on open
   useEffect(() => {
     if (!isOpen) return
     setResult(null)
@@ -138,7 +170,6 @@ export function LaunchAgentDialog({
     }
   }, [reasoningOptions, reasoningEffort])
 
-  // Load prompt preview on open
   useEffect(() => {
     if (!isOpen || !taskId) return
     setLoadingPrompt(true)
@@ -171,7 +202,6 @@ export function LaunchAgentDialog({
     })
 
     if (spawnResult.success) {
-      // Save defaults if requested
       if (rememberDefaults && projectId) {
         const cat = taskCategory || '_default'
         await saveDefaults(projectId, cat, {
@@ -191,23 +221,22 @@ export function LaunchAgentDialog({
 
   if (!isOpen) return null
 
-  // Success state
   if (result) {
     return (
       <>
-        <div className="launch-agent-backdrop" onClick={onClose} />
-        <div className="launch-agent-modal">
-          <div className="launch-agent-header">
-            <span className="launch-agent-title">Agent Launched</span>
-            <button className="launch-agent-close" onClick={onClose}><CloseIcon /></button>
+        <div className={BACKDROP_CLS} onClick={onClose} />
+        <div className={MODAL_CLS}>
+          <div className={HEADER_CLS}>
+            <span className={TITLE_CLS}>Agent Launched</span>
+            <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
           </div>
-          <div className="launch-agent-success">
-            <div className="launch-agent-success-icon">&#10003;</div>
-            <p className="launch-success-text">Agent spawned successfully.</p>
+          <div className={SUCCESS_CLS}>
+            <div className={SUCCESS_ICON_CLS}>✓</div>
+            <p className={SUCCESS_TEXT_CLS}>Agent spawned successfully.</p>
             {result.reasoning?.message && (
-              <p className="launch-success-text">{result.reasoning.message}</p>
+              <p className={SUCCESS_TEXT_CLS}>{result.reasoning.message}</p>
             )}
-            <button className="launch-agent-btn launch-agent-btn--primary" onClick={onClose}>
+            <button className={`${BTN_CLS} ${BTN_PRIMARY_CLS}`} onClick={onClose}>
               Done
             </button>
           </div>
@@ -218,26 +247,24 @@ export function LaunchAgentDialog({
 
   return (
     <>
-      <div className="launch-agent-backdrop" onClick={onClose} />
-      <div className="launch-agent-modal">
-        <div className="launch-agent-header">
-          <span className="launch-agent-title">
+      <div className={BACKDROP_CLS} onClick={onClose} />
+      <div className={MODAL_CLS}>
+        <div className={HEADER_CLS}>
+          <span className={TITLE_CLS}>
             <RocketIcon /> Launch Agent
           </span>
-          <button className="launch-agent-close" onClick={onClose}><CloseIcon /></button>
+          <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
         </div>
 
-        <div className="launch-agent-body">
-          {/* Task context */}
-          <div className="launch-agent-task-context">
+        <div className={BODY_CLS}>
+          <div className={TASK_CONTEXT_CLS}>
             {taskTitle}
           </div>
 
-          {/* Agent definition picker */}
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Agent Definition</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Agent Definition</label>
             <select
-              className="launch-agent-select"
+              className={SELECT_CLS}
               value={agentName}
               onChange={e => handleAgentChange(e.target.value)}
             >
@@ -250,16 +277,14 @@ export function LaunchAgentDialog({
             </select>
           </div>
 
-          {/* Mode selector */}
-          <div className="launch-agent-field">
-          </div>
-
-          {/* Isolation picker */}
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Isolation</label>
-            <div className="launch-agent-radio-group">
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Isolation</label>
+            <div className={RADIO_GROUP_CLS}>
               {([['none', 'None'], ['worktree', 'Worktree'], ['clone', 'Clone']] as const).map(([val, label]) => (
-                <label key={val} className={`launch-agent-radio ${isolation === val ? 'active' : ''}`}>
+                <label
+                  key={val}
+                  className={isolation === val ? `${RADIO_CLS} ${RADIO_ACTIVE_CLS}` : RADIO_CLS}
+                >
                   <input
                     type="radio"
                     name="isolation"
@@ -273,11 +298,10 @@ export function LaunchAgentDialog({
             </div>
           </div>
 
-          {/* Model override */}
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Model Override</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Model Override</label>
             <select
-              className="launch-agent-select"
+              className={SELECT_CLS}
               value={model}
               onChange={e => setModel(e.target.value)}
             >
@@ -290,10 +314,10 @@ export function LaunchAgentDialog({
             </select>
           </div>
 
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Reasoning</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Reasoning</label>
             <select
-              className="launch-agent-select"
+              className={SELECT_CLS}
               value={reasoningEffort}
               onChange={e => {
                 const nextReasoning = e.target.value
@@ -312,7 +336,7 @@ export function LaunchAgentDialog({
             </select>
           </div>
 
-          <label className="launch-agent-checkbox">
+          <label className={CHECKBOX_CLS}>
             <input
               type="checkbox"
               checked={reasoningRequired}
@@ -322,31 +346,30 @@ export function LaunchAgentDialog({
             Require reasoning support
           </label>
           {reasoningDisabled && (
-            <div className="launch-agent-field-hint">Reasoning is not available for the selected provider/model.</div>
+            <div className={FIELD_HINT_CLS}>Reasoning is not available for the selected provider/model.</div>
           )}
           {error && reasoningEffort !== AUTO_REASONING_EFFORT && !reasoningRequired && (
-            <div className="launch-agent-field-hint">Unsupported reasoning falls back with a warning unless Require reasoning support is enabled.</div>
+            <div className={FIELD_HINT_CLS}>Unsupported reasoning falls back with a warning unless Require reasoning support is enabled.</div>
           )}
 
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Model Provider</label>
-            <div className="launch-agent-task-context">{effectiveProvider}</div>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Model Provider</label>
+            <div className={TASK_CONTEXT_CLS}>{effectiveProvider}</div>
           </div>
 
-          {/* Prompt preview */}
-          <div className="launch-agent-field">
+          <div className={FIELD_CLS}>
             <button
-              className="launch-agent-prompt-toggle"
+              className={PROMPT_TOGGLE_CLS}
               onClick={() => setPromptExpanded(!promptExpanded)}
               type="button"
             >
-              <span className="launch-agent-prompt-toggle-icon">{promptExpanded ? '\u25BE' : '\u25B8'}</span>
+              <span className={PROMPT_TOGGLE_ICON_CLS}>{promptExpanded ? '▾' : '▸'}</span>
               Prompt Preview
-              {loadingPrompt && <span className="launch-agent-loading-dot">...</span>}
+              {loadingPrompt && <span className={LOADING_DOT_CLS}>...</span>}
             </button>
             {promptExpanded && (
               <textarea
-                className="launch-agent-textarea"
+                className={TEXTAREA_CLS}
                 value={promptText}
                 onChange={e => setPromptText(e.target.value)}
                 rows={8}
@@ -355,8 +378,7 @@ export function LaunchAgentDialog({
             )}
           </div>
 
-          {/* Remember defaults */}
-          <label className="launch-agent-checkbox">
+          <label className={CHECKBOX_CLS}>
             <input
               type="checkbox"
               checked={rememberDefaults}
@@ -365,19 +387,19 @@ export function LaunchAgentDialog({
             Remember as default for {taskCategory || 'all'} tasks
           </label>
 
-          {error && <div className="launch-agent-error">{error}</div>}
+          {error && <div className={ERROR_CLS}>{error}</div>}
         </div>
 
-        <div className="launch-agent-footer">
+        <div className={FOOTER_CLS}>
           <button
-            className="launch-agent-btn launch-agent-btn--default"
+            className={`${BTN_CLS} ${BTN_DEFAULT_CLS}`}
             onClick={onClose}
             disabled={spawning}
           >
             Cancel
           </button>
           <button
-            className="launch-agent-btn launch-agent-btn--primary"
+            className={`${BTN_CLS} ${BTN_PRIMARY_CLS}`}
             onClick={handleLaunch}
             disabled={spawning}
           >
@@ -388,10 +410,6 @@ export function LaunchAgentDialog({
     </>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Batch Launch Dialog
-// ---------------------------------------------------------------------------
 
 export function BatchLaunchAgentDialog({
   isOpen,
@@ -471,23 +489,22 @@ export function BatchLaunchAgentDialog({
 
   const activeCount = tasks.length - excludedIds.size
 
-  // Success state
   if (batchResult) {
     return (
       <>
-        <div className="launch-agent-backdrop" onClick={onClose} />
-        <div className="launch-agent-modal">
-          <div className="launch-agent-header">
-            <span className="launch-agent-title">Batch Launch Complete</span>
-            <button className="launch-agent-close" onClick={onClose}><CloseIcon /></button>
+        <div className={BACKDROP_CLS} onClick={onClose} />
+        <div className={MODAL_CLS}>
+          <div className={HEADER_CLS}>
+            <span className={TITLE_CLS}>Batch Launch Complete</span>
+            <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
           </div>
-          <div className="launch-agent-success">
-            <div className="launch-agent-success-icon">&#10003;</div>
-            <p>{batchResult.succeeded} agent{batchResult.succeeded !== 1 ? 's' : ''} launched successfully.</p>
+          <div className={SUCCESS_CLS}>
+            <div className={SUCCESS_ICON_CLS}>✓</div>
+            <p className={SUCCESS_TEXT_CLS}>{batchResult.succeeded} agent{batchResult.succeeded !== 1 ? 's' : ''} launched successfully.</p>
             {batchResult.failed > 0 && (
-              <p className="launch-agent-error">{batchResult.failed} failed to launch.</p>
+              <p className={ERROR_CLS}>{batchResult.failed} failed to launch.</p>
             )}
-            <button className="launch-agent-btn launch-agent-btn--primary" onClick={onClose}>
+            <button className={`${BTN_CLS} ${BTN_PRIMARY_CLS}`} onClick={onClose}>
               Done
             </button>
           </div>
@@ -498,37 +515,38 @@ export function BatchLaunchAgentDialog({
 
   return (
     <>
-      <div className="launch-agent-backdrop" onClick={onClose} />
-      <div className="launch-agent-modal launch-agent-modal--batch">
-        <div className="launch-agent-header">
-          <span className="launch-agent-title">
+      <div className={BACKDROP_CLS} onClick={onClose} />
+      <div className={`${MODAL_CLS} ${MODAL_BATCH_CLS}`}>
+        <div className={HEADER_CLS}>
+          <span className={TITLE_CLS}>
             <RocketIcon /> Launch Agents ({activeCount} task{activeCount !== 1 ? 's' : ''})
           </span>
-          <button className="launch-agent-close" onClick={onClose}><CloseIcon /></button>
+          <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
         </div>
 
-        <div className="launch-agent-body">
-          {/* Task list with exclude toggles */}
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Tasks</label>
-            <div className="launch-agent-task-list">
+        <div className={BODY_CLS}>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Tasks</label>
+            <div className={TASK_LIST_CLS}>
               {tasks.map(t => (
-                <label key={t.id} className={`launch-agent-task-item ${excludedIds.has(t.id) ? 'excluded' : ''}`}>
+                <label
+                  key={t.id}
+                  className={excludedIds.has(t.id) ? `${TASK_ITEM_CLS} ${TASK_ITEM_EXCLUDED_CLS}` : TASK_ITEM_CLS}
+                >
                   <input
                     type="checkbox"
                     checked={!excludedIds.has(t.id)}
                     onChange={() => toggleExclude(t.id)}
                   />
-                  <span className="launch-agent-task-item-title">{t.title}</span>
+                  <span className={TASK_ITEM_TITLE_CLS}>{t.title}</span>
                 </label>
               ))}
             </div>
           </div>
 
-          {/* Shared config */}
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Agent Definition</label>
-            <select className="launch-agent-select" value={agentName} onChange={e => setAgentName(e.target.value)}>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Agent Definition</label>
+            <select className={SELECT_CLS} value={agentName} onChange={e => setAgentName(e.target.value)}>
               {definitions.length === 0 && <option value="default">default</option>}
               {definitions.map(d => (
                 <option key={d.definition.name} value={d.definition.name}>
@@ -538,11 +556,14 @@ export function BatchLaunchAgentDialog({
             </select>
           </div>
 
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Isolation</label>
-            <div className="launch-agent-radio-group">
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Isolation</label>
+            <div className={RADIO_GROUP_CLS}>
               {([['none', 'None'], ['worktree', 'Worktree'], ['clone', 'Clone']] as const).map(([val, label]) => (
-                <label key={val} className={`launch-agent-radio ${isolation === val ? 'active' : ''}`}>
+                <label
+                  key={val}
+                  className={isolation === val ? `${RADIO_CLS} ${RADIO_ACTIVE_CLS}` : RADIO_CLS}
+                >
                   <input type="radio" name="batch-isolation" value={val} checked={isolation === val} onChange={() => setIsolation(val)} />
                   {label}
                 </label>
@@ -550,9 +571,9 @@ export function BatchLaunchAgentDialog({
             </div>
           </div>
 
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Model Override</label>
-            <select className="launch-agent-select" value={model} onChange={e => setModel(e.target.value)}>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Model Override</label>
+            <select className={SELECT_CLS} value={model} onChange={e => setModel(e.target.value)}>
               <option value="">Default</option>
               {modelOptions.map(option => (
                 <option key={option.value} value={option.value}>
@@ -562,10 +583,10 @@ export function BatchLaunchAgentDialog({
             </select>
           </div>
 
-          <div className="launch-agent-field">
-            <label className="launch-agent-label">Reasoning</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Reasoning</label>
             <select
-              className="launch-agent-select"
+              className={SELECT_CLS}
               value={reasoningEffort}
               onChange={e => {
                 const nextReasoning = e.target.value
@@ -584,7 +605,7 @@ export function BatchLaunchAgentDialog({
             </select>
           </div>
 
-          <label className="launch-agent-checkbox">
+          <label className={CHECKBOX_CLS}>
             <input
               type="checkbox"
               checked={reasoningRequired}
@@ -594,15 +615,15 @@ export function BatchLaunchAgentDialog({
             Require reasoning support
           </label>
 
-          {error && <div className="launch-agent-error">{error}</div>}
+          {error && <div className={ERROR_CLS}>{error}</div>}
         </div>
 
-        <div className="launch-agent-footer">
-          <button className="launch-agent-btn launch-agent-btn--default" onClick={onClose} disabled={spawning}>
+        <div className={FOOTER_CLS}>
+          <button className={`${BTN_CLS} ${BTN_DEFAULT_CLS}`} onClick={onClose} disabled={spawning}>
             Cancel
           </button>
           <button
-            className="launch-agent-btn launch-agent-btn--primary"
+            className={`${BTN_CLS} ${BTN_PRIMARY_CLS}`}
             onClick={handleBatchLaunch}
             disabled={spawning || activeCount === 0}
           >
