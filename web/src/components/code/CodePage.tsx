@@ -3,7 +3,6 @@ import { TabBar } from '../shared/TabBar'
 import { FilesPage } from '../FilesPage'
 import { CodeGraphExplorer } from '../code-graph/CodeGraphExplorer'
 import { useFilesContext } from '../../contexts/useFilesContext'
-import './CodePage.css'
 
 interface CodePageProps {
   projectId: string | null
@@ -27,15 +26,15 @@ export function CodePage({ projectId }: CodePageProps) {
   )
 
   return (
-    <div className="code-page">
-      <div className="code-page-header">
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="shrink-0 px-4">
         <TabBar
           tabs={TABS}
           activeTab={activeTab}
           onTabChange={(id) => setActiveTab(id as CodeTab)}
         />
       </div>
-      <div className="code-page-content">
+      <div className="relative flex flex-1 overflow-hidden">
         {activeTab === 'editor' && (
           scopedProjects.length > 0 ? (
             <FilesPage
@@ -59,7 +58,7 @@ export function CodePage({ projectId }: CodePageProps) {
               onFetchDiff={files.fetchDiff}
             />
           ) : (
-            <div className="code-page-empty">
+            <div className="flex flex-1 items-center justify-center text-[length:var(--text-base)] text-[var(--text-muted)]">
               {projectId
                 ? 'No files found for this project. Try refreshing or check the repo path.'
                 : 'Select a project to browse files.'}

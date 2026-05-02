@@ -2,7 +2,34 @@ import { useState, useCallback } from 'react'
 import type { Channel, ChannelType } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
 import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
-import './IntegrationsPage.css'
+import {
+  MODAL_OVERLAY_CLS,
+  MODAL_CLS,
+  MODAL_HEADER_CLS,
+  MODAL_HEADER_TITLE_CLS,
+  MODAL_CLOSE_CLS,
+  MODAL_BODY_CLS,
+  MODAL_FOOTER_CLS,
+  FORM_FIELD_CLS,
+  FORM_LABEL_CLS,
+  FORM_INPUT_CLS,
+  FORM_REQUIRED_CLS,
+  FORM_HELP_CLS,
+  FORM_ERROR_CLS,
+  FORM_CANCEL_CLS,
+  FORM_SUBMIT_CLS,
+  FORM_CHANGE_BTN_CLS,
+  EMPTY_CARD_CLS,
+} from './styles'
+
+const FORM_TYPE_GRID_CLS =
+  'grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]'
+const FORM_STATIC_CLS = 'py-2 text-[length:var(--text-sm)] text-[var(--text-primary)]'
+const FORM_INPUT_WRAP_CLS = 'relative [&>input]:pr-9'
+const FORM_EYE_BTN_CLS =
+  'absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer border-0 bg-transparent p-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const FORM_SECRET_CONFIGURED_CLS =
+  'flex items-center gap-2 py-2 text-[length:var(--text-sm)] text-[var(--text-secondary)]'
 
 interface FieldDef {
   key: string
@@ -143,19 +170,19 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
   // Type selection grid (add mode, no preset)
   if (mode === 'add' && !selectedType) {
     return (
-      <div className="intg-modal-overlay" onClick={onClose}>
-        <div className="intg-modal" onClick={e => e.stopPropagation()}>
-          <div className="intg-modal-header">
-            <h3>Add Integration</h3>
-            <button className="intg-modal-close" onClick={onClose}>&times;</button>
+      <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
+        <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
+          <div className={MODAL_HEADER_CLS}>
+            <h3 className={MODAL_HEADER_TITLE_CLS}>Add Integration</h3>
+            <button className={MODAL_CLOSE_CLS} onClick={onClose}>&times;</button>
           </div>
-          <div className="intg-modal-body">
-            <p className="intg-form-help">Select a platform:</p>
-            <div className="intg-form-type-grid">
+          <div className={MODAL_BODY_CLS}>
+            <p className={FORM_HELP_CLS}>Select a platform:</p>
+            <div className={FORM_TYPE_GRID_CLS}>
               {ALL_TYPES.map(type => (
                 <div
                   key={type}
-                  className="intg-empty-card"
+                  className={EMPTY_CARD_CLS}
                   onClick={() => setSelectedType(type)}
                   style={{ borderLeftWidth: 3, borderLeftColor: PLATFORM_COLORS[type] }}
                 >
@@ -171,21 +198,21 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
   }
 
   return (
-    <div className="intg-modal-overlay" onClick={onClose}>
-      <form className="intg-modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <div className="intg-modal-header">
-          <h3>{mode === 'add' ? 'Add' : 'Edit'} {selectedType ? CHANNEL_DISPLAY_NAMES[selectedType] : ''} Channel</h3>
-          <button type="button" className="intg-modal-close" onClick={onClose}>&times;</button>
+    <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
+      <form className={MODAL_CLS} onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+        <div className={MODAL_HEADER_CLS}>
+          <h3 className={MODAL_HEADER_TITLE_CLS}>{mode === 'add' ? 'Add' : 'Edit'} {selectedType ? CHANNEL_DISPLAY_NAMES[selectedType] : ''} Channel</h3>
+          <button type="button" className={MODAL_CLOSE_CLS} onClick={onClose}>&times;</button>
         </div>
 
-        <div className="intg-modal-body">
-          {error && <div className="intg-form-error">{error}</div>}
+        <div className={MODAL_BODY_CLS}>
+          {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
           {/* Name field */}
-          <div className="intg-form-field">
-            <label className="intg-form-label">Name</label>
+          <div className={FORM_FIELD_CLS}>
+            <label className={FORM_LABEL_CLS}>Name</label>
             <input
-              className="intg-form-input"
+              className={FORM_INPUT_CLS}
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="my-channel"
@@ -196,15 +223,15 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
 
           {/* Type display (edit mode) */}
           {mode === 'edit' && selectedType && (
-            <div className="intg-form-field">
-              <label className="intg-form-label">Type</label>
-              <div className="intg-form-static">{CHANNEL_DISPLAY_NAMES[selectedType]}</div>
+            <div className={FORM_FIELD_CLS}>
+              <label className={FORM_LABEL_CLS}>Type</label>
+              <div className={FORM_STATIC_CLS}>{CHANNEL_DISPLAY_NAMES[selectedType]}</div>
             </div>
           )}
 
           {/* No config needed */}
           {selectedType === 'gobby_chat' && (
-            <p className="intg-form-help">No additional configuration required.</p>
+            <p className={FORM_HELP_CLS}>No additional configuration required.</p>
           )}
 
           {/* Dynamic fields */}
@@ -216,13 +243,13 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
             // In edit mode, secret fields show "Configured" with Change button
             if (isEditing && isSecret && !isChanging) {
               return (
-                <div key={f.key} className="intg-form-field">
-                  <label className="intg-form-label">{f.label}</label>
-                  <div className="intg-form-secret-configured">
+                <div key={f.key} className={FORM_FIELD_CLS}>
+                  <label className={FORM_LABEL_CLS}>{f.label}</label>
+                  <div className={FORM_SECRET_CONFIGURED_CLS}>
                     <span>Configured</span>
                     <button
                       type="button"
-                      className="intg-form-change-btn"
+                      className={FORM_CHANGE_BTN_CLS}
                       onClick={() => setChangingSecrets(prev => new Set(prev).add(f.key))}
                     >
                       Change
@@ -233,14 +260,14 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
             }
 
             return (
-              <div key={f.key} className="intg-form-field">
-                <label className="intg-form-label">
+              <div key={f.key} className={FORM_FIELD_CLS}>
+                <label className={FORM_LABEL_CLS}>
                   {f.label}
-                  {f.required && <span className="intg-form-required"> *</span>}
+                  {f.required && <span className={FORM_REQUIRED_CLS}> *</span>}
                 </label>
-                <div className="intg-form-input-wrap">
+                <div className={FORM_INPUT_WRAP_CLS}>
                   <input
-                    className="intg-form-input"
+                    className={FORM_INPUT_CLS}
                     type={isSecret && !showSecrets.has(f.key) ? 'password' : (f.type || 'text')}
                     value={values[f.key] || ''}
                     onChange={e => setValue(f.key, e.target.value)}
@@ -249,11 +276,11 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
                   {isSecret && (
                     <button
                       type="button"
-                      className="intg-form-eye-btn"
+                      className={FORM_EYE_BTN_CLS}
                       onClick={() => toggleShowSecret(f.key)}
                       title={showSecrets.has(f.key) ? 'Hide' : 'Show'}
                     >
-                      {showSecrets.has(f.key) ? '\u25C9' : '\u25CE'}
+                      {showSecrets.has(f.key) ? '◉' : '◎'}
                     </button>
                   )}
                 </div>
@@ -262,9 +289,9 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
           })}
         </div>
 
-        <div className="intg-modal-footer">
-          <button type="button" className="intg-form-cancel" onClick={onClose}>Cancel</button>
-          <button type="submit" className="intg-form-submit" disabled={saving}>
+        <div className={MODAL_FOOTER_CLS}>
+          <button type="button" className={FORM_CANCEL_CLS} onClick={onClose}>Cancel</button>
+          <button type="submit" className={FORM_SUBMIT_CLS} disabled={saving}>
             {saving ? 'Saving...' : mode === 'add' ? 'Add Channel' : 'Save Changes'}
           </button>
         </div>

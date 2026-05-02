@@ -7,9 +7,48 @@ import { CHANNEL_DISPLAY_NAMES } from './channelMetadata'
 import { ChannelDetail } from './ChannelDetail'
 import { ChannelForm } from './ChannelForm'
 import { MessageList } from './MessageList'
-import './IntegrationsPage.css'
+import { EMPTY_CARD_CLS } from './styles'
+import { cn } from '../../lib/utils'
 
 const CHANNEL_TYPES: ChannelType[] = ['slack', 'telegram', 'discord', 'teams', 'email', 'sms', 'gobby_chat']
+
+const PAGE_CLS = 'flex flex-1 flex-col overflow-hidden px-3 md:px-5'
+const ERROR_TOAST_CLS =
+  'fixed left-1/2 top-[60px] z-[1000] -translate-x-1/2 cursor-pointer rounded-lg bg-[var(--color-error)] px-5 py-2.5 text-[length:var(--text-sm)] text-[var(--text-on-error)] [box-shadow:var(--shadow-md)]'
+
+const TOOLBAR_CLS = 'flex items-center justify-between gap-4 pb-3 pt-4 max-md:flex-col max-md:items-stretch'
+const TOOLBAR_LEFT_CLS = 'flex items-center gap-3'
+const TOOLBAR_TITLE_CLS = 'm-0 text-[length:var(--font-size-base)] font-semibold'
+const TOOLBAR_RIGHT_CLS = 'flex items-center gap-2 max-md:justify-between'
+const SEARCH_CLS =
+  'w-[200px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] max-md:w-full pointer-coarse:min-h-11'
+const NEW_BTN_CLS =
+  'cursor-pointer rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 pointer-coarse:min-h-11'
+
+const TABS_CLS = 'mb-3 flex border-b border-[var(--border)]'
+const TAB_CLS =
+  'cursor-pointer border-0 border-b-2 border-transparent bg-transparent px-4 py-2 text-[length:var(--text-sm)] font-medium text-[var(--text-secondary)] transition-colors duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const TAB_ACTIVE_CLS = 'border-[var(--accent)] text-[var(--accent)]'
+
+const FILTER_BAR_CLS = 'pb-3'
+const FILTER_CHIPS_CLS = 'flex flex-wrap gap-1.5'
+const FILTER_CHIP_CLS =
+  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] text-[var(--text-secondary)] transition-all duration-150 hover:bg-[rgba(255,255,255,0.05)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+const FILTER_CHIP_ACTIVE_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)]'
+
+const CHANNEL_GRID_CLS =
+  'grid flex-1 gap-3 overflow-y-auto pb-5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))] max-md:grid-cols-1'
+
+const EMPTY_STATE_CLS =
+  'flex flex-1 flex-col items-center justify-center gap-6 p-10 text-[var(--text-secondary)]'
+const EMPTY_TITLE_CLS = 'm-0 text-[length:var(--font-size-base)] font-medium text-[var(--text-primary)]'
+const EMPTY_SUBTITLE_CLS = 'm-0 text-[length:var(--text-sm)]'
+const EMPTY_CARDS_CLS =
+  'grid w-full max-w-[640px] gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(140px,1fr))] max-md:grid-cols-2'
+
+const CONTENT_CLS = 'flex flex-1 flex-col overflow-hidden'
+const LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-sm)] text-[var(--text-secondary)]'
 
 export function IntegrationsPage() {
   const {
@@ -74,35 +113,35 @@ export function IntegrationsPage() {
 
   if (isLoading) {
     return (
-      <div className="intg-page">
-        <div className="intg-loading">Loading integrations...</div>
+      <div className={PAGE_CLS}>
+        <div className={LOADING_CLS}>Loading integrations...</div>
       </div>
     )
   }
 
   return (
-    <div className="intg-page">
+    <div className={PAGE_CLS}>
       {errorMessage && (
-        <div className="intg-error-toast" onClick={() => setErrorMessage(null)}>
+        <div className={ERROR_TOAST_CLS} onClick={() => setErrorMessage(null)}>
           {errorMessage}
         </div>
       )}
 
       {/* Toolbar */}
-      <div className="intg-toolbar">
-        <div className="intg-toolbar-left">
-          <h2 className="intg-toolbar-title">Integrations</h2>
+      <div className={TOOLBAR_CLS}>
+        <div className={TOOLBAR_LEFT_CLS}>
+          <h2 className={TOOLBAR_TITLE_CLS}>Integrations</h2>
         </div>
-        <div className="intg-toolbar-right">
+        <div className={TOOLBAR_RIGHT_CLS}>
           <input
-            className="intg-search"
+            className={SEARCH_CLS}
             type="text"
             placeholder="Search channels..."
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
           />
           <button
-            className="intg-new-btn"
+            className={NEW_BTN_CLS}
             onClick={() => {
               setPresetType(null)
               setShowAddForm(true)
@@ -114,15 +153,15 @@ export function IntegrationsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="intg-tabs">
+      <div className={TABS_CLS}>
         <button
-          className={`intg-tab ${activeTab === 'channels' ? 'intg-tab--active' : ''}`}
+          className={cn(TAB_CLS, activeTab === 'channels' && TAB_ACTIVE_CLS)}
           onClick={() => setActiveTab('channels')}
         >
           Channels ({channels.length})
         </button>
         <button
-          className={`intg-tab ${activeTab === 'messages' ? 'intg-tab--active' : ''}`}
+          className={cn(TAB_CLS, activeTab === 'messages' && TAB_ACTIVE_CLS)}
           onClick={() => setActiveTab('messages')}
         >
           Messages
@@ -130,14 +169,14 @@ export function IntegrationsPage() {
       </div>
 
       {/* Content */}
-      <div className="intg-content">
+      <div className={CONTENT_CLS}>
         {activeTab === 'channels' ? (
           <>
             {/* Filter chips */}
-            <div className="intg-filter-bar">
-              <div className="intg-filter-chips">
+            <div className={FILTER_BAR_CLS}>
+              <div className={FILTER_CHIPS_CLS}>
                 <button
-                  className={`intg-filter-chip ${!channelTypeFilter ? 'intg-filter-chip--active' : ''}`}
+                  className={cn(FILTER_CHIP_CLS, !channelTypeFilter && FILTER_CHIP_ACTIVE_CLS)}
                   onClick={() => setChannelTypeFilter(null)}
                 >
                   All
@@ -145,7 +184,7 @@ export function IntegrationsPage() {
                 {CHANNEL_TYPES.map(type => (
                   <button
                     key={type}
-                    className={`intg-filter-chip ${channelTypeFilter === type ? 'intg-filter-chip--active' : ''}`}
+                    className={cn(FILTER_CHIP_CLS, channelTypeFilter === type && FILTER_CHIP_ACTIVE_CLS)}
                     onClick={() => setChannelTypeFilter(channelTypeFilter === type ? null : type)}
                   >
                     {CHANNEL_DISPLAY_NAMES[type]}
@@ -156,7 +195,7 @@ export function IntegrationsPage() {
 
             {/* Channel grid or empty state */}
             {filteredChannels.length > 0 ? (
-              <div className="intg-channel-grid">
+              <div className={CHANNEL_GRID_CLS}>
                 {filteredChannels.map(channel => (
                   <ChannelCard
                     key={channel.id}
@@ -169,14 +208,14 @@ export function IntegrationsPage() {
                 ))}
               </div>
             ) : channels.length === 0 ? (
-              <div className="intg-empty-state">
-                <h3 className="intg-empty-title">No integrations configured</h3>
-                <p className="intg-empty-subtitle">Connect a messaging platform to get started</p>
-                <div className="intg-empty-cards">
+              <div className={EMPTY_STATE_CLS}>
+                <h3 className={EMPTY_TITLE_CLS}>No integrations configured</h3>
+                <p className={EMPTY_SUBTITLE_CLS}>Connect a messaging platform to get started</p>
+                <div className={EMPTY_CARDS_CLS}>
                   {CHANNEL_TYPES.filter(t => t !== 'gobby_chat').map(type => (
                     <div
                       key={type}
-                      className="intg-empty-card"
+                      className={EMPTY_CARD_CLS}
                       onClick={() => handleEmptyCardClick(type)}
                     >
                       <PlatformIcon type={type} />
@@ -186,8 +225,8 @@ export function IntegrationsPage() {
                 </div>
               </div>
             ) : (
-              <div className="intg-empty-state">
-                <p className="intg-empty-subtitle">No channels match your filters</p>
+              <div className={EMPTY_STATE_CLS}>
+                <p className={EMPTY_SUBTITLE_CLS}>No channels match your filters</p>
               </div>
             )}
           </>

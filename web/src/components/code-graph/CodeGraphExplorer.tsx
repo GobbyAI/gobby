@@ -4,8 +4,7 @@ import SpriteText from 'three-spritetext'
 import { useCodeGraph, mergeCodeGraphData } from '../../hooks/useCodeGraph'
 import type { CodeGraphData, CodeGraphNode, CodeGraphSearchResult } from '../../hooks/useCodeGraph'
 import { IS_MOBILE, IS_IOS } from '../../utils/platform'
-import { resolveCssVar } from '../../lib/utils'
-import './CodeGraphExplorer.css'
+import { resolveCssVar, cn } from '../../lib/utils'
 
 const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS ? 30 : IS_MOBILE ? 50 : 100
 const CODE_GRAPH_LIMIT_MIN = 10
@@ -15,6 +14,58 @@ const CODE_GRAPH_LIMIT_STEP = 10
 const DEFAULT_CHARGE = -120
 const DEFAULT_LINK_DIST = 60
 const DEFAULT_CENTER = 0.05
+
+const ROOT_CLS =
+  'relative h-full w-full overflow-hidden bg-[var(--bg-primary)] [background-image:radial-gradient(circle_at_50%_50%,color-mix(in_srgb,var(--color-info)_2%,transparent),transparent_70%)]'
+const EMPTY_CLS = 'flex h-full items-center justify-center text-[length:var(--text-base)] text-[var(--text-muted)]'
+
+const CONTROLS_CLS = 'absolute right-3 top-3 z-10 flex gap-1.5'
+const BTN_CLS =
+  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+const BTN_ACTIVE_CLS =
+  'border-[var(--destructive,var(--color-error))] bg-[color-mix(in_srgb,var(--destructive,var(--color-error))_15%,transparent)] text-[var(--destructive,var(--color-error))]'
+
+const SEARCH_WRAP_CLS = 'absolute left-3 top-3 z-10 w-[260px]'
+const SEARCH_INPUT_CLS =
+  'w-full rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none transition-colors duration-150 placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] pointer-coarse:min-h-11'
+const SEARCH_RESULTS_CLS =
+  'mt-1 max-h-[240px] overflow-y-auto rounded border border-[var(--border)] bg-[var(--bg-secondary)]'
+const SEARCH_RESULT_CLS =
+  'flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-2.5 py-1.5 text-left font-mono text-[length:var(--text-sm)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+const SEARCH_KIND_CLS = 'min-w-[55px] shrink-0 text-[length:var(--text-2xs)] uppercase tracking-[0.5px]'
+const SEARCH_NAME_CLS = 'shrink-0 font-medium'
+const SEARCH_PATH_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+
+const INFO_CLS =
+  'absolute bottom-3 left-3 z-10 rounded bg-[color-mix(in_srgb,black_80%,transparent)] px-2 py-1 font-mono text-[length:var(--text-xs)] text-[var(--text-muted)]'
+
+const LEGEND_CLS =
+  'absolute bottom-3 right-3 z-10 flex flex-col gap-[3px] rounded border border-[var(--border)] bg-[color-mix(in_srgb,black_85%,transparent)] px-2.5 py-2'
+const LEGEND_ITEM_CLS = 'flex items-center gap-1.5 font-mono text-[length:var(--text-2xs)] text-[var(--text-secondary)]'
+const LEGEND_DOT_CLS = 'h-2 w-2 shrink-0 rounded-full'
+const LEGEND_LINE_CLS = 'h-0.5 w-3 shrink-0 rounded-[1px]'
+const LEGEND_SEPARATOR_CLS = 'my-0.5 h-px bg-[var(--border)]'
+
+const DETAIL_CLS =
+  'absolute right-3 top-[50px] z-10 w-[250px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3'
+const DETAIL_HEADER_CLS = 'mb-1.5 flex items-center justify-between'
+const DETAIL_TYPE_CLS = 'font-mono text-[length:var(--text-2xs)] uppercase tracking-[0.5px]'
+const DETAIL_CLOSE_CLS =
+  'cursor-pointer border-0 bg-transparent p-0 text-[length:var(--text-lg)] leading-none text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const DETAIL_NAME_CLS = 'mb-1 break-all font-mono text-[length:var(--text-md)] font-semibold text-[var(--text-primary)]'
+const DETAIL_SIG_CLS =
+  'mb-1 overflow-x-auto whitespace-nowrap rounded-[3px] bg-[color-mix(in_srgb,black_30%,transparent)] px-1.5 py-1 font-mono text-[length:var(--text-xs)] text-[var(--color-warning-foreground)]'
+const DETAIL_PATH_CLS = 'mb-0.5 font-mono text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const DETAIL_META_CLS = 'font-mono text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+
+const PHYSICS_CLS =
+  'absolute right-2 top-[42px] z-[15] flex min-w-[200px] flex-col gap-[5px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2'
+const PHYSICS_ROW_CLS = 'flex cursor-default items-center gap-1.5'
+const PHYSICS_LABEL_CLS = 'min-w-[56px] text-[length:var(--text-xs)] text-[var(--text-secondary)]'
+const PHYSICS_VALUE_CLS = 'min-w-[32px] text-right text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]'
+const PHYSICS_SLIDER_CLS = 'h-1 flex-1 cursor-pointer accent-[var(--accent)]'
+const PHYSICS_RESET_CLS =
+  'mt-0.5 cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
 
 interface CodeGraphExplorerProps {
   projectId: string | null
@@ -155,7 +206,7 @@ function getStoredNumber(key: string, defaultVal: number, min?: number, max?: nu
 
 export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // react-force-graph-3d does not export a usable instance type
-  const fgRef = useRef<any>(null)  
+  const fgRef = useRef<any>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [graphData, setGraphData] = useState<CodeGraphData>({ nodes: [], links: [] })
@@ -412,7 +463,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
   if (!projectId) {
     return (
-      <div className="code-graph-empty">
+      <div className={EMPTY_CLS}>
         Select a project to explore its code graph.
       </div>
     )
@@ -420,7 +471,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
   if (webglError) {
     return (
-      <div className="code-graph-empty">
+      <div className={EMPTY_CLS}>
         WebGL error — your browser may not support 3D rendering.
         Try refreshing the page.
       </div>
@@ -428,21 +479,21 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   }
 
   return (
-    <div className="code-graph-explorer" ref={containerRef}>
+    <div className={ROOT_CLS} ref={containerRef}>
       {/* Controls */}
-      <div className="code-graph-controls">
+      <div className={CONTROLS_CLS}>
         <button
-          className={`code-graph-btn ${blastMode ? 'active' : ''}`}
+          className={cn(BTN_CLS, blastMode && BTN_ACTIVE_CLS)}
           onClick={toggleBlastMode}
           title="Blast Radius Mode"
         >
           {blastMode ? 'Blast On' : 'Blast Radius'}
         </button>
-        <button className="code-graph-btn" onClick={handleZoomToFit} title="Zoom to Fit">
+        <button className={BTN_CLS} onClick={handleZoomToFit} title="Zoom to Fit">
           Fit
         </button>
         <button
-          className={`code-graph-btn${showPhysics ? ' active' : ''}`}
+          className={cn(BTN_CLS, showPhysics && BTN_ACTIVE_CLS)}
           onClick={() => setShowPhysics(p => !p)}
           title="Physics controls"
         >
@@ -455,11 +506,12 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
       {/* Physics controls panel */}
       {showPhysics && (
-        <div className="code-graph-physics">
-          <label className="code-graph-physics-row">
-            <span className="code-graph-physics-label">Repulsion</span>
+        <div className={PHYSICS_CLS}>
+          <label className={PHYSICS_ROW_CLS}>
+            <span className={PHYSICS_LABEL_CLS}>Repulsion</span>
             <input
               type="range"
+              className={PHYSICS_SLIDER_CLS}
               min={-500}
               max={-20}
               step={10}
@@ -470,12 +522,13 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
                 try { localStorage.setItem('gobby-cg-charge', String(v)) } catch { /* noop */ }
               }}
             />
-            <span className="code-graph-physics-value">{charge}</span>
+            <span className={PHYSICS_VALUE_CLS}>{charge}</span>
           </label>
-          <label className="code-graph-physics-row">
-            <span className="code-graph-physics-label">Link dist</span>
+          <label className={PHYSICS_ROW_CLS}>
+            <span className={PHYSICS_LABEL_CLS}>Link dist</span>
             <input
               type="range"
+              className={PHYSICS_SLIDER_CLS}
               min={10}
               max={200}
               step={5}
@@ -486,12 +539,13 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
                 try { localStorage.setItem('gobby-cg-link-dist', String(v)) } catch { /* noop */ }
               }}
             />
-            <span className="code-graph-physics-value">{linkDist}</span>
+            <span className={PHYSICS_VALUE_CLS}>{linkDist}</span>
           </label>
-          <label className="code-graph-physics-row">
-            <span className="code-graph-physics-label">Gravity</span>
+          <label className={PHYSICS_ROW_CLS}>
+            <span className={PHYSICS_LABEL_CLS}>Gravity</span>
             <input
               type="range"
+              className={PHYSICS_SLIDER_CLS}
               min={0.005}
               max={0.15}
               step={0.005}
@@ -502,12 +556,13 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
                 try { localStorage.setItem('gobby-cg-center', String(v)) } catch { /* noop */ }
               }}
             />
-            <span className="code-graph-physics-value">{centerStrength.toFixed(3)}</span>
+            <span className={PHYSICS_VALUE_CLS}>{centerStrength.toFixed(3)}</span>
           </label>
-          <label className="code-graph-physics-row">
-            <span className="code-graph-physics-label">Limit</span>
+          <label className={PHYSICS_ROW_CLS}>
+            <span className={PHYSICS_LABEL_CLS}>Limit</span>
             <input
               type="range"
+              className={PHYSICS_SLIDER_CLS}
               min={CODE_GRAPH_LIMIT_MIN}
               max={CODE_GRAPH_LIMIT_MAX}
               step={CODE_GRAPH_LIMIT_STEP}
@@ -518,10 +573,10 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
                 try { localStorage.setItem('gobby-cg-limit', String(v)) } catch { /* noop */ }
               }}
             />
-            <span className="code-graph-physics-value">{limit}</span>
+            <span className={PHYSICS_VALUE_CLS}>{limit}</span>
           </label>
           <button
-            className="code-graph-physics-reset"
+            className={PHYSICS_RESET_CLS}
             onClick={() => {
               setCharge(DEFAULT_CHARGE)
               setLinkDist(DEFAULT_LINK_DIST)
@@ -541,28 +596,28 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       )}
 
       {/* Search */}
-      <div className="code-graph-search">
+      <div className={SEARCH_WRAP_CLS}>
         <input
           type="text"
           placeholder="Search symbols..."
           value={searchQuery}
           onChange={e => handleSearch(e.target.value)}
-          className="code-graph-search-input"
+          className={SEARCH_INPUT_CLS}
         />
         {searchResults.length > 0 && (
-          <div className="code-graph-search-results">
+          <div className={SEARCH_RESULTS_CLS}>
             {searchResults.map(r => (
               <button
                 key={r.id}
-                className="code-graph-search-result"
+                className={SEARCH_RESULT_CLS}
                 onClick={() => handleSearchResultClick(r)}
               >
-                <span className="code-graph-search-kind" style={{ color: getNodeColorCss(r.kind) }}>
+                <span className={SEARCH_KIND_CLS} style={{ color: getNodeColorCss(r.kind) }}>
                   {r.kind || r.type}
                 </span>
-                <span className="code-graph-search-name">{r.name}</span>
+                <span className={SEARCH_NAME_CLS}>{r.name}</span>
                 {r.file_path && (
-                  <span className="code-graph-search-path">{r.file_path}</span>
+                  <span className={SEARCH_PATH_CLS}>{r.file_path}</span>
                 )}
               </button>
             ))}
@@ -571,23 +626,23 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       </div>
 
       {/* Info overlay */}
-      <div className="code-graph-info">
+      <div className={INFO_CLS}>
         {forceData.nodes.length} nodes &middot; {forceData.links.length} edges
         {isLoading && ' (loading...)'}
       </div>
 
       {/* Legend */}
-      <div className="code-graph-legend">
+      <div className={LEGEND_CLS}>
         {Object.keys(NODE_COLOR_VARS).slice(0, 7).map(type => (
-          <div key={type} className="code-graph-legend-item">
-            <span className="code-graph-legend-dot" style={{ background: getNodeColorCss(type) }} />
+          <div key={type} className={LEGEND_ITEM_CLS}>
+            <span className={LEGEND_DOT_CLS} style={{ background: getNodeColorCss(type) }} />
             <span>{type}</span>
           </div>
         ))}
-        <div className="code-graph-legend-separator" />
+        <div className={LEGEND_SEPARATOR_CLS} />
         {Object.keys(EDGE_COLOR_VARS).map(type => (
-          <div key={type} className="code-graph-legend-item">
-            <span className="code-graph-legend-line" style={{ background: `var(${edgeColorVar(type)})` }} />
+          <div key={type} className={LEGEND_ITEM_CLS}>
+            <span className={LEGEND_LINE_CLS} style={{ background: `var(${edgeColorVar(type)})` }} />
             <span>{type.toLowerCase()}</span>
           </div>
         ))}
@@ -595,24 +650,24 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
       {/* Detail panel */}
       {selectedNode && (
-        <div className="code-graph-detail">
-          <div className="code-graph-detail-header">
-            <span className="code-graph-detail-type" style={{ color: getNodeColorCss(selectedNode.type) }}>
+        <div className={DETAIL_CLS}>
+          <div className={DETAIL_HEADER_CLS}>
+            <span className={DETAIL_TYPE_CLS} style={{ color: getNodeColorCss(selectedNode.type) }}>
               {selectedNode.type}
             </span>
-            <button className="code-graph-detail-close" onClick={() => setSelectedNode(null)}>&times;</button>
+            <button className={DETAIL_CLOSE_CLS} onClick={() => setSelectedNode(null)}>&times;</button>
           </div>
-          <div className="code-graph-detail-name">{selectedNode.name}</div>
+          <div className={DETAIL_NAME_CLS}>{selectedNode.name}</div>
           {selectedNode.signature && (
-            <div className="code-graph-detail-sig">{selectedNode.signature}</div>
+            <div className={DETAIL_SIG_CLS}>{selectedNode.signature}</div>
           )}
           {selectedNode.file_path && selectedNode.type !== 'file' && (
-            <div className="code-graph-detail-path">
+            <div className={DETAIL_PATH_CLS}>
               {selectedNode.file_path}{selectedNode.line_start ? `:${selectedNode.line_start}` : ''}
             </div>
           )}
           {selectedNode.symbol_count !== undefined && (
-            <div className="code-graph-detail-meta">{selectedNode.symbol_count} symbols</div>
+            <div className={DETAIL_META_CLS}>{selectedNode.symbol_count} symbols</div>
           )}
         </div>
       )}

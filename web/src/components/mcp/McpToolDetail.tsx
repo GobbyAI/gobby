@@ -1,5 +1,40 @@
 import { useState, useEffect } from 'react'
 import type { McpToolSchema } from '../../hooks/useMcp'
+import { cn } from '../../lib/utils'
+
+const BACKDROP_CLS =
+  'pointer-events-none fixed inset-0 z-[900] bg-[var(--surface-scrim)] opacity-0 transition-opacity duration-200'
+const BACKDROP_OPEN_CLS = 'pointer-events-auto opacity-100'
+
+const SLIDE_CLS =
+  'fixed bottom-0 right-0 top-0 z-[901] w-[520px] max-w-[90vw] translate-x-full overflow-y-auto border-l border-[var(--border)] bg-[var(--bg-primary)] transition-transform duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)] max-md:w-screen max-md:max-w-none'
+const SLIDE_OPEN_CLS = 'translate-x-0'
+
+const DETAIL_CLS = 'p-5'
+const DETAIL_HEADER_CLS = 'mb-4 flex items-start justify-between'
+const DETAIL_HEADER_TITLE_CLS = 'm-0 break-all text-[length:var(--font-size-base)] font-semibold'
+const DETAIL_CLOSE_CLS =
+  'shrink-0 cursor-pointer border-0 bg-transparent px-2 py-1 text-[length:var(--text-2xl)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+
+const LOADING_CLS = 'flex items-center justify-center p-10 text-[length:var(--text-base)] text-[var(--text-secondary)]'
+
+const DETAIL_GRID_CLS =
+  'mb-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[length:var(--text-sm)]'
+const DETAIL_LABEL_CLS = 'text-[length:var(--text-sm)] text-[var(--text-secondary)]'
+const DETAIL_VALUE_CLS = 'text-[length:var(--text-sm)]'
+
+const DETAIL_SECTION_CLS = 'mb-5'
+const DETAIL_SECTION_TITLE_CLS = 'mb-2 text-[length:var(--text-sm)] font-semibold'
+
+const DETAIL_SCHEMA_CLS =
+  'max-h-[300px] overflow-x-auto overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3 text-[length:var(--text-sm)]'
+const EXECUTE_AREA_CLS =
+  'box-border min-h-20 w-full resize-y rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+const EXECUTE_BTN_CLS =
+  'mt-2 cursor-pointer rounded-md border-0 bg-[var(--accent)] px-4 py-1.5 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+const RESULT_CLS =
+  'mt-3 max-h-[400px] overflow-x-auto overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3 text-[length:var(--text-sm)]'
+const RESULT_ERROR_CLS = 'border-[color-mix(in_srgb,var(--color-error)_30%,transparent)] text-[var(--color-error)]'
 
 interface McpToolDetailProps {
   serverName: string | null
@@ -53,51 +88,51 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
   return (
     <>
       <div
-        className={`mcp-detail-backdrop ${isOpen ? 'open' : ''}`}
+        className={cn(BACKDROP_CLS, isOpen && BACKDROP_OPEN_CLS)}
         onClick={onClose}
       />
-      <div className={`mcp-detail-slide ${isOpen ? 'open' : ''}`}>
+      <div className={cn(SLIDE_CLS, isOpen && SLIDE_OPEN_CLS)}>
         {isOpen && (
-          <div className="mcp-detail">
-            <div className="mcp-detail-header">
-              <h3>{toolName}</h3>
-              <button className="mcp-detail-close" onClick={onClose}>
+          <div className={DETAIL_CLS}>
+            <div className={DETAIL_HEADER_CLS}>
+              <h3 className={DETAIL_HEADER_TITLE_CLS}>{toolName}</h3>
+              <button className={DETAIL_CLOSE_CLS} onClick={onClose}>
                 &times;
               </button>
             </div>
 
             {isLoading ? (
-              <div className="mcp-loading">Loading schema...</div>
+              <div className={LOADING_CLS}>Loading schema...</div>
             ) : schema ? (
               <>
-                <div className="mcp-detail-grid">
+                <div className={DETAIL_GRID_CLS}>
                   {schema.description && (
                     <>
-                      <div className="mcp-detail-label">Description</div>
-                      <div className="mcp-detail-value">{schema.description}</div>
+                      <div className={DETAIL_LABEL_CLS}>Description</div>
+                      <div className={DETAIL_VALUE_CLS}>{schema.description}</div>
                     </>
                   )}
-                  <div className="mcp-detail-label">Server</div>
-                  <div className="mcp-detail-value">{serverName}</div>
+                  <div className={DETAIL_LABEL_CLS}>Server</div>
+                  <div className={DETAIL_VALUE_CLS}>{serverName}</div>
                 </div>
 
-                <div className="mcp-detail-section">
-                  <h4>Input Schema</h4>
-                  <pre className="mcp-detail-schema">
+                <div className={DETAIL_SECTION_CLS}>
+                  <h4 className={DETAIL_SECTION_TITLE_CLS}>Input Schema</h4>
+                  <pre className={DETAIL_SCHEMA_CLS}>
                     <code>{JSON.stringify(schema.inputSchema, null, 2)}</code>
                   </pre>
                 </div>
 
-                <div className="mcp-detail-section">
-                  <h4>Execute</h4>
+                <div className={DETAIL_SECTION_CLS}>
+                  <h4 className={DETAIL_SECTION_TITLE_CLS}>Execute</h4>
                   <textarea
-                    className="mcp-detail-execute-area"
+                    className={EXECUTE_AREA_CLS}
                     value={argsText}
                     onChange={e => setArgsText(e.target.value)}
                     placeholder='{"key": "value"}'
                   />
                   <button
-                    className="mcp-detail-execute-btn"
+                    className={EXECUTE_BTN_CLS}
                     onClick={handleExecute}
                     disabled={executing}
                   >
@@ -105,14 +140,14 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
                   </button>
 
                   {result && (
-                    <pre className={`mcp-detail-result ${!result.success ? 'mcp-detail-result--error' : ''}`}>
+                    <pre className={cn(RESULT_CLS, !result.success && RESULT_ERROR_CLS)}>
                       {result.data}
                     </pre>
                   )}
                 </div>
               </>
             ) : (
-              <div className="mcp-loading">Failed to load schema</div>
+              <div className={LOADING_CLS}>Failed to load schema</div>
             )}
           </div>
         )}

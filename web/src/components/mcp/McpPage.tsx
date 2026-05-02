@@ -4,9 +4,83 @@ import type { McpToolSchema } from '../../hooks/useMcp'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { McpToolDetail } from './McpToolDetail'
 import { McpAddServerModal, McpImportModal } from './McpServerForm'
-import './McpPage.css'
+import { cn } from '../../lib/utils'
 
 const TRANSPORTS = ['internal', 'http', 'stdio', 'websocket', 'sse'] as const
+
+const PAGE_CLS = 'flex flex-1 flex-col overflow-hidden px-3 md:px-5'
+const ERROR_TOAST_CLS =
+  'fixed left-1/2 top-[60px] z-[1000] -translate-x-1/2 cursor-pointer rounded-lg bg-[var(--color-error)] px-5 py-2.5 text-[length:var(--text-sm)] text-[var(--accent-foreground)] shadow-md'
+
+const TOOLBAR_CLS = 'flex flex-wrap items-center justify-between gap-4 gap-y-2 pb-3 pt-4'
+const TOOLBAR_LEFT_CLS = 'flex min-w-0 items-center gap-3'
+const TOOLBAR_TITLE_CLS = 'm-0 text-[length:var(--font-size-base)] font-semibold'
+const TOOLBAR_RIGHT_CLS = 'flex min-w-0 flex-wrap items-center gap-2 gap-y-2'
+
+const SEARCH_CLS =
+  'w-[140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] md:w-[200px] pointer-coarse:min-h-11'
+const TOOLBAR_BTN_CLS =
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+const NEW_BTN_CLS =
+  'cursor-pointer rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 pointer-coarse:min-h-11'
+
+const FILTER_BAR_CLS = 'pb-3'
+const FILTER_CHIPS_CLS = 'flex flex-wrap gap-1.5'
+const FILTER_CHIP_CLS =
+  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] font-medium uppercase text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--text-secondary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+const FILTER_CHIP_ACTIVE_CLS =
+  'border-[var(--accent)] bg-[rgba(255,255,255,0.03)] text-[var(--accent)]'
+
+const CONTENT_CLS = 'flex-1 overflow-y-auto'
+const LOADING_CLS = 'flex items-center justify-center p-10 text-[length:var(--text-base)] text-[var(--text-secondary)]'
+const EMPTY_CLS = 'flex items-center justify-center p-10 text-[length:var(--text-sm)] text-[var(--text-secondary)]'
+
+const SERVER_LIST_CLS = 'flex flex-col gap-2 pb-5'
+const SERVER_ROW_CLS = 'overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]'
+const SERVER_HEADER_CLS =
+  'group flex cursor-pointer flex-wrap items-center gap-2.5 gap-y-1.5 px-4 py-3 transition-colors duration-100 hover:bg-[rgba(255,255,255,0.02)]'
+
+const HEALTH_DOT_BG: Record<string, string> = {
+  healthy: 'bg-[var(--color-success-foreground)]',
+  degraded: 'bg-[var(--color-warning-foreground)]',
+  unhealthy: 'bg-[var(--color-error)]',
+  unknown: 'bg-[var(--text-muted)]',
+}
+const HEALTH_DOT_CLS = 'h-2 w-2 shrink-0 rounded-full'
+
+const SERVER_NAME_CLS = 'min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-[length:var(--text-base)] md:min-w-0 md:flex-initial md:overflow-visible md:text-clip md:whitespace-nowrap'
+
+const TRANSPORT_BADGE_BG: Record<string, string> = {
+  internal: 'bg-[var(--color-success-soft)] text-[var(--color-success-foreground)]',
+  http: 'bg-[var(--color-info-soft)] text-[var(--color-info)]',
+  stdio: 'bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]',
+  websocket: 'bg-[var(--color-agent-soft)] text-[var(--color-agent)]',
+  sse: 'bg-[var(--color-error-soft)] text-[var(--color-error)]',
+}
+const BADGE_BASE_CLS = 'rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium uppercase tracking-[0.3px]'
+
+const STATE_BADGE_BG: Record<string, string> = {
+  connected: 'bg-[var(--color-success-soft)] text-[var(--color-success-foreground)]',
+  pending: 'bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]',
+  configured: 'bg-[var(--color-info-soft)] text-[var(--color-info)]',
+  failed: 'bg-[var(--color-error-soft)] text-[var(--color-error)]',
+  unknown: 'bg-[color-mix(in_srgb,var(--text-muted)_12%,transparent)] text-[var(--text-muted)]',
+}
+const STATE_BADGE_BASE_CLS = 'rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium normal-case tracking-normal'
+
+const SERVER_TOOL_COUNT_CLS = 'ml-auto whitespace-nowrap text-[length:var(--text-sm)] text-[var(--text-secondary)]'
+const REMOVE_BTN_CLS =
+  'cursor-pointer rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[length:var(--text-base)] text-[var(--text-secondary)] opacity-0 transition-all duration-150 hover:border-[var(--color-error)] hover:text-[var(--color-error)] group-hover:opacity-100 pointer-coarse:opacity-100 pointer-coarse:h-11 pointer-coarse:w-11'
+const SERVER_CHEVRON_CLS = 'shrink-0 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-transform duration-200'
+const SERVER_CHEVRON_EXPANDED_CLS = 'rotate-90'
+
+const TOOLS_LIST_CLS = 'border-t border-[var(--border)]'
+const TOOL_ROW_CLS =
+  'flex cursor-pointer items-center gap-3 py-2 pl-10 pr-4 transition-colors duration-100 hover:bg-[rgba(255,255,255,0.02)] [&+&]:border-t [&+&]:border-[var(--border)] pointer-coarse:min-h-11'
+const TOOL_NAME_CLS = 'whitespace-nowrap text-[length:var(--text-md)] font-medium'
+const TOOL_BRIEF_CLS = 'flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-sm)] text-[var(--text-secondary)]'
+const TOOL_METRICS_CLS = 'flex gap-3 whitespace-nowrap text-[length:var(--text-xs)] text-[var(--text-secondary)]'
+const NO_TOOLS_CLS = 'flex cursor-default items-center px-4 py-2 pl-10 text-[length:var(--text-sm)] text-[var(--text-secondary)]'
 
 export function McpPage() {
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
@@ -117,42 +191,42 @@ export function McpPage() {
   }, [status])
 
   return (
-    <main className="mcp-page">
+    <main className={PAGE_CLS}>
       {ConfirmDialogElement}
       {errorMessage && (
-        <div className="mcp-error-toast" onClick={() => setErrorMessage(null)}>
+        <div className={ERROR_TOAST_CLS} onClick={() => setErrorMessage(null)}>
           {errorMessage}
         </div>
       )}
 
       {/* Toolbar */}
-      <div className="mcp-toolbar">
-        <div className="mcp-toolbar-left">
-          <h2 className="mcp-toolbar-title">MCP Servers</h2>
+      <div className={TOOLBAR_CLS}>
+        <div className={TOOLBAR_LEFT_CLS}>
+          <h2 className={TOOLBAR_TITLE_CLS}>MCP Servers</h2>
         </div>
-        <div className="mcp-toolbar-right">
+        <div className={TOOLBAR_RIGHT_CLS}>
           <input
-            className="mcp-search"
+            className={SEARCH_CLS}
             type="text"
             placeholder="Search servers & tools..."
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
           />
           <button
-            className="mcp-toolbar-btn"
+            className={TOOLBAR_BTN_CLS}
             onClick={handleRefreshTools}
             title="Clear Cache"
           >
             &#x27f3; Clear Cache
           </button>
           <button
-            className="mcp-toolbar-btn"
+            className={TOOLBAR_BTN_CLS}
             onClick={() => setShowImport(true)}
           >
             Import
           </button>
           <button
-            className="mcp-new-btn"
+            className={NEW_BTN_CLS}
             onClick={() => setShowAddServer(true)}
           >
             + Add Server
@@ -161,12 +235,12 @@ export function McpPage() {
       </div>
 
       {/* Transport filter chips */}
-      <div className="mcp-filter-bar">
-        <div className="mcp-filter-chips">
+      <div className={FILTER_BAR_CLS}>
+        <div className={FILTER_CHIPS_CLS}>
           {TRANSPORTS.map(t => (
             <button
               key={t}
-              className={`mcp-filter-chip ${transportFilter === t ? 'mcp-filter-chip--active' : ''}`}
+              className={cn(FILTER_CHIP_CLS, transportFilter === t && FILTER_CHIP_ACTIVE_CLS)}
               onClick={() => setTransportFilter(transportFilter === t ? null : t)}
             >
               {t}
@@ -176,13 +250,13 @@ export function McpPage() {
       </div>
 
       {/* Server list */}
-      <div className="mcp-content">
+      <div className={CONTENT_CLS}>
         {isLoading ? (
-          <div className="mcp-loading">Loading...</div>
+          <div className={LOADING_CLS}>Loading...</div>
         ) : filteredServers.length === 0 ? (
-          <div className="mcp-empty">No servers match the current filters.</div>
+          <div className={EMPTY_CLS}>No servers match the current filters.</div>
         ) : (
-          <div className="mcp-server-list">
+          <div className={SERVER_LIST_CLS}>
             {filteredServers.map(server => {
               const expanded = expandedServers.has(server.name)
               const tools = getFilteredTools(server.name)
@@ -190,51 +264,51 @@ export function McpPage() {
               const healthClass = getHealthClass(server.name)
 
               return (
-                <div className="mcp-server-row" key={server.name}>
+                <div className={SERVER_ROW_CLS} key={server.name}>
                   <div
-                    className="mcp-server-header"
+                    className={SERVER_HEADER_CLS}
                     onClick={() => toggleExpand(server.name)}
                   >
-                    <span className={`mcp-health-dot mcp-health-dot--${healthClass}`} />
-                    <span className="mcp-server-name">{server.name}</span>
-                    <span className={`mcp-transport-badge mcp-transport-badge--${server.transport}`}>
+                    <span className={cn(HEALTH_DOT_CLS, HEALTH_DOT_BG[healthClass] ?? HEALTH_DOT_BG.unknown)} />
+                    <span className={SERVER_NAME_CLS}>{server.name}</span>
+                    <span className={cn(BADGE_BASE_CLS, TRANSPORT_BADGE_BG[server.transport] ?? '')}>
                       {server.transport}
                     </span>
-                    <span className={`mcp-state-badge mcp-state-badge--${server.state}`}>
+                    <span className={cn(STATE_BADGE_BASE_CLS, STATE_BADGE_BG[server.state] ?? STATE_BADGE_BG.unknown)}>
                       {server.state}
                     </span>
-                    <span className="mcp-server-tool-count">
+                    <span className={SERVER_TOOL_COUNT_CLS}>
                       {allTools.length} tool{allTools.length !== 1 ? 's' : ''}
                     </span>
                     {server.transport !== 'internal' && (
                       <button
-                        className="mcp-remove-btn"
+                        className={REMOVE_BTN_CLS}
                         onClick={e => handleRemoveServer(server.name, e)}
                         title="Remove server"
                       >
                         &times;
                       </button>
                     )}
-                    <span className={`mcp-server-chevron ${expanded ? 'expanded' : ''}`}>
+                    <span className={cn(SERVER_CHEVRON_CLS, expanded && SERVER_CHEVRON_EXPANDED_CLS)}>
                       &#x25B8;
                     </span>
                   </div>
                   {expanded && (
-                    <div className="mcp-tools-list">
+                    <div className={TOOLS_LIST_CLS}>
                       {tools.length === 0 ? (
-                        <div className="mcp-tool-row" style={{ color: 'var(--text-secondary)', cursor: 'default' }}>
+                        <div className={NO_TOOLS_CLS}>
                           No tools available
                         </div>
                       ) : (
                         tools.map(tool => (
                           <div
-                            className="mcp-tool-row"
+                            className={TOOL_ROW_CLS}
                             key={tool.name}
                             onClick={() => handleSelectTool(server.name, tool.name)}
                           >
-                            <span className="mcp-tool-name">{tool.name}</span>
-                            <span className="mcp-tool-brief">{tool.brief}</span>
-                            <div className="mcp-tool-metrics">
+                            <span className={TOOL_NAME_CLS}>{tool.name}</span>
+                            <span className={TOOL_BRIEF_CLS}>{tool.brief}</span>
+                            <div className={TOOL_METRICS_CLS}>
                               {(tool.call_count ?? 0) > 0 && (
                                 <span>{tool.call_count} calls</span>
                               )}
