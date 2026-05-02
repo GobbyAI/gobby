@@ -116,9 +116,9 @@ Attach this plan to an existing task #N, or create a new planning root?
 
 ### 1c. Attach guard (HARD BLOCK)
 
-Two-sided mutual exclusion with the autonomous front-half orchestrator:
+Legacy autonomous planning marker checks:
 
-**Active-front-half check.**
+**Legacy front-half marker check.**
 
 ```text
 active_fh = "conductor:front-half" in labels and "conductor:front-half-complete" not in labels
@@ -143,9 +143,9 @@ for stage in STAGE_LABELS:
 
 If `active_fh` **or** `has_live_stage_child` is true, error out:
 
-> Parent #N is under active autonomous front-half management. Wait for that flow to complete, detach it, or start a new planning root.
+> Parent #N still carries active legacy planning markers. Wait for that flow to complete, detach it, or start a new planning root.
 
-Skill exits. A parent that previously went through autonomous planning **and completed cleanly** (both `conductor:front-half` AND `conductor:front-half-complete` present, no live stage children) is allowed.
+Skill exits. A parent that previously went through the legacy autonomous planning flow **and completed cleanly** (both `conductor:front-half` AND `conductor:front-half-complete` present, no live stage children) is allowed.
 
 **Concurrent interactive-session lock check.** Enumerate **all** labels on the parent matching the prefix `interactive:planning-in-progress:` (labels accumulate — `add_label` only dedupes exact strings and `remove_label` only removes exact strings). For each such label, extract the session suffix and classify:
 
@@ -180,8 +180,6 @@ with the I/D choice, since both are part of the same deferred review-mode
 decision.
 
 Persisting the **exact** label string is load-bearing. `remove_label` is exact-match only; terminal cleanup must pass the same string back.
-
-The companion rule `block-front-half-on-interactive-lock` blocks autonomous `front_half_tick` on this parent until the label is removed (belt-and-suspenders; the guard above is the authoritative protection).
 
 ### 1e. Resume detection
 
@@ -435,7 +433,7 @@ planning = create_task(
 set_variable(name="planning_task_id", value=planning.id, session_id="#<self>")
 ```
 
-Task type is **epic** so `close_task` does not require `changes_summary` (leaf-close requirement doesn't apply to orchestration containers). **Do NOT** apply `conductor:front-half` — that label is reserved for autonomous flows.
+Task type is **epic** so `close_task` does not require `changes_summary` (leaf-close requirement doesn't apply to orchestration containers). **Do NOT** apply `conductor:front-half` — that legacy label is only interpreted by compatibility guards.
 
 The parent lock was already acquired in Step 1; do not re-acquire here.
 
@@ -447,7 +445,7 @@ If the plan file is not already at `.gobby/plans/task-<parent_seq>-<slug>.md` (t
 
 Read `current_round` from the planning epic's current stage
 `review_round_count` (default `0`). **Internal state is 0-indexed** (matches
-autonomous front-half convention); **all user-visible and adversary-facing
+the existing review-round convention); **all user-visible and adversary-facing
 surfaces use `current_round + 1`**. First round is stored as `0` internally but
 "Round 1" in every message.
 
@@ -676,7 +674,7 @@ On wake/resume, read `expansion_execution_id` and call
 
 ### 8.3. Stay out of test-architecture
 
-Do **not** advance into the test-architecture stage. That is the autonomous front-half's domain; the interactive skill ends at expansion.
+Do **not** advance into the test-architecture stage. The stage-native build flow owns that stage; the interactive skill ends at expansion.
 
 ---
 

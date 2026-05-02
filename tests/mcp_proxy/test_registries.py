@@ -271,6 +271,27 @@ def test_setup_tasks_missing_sync_manager() -> None:
     assert "gobby-tasks" not in registry_names
 
 
+def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db) -> None:
+    """The stage-native build flow no longer exposes front_half_tick."""
+    from gobby.storage.tasks import LocalTaskManager
+
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = True
+
+    manager = setup_internal_registries(
+        _config=mock_config,
+        task_manager=LocalTaskManager(temp_db),
+        sync_manager=MagicMock(),
+    )
+
+    registry = manager.get_registry("gobby-tasks-ops")
+    assert registry is not None
+
+    tool_names = [tool["name"] for tool in registry.list_tools()]
+    assert "front_half_tick" not in tool_names
+    assert "build_task" in tool_names
+
+
 def test_setup_merge_requires_both_storage_and_resolver() -> None:
     """Test merge registry requires both merge_storage and merge_resolver."""
     mock_config = MagicMock()

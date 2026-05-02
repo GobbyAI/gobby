@@ -289,6 +289,26 @@ class TestSyncBundledAgents:
             assert result["skipped"] == 1
             assert result["synced"] == 0
 
+    @pytest.mark.unit
+    def test_sync_soft_deletes_removed_bundled_agents(self, tmp_path: Path) -> None:
+        """Bundled agent rows disappear when their YAML is removed from disk."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_yaml = agents_dir / "test-agent.yaml"
+        agent_yaml.write_text(
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            agent_yaml.unlink()
+            result = sync_bundled_agents(db)
+
+        assert result["orphaned"] == 1
+        assert LocalWorkflowDefinitionManager(db).get_by_name("test-agent") is None
+
     @pytest.mark.integration
     def test_sync_with_real_bundled_agents(self, tmp_path: Path) -> None:
         """Test that sync works with the actual bundled agents directory."""
@@ -317,11 +337,11 @@ class TestSyncBundledAgents:
                 "researcher",
                 "architect",
                 "product-manager",
-                "requirements-analyst",
                 "planner",
                 "plan-adversary",
                 "test-architect",
             )
         )
+        assert "requirements-analyst" not in names
         assert "conductor" not in names
         assert "pipeline-worker" not in names

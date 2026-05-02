@@ -376,8 +376,7 @@ when:
   questions you cannot answer and escalate.
 
 The `needs_requirements:` escalation contract matches the one `planner.yaml`
-uses on the drafting side — the interactive planner and autonomous front-half
-both branch on that prefix.
+uses on the drafting side and remains stable for the stage-native planning flow.
 
 Do **not** approve a plan you do not understand. When in doubt, escalate with
 specific questions rather than manufacturing findings or rubber-stamping.

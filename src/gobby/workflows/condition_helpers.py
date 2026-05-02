@@ -110,33 +110,6 @@ def task_tree_complete(task_manager: Any, task_id: str | int | list[str | int] |
     return True
 
 
-def task_has_label_prefix(task_manager: Any, task_id: str | int | None, prefix: str) -> bool:
-    """Check if a task has any label starting with the given prefix.
-
-    Used by the block-front-half-on-interactive-lock rule to detect whether
-    a planning parent is under an interactive session-owned lock (labels of
-    the form `interactive:planning-in-progress:<session_id>`). The rule does
-    not care which session holds the lock — any lock blocks autonomous
-    front_half_tick.
-
-    Returns False on missing task_manager, missing task_id, or unresolvable
-    task — fail-open so rule evaluation never crashes on bad input.
-    """
-    if not task_id:
-        return False
-    if not task_manager:
-        return False
-
-    normalized = _normalize_task_id(task_id)
-    task = _get_task(task_manager, normalized)
-    if not task:
-        logger.debug(f"task_has_label_prefix: Task '{normalized}' not found")
-        return False
-
-    labels = getattr(task, "labels", None) or []
-    return any(isinstance(label, str) and label.startswith(prefix) for label in labels)
-
-
 def task_state_in(task_manager: Any, task_id: str | int | None, *states: str) -> bool:
     """Check whether the task's projected stage-native state is in the provided set."""
     if not task_id or not states:

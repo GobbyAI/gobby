@@ -60,7 +60,7 @@ def projected_task_state(task: Any) -> str:
     """Return the canonical workflow-facing task state."""
     if is_task_closed(task):
         return "closed"
-    if is_task_escalated(task):
+    if _task_is_escalated(task):
         return "escalated"
     return current_stage_state(task) or "ready"
 

@@ -6,7 +6,7 @@ gobby plan document. It is consumed from two places:
   - the autonomous plan-adversary.yaml agent (load_skill step before reviewing).
 
 These tests guard content drift: the review-rejection contract matches
-plan-adversary.yaml/front-half expectations, the round-scoped heading matches
+plan-adversary.yaml/stage-native planning expectations, the round-scoped heading matches
 what the interactive planner extracts from the task description, and the
 attitude-vs-quota guidance is deliberately the opposite of BMAD's "at least
 10 findings" instruction so adversary approval is a valid outcome on clean

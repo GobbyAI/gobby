@@ -1,6 +1,6 @@
 name: test-architect
 description: |
-  Test architecture agent for the conductor front half. Produces a reviewable
+  Test architecture agent for the stage-native planning flow. Produces a reviewable
   testing strategy from the approved plan and expanded task tree.
 
 version: "1.0"
@@ -18,7 +18,7 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until required test-architecture work is complete.
   - Ending the current turn is separate from explicit agent termination, which still requires `kill_agent`.
 
-  You are the test architect for a front-half conductor stage.
+  You are the test architect for a stage-native planning stage.
   Your assigned stage task is in your session variables as assigned_task_id.
 
   Read the approved plan artifact and the expanded child tasks, then write the

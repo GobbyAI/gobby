@@ -7,7 +7,6 @@ session work.
 
 Tools included:
 - Expansion: start/get/latest/resume/cancel/validate run, QA result, QA coverage, plan validation
-- Front half (1): front_half_tick
 - Affected files (4): set, get, find_overlaps, wire_from_run
 - Artifacts (5): set/get artifact pointers and append idempotent description sections
 - GitHub (2): import_github_issues, link_task_to_github_issue
@@ -24,7 +23,6 @@ from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_file
 from gobby.mcp_proxy.tools.tasks._artifacts import create_ops_artifact_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
-from gobby.mcp_proxy.tools.tasks._front_half import create_front_half_registry
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.tasks import LocalTaskManager
@@ -84,14 +82,11 @@ def create_task_ops_registry(
 
     registry = _TaskOpsToolRegistry(
         name="gobby-tasks-ops",
-        description="Task operations - expansion, front-half orchestration, affected files, GitHub, reindex",
+        description="Task operations - expansion, affected files, GitHub, reindex",
     )
 
     # Merge expansion tools
     registry.merge_from(create_expansion_registry(ctx))
-
-    # Merge front-half conductor tools
-    registry.merge_from(create_front_half_registry(ctx))
 
     # Merge ops affected files tools (set, get, find_overlaps, wire_from_run)
     registry.merge_from(create_ops_affected_files_registry(ctx))

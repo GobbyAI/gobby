@@ -8,7 +8,6 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
     is_task_complete,
-    task_has_label_prefix,
     task_needs_human_review,
     task_tree_complete,
 )
@@ -236,65 +235,3 @@ class TestTaskNeedsHumanReview:
 
     def test_no_manager_returns_false(self) -> None:
         assert task_needs_human_review(None, "#100") is False
-
-
-class TestTaskHasLabelPrefix:
-    def test_matching_label_returns_true(self, temp_db, sample_project) -> None:
-        manager = _manager(temp_db)
-        task = _task(
-            manager,
-            sample_project,
-            labels=["planning-round:1", "interactive:planning-in-progress:sess-abc"],
-        )
-
-        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is True
-
-    def test_non_matching_prefix_returns_false(self, temp_db, sample_project) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project, labels=["planning-round:1"])
-
-        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is False
-
-    def test_prefix_is_strict_startswith_not_substring(self, temp_db, sample_project) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project, labels=["prefixed-interactive:planning:x"])
-
-        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is False
-
-    def test_empty_labels_returns_false(self, temp_db, sample_project) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project, labels=[])
-
-        assert task_has_label_prefix(manager, task.id, "interactive:") is False
-
-    def test_missing_task_returns_false(self, temp_db) -> None:
-        assert task_has_label_prefix(_manager(temp_db), "#404", "interactive:") is False
-
-    def test_none_task_id_returns_false(self, temp_db) -> None:
-        assert task_has_label_prefix(_manager(temp_db), None, "interactive:") is False
-
-    def test_no_manager_returns_false(self) -> None:
-        assert task_has_label_prefix(None, "#42", "interactive:") is False
-
-    def test_int_task_id_normalizes(self, temp_db, sample_project) -> None:
-        manager = _manager(temp_db)
-        task = _task(manager, sample_project, labels=["interactive:planning-in-progress:s"])
-
-        assert (
-            task_has_label_prefix(manager, task.seq_num, "interactive:planning-in-progress:")
-            is True
-        )
-
-    def test_any_matching_label_is_enough(self, temp_db, sample_project) -> None:
-        manager = _manager(temp_db)
-        task = _task(
-            manager,
-            sample_project,
-            labels=[
-                "interactive:planning-in-progress:session-a",
-                "interactive:planning-in-progress:session-b",
-                "planning-round:2",
-            ],
-        )
-
-        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is True

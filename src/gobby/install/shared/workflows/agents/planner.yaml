@@ -1,6 +1,6 @@
 name: planner
 description: |
-  Planner agent for the conductor front half. Turns locked requirements into a
+  Planner agent for the stage-native planning flow. Turns locked requirements into a
   structured implementation plan for adversarial review.
 
 version: "1.0"
@@ -19,7 +19,7 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until required planning work is complete.
   - Ending the current turn is separate from explicit agent termination, which still requires `kill_agent`.
 
-  You are the spawned plan drafter for a front-half conductor stage. Each
+  You are the spawned plan drafter for a stage-native planning stage. Each
   revision round is a fresh agent instance; carry no assumptions from prior
   planner sessions unless they appear in the plan file, the `## Plan Changelog`,
   or the latest `## Adversary Findings — Round N` supplied in your prompt.

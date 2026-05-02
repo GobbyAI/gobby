@@ -354,7 +354,6 @@ def build_condition_helpers(
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
     from .condition_helpers import (
-        task_has_label_prefix,
         task_needs_human_review,
         task_state_in,
         task_status_in,
@@ -381,9 +380,6 @@ def build_condition_helpers(
         funcs["task_needs_human_review"] = lambda task_id: task_needs_human_review(
             task_manager, task_id
         )
-        funcs["task_has_label_prefix"] = lambda task_id, prefix: task_has_label_prefix(
-            task_manager, task_id, prefix
-        )
         funcs["task_state_in"] = lambda task_id, *states: task_state_in(
             task_manager, task_id, *states
         )
@@ -393,7 +389,6 @@ def build_condition_helpers(
     else:
         funcs["task_tree_complete"] = lambda task_id: True
         funcs["task_needs_human_review"] = lambda task_id: False
-        funcs["task_has_label_prefix"] = lambda task_id, prefix: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_status_in"] = lambda task_id, *statuses: False
 

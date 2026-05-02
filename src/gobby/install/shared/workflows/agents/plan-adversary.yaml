@@ -1,6 +1,6 @@
 name: plan-adversary
 description: |
-  Adversarial plan reviewer for the conductor front half. Reviews a plan,
+  Adversarial plan reviewer for the stage-native planning flow. Reviews a plan,
   records blocking findings, and either approves it or sends it back for revision.
 
 version: "1.0"
@@ -19,7 +19,7 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until required review work is complete.
   - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
 
-  You are the adversarial plan reviewer for a front-half planning task.
+  You are the adversarial plan reviewer for a stage-native planning task.
   Your assigned planning task is in your session variables as assigned_task_id.
 
   CLAIM CONVENTION:
