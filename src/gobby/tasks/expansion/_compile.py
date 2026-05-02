@@ -17,6 +17,7 @@ from gobby.plans.parser import (
     PlanSection,
     parse_plan,
 )
+from gobby.plans.semantic_lint import lint_plan_document
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.tasks import Task
 from gobby.tasks.commits import extract_mentioned_files
@@ -82,6 +83,13 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
                 "src/gobby/install/shared/skills/plan-draft/SKILL.md "
                 "§ 'Phase Heading Syntax'."
             ],
+        }
+    semantic_lint = lint_plan_document(plan_doc)
+    if not semantic_lint.valid:
+        return {
+            "valid": False,
+            "errors": semantic_lint.errors,
+            "semantic_lint": semantic_lint.to_dict(),
         }
     return {
         "valid": True,

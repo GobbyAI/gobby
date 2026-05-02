@@ -158,6 +158,15 @@ example `A7.4.1`, `A7.4.2`, and `A7.4.3`. Plan-adversary qualitatively rejects
 deliverables with fewer acceptance items than table data rows. This rule closes
 the missing-section failure mode from #12725.
 
+### Whole-Plan Sweep After Findings
+
+After any adversary finding, fix the cited instance and then sweep the whole
+plan for the same finding class before resubmitting. If one missing `Target:`
+file is found, scan every deliverable for body paths and acceptance `file:` /
+`test:` refs missing from its Target/Targets inventory. If one missing consumer
+file is found, use code-index usages/blast-radius for the changed symbol or
+file and add all direct consumer files that the deliverable owns.
+
 ---
 
 ## Plan Structure

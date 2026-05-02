@@ -106,6 +106,7 @@ def create_spawn_agent_registry(
     db: DatabaseProtocol | None = None,
     completion_registry: Any | None = None,
     daemon_config: Any | None = None,
+    code_index: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create a spawn_agent tool registry with the unified spawn_agent tool.
@@ -325,6 +326,7 @@ def create_spawn_agent_registry(
             session_manager=session_manager,
             db=db,
             daemon_config=daemon_config,
+            code_index=code_index,
         )
 
         # Auto-subscribe parent session + lineage to agent completion events

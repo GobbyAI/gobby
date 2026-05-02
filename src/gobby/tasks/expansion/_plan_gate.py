@@ -29,6 +29,7 @@ def validate_plan_for_agent_spawn(
     agent_name: str | None,
     task_id: str | None,
     task_manager: Any | None,
+    code_index: Any | None = None,
 ) -> dict[str, Any] | None:
     """Validate a planning agent's plan artifact before spawn.
 
@@ -60,11 +61,26 @@ def validate_plan_for_agent_spawn(
     if not plan_path.is_absolute():
         plan_path = Path.cwd() / plan_path
 
+    from gobby.plans.consumer_sweep import run_consumer_sweep
+    from gobby.plans.parser import PlanParseError, parse_plan
     from gobby.tasks.expansion._compile import validate_plan_file
 
     result = validate_plan_file(None, plan_path)
     if result.get("valid"):
-        return None
+        task = _safe_get_task(task_manager, task_id)
+        project_id = _task_project_id(task)
+        try:
+            plan_doc = parse_plan(plan_path, parse_mode="draft")
+        except (OSError, PlanParseError):
+            return None
+        sweep = run_consumer_sweep(plan_doc, project_id=project_id, code_index=code_index)
+        if sweep.valid:
+            return None
+        result = {
+            "valid": False,
+            "errors": sweep.errors,
+            "consumer_sweep": sweep.to_dict(),
+        }
 
     errors = result.get("errors", [])
     error_summary = "; ".join(errors) if errors else "Plan validation failed"
@@ -74,12 +90,17 @@ def validate_plan_for_agent_spawn(
         task_id,
         error_summary,
     )
-    return {
+    payload = {
         "success": False,
         "error": f"PlanValidationError: {error_summary}",
         "plan_file_path": str(plan_path),
         "validator_errors": list(errors),
     }
+    if "semantic_lint" in result:
+        payload["semantic_lint"] = result["semantic_lint"]
+    if "consumer_sweep" in result:
+        payload["consumer_sweep"] = result["consumer_sweep"]
+    return payload
 
 
 def _safe_get_artifacts(task_manager: Any, task_id: str) -> Any | None:
@@ -91,3 +112,24 @@ def _safe_get_artifacts(task_manager: Any, task_id: str) -> Any | None:
     except Exception as exc:
         logger.debug("Failed to load task artifacts for %s: %s", task_id, exc)
         return None
+
+
+def _safe_get_task(task_manager: Any, task_id: str) -> Any | None:
+    getter = getattr(task_manager, "get_task", None)
+    if getter is None:
+        return None
+    try:
+        return getter(task_id)
+    except Exception as exc:
+        logger.debug("Failed to load task %s for plan validation gate: %s", task_id, exc)
+        return None
+
+
+def _task_project_id(task: Any | None) -> str | None:
+    if task is None:
+        return None
+    if isinstance(task, dict):
+        value = task.get("project_id")
+    else:
+        value = getattr(task, "project_id", None)
+    return str(value) if value else None

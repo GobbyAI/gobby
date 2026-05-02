@@ -29,6 +29,8 @@ def _write_plan(root: Path) -> Path:
             ### 1.1 Work [category: docs]
             `kind: deliverable`
 
+            Target: `docs/demo.md`
+
             Body.
 
             **Acceptance:**
@@ -168,6 +170,8 @@ async def test_validate_plan_rejects_plan_with_old_phase_form(
             ### 1.1 Work [category: docs]
             `kind: deliverable`
 
+            Target: `docs/demo.md`
+
             Body.
 
             **Acceptance:**
@@ -182,3 +186,19 @@ async def test_validate_plan_rejects_plan_with_old_phase_form(
 
     assert result["valid"] is False
     assert any("phase sections" in err for err in result["errors"])
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_returns_semantic_lint_errors(
+    temp_db: LocalDatabase, tmp_path: Path
+) -> None:
+    plan_path = _write_plan(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(text.replace("Target: `docs/demo.md`\n\n", ""), encoding="utf-8")
+    registry = create_plan_registry(temp_db, default_project_id="project-1")
+
+    result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+
+    assert result["valid"] is False
+    assert any("target-coverage" in error for error in result["errors"])
+    assert result["semantic_lint"]["valid"] is False

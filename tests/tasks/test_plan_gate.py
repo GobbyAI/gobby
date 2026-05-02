@@ -9,6 +9,7 @@ artifact is recorded.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,8 @@ def _write_broken_plan(path: Path) -> Path:
 ### 1.1 Foundation [category: code]
 `kind: deliverable`
 
+Target: `src/foo.py`
+
 Implement.
 
 **Acceptance:**
@@ -57,6 +60,8 @@ def _write_clean_plan(path: Path) -> Path:
 ### 1.1 Foundation [category: code]
 `kind: deliverable`
 
+Target: `src/foo.py`
+
 Implement.
 
 **Acceptance:**
@@ -67,11 +72,73 @@ Implement.
     return path
 
 
+def _write_symbol_change_plan(path: Path) -> Path:
+    path.write_text(
+        """> **Plan ID:** symbol-change
+
+# Symbol Change
+
+## P1: Setup
+`kind: framing`
+
+### 1.1 Rename Service [category: code]
+`kind: deliverable`
+
+Target: `src/service.py`
+
+Rename symbol: `app.service.do_work`.
+
+**Acceptance:**
+- 1.1.1 - Service symbol changes. symbol: `app.service.do_work`.
+- 1.1.2 - Service file changes. file: `src/service.py`.
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+class _IndexedStorage:
+    def get_project_stats(self, project_id: str) -> object | None:
+        return object() if project_id == "project-1" else None
+
+    def search_symbols_by_name(
+        self,
+        query: str,
+        project_id: str,
+        kind: str | None = None,
+        file_path: str | None = None,
+        limit: int = 50,
+    ) -> tuple[SimpleNamespace, ...]:
+        del kind, file_path, limit
+        if project_id != "project-1" or query != "app.service.do_work":
+            return ()
+        return (
+            SimpleNamespace(
+                id="sym-do-work",
+                name="do_work",
+                qualified_name="app.service.do_work",
+                file_path="src/service.py",
+            ),
+        )
+
+    def find_direct_callers(
+        self,
+        project_id: str,
+        symbol_ids: tuple[str, ...],
+        callee_names: tuple[str, ...],
+    ) -> list[dict[str, str]]:
+        del callee_names
+        if project_id == "project-1" and "sym-do-work" in symbol_ids:
+            return [{"file_path": "src/api.py"}]
+        return []
+
+
 def _make_task_manager_with_artifact(plan_file_path: str | None) -> MagicMock:
     artifacts = MagicMock()
     artifacts.plan_file_path = plan_file_path
     manager = MagicMock()
     manager.get_artifacts = MagicMock(return_value=artifacts)
+    manager.get_task = MagicMock(return_value=SimpleNamespace(project_id="project-1"))
     return manager
 
 
@@ -167,3 +234,21 @@ def test_artifact_lookup_failure_passes_through(tmp_path: Path) -> None:
     result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
 
     assert result is None
+
+
+def test_plan_adversary_spawn_blocks_on_consumer_sweep(tmp_path: Path) -> None:
+    plan = _write_symbol_change_plan(tmp_path / "symbol.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+    code_index = SimpleNamespace(storage=_IndexedStorage(), graph=object())
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary",
+        task_id="t1",
+        task_manager=manager,
+        code_index=code_index,
+    )
+
+    assert result is not None
+    assert result["success"] is False
+    assert "consumer-sweep" in result["error"]
+    assert result["consumer_sweep"]["valid"] is False

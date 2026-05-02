@@ -1,6 +1,7 @@
 """Tests for run-oriented task expansion MCP tools."""
 
 import asyncio
+import textwrap
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -114,7 +115,48 @@ def _compiled_spec() -> dict:
     }
 
 
+def _write_plan_missing_target(tmp_path) -> str:
+    path = tmp_path / "plan.md"
+    path.write_text(
+        textwrap.dedent(
+            """
+            > **Plan ID:** missing-target
+
+            # Missing Target
+
+            ## P1: Work
+            `kind: framing`
+
+            ### 1.1 Work [category: code]
+            `kind: deliverable`
+
+            Update implementation.
+
+            **Acceptance:**
+            - 1.1.1 - Implementation exists. file: `src/app.py`.
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 class TestExpansionRuns:
+    @pytest.mark.asyncio
+    async def test_validate_plan_file_returns_semantic_lint_errors(
+        self,
+        expansion_registry,
+        tmp_path,
+    ) -> None:
+        result = await expansion_registry.call(
+            "validate_plan_file",
+            {"plan_file": _write_plan_missing_target(tmp_path)},
+        )
+
+        assert result["valid"] is False
+        assert any("target-coverage" in error for error in result["errors"])
+        assert result["semantic_lint"]["valid"] is False
+
     @pytest.mark.asyncio
     async def test_start_expansion_run_creates_run(
         self,

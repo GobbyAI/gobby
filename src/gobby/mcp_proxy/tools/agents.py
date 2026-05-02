@@ -191,6 +191,7 @@ def create_agents_registry(
     # Legacy parameter — ignored, kept for caller compatibility during migration
     running_registry: Any | None = None,
     daemon_config: Any | None = None,
+    code_index: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.
@@ -843,6 +844,7 @@ def create_agents_registry(
         db=db,
         completion_registry=completion_registry,
         daemon_config=daemon_config,
+        code_index=code_index,
     )
 
     # Merge spawn_agent tools into agents registry

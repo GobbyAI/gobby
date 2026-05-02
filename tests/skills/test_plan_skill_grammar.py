@@ -62,7 +62,7 @@ def test_kind_enum_documented() -> None:
 def test_acceptance_item_shape_documented() -> None:
     body = PLAN_DRAFT.read_text(encoding="utf-8")
     assert "**Acceptance:**" in body
-    assert "dotted suffix" in body
+    assert "appending `.<n>`" in body
     for artifact_kind in ("file", "symbol", "test", "behavior"):
         assert f"`{artifact_kind}`" in body
 

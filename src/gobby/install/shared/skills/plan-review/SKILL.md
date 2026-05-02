@@ -49,6 +49,12 @@ surfacing a contract violation the planner gate missed — or one the parser
 cannot detect mechanically (table-row decomposition, traceability gaps) —
 cite the exact rejection cause from the table.
 
+The planner-side gate also runs deterministic semantic lint before adversary
+spawn. `target-coverage` and index-proven `consumer-sweep` failures are
+mechanical validator failures, not qualitative review findings. If one appears
+in your prompt or task history, require the planner to sweep the whole plan for
+that same failure class before resubmission.
+
 Canonical heading regex:
 
 ```regex

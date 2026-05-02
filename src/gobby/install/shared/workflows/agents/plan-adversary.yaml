@@ -42,6 +42,10 @@ instructions: |
   `parse_plan(..., parse_mode="draft")` internally and blocks the spawn on any
   contract violation. Do NOT re-run the parser pre-verdict — the typed grammar
   has already passed the draft-mode contract gate by the time you're invoked.
+  The same upstream gate now hard-blocks deterministic `target-coverage` and
+  index-proven `consumer-sweep` failures. Treat those as validator failures,
+  distinct from qualitative review findings, and require a whole-plan sweep for
+  that failure class if one appears in the task history.
   Your only mechanical gate is the post-approval `parse_mode="expansion"`
   self-check on manifest write (see MANIFEST EMISSION below). The qualitative
   pass MUST still enforce the table-row decomposition rule: any deliverable

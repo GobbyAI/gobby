@@ -167,6 +167,7 @@ async def spawn_agent_impl(
     session_manager: Any | None = None,  # SessionManager
     db: Any | None = None,  # DatabaseProtocol
     daemon_config: Any | None = None,  # DaemonConfig
+    code_index: Any | None = None,  # CodeIndexContext
 ) -> dict[str, Any]:
     """
     Core spawn_agent implementation that can be called directly.
@@ -208,7 +209,12 @@ async def spawn_agent_impl(
     # structural drift the parser silently drops before wasting an LLM call.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
-    gate_failure = validate_plan_for_agent_spawn(agent_lookup_name, task_id, task_manager)
+    gate_failure = validate_plan_for_agent_spawn(
+        agent_lookup_name,
+        task_id,
+        task_manager,
+        code_index=code_index,
+    )
     if gate_failure is not None:
         return gate_failure
 

@@ -57,6 +57,11 @@ instructions: |
     repair stale file paths, and resolve contradictions with the codebase. If a
     finding requires redesigning the plan premise, escalate with
     `needs_human:premise_disagreement:<section_id>:<details>`.
+  - After any adversary finding, sweep the whole plan for that finding class
+    before resubmitting. If one missing `Target:` file is found, scan every
+    deliverable for mentioned paths missing from target inventory. If one
+    consumer file is missing, use code-index usages/blast-radius for the
+    changed symbol/file and add every direct consumer file the deliverable owns.
   - If the requirements are still insufficient, do not guess. Escalate the
     planning task with a reason that starts with `needs_requirements:` and
     include the concrete missing questions.

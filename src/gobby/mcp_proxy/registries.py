@@ -70,6 +70,7 @@ def setup_internal_registries(
     transcript_reader: Any | None = None,
     communications_manager: Any | None = None,
     web_chat_session_registry: Any | None = None,
+    code_index: Any | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -248,6 +249,7 @@ def setup_internal_registries(
             completion_registry=completion_registry,
             lifecycle_monitor=agent_lifecycle_monitor,
             daemon_config=_config,
+            code_index=code_index,
         )
 
         # Add inter-agent messaging tools if dependencies are available
