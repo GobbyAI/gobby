@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 
+from gobby.code_index.storage import CodeIndexStorage
+from gobby.plans.consumer_sweep import run_consumer_sweep
 from gobby.plans.parser import PlanParseError, parse_plan
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
+from gobby.tasks.expansion._compile import validate_plan_file
 
 from .utils import resolve_project_ref
 
 _ROOT_TASK_REF_RE = re.compile(r"^\s*root_task_ref\s*:\s*(?P<value>.+?)\s*$")
+
+
+@dataclass(frozen=True)
+class _CliCodeIndexContext:
+    storage: CodeIndexStorage
 
 
 @click.group("plans")
@@ -109,6 +118,32 @@ def register_plan_command(
     click.echo(f"Registered {record.plan_id} ({record.state})")
 
 
+@plans.command("validate")
+@click.argument("plan_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--project", "-p", "project_ref", help="Project context for code-index checks.")
+def validate_plan_command(plan_file: Path, project_ref: str | None) -> None:
+    """Validate a plan file, including semantic and consumer-sweep lint."""
+
+    result = _validate_plan_for_cli(plan_file, project_ref)
+    if not result["valid"]:
+        for error in result.get("errors", []):
+            click.echo(f"Error: {error}", err=True)
+        raise click.ClickException("Plan validation failed")
+
+    click.echo(f"Plan: {result['path']}")
+    click.echo(f"Phases: {result['phase_count']}")
+    for phase_num, title in result["phases"].items():
+        click.echo(f"  {phase_num}: {title}")
+
+    sweep = result.get("consumer_sweep")
+    if isinstance(sweep, dict):
+        if sweep.get("skipped"):
+            reason = sweep.get("skip_reason") or "not available"
+            click.echo(f"Consumer sweep: skipped ({reason})")
+        else:
+            click.echo("Consumer sweep: passed")
+
+
 @plans.command("archive")
 @click.argument("plan_id")
 @click.option("--reason")
@@ -147,6 +182,37 @@ def _open_db() -> LocalDatabase:
     if db.migrations_needed():
         run_migrations(db)
     return db
+
+
+def _validate_plan_for_cli(plan_file: Path, project_ref: str | None) -> dict[str, Any]:
+    plan_path = plan_file if plan_file.is_absolute() else Path.cwd() / plan_file
+    result = validate_plan_file(None, plan_path)
+    if not result.get("valid"):
+        return result
+
+    project_id = resolve_project_ref(project_ref)
+    try:
+        plan_doc = parse_plan(plan_path, parse_mode="draft")
+    except (OSError, PlanParseError) as exc:
+        return {"valid": False, "errors": [f"Plan file is not contract-conforming: {exc}"]}
+
+    db: LocalDatabase | None = None
+    code_index: _CliCodeIndexContext | None = None
+    if project_id:
+        db = _open_db()
+        code_index = _CliCodeIndexContext(CodeIndexStorage(db))
+
+    try:
+        sweep = run_consumer_sweep(plan_doc, project_id=project_id, code_index=code_index)
+    finally:
+        if db is not None:
+            db.close()
+
+    result["consumer_sweep"] = sweep.to_dict()
+    if not sweep.valid:
+        result["valid"] = False
+        result["errors"] = [*result.get("errors", []), *sweep.errors]
+    return result
 
 
 def _project_id(project: str | None, *, required: bool = False) -> str | None:
