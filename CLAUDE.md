@@ -12,7 +12,7 @@ These are enforced by hooks, rules and workflows.
 4. **Validation runs when closing with a commit. If a commit is done, validation must run.** `skip_validation` is silently stripped when commits are attached.
 5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
 6. **NEVER stop while you have a claimed task in progress.** Your stop hook is blocked while you have a claimed task. Task must be closed before stopping. If you claim a task, you finish a task.
-7. **NEVER mark a task as needs_review if you don't genuinely need the user to review your work.** Do not use it as a workaround to not committing/closing. Escalate to the user if you are genuinely stuck or need guidance.
+7. **NEVER escalate a task unless you need the user to review your work or are instructed to by your agent skill, workflow, or pipeline.** Do not use it as a workaround to not committing/closing. Otherwise only escalate to the user if you are genuinely stuck or need guidance.
 8. **You found it, you own it.** Every error, test failure, lint warning, or type error you encounter is yours to fix — even if it's pre-existing, even if it's unrelated to your task. Fix it before closing your task. The only exception is something that genuinely requires multi-session architectural planning; even then, investigate thoroughly and attempt the fix before filing a task to defer it.
 9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
 10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, you *MUST* voice your concerns and provide alternative solutions.
@@ -30,7 +30,7 @@ Do NOT try to call one step through another (e.g., don't use call_tool to invoke
 
 ## DO NOT RUN THE FULL PYTEST SUITE
 
-The repo has over 11,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+The repo has over 14,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
 
 ## Plan Mode
 
