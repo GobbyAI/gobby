@@ -17,9 +17,14 @@ _PATH_TOKEN_RE = re.compile(
     r"(?<![\w.-])"
     r"(?P<path>(?:\.?[A-Za-z0-9_-]+/)+[A-Za-z0-9_.@+-]+"
     r"|[A-Za-z0-9_.@+-]+\.(?:py|md|yaml|yml|toml|json|jsonl|txt|ts|tsx|js|jsx|css|html|sql|sh|rs|go))"
+    r"(?![\w.-])"
 )
 _ARTIFACT_REF_RE = re.compile(
-    r"\b(?:file|test|behavior)\s*:\s*(?:`(?P<ticked>[^`]+)`|(?P<bare>[^\s,.;)]+))",
+    r"\b(?:file|behavior)\s*:\s*(?:`(?P<ticked>[^`]+)`|(?P<bare>[^\s,.;)]+))",
+    re.IGNORECASE,
+)
+_BODY_PATH_INTENT_RE = re.compile(
+    r"\b(add|create|delete|edit|extract|implement|modify|move|refactor|remove|rename|replace|split|touch|update)\b",
     re.IGNORECASE,
 )
 _TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
@@ -230,7 +235,7 @@ def normalize_file_path(value: str) -> str | None:
 def _lint_target_coverage(plan_doc: PlanDocument, section: PlanSection) -> list[SemanticLintIssue]:
     targets = collect_target_inventory(plan_doc, section)
     mentioned = _mentioned_paths(plan_doc, section)
-    missing = sorted(path for path in mentioned if path not in targets)
+    missing = sorted(path for path in mentioned if not _path_covered_by_targets(path, targets))
     if not missing:
         return []
     return [
@@ -255,10 +260,10 @@ def _mentioned_paths(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
     for line in section_body_lines(plan_doc, section, before_acceptance=True):
         if _TARGET_LINE_RE.match(line):
             continue
-        paths.update(find_file_paths_in_text(line))
+        paths.update(_find_change_intent_file_paths(line))
 
     for item in section.acceptance_items:
-        if item.artifact_kind in {ArtifactKind.file, ArtifactKind.test, ArtifactKind.behavior}:
+        if item.artifact_kind in {ArtifactKind.file, ArtifactKind.behavior}:
             normalized = normalize_file_path(item.artifact_ref)
             if normalized is not None:
                 paths.add(normalized)
@@ -268,6 +273,31 @@ def _mentioned_paths(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
             if normalized is not None:
                 paths.add(normalized)
     return paths
+
+
+def _find_change_intent_file_paths(text: str) -> set[str]:
+    found: set[str] = set()
+    for match in _BACKTICK_RE.finditer(text):
+        if not _BODY_PATH_INTENT_RE.search(text[: match.start()]):
+            continue
+        normalized = normalize_file_path(match.group(1))
+        if normalized is not None:
+            found.add(normalized)
+    for match in _PATH_TOKEN_RE.finditer(text):
+        if not _BODY_PATH_INTENT_RE.search(text[: match.start()]):
+            continue
+        normalized = normalize_file_path(match.group("path"))
+        if normalized is not None:
+            found.add(normalized)
+    return found
+
+
+def _path_covered_by_targets(path: str, targets: frozenset[str]) -> bool:
+    if path in targets:
+        return True
+    if "/" in path:
+        return False
+    return any(target.rsplit("/", 1)[-1] == path for target in targets)
 
 
 def _lint_table_row_decomposition(

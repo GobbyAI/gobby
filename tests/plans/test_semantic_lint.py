@@ -77,7 +77,7 @@ def test_missing_body_path_fails(tmp_path: Path) -> None:
     assert any("src/other.py" in error for error in errors)
 
 
-def test_missing_acceptance_file_and_test_paths_fail(tmp_path: Path) -> None:
+def test_acceptance_test_paths_do_not_require_targets(tmp_path: Path) -> None:
     errors = _lint(
         tmp_path,
         """
@@ -91,7 +91,72 @@ def test_missing_acceptance_file_and_test_paths_fail(tmp_path: Path) -> None:
         """,
     )
 
-    assert any("tests/test_app.py" in error for error in errors)
+    assert errors == []
+
+
+def test_acceptance_file_paths_still_require_targets(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Update app behavior.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        - 1.1.2 - Helper exists. file: `src/helper.py`.
+        """,
+    )
+
+    assert any("src/helper.py" in error for error in errors)
+
+
+def test_body_context_paths_do_not_require_targets(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Read `src/context.py` for the current schema shape, then update the target file.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        """,
+    )
+
+    assert errors == []
+
+
+def test_basename_mentions_are_covered_by_full_target_paths(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/gobby/install/shared/registry/stages.yaml`
+
+        Update `stages.yaml` with the new stage row.
+
+        **Acceptance:**
+        - 1.1.1 - Registry changes. file: `src/gobby/install/shared/registry/stages.yaml`.
+        """,
+    )
+
+    assert errors == []
+
+
+def test_dotted_symbols_do_not_emit_fake_path_tokens(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Update hashing via hashlib.sha256 without changing imports.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        """,
+    )
+
+    assert not any("hashlib.sh" in error for error in errors)
 
 
 def test_multiple_targets_entries_parse(tmp_path: Path) -> None:
