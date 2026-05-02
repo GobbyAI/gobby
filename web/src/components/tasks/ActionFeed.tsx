@@ -3,10 +3,6 @@ import { RiskDot } from './RiskBadges'
 import { classifyRisk, type RiskLevel } from './riskUtils'
 import { relativeTime } from '../../utils/formatTime'
 
-// =============================================================================
-// Types
-// =============================================================================
-
 interface SessionMessage {
   tool_name: string | null
   tool_input: string | null
@@ -26,15 +22,24 @@ interface ActionEntry {
   riskLevel: RiskLevel
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
+const ROOT_CLS = 'flex max-h-[280px] flex-col gap-0.5 overflow-y-auto'
+const STATE_CLS = 'py-2 text-[length:var(--text-sm)] text-[var(--text-muted)]'
+const ITEM_CLS =
+  'flex w-full cursor-pointer flex-wrap items-center gap-1.5 rounded border-none bg-transparent px-2 py-[5px] text-left text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+const ITEM_ERROR_CLS = 'text-[var(--color-error)]'
+const DOT_CLS = 'h-1.5 w-1.5 shrink-0 rounded-full'
+const DOT_SUCCESS_CLS = 'bg-[var(--color-success-foreground)]'
+const DOT_ERROR_CLS = 'bg-[var(--color-error)]'
+const DESC_CLS = 'min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap'
+const TIME_CLS =
+  'whitespace-nowrap font-[inherit] text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+const RESULT_CLS =
+  'mt-0.5 w-full whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-muted)]'
 
 function getBaseUrl(): string {
   return ''
 }
 
-/** Generate human-readable description from tool name and input */
 function describeAction(toolName: string, inputStr: string | null): string {
   const DESCRIPTIONS: Record<string, string> = {
     read_file: 'Read file',
@@ -71,7 +76,6 @@ function describeAction(toolName: string, inputStr: string | null): string {
   return base
 }
 
-/** Truncate result to a preview */
 function previewResult(resultStr: string | null): string | null {
   if (!resultStr) return null
   try {
@@ -83,7 +87,6 @@ function previewResult(resultStr: string | null): string | null {
   }
 }
 
-/** Check if a tool result indicates an error using JSON parsing with string fallback. */
 function isErrorResult(resultStr: string | null): boolean {
   if (!resultStr) return false
   try {
@@ -109,10 +112,6 @@ function toActions(messages: SessionMessage[]): ActionEntry[] {
       riskLevel: classifyRisk(m.tool_name!, m.tool_input),
     }))
 }
-
-// =============================================================================
-// ActionFeed
-// =============================================================================
 
 interface ActionFeedProps {
   sessionId: string | null
@@ -166,25 +165,25 @@ export function ActionFeed({ sessionId }: ActionFeedProps) {
   }
 
   if (!sessionId) return null
-  if (isLoading) return <div className="action-feed-loading">Loading actions...</div>
-  if (error) return <div className="action-feed-error">{error}</div>
-  if (actions.length === 0) return <div className="action-feed-empty">No tool calls recorded</div>
+  if (isLoading) return <div className={STATE_CLS}>Loading actions...</div>
+  if (error) return <div className={STATE_CLS}>{error}</div>
+  if (actions.length === 0) return <div className={STATE_CLS}>No tool calls recorded</div>
 
   return (
-    <div className="action-feed">
+    <div className={ROOT_CLS}>
       {actions.map((action, i) => (
         <button
           key={`${action.timestamp}-${i}`}
-          className={`action-feed-item ${action.success ? '' : 'action-feed-item--error'}`}
+          className={action.success ? ITEM_CLS : `${ITEM_CLS} ${ITEM_ERROR_CLS}`}
           onClick={() => action.resultPreview && toggle(i)}
           aria-expanded={action.resultPreview ? expanded.has(i) : undefined}
         >
-          <span className={`action-feed-dot ${action.success ? 'action-feed-dot--success' : 'action-feed-dot--error'}`} />
-          <span className="action-feed-desc">{action.description}</span>
+          <span className={`${DOT_CLS} ${action.success ? DOT_SUCCESS_CLS : DOT_ERROR_CLS}`} />
+          <span className={DESC_CLS}>{action.description}</span>
           <RiskDot level={action.riskLevel} />
-          <span className="action-feed-time">{relativeTime(action.timestamp)}</span>
+          <span className={TIME_CLS}>{relativeTime(action.timestamp)}</span>
           {expanded.has(i) && action.resultPreview && (
-            <span className="action-feed-result">{action.resultPreview}</span>
+            <span className={RESULT_CLS}>{action.resultPreview}</span>
           )}
         </button>
       ))}

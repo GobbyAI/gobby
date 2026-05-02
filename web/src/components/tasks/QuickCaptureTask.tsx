@@ -7,6 +7,24 @@ interface QuickCaptureTaskProps {
 
 const TYPE_OPTIONS = ['task', 'bug', 'feature', 'epic', 'chore']
 
+const BACKDROP_CLS = 'fixed inset-0 z-[1000] bg-[var(--surface-scrim)]'
+const MODAL_CLS =
+  'fixed left-1/2 top-[20%] z-[1001] w-[480px] max-w-[90vw] -translate-x-1/2 rounded-[12px] border border-[var(--border)] bg-[var(--bg-secondary)] p-4 shadow-[var(--shadow-xl)]'
+const FORM_CLS = 'flex flex-col gap-[10px]'
+const INPUT_CLS =
+  'box-border w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-[10px] font-[var(--font-sans)] text-[length:var(--text-base)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]'
+const ROW_CLS = 'flex items-center justify-between gap-[10px]'
+const TYPES_CLS = 'flex gap-1'
+const TYPE_BTN_CLS =
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[10px] py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)]'
+const TYPE_BTN_ACTIVE_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent)] hover:text-[var(--accent-foreground)]'
+const SUBMIT_CLS =
+  'cursor-pointer rounded-md border-none bg-[var(--accent)] px-4 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50'
+const HINT_CLS = 'text-center text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const KBD_CLS =
+  'inline-block rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-[5px] py-[1px] font-[inherit] text-[length:var(--text-2xs)]'
+
 function getBaseUrl(): string {
   return ''
 }
@@ -17,12 +35,10 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
   const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Auto-focus title input when opened
   useEffect(() => {
     if (isOpen) {
       setTitle('')
       setTaskType('task')
-      // Delay focus slightly so the element is rendered
       requestAnimationFrame(() => inputRef.current?.focus())
     }
   }, [isOpen])
@@ -53,7 +69,6 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
     onClose()
   }, [title, taskType, submitting, onClose])
 
-  // Close on Escape
   useEffect(() => {
     if (!isOpen) return
     const handleKey = (e: KeyboardEvent) => {
@@ -70,25 +85,25 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
 
   return (
     <>
-      <div className="quick-capture-backdrop" onClick={onClose} />
-      <div className="quick-capture-modal">
-        <form className="quick-capture-form" onSubmit={handleSubmit}>
+      <div className={BACKDROP_CLS} onClick={onClose} />
+      <div className={MODAL_CLS}>
+        <form className={FORM_CLS} onSubmit={handleSubmit}>
           <input
             ref={inputRef}
             type="text"
-            className="quick-capture-input"
+            className={INPUT_CLS}
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="Task title..."
             required
           />
-          <div className="quick-capture-row">
-            <div className="quick-capture-types">
+          <div className={ROW_CLS}>
+            <div className={TYPES_CLS}>
               {TYPE_OPTIONS.map(t => (
                 <button
                   key={t}
                   type="button"
-                  className={`quick-capture-type-btn ${taskType === t ? 'active' : ''}`}
+                  className={taskType === t ? `${TYPE_BTN_CLS} ${TYPE_BTN_ACTIVE_CLS}` : TYPE_BTN_CLS}
                   onClick={() => setTaskType(t)}
                 >
                   {t}
@@ -97,14 +112,14 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
             </div>
             <button
               type="submit"
-              className="quick-capture-submit"
+              className={SUBMIT_CLS}
               disabled={!title.trim() || submitting}
             >
               {submitting ? 'Creating...' : 'Create'}
             </button>
           </div>
-          <div className="quick-capture-hint">
-            <kbd>Enter</kbd> to create &middot; <kbd>Esc</kbd> to cancel
+          <div className={HINT_CLS}>
+            <kbd className={KBD_CLS}>Enter</kbd> to create &middot; <kbd className={KBD_CLS}>Esc</kbd> to cancel
           </div>
         </form>
       </div>
