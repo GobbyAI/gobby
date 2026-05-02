@@ -28,7 +28,7 @@ def test_registry_populated_after_startup(mock_config) -> None:
         )
         sync.return_value = StageRegistrySyncResult(
             upserted=0,
-            skipped=14,
+            skipped=11,
             bundled_hash="hash",
         )
 

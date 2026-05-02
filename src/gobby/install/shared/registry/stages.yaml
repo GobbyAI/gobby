@@ -32,12 +32,6 @@ stages:
     category: design
     default_agent: planner
     position_hint: 50
-  - name: adversarial_review
-    display_label: Adversarial Review
-    description: Plan-adversary critiques the plan and emits the typed manifest.
-    category: verification
-    default_agent: plan-adversary
-    position_hint: 60
   - name: test_arch
     display_label: Test Architecture
     description: Test scaffolding and contract test design before expansion.
@@ -49,24 +43,12 @@ stages:
     description: Decompose plan into TDD-wrapped leaf tasks.
     category: implementation
     position_hint: 80
-  - name: expansion_qa
-    display_label: Expansion QA
-    description: Verify the expanded tree against the plan's coverage contract.
-    category: verification
-    default_agent: expansion-qa
-    position_hint: 90
   - name: development
     display_label: Development
     description: Leaf implementation work; drives TDD sandwiches.
     category: implementation
     default_agent: backend-developer
     position_hint: 100
-  - name: code_review_qa
-    display_label: Code Review QA
-    description: Automated and human code review of leaf changes.
-    category: verification
-    default_agent: qa-reviewer
-    position_hint: 110
   - name: holistic_qa
     display_label: Holistic QA
     description: Whole-epic review after every leaf is parked.

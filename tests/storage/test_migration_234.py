@@ -27,16 +27,14 @@ CANONICAL_STAGE_NAMES = [
     "architecture",
     "prd",
     "planning",
-    "adversarial_review",
     "test_arch",
     "expansion",
-    "expansion_qa",
     "development",
-    "code_review_qa",
     "holistic_qa",
     "pr",
     "merge",
 ]
+DROPPED_STAGE_NAMES = {"adversarial_review", "expansion_qa", "code_review_qa"}
 DISCOVERY_DEFAULT_AGENTS = {
     "ideation": "analyst",
     "research": "researcher",
@@ -233,12 +231,13 @@ def test_registry_seeded_inline(tmp_path: Path) -> None:
     }
 
 
-def test_bundled_stages_yaml_present_with_14_stages() -> None:
+def test_bundled_stages_yaml_present_with_11_stages() -> None:
     payload = _yaml_payload()
 
     assert payload["version"] == 1
     stages = payload["stages"]
     assert [stage["name"] for stage in stages] == CANONICAL_STAGE_NAMES
+    assert {stage["name"] for stage in stages}.isdisjoint(DROPPED_STAGE_NAMES)
 
     required = {"name", "display_label", "description", "category", "position_hint"}
     for stage in stages:

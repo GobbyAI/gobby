@@ -18,16 +18,14 @@ CANONICAL_STAGE_NAMES = [
     "architecture",
     "prd",
     "planning",
-    "adversarial_review",
     "test_arch",
     "expansion",
-    "expansion_qa",
     "development",
-    "code_review_qa",
     "holistic_qa",
     "pr",
     "merge",
 ]
+DROPPED_STAGE_NAMES = {"adversarial_review", "expansion_qa", "code_review_qa"}
 
 
 def _loader_types():
@@ -51,6 +49,7 @@ def test_parses_bundled_yaml() -> None:
     entries = StageRegistryLoader().load()
 
     assert [entry.name for entry in entries] == CANONICAL_STAGE_NAMES
+    assert {entry.name for entry in entries}.isdisjoint(DROPPED_STAGE_NAMES)
     assert entries[0].display_label == "Ideation"
     assert entries[0].default_agent == "analyst"
     assert entries[-1].name == "merge"
