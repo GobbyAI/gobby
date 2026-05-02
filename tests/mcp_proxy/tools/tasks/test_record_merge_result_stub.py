@@ -1,4 +1,4 @@
-"""Phase 2 red contracts for record_merge_result MCP placement."""
+"""Contracts for record_merge_result MCP placement."""
 
 from __future__ import annotations
 
@@ -12,12 +12,8 @@ register_contract_tests(
     globals(),
     {
         "test_absent_from_gobby_tasks": "record_merge_result is absent from the read server",
-        "test_registered_with_stub_on_gobby_tasks_ops": (
-            "record_merge_result is registered on gobby-tasks-ops during Phase 2"
-        ),
-        "test_stub_raises_notimplemented": (
-            "Phase 2 record_merge_result stub raises NotImplementedError until Phase 4.2"
-        ),
+        "test_registered_on_gobby_tasks_ops": "record_merge_result is registered on gobby-tasks-ops",
+        "test_record_merge_result_is_implemented": "record_merge_result is implemented",
     },
     required_symbols=("gobby.mcp_proxy.tools.tasks._stage_ops:create_stage_ops_registry",),
 )

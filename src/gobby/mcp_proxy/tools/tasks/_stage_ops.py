@@ -339,12 +339,46 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         report_ref: str | None = None,
         failure_reason: str | None = None,
     ) -> dict[str, Any]:
-        """Phase 2 registration stub for merge result recording."""
-        raise NotImplementedError("wired in Phase 4.2")
+        """Persist merge outcome and advance or fail the merge stage."""
+        resolved_id = _resolve_task(ctx, task_id)
+        if failure_reason is not None:
+            if merge_sha is not None:
+                raise ValueError("merge_sha cannot be provided with failure_reason")
+            _write_artifacts(
+                ctx,
+                resolved_id,
+                {"merge_campaign_report": report_ref or failure_reason},
+            )
+            stage = ctx.task_manager.stage_states.fail_stage(
+                resolved_id,
+                "merge",
+                reason=failure_reason,
+                needs_human=False,
+                by_session_id=_session_id(ctx),
+            )
+            return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+
+        if not merge_sha:
+            raise ValueError("merge_sha is required when recording a successful merge")
+        _write_artifacts(
+            ctx,
+            resolved_id,
+            {
+                "merge_commit_sha": merge_sha,
+                "merge_campaign_report": report_ref or "",
+            },
+        )
+        stage = ctx.task_manager.stage_states.complete_stage(
+            resolved_id,
+            "merge",
+            by_session_id=_session_id(ctx),
+            commit_sha=merge_sha,
+        )
+        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
 
     registry.register(
         name="record_merge_result",
-        description="Persist merge outcome and advance/fail merge stage. Stubbed until Phase 4.2.",
+        description="Persist merge outcome and advance/fail merge stage.",
         input_schema={
             "type": "object",
             "properties": {

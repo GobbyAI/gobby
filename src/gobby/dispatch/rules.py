@@ -173,7 +173,14 @@ def expansion_work_rule(task: object, context: object) -> Action | None:
 
 
 def expansion_review_rule(task: object, context: object) -> Action | None:
-    return _spawn_configured_stage_agent(task, context, "expansion", "needs_review")
+    stage = _matching_current_stage(task, context, "expansion", "needs_review")
+    if stage is None:
+        return None
+    if _stage_review_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason="expansion_max_review_rounds")
+    if not _has_agent(context, "expansion-qa"):
+        return EscalateAction(task_id=_task_id(task), reason="expansion_no_reviewer")
+    return _spawn_stage_agent(task, stage, context, "expansion-qa")
 
 
 def expansion_advance_rule(task: object, context: object) -> Action | None:
@@ -198,6 +205,8 @@ def development_review_rule(task: object, context: object) -> Action | None:
         return None
     if _stage_review_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="development_max_review_rounds")
+    if not _has_agent(context, "qa-reviewer"):
+        return EscalateAction(task_id=_task_id(task), reason="development_no_reviewer")
     return _spawn_stage_agent(task, stage, context, "qa-reviewer")
 
 
@@ -208,13 +217,22 @@ def development_advance_rule(task: object, context: object) -> Action | None:
 
 
 def holistic_qa_rule(task: object, context: object) -> Action | None:
-    return _spawn_configured_stage_agent(task, context, "holistic_qa", "in_progress")
+    stage = _matching_current_stage(task, context, "holistic_qa", "in_progress")
+    if stage is None:
+        return None
+    if _stage_work_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_max_work_attempts")
+    if not _has_agent(context, "holistic-reviewer"):
+        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
+    return _spawn_stage_agent(task, stage, context, "holistic-reviewer")
 
 
 def holistic_qa_review_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "holistic_qa", "needs_review")
     if stage is None or _stage_review_exhausted(stage, context):
         return None
+    if not _has_agent(context, "holistic-reviewer"):
+        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
     return _spawn_stage_agent(task, stage, context, "holistic-reviewer", resume_review=True)
 
 
@@ -242,7 +260,12 @@ def pr_advance_rule(task: object, context: object) -> Action | None:
 
 
 def merge_rule(task: object, context: object) -> Action | None:
-    return _spawn_configured_stage_agent(task, context, "merge", "in_progress")
+    stage = _matching_current_stage(task, context, "merge", "in_progress")
+    if stage is None:
+        return None
+    if not _has_merge_agent(context):
+        return EscalateAction(task_id=_task_id(task), reason="merge_no_agent")
+    return _spawn_stage_agent(task, stage, context, "merge-orchestrator")
 
 
 def task_has_stage(task: object, stage_name: str) -> bool:
@@ -271,14 +294,19 @@ def stage_agent_available(context: object, stage_name: str) -> bool:
     agent_slug = _default_agent(_field(context, "current_stage"), context, stage_name)
     if not agent_slug:
         return False
-    agent = _agent_definition(context, str(agent_slug))
-    if agent is None:
-        return True
-    return bool(_field(agent, "enabled", True))
+    return _has_agent(context, str(agent_slug))
 
 
 def _has_pr_agent(context: object) -> bool:
-    agent = _agent_definition(context, "pr-agent")
+    return _has_agent(context, "pr-agent")
+
+
+def _has_merge_agent(context: object) -> bool:
+    return _has_agent(context, "merge-orchestrator")
+
+
+def _has_agent(context: object, agent_slug: str) -> bool:
+    agent = _agent_definition(context, agent_slug)
     if agent is None:
         return False
     return bool(_field(agent, "enabled", True))

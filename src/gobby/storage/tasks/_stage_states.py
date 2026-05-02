@@ -158,7 +158,7 @@ def _close_task_in_txn(
 ) -> None:
     """Close a task inside the caller's already-open transaction."""
 
-    if not force:
+    if not force and not cascade_descendants:
         open_children = conn.execute(
             "SELECT id, title FROM tasks WHERE parent_task_id = ? AND closed_at IS NULL",
             (task_id,),
