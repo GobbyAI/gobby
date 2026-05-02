@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/Dialog'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import '../workflows/LaunchAgentModal.css'
 
 interface AgentPickerDropdownProps {
   definitions: AgentDefInfo[]
@@ -14,6 +13,33 @@ interface AgentPickerDropdownProps {
   onSelect: (agentName: string) => void
   onClose: () => void
 }
+
+const SCOPE_TOGGLE_CLS = 'flex gap-0.5 border-b border-[var(--border)] px-2 py-1.5'
+
+const SCOPE_BTN_BASE_CLS =
+  'flex-1 cursor-pointer rounded border-0 bg-transparent px-2 py-1 text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
+
+const SCOPE_BTN_ACTIVE_CLS =
+  'bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]'
+
+const LIST_CLS = 'max-h-60 overflow-y-auto py-1'
+
+const EMPTY_CLS = 'px-4 py-3 text-center text-[length:var(--text-sm)] text-[var(--text-muted)]'
+
+const ITEM_BASE_CLS =
+  'flex w-full cursor-pointer flex-col border-0 bg-transparent px-3 py-2 text-left text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+
+const ITEM_ACTIVE_CLS =
+  'bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)]'
+
+const ITEM_MAIN_CLS = 'flex items-center gap-2'
+
+const ITEM_NAME_CLS = 'text-[length:var(--text-md)] font-medium'
+
+const ITEM_CHECK_CLS = 'ml-auto text-[length:calc(var(--font-size-base)*0.7)] text-[var(--accent)]'
+
+const ITEM_DESC_CLS =
+  'mt-0.5 ml-[1.375rem] overflow-hidden text-ellipsis whitespace-nowrap text-[length:calc(var(--font-size-base)*0.7)] leading-[1.3] text-[var(--text-muted)]'
 
 export function AgentPickerDropdown({
   globalDefs,
@@ -43,26 +69,26 @@ export function AgentPickerDropdown({
         </div>
         <DialogDescription className="sr-only">Choose a persona for this conversation</DialogDescription>
         {showScopeToggle && (
-          <div className="agent-picker-scope-toggle">
+          <div className={SCOPE_TOGGLE_CLS}>
             <button
               type="button"
-              className={`agent-picker-scope-btn ${scope === 'global' ? 'active' : ''}`}
+              className={`${SCOPE_BTN_BASE_CLS} ${scope === 'global' ? SCOPE_BTN_ACTIVE_CLS : ''}`}
               onClick={() => setScope('global')}
             >
               Global
             </button>
             <button
               type="button"
-              className={`agent-picker-scope-btn ${scope === 'project' ? 'active' : ''}`}
+              className={`${SCOPE_BTN_BASE_CLS} ${scope === 'project' ? SCOPE_BTN_ACTIVE_CLS : ''}`}
               onClick={() => setScope('project')}
             >
               Project
             </button>
           </div>
         )}
-        <div className="agent-picker-list">
+        <div className={LIST_CLS}>
           {visibleDefs.length === 0 && (
-            <div className="agent-picker-empty">No agents</div>
+            <div className={EMPTY_CLS}>No agents</div>
           )}
           {visibleDefs.map((d) => {
             const name = d.definition.name
@@ -71,19 +97,19 @@ export function AgentPickerDropdown({
               <button
                 key={`${d.source}-${name}`}
                 type="button"
-                className={`agent-picker-item ${isActive ? 'agent-picker-item--active' : ''}`}
+                className={`${ITEM_BASE_CLS} ${isActive ? ITEM_ACTIVE_CLS : ''}`}
                 onClick={() => {
                   onSelect(name)
                   onClose()
                 }}
               >
-                <div className="agent-picker-item-main">
+                <div className={ITEM_MAIN_CLS}>
                   <AgentIcon />
-                  <span className="agent-picker-item-name">{name}</span>
-                  {isActive && <span className="agent-picker-item-check">&#10003;</span>}
+                  <span className={ITEM_NAME_CLS}>{name}</span>
+                  {isActive && <span className={ITEM_CHECK_CLS}>&#10003;</span>}
                 </div>
                 {d.definition.description && (
-                  <div className="agent-picker-item-desc">{d.definition.description}</div>
+                  <div className={ITEM_DESC_CLS}>{d.definition.description}</div>
                 )}
               </button>
             )

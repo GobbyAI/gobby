@@ -37,6 +37,21 @@ function RocketIcon() {
 // Toolbar
 // ---------------------------------------------------------------------------
 
+const TOOLBAR_CLS =
+  'fixed bottom-6 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2.5 shadow-[var(--shadow-lg)] max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:translate-x-0 max-md:justify-center max-md:rounded-none max-md:border-x-0 max-md:border-b-0 max-md:py-3'
+
+const COUNT_CLS =
+  'text-[length:calc(var(--font-size-base)*0.85)] font-medium whitespace-nowrap text-[var(--text-primary)]'
+
+const BTN_BASE_CLS =
+  'flex cursor-pointer items-center gap-[0.3rem] min-h-11 rounded-md border border-[var(--border)] px-3 py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium transition-all duration-150'
+
+const BTN_PRIMARY_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]'
+
+const BTN_DEFAULT_CLS =
+  'bg-[var(--bg-tertiary)] text-[var(--text-primary)] hover:bg-[var(--bg-primary)]'
+
 export function TaskSelectionToolbar({
   selectedTasks,
   projectId,
@@ -49,18 +64,18 @@ export function TaskSelectionToolbar({
 
   return (
     <>
-      <div className="task-selection-toolbar">
-        <span className="task-selection-count">
+      <div className={TOOLBAR_CLS}>
+        <span className={COUNT_CLS}>
           {selectedTasks.length} task{selectedTasks.length !== 1 ? 's' : ''} selected
         </span>
         <button
-          className="task-selection-btn task-selection-btn--primary"
+          className={`${BTN_BASE_CLS} ${BTN_PRIMARY_CLS}`}
           onClick={() => setShowBatchDialog(true)}
         >
           <RocketIcon /> Launch Agents
         </button>
         <button
-          className="task-selection-btn task-selection-btn--default"
+          className={`${BTN_BASE_CLS} ${BTN_DEFAULT_CLS}`}
           onClick={onClearSelection}
         >
           Clear
