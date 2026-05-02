@@ -87,9 +87,15 @@ describe("serializeSessionsFilters", () => {
   it("serializes modes as repeated mode= entries", () => {
     const f = defaultSessionsFilters();
     f.modes.add("interactive");
-    f.modes.add("auto");
     const params = serializeSessionsFilters(f, NOW);
-    expect(params.getAll("mode").sort()).toEqual(["auto", "interactive"]);
+    expect(params.getAll("mode")).toEqual(["interactive"]);
+  });
+
+  it("omits mode entries when all modes are selected", () => {
+    const f = defaultSessionsFilters();
+    f.modes = new Set(["interactive", "auto"]);
+    const params = serializeSessionsFilters(f, NOW);
+    expect(params.has("mode")).toBe(false);
   });
 
   it("serializes providers as repeated sources= entries", () => {
@@ -215,10 +221,10 @@ describe("matchesSessionsFilters", () => {
     expect(matchesSessionsFilters(makeSession({ source: "claude" }), f, NOW)).toBe(false);
   });
 
-  it("model excludes sessions with null model when models filter is set", () => {
+  it("model filters are ignored after model selection was removed", () => {
     const f = defaultSessionsFilters();
     f.models.add("claude-opus-4-7");
-    expect(matchesSessionsFilters(makeSession({ model: null }), f, NOW)).toBe(false);
+    expect(matchesSessionsFilters(makeSession({ model: null }), f, NOW)).toBe(true);
   });
 
   it("session ref range filters by seq_num", () => {
@@ -293,6 +299,7 @@ describe("storage round-trip", () => {
     const original = defaultSessionsFilters();
     original.modes.add("auto");
     original.providers.add("codex");
+    original.models.add("legacy-hidden-model");
     original.taskRefMin = 10;
     original.taskRefRoles = new Set(["claimed", "created"]);
     original.datePreset = "30d";
@@ -302,6 +309,7 @@ describe("storage round-trip", () => {
 
     expect([...restored.modes]).toEqual(["auto"]);
     expect([...restored.providers]).toEqual(["codex"]);
+    expect([...restored.models]).toEqual([]);
     expect(restored.taskRefMin).toBe(10);
     expect([...restored.taskRefRoles].sort()).toEqual(["claimed", "created"]);
     expect(restored.datePreset).toBe("30d");

@@ -238,27 +238,6 @@ function entryTimestamp(entry: WatchingSessionEntry): number {
   return raw ? new Date(raw).getTime() : 0;
 }
 
-function modelOptionsForProviders(
-  providerCatalog: readonly ProviderModelEntry[],
-  providers: ReadonlySet<string>,
-): string[] {
-  const sourceProviders =
-    providers.size > 0
-      ? providerCatalog.filter((provider) => providers.has(provider.provider))
-      : providerCatalog.filter((provider) => provider.available);
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const provider of sourceProviders) {
-    for (const model of provider.models) {
-      if (!seen.has(model.value)) {
-        seen.add(model.value);
-        out.push(model.value);
-      }
-    }
-  }
-  return out;
-}
-
 export const SessionsTab = memo(function SessionsTab({
   sessions = [],
   isLoadingSessions = false,
@@ -310,8 +289,8 @@ export const SessionsTab = memo(function SessionsTab({
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([]);
 
-  // Provider/Model catalog drives the dropdown's checkbox lists. One fetch
-  // per mount; the helper has its own 5-minute cache.
+  // Provider catalog drives the dropdown's checkbox list. One fetch per mount;
+  // the helper has its own 5-minute cache.
   useEffect(() => {
     let cancelled = false;
     fetchProviderModelCatalog()
@@ -327,18 +306,13 @@ export const SessionsTab = memo(function SessionsTab({
   }, []);
 
   const providerOptions = useMemo(
-    () => providerCatalog.filter((p) => p.available).map((p) => p.provider),
-    [providerCatalog],
-  );
-
-  const modelOptions = useMemo(() => {
-    // When providers are selected, intersect with their model lists.
-    // Otherwise, show all available models across providers.
-    return modelOptionsForProviders(providerCatalog, filters.providers);
-  }, [providerCatalog, filters.providers]);
-
-  const getModelOptionsForProviders = useCallback(
-    (providers: ReadonlySet<string>) => modelOptionsForProviders(providerCatalog, providers),
+    () =>
+      providerCatalog
+        .filter((p) => p.available)
+        .map((p) => p.provider)
+        .sort((left, right) =>
+          left.localeCompare(right, undefined, { sensitivity: "base" }),
+        ),
     [providerCatalog],
   );
 
@@ -854,8 +828,6 @@ export const SessionsTab = memo(function SessionsTab({
             filters={filters}
             onChange={setFilters}
             providerOptions={providerOptions}
-            modelOptions={modelOptions}
-            getModelOptionsForProviders={getModelOptionsForProviders}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}

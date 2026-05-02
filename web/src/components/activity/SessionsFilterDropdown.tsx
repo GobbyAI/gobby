@@ -14,15 +14,14 @@ interface SessionsFilterDropdownProps {
   filters: SessionsFilters;
   onChange: (next: SessionsFilters) => void;
   providerOptions: readonly string[];
-  modelOptions: readonly string[];
-  getModelOptionsForProviders: (providers: ReadonlySet<string>) => readonly string[];
   onClose: () => void;
 }
 
 const MODE_OPTIONS: ReadonlyArray<{ value: SessionMode; label: string }> = [
   { value: "interactive", label: "Interactive" },
-  { value: "auto", label: "Auto" },
+  { value: "auto", label: "Autonomous" },
 ];
+const MODE_VALUES = MODE_OPTIONS.map((option) => option.value);
 
 const TASK_REF_ROLES: ReadonlyArray<{ value: TaskRefRole; label: string }> = [
   { value: "claimed", label: "Claimed" },
@@ -47,6 +46,24 @@ function toggleSetMember<T>(set: Set<T>, value: T): Set<T> {
   return next;
 }
 
+function isInclusiveSetChecked<T>(set: Set<T>, value: T): boolean {
+  return set.size === 0 || set.has(value);
+}
+
+function toggleInclusiveSetMember<T>(
+  set: Set<T>,
+  value: T,
+  allValues: readonly T[],
+): Set<T> {
+  const next = set.size === 0 ? new Set(allValues) : new Set(set);
+  if (next.has(value)) {
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
+  return next.size === 0 || next.size === allValues.length ? new Set<T>() : next;
+}
+
 function parseRefBound(raw: string): number | null {
   if (raw.trim() === "") return null;
   const parsed = Number.parseInt(raw, 10);
@@ -57,12 +74,13 @@ export function SessionsFilterDropdown({
   filters,
   onChange,
   providerOptions,
-  modelOptions,
-  getModelOptionsForProviders,
   onClose,
 }: SessionsFilterDropdownProps) {
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
   const panelRef = useRef<HTMLDivElement>(null);
+  const sortedProviderOptions = [...providerOptions].sort((left, right) =>
+    left.localeCompare(right, undefined, { sensitivity: "base" }),
+  );
 
   // Escape closes the dropdown — small a11y improvement over the Tasks-tab
   // pattern, which leaves Esc as a browser-default no-op.
@@ -79,20 +97,17 @@ export function SessionsFilterDropdown({
   }
 
   function handleModeToggle(mode: SessionMode): void {
-    update({ modes: toggleSetMember(filters.modes, mode) });
+    update({ modes: toggleInclusiveSetMember(filters.modes, mode, MODE_VALUES) });
   }
 
   function handleProviderToggle(provider: string): void {
-    const nextProviders = toggleSetMember(filters.providers, provider);
-    const modelOptionsForNext = new Set(getModelOptionsForProviders(nextProviders));
-    const nextModels = new Set<string>(
-      [...filters.models].filter((m) => modelOptionsForNext.has(m)),
-    );
-    update({ providers: nextProviders, models: nextModels });
-  }
-
-  function handleModelToggle(model: string): void {
-    update({ models: toggleSetMember(filters.models, model) });
+    update({
+      providers: toggleInclusiveSetMember(
+        filters.providers,
+        provider,
+        sortedProviderOptions,
+      ),
+    });
   }
 
   function handleTaskRefRoleToggle(role: TaskRefRole): void {
@@ -132,7 +147,7 @@ export function SessionsFilterDropdown({
               <CheckboxRow
                 key={option.value}
                 label={option.label}
-                checked={filters.modes.has(option.value)}
+                checked={isInclusiveSetChecked(filters.modes, option.value)}
                 onToggle={() => handleModeToggle(option.value)}
               />
             ))}
@@ -140,35 +155,17 @@ export function SessionsFilterDropdown({
 
           {/* Provider */}
           <Section label="Provider">
-            {providerOptions.length === 0 ? (
+            {sortedProviderOptions.length === 0 ? (
               <EmptyHint>No providers available</EmptyHint>
             ) : (
-              providerOptions.map((provider) => (
+              sortedProviderOptions.map((provider) => (
                 <CheckboxRow
                   key={provider}
                   label={provider}
-                  checked={filters.providers.has(provider)}
+                  checked={isInclusiveSetChecked(filters.providers, provider)}
                   onToggle={() => handleProviderToggle(provider)}
                 />
               ))
-            )}
-          </Section>
-
-          {/* Model */}
-          <Section label="Model">
-            {modelOptions.length === 0 ? (
-              <EmptyHint>No models for current providers</EmptyHint>
-            ) : (
-              <div className="max-h-32 overflow-y-auto flex flex-col gap-0.5">
-                {modelOptions.map((model) => (
-                  <CheckboxRow
-                    key={model}
-                    label={model}
-                    checked={filters.models.has(model)}
-                    onToggle={() => handleModelToggle(model)}
-                  />
-                ))}
-              </div>
             )}
           </Section>
 

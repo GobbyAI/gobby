@@ -7,21 +7,14 @@ import { defaultSessionsFilters, type SessionsFilters } from "../sessionsFilters
 function renderDropdown(overrides: Partial<{
   filters: SessionsFilters;
   providerOptions: readonly string[];
-  modelOptions: readonly string[];
-  getModelOptionsForProviders: (providers: ReadonlySet<string>) => readonly string[];
 }> = {}) {
   const onChange = vi.fn();
   const onClose = vi.fn();
-  const modelOptions = overrides.modelOptions ?? ["claude-opus-4-7", "gpt-5"];
   const view = render(
     <SessionsFilterDropdown
       filters={overrides.filters ?? defaultSessionsFilters()}
       onChange={onChange}
       providerOptions={overrides.providerOptions ?? ["claude", "codex", "gemini"]}
-      modelOptions={modelOptions}
-      getModelOptionsForProviders={
-        overrides.getModelOptionsForProviders ?? (() => modelOptions)
-      }
       onClose={onClose}
     />,
   );
@@ -29,61 +22,51 @@ function renderDropdown(overrides: Partial<{
 }
 
 describe("SessionsFilterDropdown", () => {
-  it("renders all six section labels", () => {
+  it("renders the filter section labels without model selection", () => {
     renderDropdown();
     expect(screen.getByText("Mode")).toBeInTheDocument();
     expect(screen.getByText("Provider")).toBeInTheDocument();
-    expect(screen.getByText("Model")).toBeInTheDocument();
+    expect(screen.queryByText("Model")).toBeNull();
     expect(screen.getByText("Session ref")).toBeInTheDocument();
     expect(screen.getByText("Task ref")).toBeInTheDocument();
     expect(screen.getByText("Date range")).toBeInTheDocument();
   });
 
-  it("toggling a Mode checkbox emits onChange with the updated set", () => {
+  it("renders default include-all modes as checked with the Autonomous label", () => {
+    renderDropdown();
+    expect(screen.getByLabelText("Interactive")).toBeChecked();
+    expect(screen.getByLabelText("Autonomous")).toBeChecked();
+    expect(screen.queryByLabelText("Auto")).toBeNull();
+  });
+
+  it("toggling a default Mode checkbox emits the remaining narrowed mode set", () => {
     const { onChange } = renderDropdown();
     fireEvent.click(screen.getByLabelText("Interactive"));
     expect(onChange).toHaveBeenCalledTimes(1);
     const next: SessionsFilters = onChange.mock.calls[0][0];
-    expect([...next.modes]).toEqual(["interactive"]);
+    expect([...next.modes]).toEqual(["auto"]);
   });
 
-  it("toggling a Provider emits onChange and prunes models not in option list", () => {
-    const filters = defaultSessionsFilters();
-    filters.models.add("phantom-model");
-    filters.models.add("gpt-5");
-    const { onChange } = renderDropdown({
-      filters,
-      modelOptions: ["gpt-5"],
-      getModelOptionsForProviders: () => ["gpt-5"],
-    });
+  it("renders providers alphabetically and checked by default", () => {
+    renderDropdown({ providerOptions: ["gemini", "claude", "codex"] });
 
+    const section = screen.getByText("Provider").parentElement!;
+    expect(
+      within(section)
+        .getAllByRole("checkbox")
+        .map((checkbox) => checkbox.nextSibling?.textContent),
+    ).toEqual(["claude", "codex", "gemini"]);
+    expect(screen.getByLabelText("claude")).toBeChecked();
+    expect(screen.getByLabelText("codex")).toBeChecked();
+    expect(screen.getByLabelText("gemini")).toBeChecked();
+  });
+
+  it("toggling a default Provider emits the remaining narrowed provider set", () => {
+    const { onChange } = renderDropdown();
     fireEvent.click(screen.getByLabelText("codex"));
 
     const next: SessionsFilters = onChange.mock.calls[0][0];
-    expect([...next.providers]).toEqual(["codex"]);
-    // phantom-model is not in modelOptions and is dropped
-    expect([...next.models].sort()).toEqual(["gpt-5"]);
-  });
-
-  it("toggling a Provider prunes models using the next provider selection", () => {
-    const filters = defaultSessionsFilters();
-    filters.providers.add("claude");
-    filters.providers.add("codex");
-    filters.models.add("sonnet");
-    filters.models.add("gpt-5.5");
-    const { onChange } = renderDropdown({
-      filters,
-      providerOptions: ["claude", "codex"],
-      modelOptions: ["sonnet", "gpt-5.5"],
-      getModelOptionsForProviders: (providers) =>
-        providers.has("claude") ? ["sonnet", "gpt-5.5"] : ["gpt-5.5"],
-    });
-
-    fireEvent.click(screen.getByLabelText("claude"));
-
-    const next: SessionsFilters = onChange.mock.calls[0][0];
-    expect([...next.providers]).toEqual(["codex"]);
-    expect([...next.models]).toEqual(["gpt-5.5"]);
+    expect([...next.providers]).toEqual(["claude", "gemini"]);
   });
 
   it("typing a session ref bound emits onChange with the parsed integer", () => {
@@ -173,11 +156,6 @@ describe("SessionsFilterDropdown", () => {
     expect(screen.getByText("No providers available")).toBeInTheDocument();
   });
 
-  it("renders empty hint when no models match selected providers", () => {
-    renderDropdown({ modelOptions: [] });
-    expect(screen.getByText("No models for current providers")).toBeInTheDocument();
-  });
-
   it("custom date inputs surface filter values when present", () => {
     const filters = defaultSessionsFilters();
     filters.datePreset = "custom";
@@ -195,6 +173,6 @@ describe("SessionsFilterDropdown", () => {
     // sections that have similar text.
     const section = screen.getByText("Mode").parentElement!;
     expect(within(section).getByText("Interactive")).toBeInTheDocument();
-    expect(within(section).getByText("Auto")).toBeInTheDocument();
+    expect(within(section).getByText("Autonomous")).toBeInTheDocument();
   });
 });

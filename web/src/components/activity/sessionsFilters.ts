@@ -56,9 +56,8 @@ export function defaultSessionsFilters(): SessionsFilters {
 /** Number of filter sections that have a non-default value. Drives the badge on the funnel button. */
 export function countActiveFilters(filters: SessionsFilters): number {
   let count = 0;
-  if (filters.modes.size > 0) count += 1;
+  if (filters.modes.size > 0 && filters.modes.size < ALL_MODES.length) count += 1;
   if (filters.providers.size > 0) count += 1;
-  if (filters.models.size > 0) count += 1;
   if (filters.sessionRefMin !== null || filters.sessionRefMax !== null) count += 1;
   if (filters.taskRefMin !== null || filters.taskRefMax !== null) count += 1;
   if (filters.datePreset !== "all") count += 1;
@@ -142,10 +141,6 @@ export function matchesSessionsFilters(
     return false;
   }
 
-  if (filters.models.size > 0) {
-    if (session.model === null || !filters.models.has(session.model)) return false;
-  }
-
   if (filters.sessionRefMin !== null) {
     if (session.seq_num === null || session.seq_num < filters.sessionRefMin) return false;
   }
@@ -188,9 +183,10 @@ export function matchesSessionsFilters(
  */
 export function serializeSessionsFilters(filters: SessionsFilters, now: Date): URLSearchParams {
   const params = new URLSearchParams();
-  for (const mode of filters.modes) params.append("mode", mode);
+  if (filters.modes.size > 0 && filters.modes.size < ALL_MODES.length) {
+    for (const mode of filters.modes) params.append("mode", mode);
+  }
   for (const provider of filters.providers) params.append("sources", provider);
-  for (const model of filters.models) params.append("model", model);
   for (const status of filters.statuses) params.append("status_in", status);
   if (filters.sessionRefMin !== null) params.set("session_seq_min", String(filters.sessionRefMin));
   if (filters.sessionRefMax !== null) params.set("session_seq_max", String(filters.sessionRefMax));
@@ -225,7 +221,7 @@ export function serializeForStorage(filters: SessionsFilters): StoredSessionsFil
   return {
     modes: [...filters.modes],
     providers: [...filters.providers],
-    models: [...filters.models],
+    models: [],
     sessionRefMin: filters.sessionRefMin,
     sessionRefMax: filters.sessionRefMax,
     taskRefMin: filters.taskRefMin,
@@ -257,9 +253,7 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
     const providers = new Set<string>(
       Array.isArray(parsed.providers) ? parsed.providers.filter((p) => typeof p === "string") : [],
     );
-    const models = new Set<string>(
-      Array.isArray(parsed.models) ? parsed.models.filter((m) => typeof m === "string") : [],
-    );
+    const models = new Set<string>();
     const taskRefRoles = new Set<TaskRefRole>(
       Array.isArray(parsed.taskRefRoles)
         ? parsed.taskRefRoles.filter((r): r is TaskRefRole => ALL_TASK_REF_ROLES.includes(r))
