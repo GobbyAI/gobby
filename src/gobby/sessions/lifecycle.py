@@ -19,6 +19,7 @@ from typing import Any
 from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.summarize import TURN_PATTERN
+from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
@@ -400,11 +401,14 @@ class SessionLifecycleManager:
             return
 
         session = self.session_manager.get(session_id)
-        if not session or session.summary_markdown:
+        if not session or is_summary_markdown_valid(session.summary_markdown):
             return
 
-        # Only generate if there's a transcript to read
-        if not session.transcript_path:
+        digest_markdown = getattr(session, "digest_markdown", None)
+        has_digest = bool(digest_markdown and digest_markdown.strip())
+
+        # Digest-backed sessions can regenerate without a readable transcript.
+        if not has_digest and not session.transcript_path:
             return
 
         try:

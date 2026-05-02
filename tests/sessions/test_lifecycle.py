@@ -477,6 +477,24 @@ class TestGenerateSummariesIfNeeded:
         await manager._generate_summaries_if_needed("sess-1")
 
     @pytest.mark.asyncio
+    async def test_sentinel_summary_does_not_count_as_existing_summary(self, manager):
+        """Provider failure sentinels are retried instead of treated as summaries."""
+        manager.llm_service = MagicMock()
+        session = MagicMock()
+        session.summary_markdown = "Session summary generation failed: provider unavailable"
+        session.digest_markdown = "### Turn 1\nDigest source"
+        session.transcript_path = None
+        manager.session_manager.get.return_value = session
+
+        with patch(
+            "gobby.sessions.summarize.generate_session_summaries",
+            new_callable=AsyncMock,
+        ) as mock_gen:
+            await manager._generate_summaries_if_needed("sess-1")
+
+        mock_gen.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_session_no_transcript_path(self, manager):
         """Skips when session has no transcript_path."""
         manager.llm_service = MagicMock()

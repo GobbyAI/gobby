@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.sessions.summarize import _generate_full_summary, generate_session_summaries
+from gobby.sessions.summarize import (
+    TRANSCRIPT_FALLBACK_MAX_CHARS,
+    TRANSCRIPT_FALLBACK_MAX_TURNS,
+    _generate_full_summary,
+    generate_session_summaries,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -18,13 +23,14 @@ def _make_session(
     transcript_path: str | None = None,
     source: str = "claude",
     summary_markdown: str | None = None,
+    digest_markdown: str | None = None,
 ) -> MagicMock:
     session = MagicMock()
     session.id = session_id
     session.transcript_path = transcript_path
     session.source = source
     session.summary_markdown = summary_markdown
-    session.digest_markdown = None
+    session.digest_markdown = digest_markdown
     return session
 
 
@@ -242,6 +248,126 @@ class TestGenerateSessionSummaries:
         MockParser.assert_called_once_with(
             session_id="sess-droid",
             transcript_path="/tmp/droid-session.jsonl",
+        )
+
+    @pytest.mark.asyncio
+    async def test_digest_primary_context_does_not_format_full_transcript(self) -> None:
+        session = _make_session(
+            session_id="sess-digest",
+            transcript_path="/tmp/transcript.jsonl",
+            digest_markdown="### Turn 1\nDigest is the bounded source.",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = "clean"
+        session_manager = MagicMock()
+        session_manager.db = None
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "# Digest Summary"
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[{"message": {"role": "user", "content": "raw transcript"}}],
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown == "# Digest Summary"
+        assert full_error is None
+        mock_format.assert_not_called()
+        context = provider.generate_summary.await_args.args[0]
+        assert context["transcript_summary"] == "### Turn 1\nDigest is the bounded source."
+        assert context["last_messages"] == "### Turn 1\nDigest is the bounded source."
+
+    @pytest.mark.asyncio
+    async def test_missing_digest_uses_bounded_transcript_fallback(self) -> None:
+        session = _make_session(session_id="sess-fallback", transcript_path="/tmp/transcript.jsonl")
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = ""
+        session_manager = MagicMock()
+        session_manager.db = None
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "# Transcript Summary"
+        turns = [{"idx": i} for i in range(TRANSCRIPT_FALLBACK_MAX_TURNS + 20)]
+        formatted = "fallback\n" + ("x" * (TRANSCRIPT_FALLBACK_MAX_CHARS + 100))
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.sessions.transcripts.claude.ClaudeTranscriptParser") as MockParser,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch(
+                "gobby.workflows.summary_actions.format_turns_for_llm",
+                return_value=formatted,
+            ) as mock_format,
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockParser.return_value.extract_turns_since_clear.return_value = turns
+            MockParser.return_value.extract_last_messages.return_value = []
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=turns,
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown == "# Transcript Summary"
+        assert full_error is None
+        formatted_turns = mock_format.call_args.args[0]
+        assert len(formatted_turns) == TRANSCRIPT_FALLBACK_MAX_TURNS
+        context = provider.generate_summary.await_args.args[0]
+        assert len(context["transcript_summary"]) <= TRANSCRIPT_FALLBACK_MAX_CHARS + 4
+        assert context["transcript_summary"].endswith("...")
+
+    @pytest.mark.asyncio
+    async def test_provider_failure_string_is_not_persisted(self, tmp_path: Path) -> None:
+        transcript_path = _write_transcript(tmp_path)
+        sm = MagicMock()
+        sm.get.return_value = _make_session(transcript_path=transcript_path)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=("Session summary generation failed: provider unavailable", None),
+            ),
+            patch(
+                "gobby.sessions.formatting.format_handoff_as_markdown",
+                return_value="# Fallback Summary",
+            ),
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-1",
+                session_manager=sm,
+                set_handoff_ready=False,
+            )
+
+        assert result["success"] is True
+        sm.update_summary.assert_called_once_with(
+            "sess-1",
+            summary_markdown="# Fallback Summary",
         )
 
 

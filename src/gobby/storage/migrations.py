@@ -32,6 +32,9 @@ from gobby.storage.migration_helpers import (
 )
 from gobby.storage.migrations.add_cron_is_system import up as add_cron_is_system
 from gobby.storage.migrations.add_last_reviewed_plan_hash import up as add_last_reviewed_plan_hash
+from gobby.storage.migrations.clear_session_summary_sentinels import (
+    up as clear_session_summary_sentinels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +244,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         231,
         "Add system-managed marker to cron jobs",
         add_cron_is_system,
+    ),
+    (
+        233,
+        "Clear failed provider output from session summaries",
+        clear_session_summary_sentinels,
     ),
 ]
 

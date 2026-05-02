@@ -18,11 +18,15 @@ from typing import Any, Protocol
 
 import aiofiles
 
+from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
 
 TURN_PATTERN = re.compile(r"^### Turn \d+", re.MULTILINE)
+TRANSCRIPT_FALLBACK_MAX_TURNS = 80
+TRANSCRIPT_FALLBACK_MAX_CHARS = 24_000
+DIGEST_FALLBACK_MAX_CHARS = 24_000
 
 
 class SessionManagerProtocol(Protocol):
@@ -78,26 +82,28 @@ async def generate_session_summaries(
     if not session:
         return {"success": False, "error": "No session found", "session_id": session_id}
 
-    # Get transcript path
-    transcript_path = session.transcript_path
-    if not transcript_path:
-        return {
-            "success": False,
-            "error": "No transcript path for session",
-            "session_id": session_id,
-        }
-
-    path = Path(transcript_path)
-    if not path.exists():
-        return {
-            "success": False,
-            "error": "Transcript file not found",
-            "path": transcript_path,
-        }
-
-    # Read and parse transcript
+    digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
+    transcript_path = getattr(session, "transcript_path", None)
+    path = Path(transcript_path) if transcript_path else None
     source = getattr(session, "source", "claude") or "claude"
-    turns = await _read_transcript(path, source=source)
+    turns: list[dict[str, Any]] = []
+
+    if not digest_markdown:
+        if not transcript_path:
+            return {
+                "success": False,
+                "error": "No transcript path for session",
+                "session_id": session_id,
+            }
+        if path is None or not path.exists():
+            return {
+                "success": False,
+                "error": "Transcript file not found",
+                "path": transcript_path,
+            }
+
+        # Transcript summarization is the fallback for older sessions with no digest.
+        turns = await _read_transcript(path, source=source)
 
     # Analyze transcript
     from gobby.sessions.analyzer import TranscriptAnalyzer
@@ -106,7 +112,8 @@ async def generate_session_summaries(
     handoff_ctx = analyzer.extract_handoff_context(turns)
 
     # Enrich with real-time git status
-    await _enrich_git_context(handoff_ctx, path.parent)
+    cwd = path.parent if path and path.exists() else Path.cwd()
+    await _enrich_git_context(handoff_ctx, cwd)
 
     # Generate full summary
     full_markdown, full_error = await _generate_full_summary(
@@ -118,17 +125,15 @@ async def generate_session_summaries(
         session_manager=session_manager,
     )
 
-    if not full_markdown:
+    if not is_summary_markdown_valid(full_markdown):
         # Fallback to code-only renderer when LLM is unavailable
         logger.warning(
             f"Full LLM summary failed ({full_error}), falling back to code-only",
         )
-        from gobby.sessions.formatting import format_handoff_as_markdown
-
-        full_markdown = format_handoff_as_markdown(handoff_ctx)
+        full_markdown = _format_deterministic_summary(handoff_ctx, digest_markdown)
 
     # Persist to database
-    if full_markdown:
+    if is_summary_markdown_valid(full_markdown):
         await asyncio.to_thread(
             session_manager.update_summary, session_id, summary_markdown=full_markdown
         )
@@ -212,6 +217,40 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
                 except json.JSONDecodeError:
                     logger.warning(f"Skipping malformed JSONL line {idx + 1} in {path}")
     return turns
+
+
+def _summary_source_text(value: str | None) -> str:
+    """Normalize optional markdown fields for summary context decisions."""
+    return value.strip() if value and value.strip() else ""
+
+
+def _truncate_markdown(value: str, max_chars: int) -> str:
+    """Bound prompt context without splitting through the fallback plumbing."""
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars].rstrip()}\n..."
+
+
+def _format_transcript_fallback_summary(
+    turns: list[dict[str, Any]],
+    formatter: Any,
+) -> str:
+    """Format a bounded transcript fallback for sessions without digest markdown."""
+    bounded_turns = turns[-TRANSCRIPT_FALLBACK_MAX_TURNS:]
+    formatted = formatter(bounded_turns)
+    return _truncate_markdown(formatted, TRANSCRIPT_FALLBACK_MAX_CHARS)
+
+
+def _format_deterministic_summary(handoff_ctx: Any, digest_markdown: str) -> str:
+    """Build deterministic markdown when provider generation is unavailable."""
+    from gobby.sessions.formatting import format_handoff_as_markdown
+
+    base_markdown = format_handoff_as_markdown(handoff_ctx)
+    if not digest_markdown:
+        return base_markdown
+
+    digest_section = _truncate_markdown(digest_markdown, DIGEST_FALLBACK_MAX_CHARS)
+    return f"## Session Digest\n\n{digest_section}\n\n{base_markdown}".strip()
 
 
 async def _read_gemini_json_transcript(path: Path) -> list[dict[str, Any]]:
@@ -317,28 +356,6 @@ async def _generate_full_summary(
     try:
         provider = _resolve_provider(llm_service)
 
-        # Get transcript parser — use the right one for this session's source
-        parser: Any
-        if getattr(session, "source", None) == "gemini":
-            from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
-
-            parser = GeminiTranscriptParser()
-        elif getattr(session, "source", None) == "codex":
-            from gobby.sessions.transcripts.codex import CodexTranscriptParser
-
-            parser = CodexTranscriptParser()
-        elif getattr(session, "source", None) == "droid":
-            from gobby.sessions.transcripts.droid import DroidTranscriptParser
-
-            parser = DroidTranscriptParser(
-                session_id=getattr(session, "id", None),
-                transcript_path=getattr(session, "transcript_path", None),
-            )
-        else:
-            from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-
-            parser = ClaudeTranscriptParser()
-
         # Load prompt template
         prompt_template = None
         try:
@@ -360,9 +377,44 @@ async def _generate_full_summary(
             format_turns_for_llm,
         )
 
-        last_turns = parser.extract_turns_since_clear(turns)
-        last_messages = parser.extract_last_messages(turns, num_pairs=2)
-        last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
+        digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
+        first_digest_turn, recent_digest_turns = _extract_digest_turns(digest_markdown)
+        if digest_markdown:
+            transcript_summary = _truncate_markdown(
+                digest_markdown,
+                TRANSCRIPT_FALLBACK_MAX_CHARS,
+            )
+            last_messages_str = recent_digest_turns
+        else:
+            # Get transcript parser — use the right one for this session's source
+            parser: Any
+            if getattr(session, "source", None) == "gemini":
+                from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+
+                parser = GeminiTranscriptParser()
+            elif getattr(session, "source", None) == "codex":
+                from gobby.sessions.transcripts.codex import CodexTranscriptParser
+
+                parser = CodexTranscriptParser()
+            elif getattr(session, "source", None) == "droid":
+                from gobby.sessions.transcripts.droid import DroidTranscriptParser
+
+                parser = DroidTranscriptParser(
+                    session_id=getattr(session, "id", None),
+                    transcript_path=getattr(session, "transcript_path", None),
+                )
+            else:
+                from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+
+                parser = ClaudeTranscriptParser()
+
+            last_turns = parser.extract_turns_since_clear(turns)
+            transcript_summary = _format_transcript_fallback_summary(
+                last_turns,
+                format_turns_for_llm,
+            )
+            last_messages = parser.extract_last_messages(turns, num_pairs=2)
+            last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
 
         file_changes = get_file_changes()
         git_diff_summary = get_git_diff_summary()
@@ -380,10 +432,8 @@ async def _generate_full_summary(
             if resolved_db
             else ""
         )
-        first_digest_turn, recent_digest_turns = _extract_digest_turns(session.digest_markdown)
-
         context = {
-            "transcript_summary": format_turns_for_llm(last_turns),
+            "transcript_summary": transcript_summary,
             "last_messages": last_messages_str,
             "git_status": handoff_ctx.git_status or "",
             "file_changes": file_changes,
@@ -399,6 +449,8 @@ async def _generate_full_summary(
         }
 
         full_markdown = await provider.generate_summary(context, prompt_template=prompt_template)
+        if not is_summary_markdown_valid(full_markdown):
+            return None, full_markdown or "Empty session summary"
         return full_markdown, None
 
     except Exception as e:
