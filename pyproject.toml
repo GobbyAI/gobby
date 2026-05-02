@@ -198,10 +198,6 @@ disallow_any_generics = false
 ignore_missing_imports = true
 exclude = ["^build/"]
 
-[[tool.mypy.overrides]]
-module = "aiofiles.*"
-ignore_missing_imports = true
-
 [tool.bandit]
 targets = ["src"]
 exclude_dirs = ["tests", ".venv", "build", "examples"]

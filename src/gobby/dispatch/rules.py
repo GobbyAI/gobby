@@ -223,9 +223,12 @@ def holistic_qa_advance_rule(task: object, context: object) -> Action | None:
 
 
 def pr_work_rule(task: object, context: object) -> Action | None:
-    if _matching_current_stage(task, context, "pr", "in_progress") is None:
+    stage = _matching_current_stage(task, context, "pr", "in_progress")
+    if stage is None:
         return None
-    return EscalateAction(task_id=_task_id(task), reason="pr_no_agent")
+    if not _has_pr_agent(context):
+        return EscalateAction(task_id=_task_id(task), reason="pr_no_agent")
+    return _spawn_stage_agent(task, stage, context, "pr-agent")
 
 
 def pr_review_rule(task: object, context: object) -> Action | None:
@@ -271,6 +274,13 @@ def stage_agent_available(context: object, stage_name: str) -> bool:
     agent = _agent_definition(context, str(agent_slug))
     if agent is None:
         return True
+    return bool(_field(agent, "enabled", True))
+
+
+def _has_pr_agent(context: object) -> bool:
+    agent = _agent_definition(context, "pr-agent")
+    if agent is None:
+        return False
     return bool(_field(agent, "enabled", True))
 
 

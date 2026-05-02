@@ -10,7 +10,16 @@ from unittest.mock import Mock
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
+from gobby.storage.tasks import LocalTaskManager
 from tests.phase2_stage_contract_helpers import register_contract_tests
+from tests.storage.tasks._stage_test_helpers import (
+    create_task,
+    initialize_manifest,
+    set_stage_state,
+    spec,
+    stage_row,
+    task_row,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -50,6 +59,35 @@ def _patch_stage_view(monkeypatch: pytest.MonkeyPatch) -> None:
         "stage_state_operation_view",
         lambda stage: {"stage_name": stage.stage_name, "state": stage.state},
     )
+
+
+def _real_context(temp_db) -> SimpleNamespace:
+    return SimpleNamespace(
+        task_manager=LocalTaskManager(temp_db),
+        resolve_session_id=lambda session_ref: session_ref,
+    )
+
+
+def _pr_task_in_review(
+    temp_db,
+    sample_project,
+    *,
+    max_review_rounds: int | None = None,
+    review_round_count: int = 0,
+):
+    stage_kwargs = {}
+    if max_review_rounds is not None:
+        stage_kwargs["max_review_rounds"] = max_review_rounds
+    task = create_task(temp_db, sample_project, task_type="feature")
+    initialize_manifest(temp_db, task.id, [spec("pr", 1, **stage_kwargs)])
+    set_stage_state(
+        temp_db,
+        task.id,
+        "pr",
+        "needs_review",
+        review_round_count=review_round_count,
+    )
+    return task
 
 
 def test_approved_calls_approve_review_no_advance(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,6 +132,89 @@ def test_approved_writes_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
         "report_ref": "pr-review.md",
     }
     assert params[2] == "pr-review.md"
+
+
+def _assert_reject_review_for_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: str,
+) -> None:
+    _patch_stage_view(monkeypatch)
+    ctx = _context()
+
+    result = _record_pr_verdict(ctx)(
+        task_id="task-1",
+        verdict=verdict,
+        findings="missing test evidence",
+    )
+
+    assert result["stage"] == {"stage_name": "pr", "state": "ready"}
+    ctx.task_manager.stage_states.reject_review.assert_called_once_with(
+        "task-1",
+        "pr",
+        reason="missing test evidence",
+        by_session_id=None,
+        notes="missing test evidence",
+    )
+    ctx.task_manager.stage_states.approve_review.assert_not_called()
+    ctx.task_manager.stage_states.complete_stage.assert_not_called()
+
+
+def test_rejected_calls_reject_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    _assert_reject_review_for_verdict(monkeypatch, "rejected")
+
+
+def test_needs_changes_calls_reject_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    _assert_reject_review_for_verdict(monkeypatch, "needs_changes")
+
+
+def test_rejected_under_cap_returns_to_ready(temp_db, sample_project) -> None:
+    task = _pr_task_in_review(temp_db, sample_project, max_review_rounds=2)
+
+    result = _record_pr_verdict(_real_context(temp_db))(
+        task_id=task.id,
+        verdict="rejected",
+        findings="needs another pass",
+    )
+
+    row = stage_row(temp_db, task.id, "pr")
+    assert result["stage"]["state"] == "ready"
+    assert row["state"] == "ready"
+    assert row["review_round_count"] == 1
+    assert task_row(temp_db, task.id)["status"] == "open"
+
+
+def test_rejected_over_cap_escalates(temp_db, sample_project) -> None:
+    task = _pr_task_in_review(temp_db, sample_project, max_review_rounds=1)
+
+    _record_pr_verdict(_real_context(temp_db))(
+        task_id=task.id,
+        verdict="rejected",
+        findings="still blocked",
+    )
+
+    row = stage_row(temp_db, task.id, "pr")
+    assert row["state"] == "ready"
+    assert row["review_round_count"] == 1
+    assert task_row(temp_db, task.id)["status"] == "escalated"
+
+
+def test_per_stage_max_review_rounds_override_works(temp_db, sample_project) -> None:
+    task = _pr_task_in_review(
+        temp_db,
+        sample_project,
+        max_review_rounds=2,
+        review_round_count=1,
+    )
+
+    _record_pr_verdict(_real_context(temp_db))(
+        task_id=task.id,
+        verdict="needs_changes",
+        findings="second failed review",
+    )
+
+    row = stage_row(temp_db, task.id, "pr")
+    assert row["review_round_count"] == 2
+    assert task_row(temp_db, task.id)["status"] == "escalated"
 
 
 register_contract_tests(
