@@ -1,13 +1,10 @@
 import { useState, useCallback } from 'react'
 import type { GobbyTaskDetail } from '../../hooks/useTasks'
+import { cn } from '../../lib/utils'
 
 function getBaseUrl(): string {
   return ''
 }
-
-// =============================================================================
-// Types
-// =============================================================================
 
 interface ParsedOption {
   label: string
@@ -23,27 +20,48 @@ interface ParsedEscalation {
   context: string | null
 }
 
-// =============================================================================
-// Parse escalation reason into structured data
-// =============================================================================
+const CARD_CLS =
+  'my-2 flex flex-col gap-2 rounded-lg border border-[color-mix(in_srgb,var(--color-warning-foreground)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_6%,transparent)] p-[0.8rem]'
+const HEADER_CLS = 'flex items-center gap-[0.4rem]'
+const ICON_CLS = 'text-[length:calc(var(--font-size-base)*1.1)]'
+const TITLE_CLS = 'flex-1 text-[length:calc(var(--font-size-base)*0.8)] font-semibold text-[var(--color-warning-foreground)]'
+const TIME_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+const QUESTION_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] font-medium leading-[1.5] text-[var(--text-primary)]'
+const CONTEXT_CLS =
+  'rounded bg-[var(--bg-secondary)] px-2 py-[0.3rem] text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-secondary)]'
 
-/**
- * Try to extract structured options from escalation_reason.
- * Supports markdown-like format:
- *   ## Question text
- *   ### Option A
- *   Pros: x, y
- *   Cons: z
- *   ### Option B
- *   ...
- * Falls back to showing raw text if unparseable.
- */
+const OPTIONS_CLS = 'flex flex-col gap-1'
+const OPTION_CLS =
+  'flex cursor-pointer flex-col gap-[0.2rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2 text-left text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+const OPTION_SELECTED_CLS = 'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)]'
+const OPTION_HEADER_CLS = 'flex items-center gap-[0.4rem]'
+const OPTION_RADIO_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
+const OPTION_RADIO_SELECTED_CLS = 'text-[var(--accent)]'
+const OPTION_LABEL_CLS = 'flex-1 font-semibold'
+const OPTION_DESC_CLS = 'pl-[1.4rem] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)]'
+const OPTION_TRADEOFFS_CLS = 'flex flex-col gap-0.5 pl-[1.4rem] text-[length:calc(var(--font-size-base)*0.65)]'
+const PRO_CLS = 'text-[var(--color-success-foreground)]'
+const CON_CLS = 'text-[var(--color-error)]'
+
+const CONFIDENCE_CLS = 'ml-auto flex items-center gap-[0.3rem]'
+const CONFIDENCE_BAR_CLS = 'h-1 w-12 overflow-hidden rounded-[2px] bg-[var(--border)]'
+const CONFIDENCE_FILL_CLS = 'h-full rounded-[2px]'
+const CONFIDENCE_LABEL_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+
+const CUSTOM_TOGGLE_CLS =
+  'cursor-pointer border-0 bg-transparent px-0 py-[0.2rem] text-left font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--text-secondary)]'
+const CUSTOM_TOGGLE_ACTIVE_CLS = 'text-[var(--text-secondary)]'
+const CUSTOM_INPUT_CLS =
+  'resize-y rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+const ACTIONS_CLS = 'flex justify-end pt-[0.2rem]'
+const SUBMIT_CLS =
+  'flex-1 cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+
 function parseEscalation(reason: string | null): ParsedEscalation {
   if (!reason) {
     return { question: 'Agent needs your input', options: [], context: null }
   }
 
-  // Try JSON parse first (structured escalation)
   try {
     const data = JSON.parse(reason)
     if (data.question && Array.isArray(data.options)) {
@@ -63,7 +81,6 @@ function parseEscalation(reason: string | null): ParsedEscalation {
     // Not JSON
   }
 
-  // Try markdown-style parsing
   const lines = reason.split('\n')
   const question = lines[0]?.replace(/^#+\s*/, '') || 'Agent needs your input'
   const options: ParsedOption[] = []
@@ -111,30 +128,22 @@ function parseEscalation(reason: string | null): ParsedEscalation {
   }
 }
 
-// =============================================================================
-// ConfidenceBar
-// =============================================================================
-
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.min(100, Math.max(0, value))
   const color = pct >= 70 ? 'var(--color-success-foreground)' : pct >= 40 ? 'var(--color-warning-foreground)' : 'var(--color-error)'
 
   return (
-    <div className="escalation-confidence">
-      <div className="escalation-confidence-bar">
+    <div className={CONFIDENCE_CLS}>
+      <div className={CONFIDENCE_BAR_CLS}>
         <div
-          className="escalation-confidence-fill"
+          className={CONFIDENCE_FILL_CLS}
           style={{ width: `${pct}%`, background: color }}
         />
       </div>
-      <span className="escalation-confidence-label">{pct}%</span>
+      <span className={CONFIDENCE_LABEL_CLS}>{pct}%</span>
     </div>
   )
 }
-
-// =============================================================================
-// EscalationCard
-// =============================================================================
 
 interface EscalationCardProps {
   task: GobbyTaskDetail
@@ -192,12 +201,12 @@ export function EscalationCard({ task, targetStatus, onResolve }: EscalationCard
   const canSubmit = (showCustom ? customInput.trim().length > 0 : selectedOption !== null) && !isSubmitting
 
   return (
-    <div className="escalation-card">
-      <div className="escalation-card-header">
-        <span className="escalation-card-icon">{'\u26A0'}</span>
-        <span className="escalation-card-title">Agent Needs Your Decision</span>
+    <div className={CARD_CLS}>
+      <div className={HEADER_CLS}>
+        <span className={ICON_CLS}>{'⚠'}</span>
+        <span className={TITLE_CLS}>Agent Needs Your Decision</span>
         {task.escalated_at && (
-          <span className="escalation-card-time">
+          <span className={TIME_CLS}>
             {new Date(task.escalated_at).toLocaleString(undefined, {
               month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
             })}
@@ -205,44 +214,43 @@ export function EscalationCard({ task, targetStatus, onResolve }: EscalationCard
         )}
       </div>
 
-      <div className="escalation-card-question">{escalation.question}</div>
+      <div className={QUESTION_CLS}>{escalation.question}</div>
 
       {escalation.context && (
-        <div className="escalation-card-context">{escalation.context}</div>
+        <div className={CONTEXT_CLS}>{escalation.context}</div>
       )}
 
-      {/* Options */}
       {escalation.options.length > 0 && (
-        <div className="escalation-options">
+        <div className={OPTIONS_CLS}>
           {escalation.options.map((opt, i) => (
             <button
               key={i}
-              className={`escalation-option ${selectedOption === i ? 'escalation-option--selected' : ''}`}
+              className={cn(OPTION_CLS, selectedOption === i && OPTION_SELECTED_CLS)}
               onClick={() => { setSelectedOption(i); setShowCustom(false) }}
             >
-              <div className="escalation-option-header">
-                <span className="escalation-option-radio">
-                  {selectedOption === i ? '\u25C9' : '\u25CB'}
+              <div className={OPTION_HEADER_CLS}>
+                <span className={cn(OPTION_RADIO_CLS, selectedOption === i && OPTION_RADIO_SELECTED_CLS)}>
+                  {selectedOption === i ? '◉' : '○'}
                 </span>
-                <span className="escalation-option-label">{opt.label}</span>
+                <span className={OPTION_LABEL_CLS}>{opt.label}</span>
                 {opt.confidence !== undefined && <ConfidenceBar value={opt.confidence} />}
               </div>
               {opt.description && (
-                <div className="escalation-option-desc">{opt.description}</div>
+                <div className={OPTION_DESC_CLS}>{opt.description}</div>
               )}
               {(opt.pros.length > 0 || opt.cons.length > 0) && (
-                <div className="escalation-option-tradeoffs">
+                <div className={OPTION_TRADEOFFS_CLS}>
                   {opt.pros.length > 0 && (
-                    <div className="escalation-option-pros">
+                    <div>
                       {opt.pros.map((p, j) => (
-                        <span key={j} className="escalation-pro">+ {p}</span>
+                        <span key={j} className={PRO_CLS}>+ {p}</span>
                       ))}
                     </div>
                   )}
                   {opt.cons.length > 0 && (
-                    <div className="escalation-option-cons">
+                    <div>
                       {opt.cons.map((c, j) => (
-                        <span key={j} className="escalation-con">- {c}</span>
+                        <span key={j} className={CON_CLS}>- {c}</span>
                       ))}
                     </div>
                   )}
@@ -253,17 +261,16 @@ export function EscalationCard({ task, targetStatus, onResolve }: EscalationCard
         </div>
       )}
 
-      {/* Custom input toggle */}
       <button
-        className={`escalation-custom-toggle ${showCustom ? 'active' : ''}`}
+        className={cn(CUSTOM_TOGGLE_CLS, showCustom && CUSTOM_TOGGLE_ACTIVE_CLS)}
         onClick={() => { setShowCustom(!showCustom); setSelectedOption(null) }}
       >
-        {showCustom ? '\u25BE' : '\u25B8'} Provide custom response
+        {showCustom ? '▾' : '▸'} Provide custom response
       </button>
 
       {showCustom && (
         <textarea
-          className="escalation-custom-input"
+          className={CUSTOM_INPUT_CLS}
           value={customInput}
           onChange={e => setCustomInput(e.target.value)}
           placeholder="Type your decision or instructions..."
@@ -273,14 +280,13 @@ export function EscalationCard({ task, targetStatus, onResolve }: EscalationCard
         />
       )}
 
-      {/* Submit */}
-      <div className="escalation-card-actions">
+      <div className={ACTIONS_CLS}>
         <button
-          className="flex-1 cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11"
+          className={SUBMIT_CLS}
           onClick={handleResolve}
           disabled={!canSubmit}
         >
-          {isSubmitting ? 'Returning...' : '\u21A9 Return to Agent'}
+          {isSubmitting ? 'Returning...' : '↩ Return to Agent'}
         </button>
       </div>
     </div>

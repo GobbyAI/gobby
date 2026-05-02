@@ -1,8 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-
-// =============================================================================
-// Types
-// =============================================================================
+import { cn } from '../../lib/utils'
 
 interface MemoryEntry {
   id: string
@@ -14,9 +11,53 @@ interface MemoryEntry {
   tags: string[]
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
+const ROOT_CLS = 'flex flex-col gap-[0.3rem]'
+const STATE_TEXT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const COUNT_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+const LIST_CLS = 'flex max-h-80 flex-col gap-1 overflow-y-auto'
+
+const ITEM_CLS =
+  'group flex w-full cursor-pointer flex-col gap-[0.15rem] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.4rem] text-left text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--text-muted)]'
+const ITEM_PINNED_CLS =
+  'border-[color-mix(in_srgb,var(--color-warning-foreground)_25%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_3%,transparent)]'
+const ITEM_CONFIRMING_CLS =
+  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-info)_5%,transparent)]'
+
+const HEADER_CLS = 'flex items-center gap-[0.3rem] text-[length:calc(var(--font-size-base)*0.65)]'
+const ICON_CLS = 'text-[length:calc(var(--font-size-base)*0.75)]'
+const PIN_BADGE_CLS = 'text-[length:calc(var(--font-size-base)*0.6)]'
+const TYPE_CLS = 'font-[inherit] font-semibold capitalize text-[var(--text-secondary)]'
+const IMPORTANCE_CLS = 'ml-auto font-[inherit] text-[length:calc(var(--font-size-base)*0.6)]'
+const DATE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+
+const ACTIONS_CLS = 'ml-1 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100'
+const ACTION_BTN_CLS =
+  'cursor-pointer rounded-[3px] border-0 bg-transparent px-[3px] py-px text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)] opacity-60 transition-[opacity,background] duration-150 hover:bg-[var(--bg-tertiary)] hover:opacity-100'
+const ACTION_BTN_ACTIVE_CLS = 'opacity-100 text-[var(--color-warning-foreground)]'
+
+const CONTENT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-secondary)]'
+
+const TAGS_CLS = 'mt-[0.1rem] flex flex-wrap gap-[3px]'
+const TAG_CLS =
+  'rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+
+const EDIT_CLS = 'flex flex-col gap-1.5'
+const EDIT_TEXTAREA_CLS =
+  'w-full resize-y rounded border border-[var(--accent)] bg-[var(--bg-primary)] px-2 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-primary)] focus:border-[var(--accent-hover)] focus:outline-none'
+const EDIT_BUTTONS_CLS = 'flex items-center gap-1.5'
+const EDIT_SAVE_CLS =
+  'cursor-pointer rounded border-0 bg-[var(--accent)] px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.65)] text-white hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+const EDIT_CANCEL_CLS =
+  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-secondary)] pointer-coarse:min-h-11'
+const EDIT_HINT_CLS = 'ml-auto text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
+
+const CONFIRM_CLS = 'flex flex-col gap-1.5'
+const CONFIRM_LABEL_CLS =
+  'text-[length:calc(var(--font-size-base)*0.65)] font-semibold uppercase tracking-[0.5px] text-[var(--accent)]'
+const CONFIRM_PREVIEW_CLS =
+  'rounded border border-[color-mix(in_srgb,var(--color-info)_20%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.72)] leading-[1.4] text-[var(--text-primary)]'
+const CONFIRM_DIFF_CLS = 'flex flex-col gap-0.5'
+const CONFIRM_OLD_CLS = 'text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)] line-through opacity-70'
 
 function getBaseUrl(): string {
   return ''
@@ -41,17 +82,13 @@ function isPinned(mem: MemoryEntry): boolean {
 }
 
 const TYPE_ICONS: Record<string, string> = {
-  fact: '\u2139',         // ℹ
-  pattern: '\u2699',      // ⚙
-  preference: '\u2605',   // ★
-  decision: '\u2714',     // ✔
-  lesson: '\u2728',       // ✨
-  insight: '\u{1F4A1}',   // 💡
+  fact: 'ℹ',
+  pattern: '⚙',
+  preference: '★',
+  decision: '✔',
+  lesson: '✨',
+  insight: '\u{1F4A1}',
 }
-
-// =============================================================================
-// TaskMemories
-// =============================================================================
 
 interface TaskMemoriesProps {
   sessionId: string | null
@@ -80,7 +117,6 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
       }
       const data = await response.json()
       const all: MemoryEntry[] = data.memories || []
-      // Filter to memories created in this session
       const sessionMemories = all.filter(m => m.source_session_id === sessionId)
       setMemories(sessionMemories)
     } catch (e) {
@@ -136,7 +172,6 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
 
   const saveEdit = useCallback((memoryId: string) => {
     if (!editContent.trim()) return
-    // Show confirmation preview instead of saving immediately
     setEditingId(null)
     setConfirmingId(memoryId)
   }, [editContent])
@@ -156,7 +191,6 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
 
   const sortedMemories = useMemo(
     () => [...memories].sort((a, b) => {
-      // Pinned first, then by importance
       if (isPinned(a) !== isPinned(b)) return isPinned(a) ? -1 : 1
       return b.importance - a.importance
     }),
@@ -164,14 +198,14 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
   )
 
   if (!sessionId) return null
-  if (isLoading) return <div className="task-memories-loading">Loading memories...</div>
-  if (error) return <div className="task-memories-empty">{error}</div>
-  if (memories.length === 0) return <div className="task-memories-empty">No memories from this session</div>
+  if (isLoading) return <div className={STATE_TEXT_CLS}>Loading memories...</div>
+  if (error) return <div className={STATE_TEXT_CLS}>{error}</div>
+  if (memories.length === 0) return <div className={STATE_TEXT_CLS}>No memories from this session</div>
 
   return (
-    <div className="task-memories">
-      <span className="task-memories-count">{memories.length} memor{memories.length === 1 ? 'y' : 'ies'}</span>
-      <div className="task-memories-list">
+    <div className={ROOT_CLS}>
+      <span className={COUNT_CLS}>{memories.length} memor{memories.length === 1 ? 'y' : 'ies'}</span>
+      <div className={LIST_CLS}>
         {sortedMemories.map(mem => {
           const isExpanded = expandedIds.has(mem.id)
           const isEditing = editingId === mem.id
@@ -180,48 +214,48 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
           const preview = mem.content.length > 100 && !isExpanded && !isEditing && !isConfirming
             ? mem.content.slice(0, 100) + '...'
             : mem.content
-          const icon = TYPE_ICONS[mem.memory_type] || '\u2022'
+          const icon = TYPE_ICONS[mem.memory_type] || '•'
 
           return (
             <div
               key={mem.id}
-              className={`task-memory-item ${pinned ? 'task-memory-item--pinned' : ''} ${isConfirming ? 'task-memory-item--confirming' : ''}`}
+              className={cn(ITEM_CLS, pinned && ITEM_PINNED_CLS, isConfirming && ITEM_CONFIRMING_CLS)}
               onClick={() => { if (!isEditing && !isConfirming) toggle(mem.id) }}
             >
-              <div className="task-memory-header">
-                <span className="task-memory-icon">{icon}</span>
-                {pinned && <span className="task-memory-pin-badge" title="Pinned">{'\u{1F4CC}'}</span>}
-                <span className="task-memory-type">{mem.memory_type}</span>
+              <div className={HEADER_CLS}>
+                <span className={ICON_CLS}>{icon}</span>
+                {pinned && <span className={PIN_BADGE_CLS} title="Pinned">{'\u{1F4CC}'}</span>}
+                <span className={TYPE_CLS}>{mem.memory_type}</span>
                 <span
-                  className="task-memory-importance"
+                  className={IMPORTANCE_CLS}
                   style={{ color: importanceColor(mem.importance) }}
                   title={`Importance: ${(mem.importance * 100).toFixed(0)}%`}
                 >
-                  {'\u25CF'} {(mem.importance * 100).toFixed(0)}%
+                  ● {(mem.importance * 100).toFixed(0)}%
                 </span>
-                <span className="task-memory-date">{formatDate(mem.created_at)}</span>
-                <div className="task-memory-actions">
+                <span className={DATE_CLS}>{formatDate(mem.created_at)}</span>
+                <div className={ACTIONS_CLS}>
                   <button
-                    className={`task-memory-action-btn ${pinned ? 'task-memory-action-btn--active' : ''}`}
+                    className={cn(ACTION_BTN_CLS, pinned && ACTION_BTN_ACTIVE_CLS)}
                     onClick={(e) => handlePin(e, mem)}
                     title={pinned ? 'Unpin' : 'Pin'}
                   >
                     {'\u{1F4CC}'}
                   </button>
                   <button
-                    className="task-memory-action-btn"
+                    className={ACTION_BTN_CLS}
                     onClick={(e) => startEdit(e, mem)}
                     title="Edit"
                   >
-                    {'\u270E'}
+                    ✎
                   </button>
                 </div>
               </div>
 
               {isEditing ? (
-                <div className="task-memory-edit" onClick={e => e.stopPropagation()}>
+                <div className={EDIT_CLS} onClick={e => e.stopPropagation()}>
                   <textarea
-                    className="task-memory-edit-textarea"
+                    className={EDIT_TEXTAREA_CLS}
                     value={editContent}
                     onChange={e => setEditContent(e.target.value)}
                     onKeyDown={e => {
@@ -234,35 +268,35 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
                     rows={3}
                     autoFocus
                   />
-                  <div className="task-memory-edit-buttons">
-                    <button className="task-memory-edit-save" onClick={() => saveEdit(mem.id)}>Review</button>
-                    <button className="task-memory-edit-cancel" onClick={cancelEdit}>Cancel</button>
-                    <span className="task-memory-edit-hint">{navigator.platform?.includes('Mac') ? 'Cmd' : 'Ctrl'}+Enter to review</span>
+                  <div className={EDIT_BUTTONS_CLS}>
+                    <button className={EDIT_SAVE_CLS} onClick={() => saveEdit(mem.id)}>Review</button>
+                    <button className={EDIT_CANCEL_CLS} onClick={cancelEdit}>Cancel</button>
+                    <span className={EDIT_HINT_CLS}>{navigator.platform?.includes('Mac') ? 'Cmd' : 'Ctrl'}+Enter to review</span>
                   </div>
                 </div>
               ) : isConfirming ? (
-                <div className="task-memory-confirm" onClick={e => e.stopPropagation()}>
-                  <div className="task-memory-confirm-label">Agent will remember:</div>
-                  <div className="task-memory-confirm-preview">{editContent.trim()}</div>
+                <div className={CONFIRM_CLS} onClick={e => e.stopPropagation()}>
+                  <div className={CONFIRM_LABEL_CLS}>Agent will remember:</div>
+                  <div className={CONFIRM_PREVIEW_CLS}>{editContent.trim()}</div>
                   {editContent.trim() !== mem.content && (
-                    <div className="task-memory-confirm-diff">
-                      <span className="task-memory-confirm-old">Was: {mem.content.length > 80 ? mem.content.slice(0, 80) + '...' : mem.content}</span>
+                    <div className={CONFIRM_DIFF_CLS}>
+                      <span className={CONFIRM_OLD_CLS}>Was: {mem.content.length > 80 ? mem.content.slice(0, 80) + '...' : mem.content}</span>
                     </div>
                   )}
-                  <div className="task-memory-edit-buttons">
-                    <button className="task-memory-edit-save" onClick={() => confirmSave(mem.id)}>Confirm</button>
-                    <button className="task-memory-edit-cancel" onClick={() => { setConfirmingId(null); setEditingId(mem.id) }}>Edit Again</button>
-                    <button className="task-memory-edit-cancel" onClick={cancelEdit}>Discard</button>
+                  <div className={EDIT_BUTTONS_CLS}>
+                    <button className={EDIT_SAVE_CLS} onClick={() => confirmSave(mem.id)}>Confirm</button>
+                    <button className={EDIT_CANCEL_CLS} onClick={() => { setConfirmingId(null); setEditingId(mem.id) }}>Edit Again</button>
+                    <button className={EDIT_CANCEL_CLS} onClick={cancelEdit}>Discard</button>
                   </div>
                 </div>
               ) : (
-                <div className="task-memory-content">{preview}</div>
+                <div className={CONTENT_CLS}>{preview}</div>
               )}
 
               {mem.tags.length > 0 && (
-                <div className="task-memory-tags">
+                <div className={TAGS_CLS}>
                   {mem.tags.map((tag, i) => (
-                    <span key={`${tag}-${i}`} className="task-memory-tag">{tag}</span>
+                    <span key={`${tag}-${i}`} className={TAG_CLS}>{tag}</span>
                   ))}
                 </div>
               )}

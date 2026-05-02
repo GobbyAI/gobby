@@ -6,7 +6,6 @@ import type { GobbyTaskDetail } from '../../../hooks/useTasks'
 
 // Mock CSS imports
 vi.mock('../task-execution.css', () => ({}))
-vi.mock('../task-advanced.css', () => ({}))
 
 // Mock heavy sub-components
 vi.mock('../ReasoningTimeline', () => ({ ReasoningTimeline: () => null }))
