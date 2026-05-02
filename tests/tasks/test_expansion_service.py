@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.tasks import Lifecycle, LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -61,7 +61,7 @@ def _compiled_spec(*, category: str = "code") -> dict:
     }
 
 
-def test_prompt_context_includes_skipped_stages_from_epic_labels(
+def test_prompt_context_ignores_legacy_stage_skip_labels(
     service: ExpansionService,
     run_manager: LocalExpansionRunManager,
     sample_project,
@@ -80,13 +80,13 @@ def test_prompt_context_includes_skipped_stages_from_epic_labels(
 
     context = service._build_prompt_context(run, epic)
 
-    assert context["skipped_stages"] == ["pr", "qa"]
+    assert context.get("skipped_stages", []) == []
     assert "STAGE_BY_PROFILE" not in context
     assert "profile:quick" not in context["context_str"]
 
 
 @pytest.mark.asyncio
-async def test_compile_run_skips_tree_when_dev_is_only_enabled_stage(
+async def test_compile_run_does_not_short_circuit_from_legacy_skip_labels(
     service: ExpansionService,
     run_manager: LocalExpansionRunManager,
     sample_project,
@@ -111,15 +111,13 @@ async def test_compile_run_skips_tree_when_dev_is_only_enabled_stage(
         input_source="task",
     )
 
-    raw_spec = AsyncMock()
+    raw_spec = AsyncMock(return_value=_compiled_spec())
     with patch.object(service, "_generate_raw_spec", raw_spec):
         refreshed = await service.compile_and_apply_run(run.id, session_id=None)
 
-    assert raw_spec.await_count == 0
+    assert raw_spec.await_count == 1
     assert refreshed.status == "completed"
-    assert refreshed.created_task_ids == []
-    assert service.task_manager.list_tasks(parent_task_id=epic.id) == []
-    assert service.task_manager.get_task(epic.id).lifecycle is Lifecycle.in_development
+    assert len(refreshed.created_task_ids) == 1
 
 
 def test_apply_run_persists_agent_selection_fields_to_created_leaf(

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from gobby.storage.tasks import Isolation, LocalTaskManager, cascade_build_state_to_subtree
+from tests.phase5_contract_helpers import source_text
 
 pytestmark = pytest.mark.unit
 
@@ -46,14 +49,15 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
     with temp_db.transaction() as conn:
         conn.execute("UPDATE tasks SET lifecycle = ? WHERE id = ?", ("holistic_review", leaf.id))
 
-    updated_count = cascade_build_state_to_subtree(
-        temp_db,
-        epic.id,
-        Isolation.clone,
-        unattended=True,
-        skip_stage_labels=["stage-:qa", "stage-:test_arch", "stage-:qa", ""],
-        allow_automation=True,
-    )
+    kwargs = {
+        "isolation": Isolation.clone,
+        "unattended": True,
+        "allow_automation": True,
+    }
+    if "skip_stage_labels" in inspect.signature(cascade_build_state_to_subtree).parameters:
+        kwargs["skip_stage_labels"] = []
+
+    updated_count = cascade_build_state_to_subtree(temp_db, epic.id, **kwargs)
 
     assert updated_count == 4
     for task_id in (epic.id, child_epic.id, leaf.id, sibling.id):
@@ -61,8 +65,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         assert task.allow_automation is True
         assert task.unattended is True
         assert task.isolation is Isolation.clone
-        assert {"stage-:qa", "stage-:test_arch"}.issubset(set(task.labels or []))
-        assert (task.labels or []).count("stage-:qa") == 1
+        assert not any(label.startswith("stage-:") for label in task.labels or [])
 
     updated_epic = task_manager.get_task(epic.id)
     updated_leaf = task_manager.get_task(leaf.id)
@@ -70,3 +73,17 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
     assert updated_leaf.assigned_agent == "backend-developer"
     assert updated_leaf.additional_skills == ["sql-review"]
     assert updated_leaf.lifecycle == "holistic_review"
+
+
+def test_cascade_uses_initialize_manifest() -> None:
+    source = source_text("src/gobby/storage/tasks/_crud.py")
+
+    assert "initialize_manifest(" in source
+
+
+def test_cascade_no_legacy_label_writes() -> None:
+    source = source_text("src/gobby/storage/tasks/_crud.py")
+
+    assert "skip_stage_labels" not in source
+    assert "_normalize_skip_stage_labels" not in source
+    assert "stage-:" not in source

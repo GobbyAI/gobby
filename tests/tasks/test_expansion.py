@@ -46,35 +46,16 @@ def _store_agent(service: ExpansionService, name: str, description: str) -> None
     )
 
 
-def test_skipped_stages_helper_parses_resolved_stage_labels_not_profiles(
-    service: ExpansionService,
-    sample_project,
-) -> None:
+def test_expansion_service_facade_does_not_export_skipped_stages() -> None:
     assert not hasattr(expansion_module, "STAGE_BY_PROFILE")
-    helper = expansion_module._skipped_stages
-    epic = _parent(
-        service,
-        sample_project,
-        labels=["profile:quick", "stage-:qa", "stage-:holistic_review"],
-    )
-
-    assert helper(epic) == {"qa", "holistic_review"}
+    assert not hasattr(expansion_module, "_skipped_stages")
+    assert "_skipped_stages" not in getattr(expansion_module, "__all__", ())
 
 
-def test_skipped_stages_helper_ignores_dev_only_profile_without_resolved_labels(
-    service: ExpansionService,
-    sample_project,
-) -> None:
-    helper = expansion_module._skipped_stages
-    profile_only = _parent(service, sample_project, labels=["profile:dev-only"])
-    resolved = _parent(
-        service,
-        sample_project,
-        labels=["profile:dev-only", "stage-:qa", "stage-:pr"],
-    )
+def test_expansion_common_runtime_helper_removed() -> None:
+    from gobby.tasks.expansion import _common
 
-    assert helper(profile_only) == set()
-    assert helper(resolved) == {"qa", "pr"}
+    assert not hasattr(_common, "_skipped_stages")
 
 
 def test_automated_leaf_categories_are_explicit() -> None:

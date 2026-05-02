@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,21 @@ def _stage_rows(db: LocalDatabase, task_id: str) -> list[dict[str, Any]]:
 
 def _state_map(db: LocalDatabase, task_id: str) -> dict[str, str]:
     return {row["stage_name"]: row["state"] for row in _stage_rows(db, task_id)}
+
+
+def _default_stage_names(db: LocalDatabase, task_type: str) -> list[str]:
+    return [
+        row["stage_name"]
+        for row in db.fetchall(
+            """
+            SELECT stage_name
+              FROM task_type_default_stages
+             WHERE task_type = ?
+             ORDER BY position, stage_name
+            """,
+            (task_type,),
+        )
+    ]
 
 
 register_contract_tests(
@@ -440,6 +456,40 @@ def test_backfill_honors_labels_rounds_caps_and_pr_artifact(tmp_path: Path) -> N
 
     labels = db.fetchone("SELECT labels FROM tasks WHERE id = ?", ("epic-task",))["labels"]
     assert json.loads(labels) == ["keep", "planning-round:3", "qa-attempts:5"]
+
+
+def test_replay_against_pre_cutover_db_honors_legacy_skip_labels(tmp_path: Path) -> None:
+    db = _db_before_234(tmp_path)
+    _insert_task(
+        db,
+        "pre-cutover-task",
+        task_type="epic",
+        lifecycle="open",
+        status="open",
+        labels=["stage-:test_arch", "stage-:expansion", "keep"],
+    )
+
+    _apply_234(db)
+
+    expected = [
+        stage_name
+        for stage_name in _default_stage_names(db, "epic")
+        if stage_name not in {"test_arch", "expansion"}
+    ]
+    actual = [row["stage_name"] for row in _stage_rows(db, "pre-cutover-task")]
+    assert actual == expected
+    assert "test_arch" not in actual
+    assert "expansion" not in actual
+
+
+def test_skip_label_reads_in_helper_survive_phase_7_1_cleanup() -> None:
+    from gobby.storage import migrations
+
+    source = inspect.getsource(migrations._stage_skip_labels)
+
+    assert "stage-:" in source
+    assert "removeprefix" in source
+    assert hasattr(migrations, "_backfill_task_stage_states_from_legacy")
 
 
 def test_backfill_conductor_override_and_escalation_normalization(tmp_path: Path) -> None:

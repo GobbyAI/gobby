@@ -136,7 +136,8 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "additional_skills_loaded" in agent["step_variables"]
     assert "loaded_skills" in str(load_skills["transitions"])
     assert "gobby-agents:end_agent_run" in _blocked_mcp_tools(implement)
-    assert "_skipped_stages" in implement["status_message"]
+    assert "_skipped_stages" not in implement["status_message"]
+    assert "manifest" in implement["status_message"]
     assert "close_task" in implement["status_message"]
     assert "mark_task_needs_review" in implement["status_message"]
     assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
