@@ -199,7 +199,8 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
         ) : (
           <>
             {executions.map((exec) => (
-              <div
+              <button
+                type="button"
                 key={exec.id}
                 className={`pipeline-exec-row${selectedId === exec.id ? ' pipeline-exec-row--active' : ''}`}
                 onClick={() => handleSelect(exec.id)}
@@ -213,7 +214,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                     {formatDateTime(exec.created_at)}
                   </span>
                 </div>
-              </div>
+              </button>
             ))}
             {hasMore && (
               <button

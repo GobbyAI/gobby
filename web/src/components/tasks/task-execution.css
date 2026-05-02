@@ -204,6 +204,13 @@
 }
 
 .activity-task-row {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 0.45rem;

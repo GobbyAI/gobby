@@ -758,12 +758,21 @@ export const TasksTab = memo(function TasksTab({
           style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
           className={taskRowClass}
           role="treeitem"
+          tabIndex={0}
           aria-level={row.depth + 1}
           aria-expanded={row.isInternal ? row.isOpen : undefined}
           onClick={() => {
             userSelectedRef.current = true;
             setClaimError(null);
             setSelectedTaskId(task.id);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              userSelectedRef.current = true;
+              setClaimError(null);
+              setSelectedTaskId(task.id);
+            }
           }}
         >
           {row.isInternal ? (

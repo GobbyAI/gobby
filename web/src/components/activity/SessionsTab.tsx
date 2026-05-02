@@ -863,8 +863,16 @@ export const SessionsTab = memo(function SessionsTab({
             return (
               <div
                 key={`${entry.type}-${entry.id}`}
+                role="button"
+                tabIndex={0}
                 className={`session-entry${isSelected ? " session-entry--active" : ""}${isPaused ? " session-entry--paused" : ""}`}
                 onClick={() => handleSelect(entry.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleSelect(entry.id);
+                  }
+                }}
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <SourceIcon source={entry.provider} size={14} />
