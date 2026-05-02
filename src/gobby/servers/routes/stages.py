@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from gobby.storage.tasks._stage_views import stage_registry_entry_view
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -51,7 +52,7 @@ def create_stages_router(server: HTTPServer) -> APIRouter:
     @stage_router.get("/api/stages/registry", response_model=StagesRegistryResponse)
     async def list_stages_registry() -> dict[str, object]:
         entries = server.task_manager.stages_registry.list_all()
-        return {"stages": [asdict(entry) for entry in entries]}
+        return {"stages": [stage_registry_entry_view(entry) for entry in entries]}
 
     @stage_router.get(
         "/api/task-types/{task_type}/default-stages",

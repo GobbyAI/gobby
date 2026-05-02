@@ -8,6 +8,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks._stage_views import stage_registry_entry_view, stage_state_view
 
 STAGE_STATE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -58,46 +59,6 @@ def _resolve_task(ctx: RegistryContext, task_id: str) -> str:
     return resolve_task_id_for_mcp(ctx.task_manager, task_id)
 
 
-def _state_view(row: Any) -> dict[str, Any]:
-    return {
-        "task_id": row.task_id,
-        "stage_name": row.stage_name,
-        "position": row.position,
-        "state": row.state,
-        "review_policy": row.review_policy,
-        "reviewer_agent": row.reviewer_agent,
-        "entered_at": row.entered_at,
-        "entered_by_session_id": row.entered_by_session_id,
-        "completed_at": row.completed_at,
-        "completed_by_session_id": row.completed_by_session_id,
-        "completed_commit_sha": row.completed_commit_sha,
-        "work_attempt_count": row.work_attempt_count,
-        "review_round_count": row.review_round_count,
-        "max_work_attempts": row.max_work_attempts,
-        "max_review_rounds": row.max_review_rounds,
-        "artifact_refs": row.artifact_refs,
-        "notes": row.notes,
-        "updated_at": row.updated_at,
-    }
-
-
-def _registry_entry_view(row: Any) -> dict[str, Any]:
-    return {
-        "name": row.name,
-        "display_label": row.display_label,
-        "description": row.description,
-        "category": row.category,
-        "default_agent": row.default_agent,
-        "reviewer_agent": row.reviewer_agent,
-        "review_policy": row.review_policy,
-        "position_hint": row.position_hint,
-        "requires_human": row.requires_human,
-        "is_terminal": row.is_terminal,
-        "default_max_work_attempts": row.default_max_work_attempts,
-        "default_max_review_rounds": row.default_max_review_rounds,
-    }
-
-
 def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
     """Create read-only task stage manifest tools for gobby-tasks."""
 
@@ -113,7 +74,8 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except (TaskNotFoundError, ValueError) as error:
             return {"ok": False, "error": "invalid_task_id", "message": str(error)}
         stages = [
-            _state_view(row) for row in ctx.task_manager.stage_states().list_for_task(resolved_id)
+            stage_state_view(row)
+            for row in ctx.task_manager.stage_states.list_for_task(resolved_id)
         ]
         return {"ok": True, "task_id": resolved_id, "stages": stages}
 
@@ -142,7 +104,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
     def list_stages_registry() -> dict[str, Any]:
         """Return all stage registry entries."""
         entries = [
-            _registry_entry_view(row) for row in ctx.task_manager.stages_registry().list_all()
+            stage_registry_entry_view(row) for row in ctx.task_manager.stages_registry.list_all()
         ]
         return {"ok": True, "entries": entries}
 
@@ -163,7 +125,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     def get_task_type_defaults(task_type: str) -> dict[str, Any]:
         """Return the default stage manifest for a task type."""
-        defaults = ctx.task_manager.stages_registry().list_default_stages(task_type)
+        defaults = ctx.task_manager.stages_registry.list_default_stages(task_type)
         if not defaults:
             return {
                 "ok": False,

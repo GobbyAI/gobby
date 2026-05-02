@@ -13,6 +13,7 @@ from gobby.storage.tasks._stage_states import (
     IllegalManifestMutationError,
     StageManifestSpec,
 )
+from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.utils.session_context import get_current_session_id
 
 
@@ -28,24 +29,6 @@ def _session_id(ctx: RegistryContext) -> str | None:
         return ctx.resolve_session_id(session_ref)
     except Exception:
         return session_ref
-
-
-def _state_view(row: Any) -> dict[str, Any]:
-    return {
-        "task_id": row.task_id,
-        "stage_name": row.stage_name,
-        "position": row.position,
-        "state": row.state,
-        "review_policy": row.review_policy,
-        "reviewer_agent": row.reviewer_agent,
-        "work_attempt_count": row.work_attempt_count,
-        "review_round_count": row.review_round_count,
-        "max_work_attempts": row.max_work_attempts,
-        "max_review_rounds": row.max_review_rounds,
-        "artifact_refs": row.artifact_refs,
-        "notes": row.notes,
-        "updated_at": row.updated_at,
-    }
 
 
 def _manifest_error(error: IllegalManifestMutationError) -> dict[str, Any]:
@@ -100,13 +83,13 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     def start_stage(task_id: str, stage_name: str, notes: str | None = None) -> dict[str, Any]:
         """Transition a ready stage to in_progress."""
         resolved_id = _resolve_task(ctx, task_id)
-        stage = ctx.task_manager.stage_states().start_stage(
+        stage = ctx.task_manager.stage_states.start_stage(
             resolved_id,
             stage_name,
             by_session_id=_session_id(ctx),
             notes=notes,
         )
-        return {"ok": True, "task_id": resolved_id, "stage": _state_view(stage)}
+        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
 
     registry.register(
         name="start_stage",
@@ -133,7 +116,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Complete a stage according to its review policy."""
         resolved_id = _resolve_task(ctx, task_id)
-        stage = ctx.task_manager.stage_states().complete_stage(
+        stage = ctx.task_manager.stage_states.complete_stage(
             resolved_id,
             stage_name,
             by_session_id=_session_id(ctx),
@@ -141,7 +124,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
         )
-        return {"ok": True, "task_id": resolved_id, "stage": _state_view(stage)}
+        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
 
     registry.register(
         name="complete_stage",
@@ -169,14 +152,14 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Return a failed in-progress stage to ready or escalate after caps."""
         resolved_id = _resolve_task(ctx, task_id)
-        stage = ctx.task_manager.stage_states().fail_stage(
+        stage = ctx.task_manager.stage_states.fail_stage(
             resolved_id,
             stage_name,
             reason=reason,
             needs_human=needs_human,
             by_session_id=_session_id(ctx),
         )
-        return {"ok": True, "task_id": resolved_id, "stage": _state_view(stage)}
+        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
 
     registry.register(
         name="fail_stage",
@@ -198,7 +181,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     def add_stage(task_id: str, stage_name: str, position: int) -> dict[str, Any]:
         """Insert a future ready stage into a task manifest."""
         resolved_id = _resolve_task(ctx, task_id)
-        registry_entry = ctx.task_manager.stages_registry().get(stage_name)
+        registry_entry = ctx.task_manager.stages_registry.get(stage_name)
         if registry_entry is None:
             raise ValueError(f"Unknown stage '{stage_name}'")
         spec = StageManifestSpec(
@@ -208,14 +191,14 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             max_review_rounds=registry_entry.default_max_review_rounds,
         )
         try:
-            stage = ctx.task_manager.stage_states().add_stage(
+            stage = ctx.task_manager.stage_states.add_stage(
                 resolved_id,
                 spec,
                 by_session_id=_session_id(ctx),
             )
         except IllegalManifestMutationError as error:
             return _manifest_error(error)
-        return {"ok": True, "task_id": resolved_id, "stage": _state_view(stage)}
+        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
 
     registry.register(
         name="add_stage",
@@ -237,7 +220,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Remove a future ready stage from a task manifest."""
         resolved_id = _resolve_task(ctx, task_id)
         try:
-            ctx.task_manager.stage_states().remove_stage(
+            ctx.task_manager.stage_states.remove_stage(
                 resolved_id,
                 stage_name,
                 by_session_id=_session_id(ctx),
@@ -279,21 +262,21 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             },
         )
         if verdict == "approved":
-            stage = ctx.task_manager.stage_states().approve_review(
+            stage = ctx.task_manager.stage_states.approve_review(
                 resolved_id,
                 "pr",
                 by_session_id=_session_id(ctx),
                 notes=findings,
             )
         else:
-            stage = ctx.task_manager.stage_states().reject_review(
+            stage = ctx.task_manager.stage_states.reject_review(
                 resolved_id,
                 "pr",
                 reason=findings,
                 by_session_id=_session_id(ctx),
                 notes=findings,
             )
-        return {"ok": True, "task_id": resolved_id, "stage": _state_view(stage)}
+        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
 
     registry.register(
         name="record_pr_verdict",
@@ -324,13 +307,13 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             _write_artifacts(ctx, resolved_id, {"pr_url": pr_url})
         if github_pr_number is not None:
             ctx.task_manager.update_task(resolved_id, github_pr_number=github_pr_number)
-        stage = ctx.task_manager.stage_states().get(resolved_id, "pr")
+        stage = ctx.task_manager.stage_states.get(resolved_id, "pr")
         return {
             "ok": True,
             "task_id": resolved_id,
             "pr_url": pr_url,
             "github_pr_number": github_pr_number,
-            "stage": _state_view(stage) if stage is not None else None,
+            "stage": stage_state_operation_view(stage) if stage is not None else None,
             "idempotent": existing_url == pr_url,
         }
 

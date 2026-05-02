@@ -23,6 +23,7 @@ from gobby.storage.tasks._stage_states import (
     StageManifestSpec,
     StageState,
 )
+from gobby.storage.tasks._stage_views import stage_state_view
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -271,26 +272,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         return str(server.session_manager.resolve_session_reference(session_ref, project_id))
 
     def _stage_view(stage: StageState) -> dict[str, Any]:
-        return {
-            "task_id": stage.task_id,
-            "stage_name": stage.stage_name,
-            "position": stage.position,
-            "state": stage.state,
-            "review_policy": stage.review_policy,
-            "reviewer_agent": stage.reviewer_agent,
-            "entered_at": stage.entered_at,
-            "entered_by_session_id": stage.entered_by_session_id,
-            "completed_at": stage.completed_at,
-            "completed_by_session_id": stage.completed_by_session_id,
-            "completed_commit_sha": stage.completed_commit_sha,
-            "work_attempt_count": stage.work_attempt_count,
-            "review_round_count": stage.review_round_count,
-            "max_work_attempts": stage.max_work_attempts,
-            "max_review_rounds": stage.max_review_rounds,
-            "artifact_refs": stage.artifact_refs,
-            "notes": stage.notes,
-            "updated_at": stage.updated_at,
-        }
+        return stage_state_view(stage)
 
     def _stage_views_for_tasks(task_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         if not task_ids:
