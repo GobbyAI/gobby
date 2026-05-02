@@ -13,13 +13,14 @@ Task: gt-88c34e
 """
 
 from collections.abc import Generator
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.validation import TaskValidator
 from gobby.utils.session_context import session_context_for_test
 
@@ -33,6 +34,68 @@ from gobby.utils.session_context import session_context_for_test
 def _seed_session_context() -> Generator[None]:
     with session_context_for_test("validation-mcp-tools-session"):
         yield
+
+
+def _task_like(
+    *,
+    task_id: str = "t1",
+    title: str = "Task",
+    project_id: str = "p1",
+    is_escalated: bool = False,
+    escalated_at: str | None = None,
+    escalation_reason: str | None = None,
+    validation_fail_count: int = 0,
+):
+    return SimpleNamespace(
+        id=task_id,
+        title=title,
+        project_id=project_id,
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+        closed_at=None,
+        closed_reason=None,
+        closed_in_session_id=None,
+        closed_commit_sha=None,
+        escalated_at=escalated_at,
+        escalation_reason=escalation_reason,
+        is_escalated=is_escalated,
+        validation_fail_count=validation_fail_count,
+        seq_num=None,
+        current_stage=SimpleNamespace(name="development", state="ready"),
+    )
+
+
+class Task(SimpleNamespace):
+    """Small stage-native stand-in for historical Task(status=...) test data."""
+
+    def __init__(self, **kwargs):
+        status = kwargs.pop("status", None)
+        if "is_escalated" not in kwargs:
+            kwargs["is_escalated"] = status == "escalated"
+        if status == "escalated" and kwargs.get("escalated_at") is None:
+            kwargs["escalated_at"] = "now"
+        kwargs.setdefault("closed_at", "now" if status == "closed" else None)
+        kwargs.setdefault("closed_reason", None)
+        kwargs.setdefault("closed_in_session_id", None)
+        kwargs.setdefault("closed_commit_sha", None)
+        kwargs.setdefault("escalated_at", None)
+        kwargs.setdefault("escalation_reason", None)
+        kwargs.setdefault("validation_fail_count", 0)
+        kwargs.setdefault("seq_num", None)
+        kwargs.setdefault(
+            "current_stage",
+            SimpleNamespace(
+                name="development",
+                state={
+                    "in_progress": "in_progress",
+                    "needs_review": "needs_review",
+                    "review_approved": "review_approved",
+                }.get(status, "ready"),
+            ),
+        )
+        super().__init__(**kwargs)
 
 
 @pytest.fixture
@@ -485,31 +548,16 @@ class TestDeEscalateTaskTool:
         self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de_escalate_task returns task to open status."""
-        escalated_task = Task(
-            id="t1",
+        escalated_task = _task_like(
             title="Escalated task",
-            project_id="p1",
-            status="escalated",
-            priority=2,
-            task_type="task",
+            is_escalated=True,
             escalated_at="2024-01-01T00:00:00",
             escalation_reason="max_iterations",
-            created_at="now",
-            updated_at="now",
         )
         mock_task_manager.get_task.return_value = escalated_task
 
-        reopened_task = Task(
-            id="t1",
+        reopened_task = _task_like(
             title="Escalated task",
-            project_id="p1",
-            status="open",
-            priority=2,
-            task_type="task",
-            escalated_at=None,
-            escalation_reason=None,
-            created_at="now",
-            updated_at="now",
         )
         mock_task_manager.de_escalate_task.return_value = reopened_task
 
@@ -522,7 +570,6 @@ class TestDeEscalateTaskTool:
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Fixed manually",
-            target_status=None,
             reset_validation=False,
         )
 
@@ -532,15 +579,10 @@ class TestDeEscalateTaskTool:
         self, mock_task_manager, task_registry_with_patches
     ) -> None:
         """Test that de_escalate_task requires a reason."""
-        escalated_task = Task(
-            id="t1",
+        escalated_task = _task_like(
             title="Escalated task",
-            project_id="p1",
-            status="escalated",
-            priority=2,
-            task_type="task",
-            created_at="now",
-            updated_at="now",
+            is_escalated=True,
+            escalated_at="2024-01-01T00:00:00",
         )
         mock_task_manager.get_task.return_value = escalated_task
 
@@ -554,15 +596,8 @@ class TestDeEscalateTaskTool:
         self, mock_task_manager, task_registry_with_patches
     ):
         """Test de_escalate_task fails if task is not escalated."""
-        non_escalated_task = Task(
-            id="t1",
+        non_escalated_task = _task_like(
             title="Normal task",
-            project_id="p1",
-            status="open",  # Not escalated
-            priority=2,
-            task_type="task",
-            created_at="now",
-            updated_at="now",
         )
         mock_task_manager.get_task.return_value = non_escalated_task
 
@@ -594,17 +629,11 @@ class TestDeEscalateTaskTool:
         self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de_escalate_task clears escalation-related fields."""
-        escalated_task = Task(
-            id="t1",
+        escalated_task = _task_like(
             title="Escalated task",
-            project_id="p1",
-            status="escalated",
-            priority=2,
-            task_type="task",
+            is_escalated=True,
             escalated_at="2024-01-01T00:00:00",
             escalation_reason="recurring_issues",
-            created_at="now",
-            updated_at="now",
         )
         mock_task_manager.get_task.return_value = escalated_task
 
@@ -615,7 +644,6 @@ class TestDeEscalateTaskTool:
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Resolved manually",
-            target_status=None,
             reset_validation=False,
         )
 
@@ -625,29 +653,16 @@ class TestDeEscalateTaskTool:
         self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de_escalate_task succeeds when given a reason."""
-        escalated_task = Task(
-            id="t1",
+        escalated_task = _task_like(
             title="Escalated task",
-            project_id="p1",
-            status="escalated",
-            priority=2,
-            task_type="task",
+            is_escalated=True,
             escalated_at="2024-01-01T00:00:00",
             escalation_reason="max_iterations",
-            created_at="now",
-            updated_at="now",
         )
         mock_task_manager.get_task.return_value = escalated_task
 
-        reopened_task = Task(
-            id="t1",
+        reopened_task = _task_like(
             title="Escalated task",
-            project_id="p1",
-            status="open",
-            priority=2,
-            task_type="task",
-            created_at="now",
-            updated_at="now",
         )
         mock_task_manager.update_task.return_value = reopened_task
 
@@ -660,7 +675,6 @@ class TestDeEscalateTaskTool:
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Human fixed the issue",
-            target_status=None,
             reset_validation=False,
         )
 
@@ -670,18 +684,12 @@ class TestDeEscalateTaskTool:
         self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de_escalate_task optionally resets validation state."""
-        escalated_task = Task(
-            id="t1",
+        escalated_task = _task_like(
             title="Escalated task",
-            project_id="p1",
-            status="escalated",
-            priority=2,
-            task_type="task",
             validation_fail_count=10,
+            is_escalated=True,
             escalated_at="2024-01-01T00:00:00",
             escalation_reason="max_iterations",
-            created_at="now",
-            updated_at="now",
         )
         mock_task_manager.get_task.return_value = escalated_task
 
@@ -693,39 +701,20 @@ class TestDeEscalateTaskTool:
         mock_task_manager.de_escalate_task.assert_called_once_with(
             "t1",
             reason="Fixed",
-            target_status=None,
             reset_validation=True,
         )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_de_escalate_task_accepts_explicit_target_status(
+    async def test_de_escalate_task_schema_has_no_explicit_stage_target(
         self, mock_task_manager, task_registry_with_patches
     ):
-        """Test that de_escalate_task can route explicitly to needs_review."""
-        escalated_task = Task(
-            id="t1",
-            title="Escalated task",
-            project_id="p1",
-            status="escalated",
-            priority=2,
-            task_type="task",
-            created_at="now",
-            updated_at="now",
-        )
-        mock_task_manager.get_task.return_value = escalated_task
+        """Test that de_escalate_task no longer accepts explicit state routing."""
+        schema = task_registry_with_patches.get_schema("de_escalate_task")
+        assert schema is not None
 
-        await task_registry_with_patches.call(
-            "de_escalate_task",
-            {"task_id": "t1", "reason": "Resume review", "target_status": "needs_review"},
-        )
-
-        mock_task_manager.de_escalate_task.assert_called_once_with(
-            "t1",
-            reason="Resume review",
-            target_status="needs_review",
-            reset_validation=False,
-        )
+        properties = schema["inputSchema"]["properties"]
+        assert "target_state" not in properties
 
 
 # ============================================================================

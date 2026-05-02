@@ -56,6 +56,15 @@ def current_stage_state(task: Any) -> str | None:
     return raw_state if isinstance(raw_state, str) else None
 
 
+def projected_task_state(task: Any) -> str:
+    """Return the canonical workflow-facing task state."""
+    if is_task_closed(task):
+        return "closed"
+    if is_task_escalated(task):
+        return "escalated"
+    return current_stage_state(task) or "ready"
+
+
 def is_task_closed(task: Any) -> bool:
     """Return whether close metadata marks the task as closed."""
     if task is None:

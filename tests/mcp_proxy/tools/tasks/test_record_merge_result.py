@@ -141,7 +141,7 @@ def test_success_closes_task_via_terminal_close(temp_db, sample_project) -> None
 
     assert result["stage"]["state"] == "done"
     assert stage_row(temp_db, task.id, "merge")["state"] == "done"
-    assert task_row(temp_db, task.id)["status"] == "closed"
+    assert task_row(temp_db, task.id)["closed_at"] is not None
 
 
 def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
@@ -183,10 +183,10 @@ def test_success_close_uses_cascade_descendants_true(temp_db, sample_project) ->
 
     parent_row = task_row(temp_db, parent.id)
     child_row = task_row(temp_db, child.id)
-    assert parent_row["status"] == "closed"
+    assert parent_row["closed_at"] is not None
     assert parent_row["closed_reason"] == "manifest_exhausted"
-    assert child_row["status"] == "closed"
-    assert child_row["lifecycle"] == "merged"
+    assert child_row["closed_at"] is not None
+    assert child_row["closed_reason"] == "merged"
     assert child_row["closed_commit_sha"] == "mergecascade123"
 
 
@@ -239,7 +239,9 @@ def test_failure_path(temp_db, sample_project) -> None:
     assert result["stage"]["state"] == "ready"
     assert row["state"] == "ready"
     assert row["work_attempt_count"] == 1
-    assert task_row(temp_db, under_cap.id)["status"] == "open"
+    under_cap_state = task_row(temp_db, under_cap.id)
+    assert under_cap_state["closed_at"] is None
+    assert under_cap_state["is_escalated"] == 0
     assert _artifact_row(temp_db, under_cap.id)["merge_campaign_report"] == "merge-failure.md"
 
     over_cap = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=1)
@@ -251,6 +253,8 @@ def test_failure_path(temp_db, sample_project) -> None:
     )
 
     row = stage_row(temp_db, over_cap.id, "merge")
+    over_cap_state = task_row(temp_db, over_cap.id)
     assert row["state"] == "ready"
     assert row["work_attempt_count"] == 1
-    assert task_row(temp_db, over_cap.id)["status"] == "escalated"
+    assert over_cap_state["is_escalated"] == 1
+    assert over_cap_state["escalated_at"] is not None

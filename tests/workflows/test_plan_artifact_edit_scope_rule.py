@@ -1,6 +1,5 @@
 """Tests for block-writes-outside-plan-artifact rule."""
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pytest
@@ -10,6 +9,7 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -17,20 +17,6 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
-
-
-@dataclass
-class FakeTask:
-    id: str
-    status: str
-
-
-class FakeTaskManager:
-    def __init__(self, tasks: dict[str, FakeTask]):
-        self._tasks = tasks
-
-    def get_task(self, task_id: str) -> FakeTask | None:
-        return self._tasks.get(task_id)
 
 
 @pytest.fixture
@@ -81,7 +67,7 @@ def test_rule_syncs_and_uses_helper_wiring(db: LocalDatabase) -> None:
     assert body.event.value == "before_tool"
     assert body.effects[0].type == "block"
     assert "is_current_plan_artifact" in (body.when or "")
-    assert "task_status_in" in (body.when or "")
+    assert "task_state_in" in (body.when or "")
 
 
 def test_delegated_path_blocks_non_artifact_and_allows_artifact(
@@ -106,16 +92,18 @@ def test_delegated_path_blocks_non_artifact_and_allows_artifact(
     )
 
 
-def test_planner_path_blocks_until_task_reaches_terminal_status(
+def test_planner_path_blocks_until_task_reaches_review_approved(
     db: LocalDatabase, tmp_path
 ) -> None:
     body = _sync_bundled(db)
-    task_manager = FakeTaskManager({"task-1": FakeTask(id="task-1", status="open")})
+    project = LocalProjectManager(db).create(name="planner-project", repo_path=str(tmp_path))
+    task_manager = LocalTaskManager(db)
+    task = task_manager.create_task(project_id=project.id, title="Planner task")
     engine = RuleEngine(db, task_manager=task_manager)
     variables: dict[str, object] = {
         "project": {"path": str(tmp_path)},
         "_agent_type": "planner",
-        "assigned_task_id": "task-1",
+        "assigned_task_id": task.id,
         "artifact_path": ".gobby/plans/task-42-plan.md",
     }
 
@@ -129,7 +117,9 @@ def test_planner_path_blocks_until_task_reaches_terminal_status(
         is True
     )
 
-    task_manager._tasks["task-1"].status = "review_approved"
+    task_manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+    task_manager.mark_task_needs_review(task.id)
+    task_manager.mark_task_review_approved(task.id)
     assert (
         _evaluate_when(
             engine,
@@ -174,11 +164,12 @@ def test_absolute_artifact_write_uses_platform_session_project_path(
         project_id=project.id,
         project_path=str(tmp_path),
     )
-    task_manager = FakeTaskManager({"task-1": FakeTask(id="task-1", status="open")})
+    task_manager = LocalTaskManager(db)
+    task = task_manager.create_task(project_id=project.id, title="Planner task")
     engine = RuleEngine(db, task_manager=task_manager)
     variables: dict[str, object] = {
         "_agent_type": "planner",
-        "assigned_task_id": "task-1",
+        "assigned_task_id": task.id,
         "artifact_path": ".gobby/plans/task-42-plan.md",
     }
 

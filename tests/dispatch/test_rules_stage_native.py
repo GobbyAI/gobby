@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.phase5_contract_helpers import source_text
+from tests.phase5_contract_helpers import LEGACY_REVIEW_TOOLS, source_text, source_texts
 
 pytestmark = pytest.mark.unit
 
@@ -148,3 +148,25 @@ def test_no_rule_invokes_stage_states_manager_directly() -> None:
         r"reject_review|fail_stage)\("
     )
     assert forbidden.search(source) is None
+
+
+def test_bundled_rules_use_task_state_helper_name() -> None:
+    source = source_text(
+        "src/gobby/install/shared/workflows/rules/plan-mode/block-writes-outside-plan-artifact.yaml"
+    )
+
+    assert "task_state_in" in source
+    assert "task_status_in" not in source
+
+
+def test_bundled_merge_assets_do_not_reference_removed_lifecycle_tools() -> None:
+    source = source_texts(
+        (
+            "src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml",
+            "src/gobby/install/shared/workflows/agents/merge-worker.yaml",
+            "src/gobby/install/shared/skills/merge-expert/SKILL.md",
+        )
+    )
+
+    for tool_name in LEGACY_REVIEW_TOOLS:
+        assert tool_name not in source

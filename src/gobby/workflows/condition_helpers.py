@@ -9,21 +9,23 @@ so they can be called from rule ``when`` conditions, e.g.:
 import logging
 from typing import Any
 
+from gobby.tasks.state_semantics import projected_task_state
+
 logger = logging.getLogger(__name__)
 
 
 def is_task_complete(task: Any) -> bool:
     """Check if a task counts as complete for workflow purposes.
 
-    A task is complete only when status is 'closed'.
+    A task is complete only when closure metadata projects to closed.
     """
-    return bool(task.status == "closed")
+    return projected_task_state(task) == "closed"
 
 
 def task_needs_human_review(task_manager: Any, task_id: str | int | None) -> bool:
     """Check if a task has been escalated for human review.
 
-    Returns True when the task has status 'escalated'.
+    Returns True when escalation metadata projects to escalated.
 
     Used in rule conditions like:
         when: "task_needs_human_review(variables.session_task)"
@@ -34,12 +36,12 @@ def task_needs_human_review(task_manager: Any, task_id: str | int | None) -> boo
         return False
 
     normalized = _normalize_task_id(task_id)
-    task = task_manager.get_task(normalized)
+    task = _get_task(task_manager, normalized)
     if not task:
         logger.warning(f"task_needs_human_review: Task '{normalized}' not found")
         return False
 
-    return bool(task.status == "escalated")
+    return projected_task_state(task) == "escalated"
 
 
 def _normalize_task_id(task_id: Any) -> str:
@@ -50,6 +52,29 @@ def _normalize_task_id(task_id: Any) -> str:
     if isinstance(task_id, int):
         return f"#{task_id}"
     return str(task_id)
+
+
+def _get_task(task_manager: Any, task_id: str) -> Any | None:
+    try:
+        return task_manager.get_task(task_id)
+    except ValueError:
+        pass
+    if not (task_id.startswith("#") or task_id.isdigit()):
+        return None
+    try:
+        seq_num = int(task_id[1:] if task_id.startswith("#") else task_id)
+    except ValueError:
+        return None
+    db = getattr(task_manager, "db", None)
+    if db is None:
+        return None
+    rows = db.fetchall("SELECT id FROM tasks WHERE seq_num = ?", (seq_num,))
+    if len(rows) != 1:
+        return None
+    try:
+        return task_manager.get_task(rows[0]["id"])
+    except ValueError:
+        return None
 
 
 def task_tree_complete(task_manager: Any, task_id: str | int | list[str | int] | None) -> bool:
@@ -103,7 +128,7 @@ def task_has_label_prefix(task_manager: Any, task_id: str | int | None, prefix: 
         return False
 
     normalized = _normalize_task_id(task_id)
-    task = task_manager.get_task(normalized)
+    task = _get_task(task_manager, normalized)
     if not task:
         logger.debug(f"task_has_label_prefix: Task '{normalized}' not found")
         return False
@@ -112,26 +137,33 @@ def task_has_label_prefix(task_manager: Any, task_id: str | int | None, prefix: 
     return any(isinstance(label, str) and label.startswith(prefix) for label in labels)
 
 
-def task_status_in(task_manager: Any, task_id: str | int | None, *statuses: str) -> bool:
-    """Check whether the task's current status is in the provided set."""
-    if not task_id or not statuses:
+def task_state_in(task_manager: Any, task_id: str | int | None, *states: str) -> bool:
+    """Check whether the task's projected stage-native state is in the provided set."""
+    if not task_id or not states:
         return False
     if not task_manager:
         return False
 
     normalized = _normalize_task_id(task_id)
-    task = task_manager.get_task(normalized)
+    task = _get_task(task_manager, normalized)
     if not task:
-        logger.debug(f"task_status_in: Task '{normalized}' not found")
+        logger.debug(f"task_state_in: Task '{normalized}' not found")
         return False
 
-    normalized_statuses = {status.strip() for status in statuses if isinstance(status, str)}
-    return bool(getattr(task, "status", None) in normalized_statuses)
+    normalized_states = {state.strip() for state in states if isinstance(state, str)}
+    return projected_task_state(task) in normalized_states
+
+
+def task_status_in(task_manager: Any, task_id: str | int | None, *statuses: str) -> bool:
+    """Compatibility alias for older rules; prefer task_state_in."""
+    legacy_state_map = {"open": "ready"}
+    states = tuple(legacy_state_map.get(status, status) for status in statuses)
+    return task_state_in(task_manager, task_id, *states)
 
 
 def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
     """Check if a single task and its subtree are complete."""
-    task = task_manager.get_task(task_id)
+    task = _get_task(task_manager, task_id)
     if not task:
         logger.warning(f"task_tree_complete: Task '{task_id}' not found")
         return False
@@ -142,7 +174,9 @@ def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
     if not subtasks:
         if not task_closed:
             logger.debug(
-                f"task_tree_complete: Leaf task '{task_id}' is not complete (status={task.status})"
+                "task_tree_complete: Leaf task '%s' is not complete (state=%s)",
+                task_id,
+                projected_task_state(task),
             )
         return task_closed
 

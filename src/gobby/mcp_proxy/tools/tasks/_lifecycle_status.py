@@ -14,10 +14,8 @@ from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_sta
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import (
-    current_stage_state,
     get_claimed_session_id,
-    is_task_closed,
-    is_task_escalated,
+    projected_task_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,15 +34,6 @@ def _lifecycle_value_error(message: str) -> dict[str, Any]:
     if "closed" in message.lower():
         return _state_error(message, "closed")
     return {"error": message}
-
-
-def _projected_task_state(task: Any) -> str:
-    """Return a human-facing state label from stage-native task fields."""
-    if is_task_closed(task):
-        return "closed"
-    if is_task_escalated(task):
-        return "escalated"
-    return current_stage_state(task) or "ready"
 
 
 def _clear_prior_claim_session_variables(
@@ -178,7 +167,7 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
-        projected_state = _projected_task_state(task)
+        projected_state = projected_task_state(task)
         if projected_state in {"escalated", "closed"}:
             return _state_error(
                 f"Cannot escalate task in state '{projected_state}'.",
@@ -692,7 +681,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
 
-        projected_state = _projected_task_state(task)
+        projected_state = projected_task_state(task)
         if projected_state != "escalated":
             return _state_error(
                 f"Task {task_id} is not escalated (current state: {projected_state})",
@@ -715,7 +704,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
-            _projected_task_state(updated),
+            projected_task_state(updated),
             task_ref=f"#{task.seq_num}" if task.seq_num else None,
         )
 

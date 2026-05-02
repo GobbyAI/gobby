@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._stage_states import (
     IllegalStageTransitionError,
     NoCurrentStageError,
@@ -148,6 +149,32 @@ def test_wrong_source_state_errors_no_mutation(temp_db, sample_project) -> None:
         mark_task_review_approved(temp_db, task.id)
 
     assert stage_row(temp_db, task.id, "planning")["state"] == "ready"
+
+
+def test_fresh_feature_task_planning_review_path_uses_registry_policy(
+    temp_db, sample_project
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Production path feature",
+        task_type="feature",
+    )
+    rows = {row["stage_name"]: row for row in stage_rows(temp_db, task.id)}
+
+    assert [row["position"] for row in rows.values()] == list(range(len(rows)))
+    for stage_name in ("planning", "expansion", "development", "pr"):
+        assert rows[stage_name]["review_policy"] == "required"
+    assert rows["planning"]["reviewer_agent"] == "plan-adversary"
+    assert rows["expansion"]["reviewer_agent"] == "expansion-qa"
+    assert rows["development"]["reviewer_agent"] == "qa-reviewer"
+    assert rows["pr"]["reviewer_agent"] is None
+
+    manager.stage_states.start_stage(task.id, "planning", by_session_id=None)
+    updated = manager.mark_task_needs_review(task.id)
+
+    _assert_open_task(updated)
+    assert stage_row(temp_db, task.id, "planning")["state"] == "needs_review"
 
 
 def test_needs_review_calls_submit_for_review_no_legacy_writes(

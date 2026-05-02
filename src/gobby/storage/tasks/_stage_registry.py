@@ -11,14 +11,6 @@ from gobby.storage.database import DatabaseProtocol
 ReviewPolicy = Literal["none", "required", "optional"]
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
 
-_REQUIRED_POLICY_STAGES: dict[str, str | None] = {
-    "planning": "plan-adversary",
-    "expansion": "expansion-qa",
-    "development": "qa-reviewer",
-    "holistic_qa": "holistic-reviewer",
-    "pr": None,
-}
-
 
 @dataclass(frozen=True, slots=True)
 class StageRegistryEntry:
@@ -141,11 +133,7 @@ class StageRegistryManager:
 
     def _entry_from_row(self, row) -> StageRegistryEntry:
         review_policy = self._row_value(row, "review_policy")
-        reviewer_agent = self._row_value(row, "reviewer_agent")
-        if row["name"] in _REQUIRED_POLICY_STAGES:
-            review_policy = "required"
-            reviewer_agent = _REQUIRED_POLICY_STAGES[row["name"]]
-        elif review_policy not in {"none", "required", "optional"}:
+        if review_policy not in {"none", "required", "optional"}:
             review_policy = "none"
 
         return StageRegistryEntry(
@@ -154,7 +142,7 @@ class StageRegistryManager:
             description=row["description"],
             category=row["category"],
             default_agent=self._row_value(row, "default_agent"),
-            reviewer_agent=reviewer_agent,
+            reviewer_agent=self._row_value(row, "reviewer_agent"),
             review_policy=review_policy,
             position_hint=int(row["position_hint"]),
             requires_human=bool(row["requires_human"]),
@@ -184,17 +172,6 @@ class StageRegistryManager:
             for column, sql in additions.items():
                 if column not in columns:
                     conn.execute(sql)
-            for stage_name, reviewer_agent in _REQUIRED_POLICY_STAGES.items():
-                conn.execute(
-                    """
-                    UPDATE task_stages_registry
-                       SET review_policy = 'required',
-                           reviewer_agent = ?,
-                           updated_at = datetime('now')
-                     WHERE name = ?
-                    """,
-                    (reviewer_agent, stage_name),
-                )
 
     def _columns(self, table_name: str) -> set[str]:
         return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}

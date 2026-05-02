@@ -45,9 +45,10 @@ instructions: |
     campaign-level verification. Append a lifecycle event per step.
   - Recover orphaned merge state with merge_abort or merge_resolve before
     scheduling fresh work in the same worktree.
-  - Report: write the campaign JSON into task_artifacts.merge_campaign_report
-    via update_task_artifacts.
-  - Approve, escalate, or (under yolo) advance_lifecycle. Terminate only by
+  - Report: record the campaign result with
+    gobby-tasks-ops:record_merge_result.
+  - Record a clean merge, record a failed merge with failure_reason, or
+    escalate_task when human intervention is required. Terminate only by
     calling end_agent_run.
 
   CRITICAL RULES:
@@ -207,35 +208,26 @@ steps:
   - name: report
     description: "Write the campaign report and transition the campaign task"
     status_message: |
-      Write the campaign JSON to task_artifacts.merge_campaign_report via
-      update_task_artifacts. Then transition: mark_task_merged on clean
-      success, escalate_task on needs_human, or advance_lifecycle to merged
-      under yolo with the failure list preserved.
+      Call gobby-tasks-ops:record_merge_result with report_ref and either
+      merge_sha for clean success or failure_reason for unresolved failures.
+      Use escalate_task only when human intervention is required.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-tasks:update_task_artifacts"
-      - "gobby-tasks:mark_task_merged"
-      - "gobby-tasks:mark_task_merge_failed"
+      - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks:escalate_task"
-      - "gobby-tasks:advance_lifecycle"
       - "gobby-tasks:append_description_section"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_merged
+      - server: gobby-tasks-ops
+        tool: record_merge_result
         action: set_variable
         variable: report_complete
         value: true
       - server: gobby-tasks
         tool: escalate_task
-        action: set_variable
-        variable: report_complete
-        value: true
-      - server: gobby-tasks
-        tool: advance_lifecycle
         action: set_variable
         variable: report_complete
         value: true

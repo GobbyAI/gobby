@@ -13,7 +13,9 @@ from gobby.paths import get_install_dir
 from gobby.storage.database import DatabaseProtocol
 
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
+ReviewPolicy = Literal["none", "required", "optional"]
 _CATEGORIES: set[str] = {"discovery", "design", "verification", "implementation", "delivery"}
+_REVIEW_POLICIES: set[str] = {"none", "required", "optional"}
 
 
 class StageRegistryLoadError(ValueError):
@@ -27,6 +29,8 @@ class StageRegistryEntry:
     description: str
     category: StageCategory
     default_agent: str | None
+    reviewer_agent: str | None
+    review_policy: ReviewPolicy
     position_hint: int
     requires_human: bool = False
     is_terminal: bool = False
@@ -77,13 +81,16 @@ class StageRegistryLoader:
                     """
                     INSERT INTO task_stages_registry (
                         name, display_label, description, category, default_agent,
-                        position_hint, requires_human, is_terminal, bundled_hash, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        reviewer_agent, review_policy, position_hint, requires_human,
+                        is_terminal, bundled_hash, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     ON CONFLICT(name) DO UPDATE SET
                         display_label = excluded.display_label,
                         description = excluded.description,
                         category = excluded.category,
                         default_agent = excluded.default_agent,
+                        reviewer_agent = excluded.reviewer_agent,
+                        review_policy = excluded.review_policy,
                         position_hint = excluded.position_hint,
                         requires_human = excluded.requires_human,
                         is_terminal = excluded.is_terminal,
@@ -96,6 +103,8 @@ class StageRegistryLoader:
                         entry.description,
                         entry.category,
                         entry.default_agent,
+                        entry.reviewer_agent,
+                        entry.review_policy,
                         entry.position_hint,
                         1 if entry.requires_human else 0,
                         1 if entry.is_terminal else 0,
@@ -147,7 +156,14 @@ class StageRegistryLoader:
         raw_stage: dict[str, Any],
         seen: set[str],
     ) -> StageRegistryEntry:
-        required = {"name", "display_label", "description", "category", "position_hint"}
+        required = {
+            "name",
+            "display_label",
+            "description",
+            "category",
+            "review_policy",
+            "position_hint",
+        }
         missing = required - set(raw_stage)
         if missing:
             raise StageRegistryLoadError(
@@ -170,12 +186,26 @@ class StageRegistryLoader:
         if default_agent is not None and not isinstance(default_agent, str):
             raise StageRegistryLoadError(f"Stage {name} default_agent must be a string")
 
+        reviewer_agent = raw_stage.get("reviewer_agent")
+        if reviewer_agent is not None and not isinstance(reviewer_agent, str):
+            raise StageRegistryLoadError(f"Stage {name} reviewer_agent must be a string")
+
+        review_policy = self._required_string(raw_stage, "review_policy", index)
+        if review_policy not in _REVIEW_POLICIES:
+            raise StageRegistryLoadError(f"Stage {name} has invalid review_policy: {review_policy}")
+        if review_policy != "none" and not reviewer_agent and name != "pr":
+            raise StageRegistryLoadError(
+                f"Stage {name} reviewer_agent is required for review_policy={review_policy}"
+            )
+
         return StageRegistryEntry(
             name=name,
             display_label=self._required_string(raw_stage, "display_label", index),
             description=self._required_string(raw_stage, "description", index),
             category=category,  # type: ignore[arg-type]
             default_agent=default_agent,
+            reviewer_agent=reviewer_agent,
+            review_policy=review_policy,  # type: ignore[arg-type]
             position_hint=position_hint,
             requires_human=self._optional_bool(raw_stage, "requires_human", name),
             is_terminal=self._optional_bool(raw_stage, "is_terminal", name),

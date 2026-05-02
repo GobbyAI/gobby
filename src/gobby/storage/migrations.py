@@ -70,7 +70,6 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 BASELINE_VERSION = 220
 _MIN_MIGRATION_VERSION = 219
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
-_STAGES_REGISTRY_PATH = Path(__file__).parent.parent / "install/shared/registry/stages.yaml"
 _ARTIFACT_REPORT_COLUMNS = (
     "pr_review_report",
     "structured_pr_verdict",
@@ -858,19 +857,22 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
 
         from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
 
-        stages, bundled_hash = StageRegistryLoader(path=_STAGES_REGISTRY_PATH).load_with_hash()
+        stages, bundled_hash = StageRegistryLoader().load_with_hash()
         for stage in stages:
             db.execute(
                 """
                 INSERT INTO task_stages_registry (
                     name, display_label, description, category, default_agent,
-                    position_hint, requires_human, is_terminal, bundled_hash, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    reviewer_agent, review_policy, position_hint, requires_human,
+                    is_terminal, bundled_hash, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(name) DO UPDATE SET
                     display_label = excluded.display_label,
                     description = excluded.description,
                     category = excluded.category,
                     default_agent = excluded.default_agent,
+                    reviewer_agent = excluded.reviewer_agent,
+                    review_policy = excluded.review_policy,
                     position_hint = excluded.position_hint,
                     requires_human = excluded.requires_human,
                     is_terminal = excluded.is_terminal,
@@ -883,22 +885,13 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
                     stage.description,
                     stage.category,
                     stage.default_agent,
+                    stage.reviewer_agent,
+                    stage.review_policy,
                     stage.position_hint,
                     1 if stage.requires_human else 0,
                     1 if stage.is_terminal else 0,
                     bundled_hash,
                 ),
-            )
-        for stage_name, reviewer_agent in _REQUIRED_REVIEW_STAGES.items():
-            db.execute(
-                """
-                UPDATE task_stages_registry
-                   SET review_policy = 'required',
-                       reviewer_agent = ?,
-                       updated_at = datetime('now')
-                 WHERE name = ?
-                """,
-                (reviewer_agent, stage_name),
             )
 
         for task_type, stages_for_type in _DEFAULT_STAGE_MANIFESTS.items():
@@ -961,6 +954,133 @@ def _drop_legacy_task_state_columns(db: LocalDatabase) -> None:
                 ON tasks(allow_automation, closed_at, is_escalated)
             """
         )
+
+
+def _sync_stage_registry_policy_from_bundled_yaml(db: LocalDatabase) -> None:
+    """Repair canonical review policy fields from bundled stages.yaml."""
+    from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
+
+    stages, bundled_hash = StageRegistryLoader().load_with_hash()
+    for stage in stages:
+        db.execute(
+            """
+            INSERT INTO task_stages_registry (
+                name, display_label, description, category, default_agent,
+                reviewer_agent, review_policy, position_hint, requires_human,
+                is_terminal, bundled_hash, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(name) DO UPDATE SET
+                display_label = excluded.display_label,
+                description = excluded.description,
+                category = excluded.category,
+                default_agent = excluded.default_agent,
+                reviewer_agent = excluded.reviewer_agent,
+                review_policy = excluded.review_policy,
+                position_hint = excluded.position_hint,
+                requires_human = excluded.requires_human,
+                is_terminal = excluded.is_terminal,
+                bundled_hash = excluded.bundled_hash,
+                updated_at = datetime('now')
+            """,
+            (
+                stage.name,
+                stage.display_label,
+                stage.description,
+                stage.category,
+                stage.default_agent,
+                stage.reviewer_agent,
+                stage.review_policy,
+                stage.position_hint,
+                1 if stage.requires_human else 0,
+                1 if stage.is_terminal else 0,
+                bundled_hash,
+            ),
+        )
+
+    db.execute(
+        """
+        UPDATE task_stage_states
+           SET review_policy = (
+                   SELECT registry.review_policy
+                     FROM task_stages_registry registry
+                    WHERE registry.name = task_stage_states.stage_name
+               ),
+               reviewer_agent = (
+                   SELECT registry.reviewer_agent
+                     FROM task_stages_registry registry
+                    WHERE registry.name = task_stage_states.stage_name
+               ),
+               updated_at = datetime('now')
+         WHERE EXISTS (
+               SELECT 1
+                 FROM task_stages_registry registry
+                WHERE registry.name = task_stage_states.stage_name
+           )
+        """
+    )
+
+
+def _normalize_stage_positions_zero_based(db: LocalDatabase) -> None:
+    """Normalize default and task manifests to dense zero-based positions."""
+    db.execute(
+        """
+        WITH ordered AS (
+            SELECT task_type,
+                   stage_name,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY task_type
+                       ORDER BY position, stage_name
+                   ) - 1 AS new_position
+              FROM task_type_default_stages
+        )
+        UPDATE task_type_default_stages
+           SET position = (
+               SELECT ordered.new_position
+                 FROM ordered
+                WHERE ordered.task_type = task_type_default_stages.task_type
+                  AND ordered.stage_name = task_type_default_stages.stage_name
+           )
+         WHERE EXISTS (
+               SELECT 1
+                 FROM ordered
+                WHERE ordered.task_type = task_type_default_stages.task_type
+                  AND ordered.stage_name = task_type_default_stages.stage_name
+           )
+        """
+    )
+    db.execute(
+        """
+        WITH ordered AS (
+            SELECT task_id,
+                   stage_name,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY task_id
+                       ORDER BY position, stage_name
+                   ) - 1 AS new_position
+              FROM task_stage_states
+        )
+        UPDATE task_stage_states
+           SET position = (
+               SELECT -ordered.new_position - 1
+                 FROM ordered
+                WHERE ordered.task_id = task_stage_states.task_id
+                  AND ordered.stage_name = task_stage_states.stage_name
+           )
+         WHERE EXISTS (
+               SELECT 1
+                 FROM ordered
+                WHERE ordered.task_id = task_stage_states.task_id
+                  AND ordered.stage_name = task_stage_states.stage_name
+           )
+        """
+    )
+    db.execute(
+        """
+        UPDATE task_stage_states
+           SET position = -position - 1
+         WHERE position < 0
+        """
+    )
 
 
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
@@ -1047,6 +1167,16 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         237,
         "Drop legacy review-round labels",
         _drop_legacy_review_round_labels,
+    ),
+    (
+        238,
+        "Repair stage registry review policy from bundled YAML",
+        _sync_stage_registry_policy_from_bundled_yaml,
+    ),
+    (
+        239,
+        "Normalize stage manifest positions to zero-based order",
+        _normalize_stage_positions_zero_based,
     ),
 ]
 

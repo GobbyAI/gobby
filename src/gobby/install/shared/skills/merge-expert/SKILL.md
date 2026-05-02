@@ -200,11 +200,12 @@ closing. Required JSON shape:
 
 Then transition the campaign task:
 
-- All steps merged + verified → `mark_task_review_approved`.
-- Any step ended in `needs_human:` → `escalate_task` with the failure list
+- All steps merged + verified -> `gobby-tasks-ops:record_merge_result` with
+  `merge_sha` and `report_ref`.
+- Any step ended in `needs_human:` -> `escalate_task` with the failure list
   in the reason.
-- Under `yolo`, force-advance via `advance_lifecycle` instead of escalating;
-  preserve the failure list in the report.
+- Unresolved merge failures -> `gobby-tasks-ops:record_merge_result` with
+  `failure_reason` and `report_ref`.
 
 ## Boundaries
 
@@ -212,6 +213,6 @@ Then transition the campaign task:
   the orchestrator only routes.
 - Do **not** spawn agents deeper than 5 levels — the `child_session_manager`
   enforces this, but plan around it: workers cannot spawn workers.
-- Do **not** `close_task` on the campaign task. Use the review flow
-  (`mark_task_review_approved` / `escalate_task` / `advance_lifecycle`).
+- Do **not** `close_task` on the campaign task. Use
+  `gobby-tasks-ops:record_merge_result` or `escalate_task`.
 - Do **not** edit code. The orchestrator is read + dispatch only.

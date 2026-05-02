@@ -5,6 +5,7 @@ stages:
     description: Early problem framing; capture motivating questions and constraints.
     category: discovery
     default_agent: analyst
+    review_policy: none
     position_hint: 10
     requires_human: false
     is_terminal: false
@@ -13,57 +14,71 @@ stages:
     description: Targeted investigation; produce findings consumable by architecture/PRD.
     category: discovery
     default_agent: researcher
+    review_policy: none
     position_hint: 20
   - name: architecture
     display_label: Architecture
     description: Cross-cutting design decisions and component shape.
     category: design
     default_agent: architect
+    review_policy: none
     position_hint: 30
   - name: prd
     display_label: PRD
     description: Productized requirements; bridges discovery and planning.
     category: design
     default_agent: product-manager
+    review_policy: none
     position_hint: 40
   - name: planning
     display_label: Planning
     description: Implementation plan authoring (interactive or autonomous).
     category: design
     default_agent: planner
+    reviewer_agent: plan-adversary
+    review_policy: required
     position_hint: 50
   - name: test_arch
     display_label: Test Architecture
     description: Test scaffolding and contract test design before expansion.
     category: verification
     default_agent: test-architect
+    review_policy: none
     position_hint: 70
   - name: expansion
     display_label: Expansion
     description: Decompose plan into TDD-wrapped leaf tasks.
     category: implementation
+    reviewer_agent: expansion-qa
+    review_policy: required
     position_hint: 80
   - name: development
     display_label: Development
     description: Leaf implementation work; drives TDD sandwiches.
     category: implementation
     default_agent: backend-developer
+    reviewer_agent: qa-reviewer
+    review_policy: required
     position_hint: 100
   - name: holistic_qa
     display_label: Holistic QA
     description: Whole-epic review after every leaf is parked.
     category: verification
     default_agent: holistic-reviewer
+    reviewer_agent: holistic-reviewer
+    review_policy: required
     position_hint: 120
   - name: pr
     display_label: Pull Request
     description: Open/update PR, capture verdict, gate on external review.
     category: delivery
+    review_policy: required
     position_hint: 130
   - name: merge
     display_label: Merge
     description: Land approved PR; resolve conflicts; close terminal task.
     category: delivery
     default_agent: merge-orchestrator
+    review_policy: none
     position_hint: 140
     is_terminal: true

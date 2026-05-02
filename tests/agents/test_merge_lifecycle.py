@@ -1,17 +1,20 @@
-"""Phase 2 contract tests for merge-agent lifecycle write-back."""
+"""Stage-native contracts for bundled merge agents."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
-from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
-
 pytestmark = pytest.mark.unit
+
+LEGACY_MERGE_TOOLS = {
+    "gobby-tasks:mark_task_merged",
+    "gobby-tasks:mark_task_merge_failed",
+    "gobby-tasks:mark_task_pr_opened",
+    "gobby-tasks:advance_lifecycle",
+}
 
 
 def _agent(name: str) -> dict:
@@ -29,71 +32,24 @@ def _allowed_mcp_tools(agent: dict) -> set[str]:
     return tools
 
 
-@pytest.fixture
-def mock_task_manager() -> MagicMock:
-    manager = MagicMock()
-    manager.db = MagicMock()
-    manager.get_task.return_value = MagicMock(id="task-1", status="open", lifecycle="merging")
-    return manager
+def test_merge_orchestrator_uses_stage_native_merge_result_tool() -> None:
+    tools = _allowed_mcp_tools(_agent("merge-orchestrator"))
+
+    assert "gobby-tasks-ops:record_merge_result" in tools
+    assert tools.isdisjoint(LEGACY_MERGE_TOOLS)
 
 
-@pytest.fixture
-def lifecycle_registry(mock_task_manager: MagicMock):
-    return create_lifecycle_registry(
-        RegistryContext(task_manager=mock_task_manager, sync_manager=MagicMock())
+def test_merge_worker_uses_stage_native_merge_result_tool() -> None:
+    tools = _allowed_mcp_tools(_agent("merge-worker"))
+
+    assert "gobby-tasks-ops:record_merge_result" in tools
+    assert tools.isdisjoint(LEGACY_MERGE_TOOLS)
+
+
+def test_merge_orchestrator_instructions_do_not_reference_removed_lifecycle_tools() -> None:
+    text = Path("src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml").read_text(
+        encoding="utf-8"
     )
 
-
-def test_merge_orchestrator_allowlist_includes_merge_tools() -> None:
-    assert {
-        "gobby-tasks:mark_task_merged",
-        "gobby-tasks:mark_task_merge_failed",
-    } <= _allowed_mcp_tools(_agent("merge-orchestrator"))
-
-
-def test_merge_worker_allowlist_includes_merge_tools() -> None:
-    assert {
-        "gobby-tasks:mark_task_merged",
-        "gobby-tasks:mark_task_merge_failed",
-    } <= _allowed_mcp_tools(_agent("merge-worker"))
-
-
-def test_pr_url_artifact_set_on_merge_via_tool(lifecycle_registry, mock_task_manager) -> None:
-    tool = lifecycle_registry._tools["mark_task_merged"].func
-    tool(task_id="#1", pr_url="https://example.test/pr/1")
-
-    mock_task_manager.mark_task_merged.assert_called_once_with(
-        "#1",
-        pr_url="https://example.test/pr/1",
-        merge_sha=None,
-    )
-
-
-def test_conflict_retry_within_max_merge_attempts(lifecycle_registry, mock_task_manager) -> None:
-    tool = lifecycle_registry._tools["mark_task_merge_failed"].func
-    tool(task_id="#1", reason="conflict")
-
-    mock_task_manager.mark_task_merge_failed.assert_called_once_with("#1", reason="conflict")
-
-
-def test_unattended_fallback_on_unresolved_conflict() -> None:
-    from gobby.dispatch.actions import AdvanceLifecycleAction
-    from gobby.dispatch.rules import merge_rule
-
-    task = type(
-        "Task",
-        (),
-        {
-            "id": "task-1",
-            "ref": "#1",
-            "task_type": "epic",
-            "lifecycle": "merging",
-            "status": "open",
-            "labels": [],
-            "unattended": True,
-            "dispatch_failure_count": 3,
-        },
-    )()
-    context = type("Context", (), {"artifacts": object(), "max_merge_attempts": 3})()
-
-    assert isinstance(merge_rule(task, context), AdvanceLifecycleAction)
+    for tool in LEGACY_MERGE_TOOLS:
+        assert tool.split(":", 1)[1] not in text

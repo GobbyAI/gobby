@@ -356,6 +356,7 @@ def build_condition_helpers(
     from .condition_helpers import (
         task_has_label_prefix,
         task_needs_human_review,
+        task_state_in,
         task_status_in,
         task_tree_complete,
     )
@@ -383,6 +384,9 @@ def build_condition_helpers(
         funcs["task_has_label_prefix"] = lambda task_id, prefix: task_has_label_prefix(
             task_manager, task_id, prefix
         )
+        funcs["task_state_in"] = lambda task_id, *states: task_state_in(
+            task_manager, task_id, *states
+        )
         funcs["task_status_in"] = lambda task_id, *statuses: task_status_in(
             task_manager, task_id, *statuses
         )
@@ -390,6 +394,7 @@ def build_condition_helpers(
         funcs["task_tree_complete"] = lambda task_id: True
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_has_label_prefix"] = lambda task_id, prefix: False
+        funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_status_in"] = lambda task_id, *statuses: False
 
     # --- Stop signal helper ---

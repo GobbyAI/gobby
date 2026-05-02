@@ -41,11 +41,10 @@ instructions: |
   3. Call end_agent_run (conflict resolution not available for clones)
 
   LIFECYCLE MODEL:
-  - On successful merge, call gobby-tasks:mark_task_merged with the task id
-    assigned for the merged work before end_agent_run.
+  - On successful merge, call gobby-tasks-ops:record_merge_result with the
+    task id assigned for the merged work and merge_sha before end_agent_run.
   - On unresolved conflict or verification failure, call
-    gobby-tasks:mark_task_merge_failed with the task id and reason before
-    end_agent_run.
+    gobby-tasks-ops:record_merge_result with failure_reason before end_agent_run.
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required merge work is complete.
@@ -111,8 +110,7 @@ steps:
       - "gobby-merge:merge_resolve"
       - "gobby-merge:merge_apply"
       - "gobby-merge:merge_abort"
-      - "gobby-tasks:mark_task_merged"
-      - "gobby-tasks:mark_task_merge_failed"
+      - "gobby-tasks-ops:record_merge_result"
       - "gobby-agents:end_agent_run"
     on_mcp_success:
       - server: gobby-merge

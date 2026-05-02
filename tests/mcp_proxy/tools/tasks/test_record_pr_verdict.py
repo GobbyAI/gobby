@@ -177,10 +177,12 @@ def test_rejected_under_cap_returns_to_ready(temp_db, sample_project) -> None:
     )
 
     row = stage_row(temp_db, task.id, "pr")
+    task_state = task_row(temp_db, task.id)
     assert result["stage"]["state"] == "ready"
     assert row["state"] == "ready"
     assert row["review_round_count"] == 1
-    assert task_row(temp_db, task.id)["status"] == "open"
+    assert task_state["closed_at"] is None
+    assert task_state["is_escalated"] == 0
 
 
 def test_rejected_over_cap_escalates(temp_db, sample_project) -> None:
@@ -193,9 +195,11 @@ def test_rejected_over_cap_escalates(temp_db, sample_project) -> None:
     )
 
     row = stage_row(temp_db, task.id, "pr")
+    task_state = task_row(temp_db, task.id)
     assert row["state"] == "ready"
     assert row["review_round_count"] == 1
-    assert task_row(temp_db, task.id)["status"] == "escalated"
+    assert task_state["is_escalated"] == 1
+    assert task_state["escalated_at"] is not None
 
 
 def test_per_stage_max_review_rounds_override_works(temp_db, sample_project) -> None:
@@ -212,9 +216,11 @@ def test_per_stage_max_review_rounds_override_works(temp_db, sample_project) -> 
         findings="second failed review",
     )
 
+    task_state = task_row(temp_db, task.id)
     row = stage_row(temp_db, task.id, "pr")
     assert row["review_round_count"] == 2
-    assert task_row(temp_db, task.id)["status"] == "escalated"
+    assert task_state["is_escalated"] == 1
+    assert task_state["escalated_at"] is not None
 
 
 register_contract_tests(

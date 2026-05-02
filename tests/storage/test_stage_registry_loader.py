@@ -47,6 +47,7 @@ def test_parses_bundled_yaml() -> None:
     StageRegistryLoader, _ = _loader_types()
 
     entries = StageRegistryLoader().load()
+    by_name = {entry.name: entry for entry in entries}
 
     assert [entry.name for entry in entries] == CANONICAL_STAGE_NAMES
     assert {entry.name for entry in entries}.isdisjoint(DROPPED_STAGE_NAMES)
@@ -54,6 +55,13 @@ def test_parses_bundled_yaml() -> None:
     assert entries[0].default_agent == "analyst"
     assert entries[-1].name == "merge"
     assert entries[-1].is_terminal is True
+    assert by_name["planning"].review_policy == "required"
+    assert by_name["planning"].reviewer_agent == "plan-adversary"
+    assert by_name["expansion"].reviewer_agent == "expansion-qa"
+    assert by_name["development"].reviewer_agent == "qa-reviewer"
+    assert by_name["pr"].review_policy == "required"
+    assert by_name["pr"].reviewer_agent is None
+    assert by_name["merge"].review_policy == "none"
 
 
 def test_malformed_yaml_raises(tmp_path: Path) -> None:
@@ -65,6 +73,58 @@ def test_malformed_yaml_raises(tmp_path: Path) -> None:
     )
 
     with pytest.raises(StageRegistryLoadError, match="display_label|description|required"):
+        StageRegistryLoader(path=broken).load()
+
+
+def test_invalid_review_policy_raises(tmp_path: Path) -> None:
+    StageRegistryLoader, StageRegistryLoadError = _loader_types()
+    broken = tmp_path / "stages.yaml"
+    broken.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "stages": [
+                    {
+                        "name": "planning",
+                        "display_label": "Planning",
+                        "description": "Plan",
+                        "category": "design",
+                        "review_policy": "always",
+                        "position_hint": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StageRegistryLoadError, match="invalid review_policy"):
+        StageRegistryLoader(path=broken).load()
+
+
+def test_required_review_policy_requires_reviewer_agent_except_pr(tmp_path: Path) -> None:
+    StageRegistryLoader, StageRegistryLoadError = _loader_types()
+    broken = tmp_path / "stages.yaml"
+    broken.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "stages": [
+                    {
+                        "name": "planning",
+                        "display_label": "Planning",
+                        "description": "Plan",
+                        "category": "design",
+                        "review_policy": "required",
+                        "position_hint": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StageRegistryLoadError, match="reviewer_agent is required"):
         StageRegistryLoader(path=broken).load()
 
 
@@ -93,7 +153,7 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
     db.execute(
         """
         UPDATE task_stages_registry
-        SET bundled_hash = ?, display_label = ?
+        SET bundled_hash = ?, display_label = ?, review_policy = 'none', reviewer_agent = NULL
         WHERE name = ?
         """,
         ("stale-hash", "Old Planning", "planning"),
@@ -102,11 +162,17 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
     result = StageRegistryLoader().sync(db)
 
     row = db.fetchone(
-        "SELECT display_label, bundled_hash FROM task_stages_registry WHERE name = 'planning'"
+        """
+        SELECT display_label, bundled_hash, review_policy, reviewer_agent
+        FROM task_stages_registry
+        WHERE name = 'planning'
+        """
     )
     assert result.upserted >= 1
     assert row["display_label"] == "Planning"
     assert row["bundled_hash"] != "stale-hash"
+    assert row["review_policy"] == "required"
+    assert row["reviewer_agent"] == "plan-adversary"
 
 
 def test_user_added_stage_preserved(tmp_path: Path) -> None:
@@ -133,6 +199,7 @@ def test_user_added_stage_preserved(tmp_path: Path) -> None:
 
     StageRegistryLoader().sync(db)
 
-    assert db.fetchone(
-        "SELECT name FROM task_stages_registry WHERE name = 'operator_review'"
-    ) is not None
+    assert (
+        db.fetchone("SELECT name FROM task_stages_registry WHERE name = 'operator_review'")
+        is not None
+    )

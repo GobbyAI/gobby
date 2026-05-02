@@ -218,7 +218,8 @@ def test_registry_seeded_inline(tmp_path: Path) -> None:
     rows = db.fetchall(
         """
         SELECT name, display_label, description, category, default_agent,
-               position_hint, requires_human, is_terminal, bundled_hash
+               reviewer_agent, review_policy, position_hint, requires_human,
+               is_terminal, bundled_hash
         FROM task_stages_registry
         ORDER BY position_hint
         """
@@ -229,6 +230,24 @@ def test_registry_seeded_inline(tmp_path: Path) -> None:
     assert DISCOVERY_DEFAULT_AGENTS == {
         row["name"]: row["default_agent"] for row in rows if row["name"] in DISCOVERY_DEFAULT_AGENTS
     }
+    policies = {row["name"]: row["review_policy"] for row in rows}
+    reviewers = {row["name"]: row["reviewer_agent"] for row in rows}
+    expected_required_policies = {
+        "planning": "required",
+        "expansion": "required",
+        "development": "required",
+        "holistic_qa": "required",
+        "pr": "required",
+        "merge": "none",
+    }
+    assert {
+        name: policies[name] for name in expected_required_policies
+    } == expected_required_policies
+    assert reviewers["planning"] == "plan-adversary"
+    assert reviewers["expansion"] == "expansion-qa"
+    assert reviewers["development"] == "qa-reviewer"
+    assert reviewers["holistic_qa"] == "holistic-reviewer"
+    assert reviewers["pr"] is None
 
 
 def test_bundled_stages_yaml_present_with_11_stages() -> None:
@@ -239,7 +258,14 @@ def test_bundled_stages_yaml_present_with_11_stages() -> None:
     assert [stage["name"] for stage in stages] == CANONICAL_STAGE_NAMES
     assert {stage["name"] for stage in stages}.isdisjoint(DROPPED_STAGE_NAMES)
 
-    required = {"name", "display_label", "description", "category", "position_hint"}
+    required = {
+        "name",
+        "display_label",
+        "description",
+        "category",
+        "review_policy",
+        "position_hint",
+    }
     for stage in stages:
         assert required.issubset(stage)
         assert stage["category"] in {
@@ -250,11 +276,36 @@ def test_bundled_stages_yaml_present_with_11_stages() -> None:
             "delivery",
         }
         assert isinstance(stage["position_hint"], int)
+        assert stage["review_policy"] in {"none", "required", "optional"}
 
     assert {stage["name"]: stage.get("default_agent") for stage in stages}.items() >= (
         DISCOVERY_DEFAULT_AGENTS.items()
     )
     assert next(stage for stage in stages if stage["name"] == "merge")["is_terminal"] is True
+
+
+def test_registry_seed_uses_install_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    install_dir = tmp_path / "install"
+    registry_dir = install_dir / "shared" / "registry"
+    registry_dir.mkdir(parents=True)
+    payload = _yaml_payload()
+    payload["stages"][0]["display_label"] = "Install Dir Ideation"
+    bundled = registry_dir / "stages.yaml"
+    bundled.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    db = _db_before_234(tmp_path)
+
+    monkeypatch.setattr(
+        "gobby.storage.tasks._stage_registry_loader.get_install_dir",
+        lambda: install_dir,
+    )
+
+    _apply_234(db)
+
+    row = db.fetchone(
+        "SELECT display_label, bundled_hash FROM task_stages_registry WHERE name = 'ideation'"
+    )
+    assert row["display_label"] == "Install Dir Ideation"
+    assert row["bundled_hash"] == hashlib.sha256(bundled.read_bytes()).hexdigest()
 
 
 def test_default_stages_seeded_inline(tmp_path: Path) -> None:

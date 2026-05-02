@@ -1,19 +1,10 @@
-"""Tests for condition helper functions used in rule engine expressions.
-
-Covers:
-- _normalize_task_id: int → '#N', str passthrough
-- task_tree_complete: int task_id, str task_id, list of mixed, None, missing task
-- task_needs_human_review: escalated status check with int/str task_id
-- is_task_complete: only closed counts as complete
-"""
+"""Tests for condition helper functions used in rule engine expressions."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 import pytest
 
+from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
     is_task_complete,
@@ -25,43 +16,18 @@ from gobby.workflows.condition_helpers import (
 pytestmark = pytest.mark.unit
 
 
-# ---------------------------------------------------------------------------
-# Stubs
-# ---------------------------------------------------------------------------
+def _manager(temp_db) -> LocalTaskManager:
+    return LocalTaskManager(temp_db)
 
 
-@dataclass
-class FakeTask:
-    id: str
-    status: str = "open"
-    labels: list[str] | None = None
+def _task(manager: LocalTaskManager, sample_project: dict, **kwargs):
+    title = kwargs.pop("title", "Condition helper task")
+    return manager.create_task(project_id=sample_project["id"], title=title, **kwargs)
 
 
-class FakeTaskManager:
-    """In-memory task manager for testing condition helpers."""
-
-    def __init__(self) -> None:
-        self._tasks: dict[str, FakeTask] = {}
-        self._children: dict[str, list[str]] = {}  # parent_id → [child_ids]
-
-    def add(self, task: FakeTask, parent_id: str | None = None) -> None:
-        self._tasks[task.id] = task
-        if parent_id is not None:
-            self._children.setdefault(parent_id, []).append(task.id)
-
-    def get_task(self, task_id: str) -> FakeTask | None:
-        return self._tasks.get(task_id)
-
-    def list_tasks(self, parent_task_id: str | None = None, **kwargs: Any) -> list[FakeTask]:
-        if parent_task_id is None:
-            return list(self._tasks.values())
-        child_ids = self._children.get(parent_task_id, [])
-        return [self._tasks[cid] for cid in child_ids if cid in self._tasks]
-
-
-# ---------------------------------------------------------------------------
-# _normalize_task_id
-# ---------------------------------------------------------------------------
+def _seq_ref(task) -> str:
+    assert task.seq_num is not None
+    return f"#{task.seq_num}"
 
 
 class TestNormalizeTaskId:
@@ -79,253 +45,256 @@ class TestNormalizeTaskId:
         assert _normalize_task_id(uuid) == uuid
 
 
-# ---------------------------------------------------------------------------
-# is_task_complete
-# ---------------------------------------------------------------------------
-
-
 class TestIsTaskComplete:
-    def test_closed_is_complete(self) -> None:
-        assert is_task_complete(FakeTask(id="1", status="closed")) is True
+    def test_closed_is_complete(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
 
-    def test_needs_review_is_not_complete(self) -> None:
-        assert is_task_complete(FakeTask(id="1", status="needs_review")) is False
+        closed = manager.close_task(task.id, force=True)
 
-    def test_open_is_not_complete(self) -> None:
-        assert is_task_complete(FakeTask(id="1", status="open")) is False
+        assert not hasattr(closed, "status")
+        assert is_task_complete(closed) is True
 
-    def test_in_progress_is_not_complete(self) -> None:
-        assert is_task_complete(FakeTask(id="1", status="in_progress")) is False
+    def test_ready_is_not_complete(self, temp_db, sample_project) -> None:
+        task = _task(_manager(temp_db), sample_project)
+        assert is_task_complete(task) is False
 
-    def test_escalated_is_not_complete(self) -> None:
-        assert is_task_complete(FakeTask(id="1", status="escalated")) is False
+    def test_in_progress_is_not_complete(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.stage_states.start_stage(task.id, "development", by_session_id=None)
 
+        assert is_task_complete(manager.get_task(task.id)) is False
 
-# ---------------------------------------------------------------------------
-# task_tree_complete — int task_id handling (the bug fix)
-# ---------------------------------------------------------------------------
+    def test_needs_review_is_not_complete(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+        reviewed = manager.mark_task_needs_review(task.id)
+
+        assert is_task_complete(reviewed) is False
+
+    def test_escalated_is_not_complete(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        escalated = manager.escalate_task(task.id, reason="needs human")
+
+        assert is_task_complete(escalated) is False
 
 
 class TestTaskTreeCompleteIntHandling:
-    """Regression tests for int task_id (e.g. auto_task_ref=9438)."""
+    def test_int_task_id_closed(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.close_task(task.id, force=True)
 
-    def test_int_task_id_closed(self) -> None:
-        """task_tree_complete(9438) should work when task #9438 is closed."""
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#9438", status="closed"))
-        assert task_tree_complete(mgr, 9438) is True
+        assert task_tree_complete(manager, task.seq_num) is True
 
-    def test_int_task_id_open(self) -> None:
-        """task_tree_complete(9438) should return False when task is open."""
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#9438", status="open"))
-        assert task_tree_complete(mgr, 9438) is False
+    def test_int_task_id_open(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
 
-    def test_int_task_id_not_found(self) -> None:
-        """task_tree_complete(9438) returns False when task doesn't exist."""
-        mgr = FakeTaskManager()
-        assert task_tree_complete(mgr, 9438) is False
+        assert task_tree_complete(manager, task.seq_num) is False
 
-    def test_int_does_not_raise_type_error(self) -> None:
-        """The original bug: iterating over an int caused TypeError."""
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#9438", status="open"))
-        # This used to raise: TypeError: 'int' object is not iterable
-        result = task_tree_complete(mgr, 9438)
-        assert result is False
+    def test_int_task_id_not_found(self, temp_db) -> None:
+        assert task_tree_complete(_manager(temp_db), 9438) is False
 
+    def test_int_does_not_raise_type_error(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
 
-# ---------------------------------------------------------------------------
-# task_tree_complete — string task_id (existing behavior)
-# ---------------------------------------------------------------------------
+        assert task_tree_complete(manager, task.seq_num) is False
 
 
 class TestTaskTreeCompleteString:
-    def test_string_task_id_closed(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="closed"))
-        assert task_tree_complete(mgr, "#100") is True
+    def test_string_task_id_closed(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.close_task(task.id, force=True)
 
-    def test_string_task_id_open(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="open"))
-        assert task_tree_complete(mgr, "#100") is False
+        assert task_tree_complete(manager, task.id) is True
 
+    def test_string_task_id_open(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
 
-# ---------------------------------------------------------------------------
-# task_tree_complete — list of task_ids
-# ---------------------------------------------------------------------------
+        assert task_tree_complete(manager, task.id) is False
 
 
 class TestTaskTreeCompleteList:
-    def test_list_of_strings_all_closed(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#1", status="closed"))
-        mgr.add(FakeTask(id="#2", status="closed"))
-        assert task_tree_complete(mgr, ["#1", "#2"]) is True
+    def test_list_of_strings_all_closed(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        first = _task(manager, sample_project, title="First")
+        second = _task(manager, sample_project, title="Second")
+        manager.close_task(first.id, force=True)
+        manager.close_task(second.id, force=True)
 
-    def test_list_of_ints_all_closed(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#1", status="closed"))
-        mgr.add(FakeTask(id="#2", status="closed"))
-        assert task_tree_complete(mgr, [1, 2]) is True
+        assert task_tree_complete(manager, [first.id, second.id]) is True
 
-    def test_mixed_list(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#1", status="closed"))
-        mgr.add(FakeTask(id="#2", status="closed"))
-        assert task_tree_complete(mgr, ["#1", 2]) is True
+    def test_list_of_ints_all_closed(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        first = _task(manager, sample_project, title="First")
+        second = _task(manager, sample_project, title="Second")
+        manager.close_task(first.id, force=True)
+        manager.close_task(second.id, force=True)
 
-    def test_list_one_open(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#1", status="closed"))
-        mgr.add(FakeTask(id="#2", status="open"))
-        assert task_tree_complete(mgr, [1, 2]) is False
+        assert task_tree_complete(manager, [first.seq_num, second.seq_num]) is True
 
+    def test_mixed_list(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        first = _task(manager, sample_project, title="First")
+        second = _task(manager, sample_project, title="Second")
+        manager.close_task(first.id, force=True)
+        manager.close_task(second.id, force=True)
 
-# ---------------------------------------------------------------------------
-# task_tree_complete — edge cases
-# ---------------------------------------------------------------------------
+        assert task_tree_complete(manager, [first.id, second.seq_num]) is True
+
+    def test_list_one_open(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        first = _task(manager, sample_project, title="First")
+        second = _task(manager, sample_project, title="Second")
+        manager.close_task(first.id, force=True)
+
+        assert task_tree_complete(manager, [first.seq_num, second.seq_num]) is False
 
 
 class TestTaskTreeCompleteEdgeCases:
-    def test_none_returns_true(self) -> None:
-        mgr = FakeTaskManager()
-        assert task_tree_complete(mgr, None) is True
+    def test_none_returns_true(self, temp_db) -> None:
+        assert task_tree_complete(_manager(temp_db), None) is True
 
     def test_no_task_manager_returns_false(self) -> None:
         assert task_tree_complete(None, "#1") is False
 
-    def test_subtree_all_closed(self) -> None:
-        """Parent open but all subtasks closed -> tree is complete."""
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="open"))
-        mgr.add(FakeTask(id="#101", status="closed"), parent_id="#100")
-        mgr.add(FakeTask(id="#102", status="closed"), parent_id="#100")
-        assert task_tree_complete(mgr, "#100") is True
+    def test_subtree_all_closed(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        parent = _task(manager, sample_project, title="Parent")
+        child_a = _task(manager, sample_project, title="Child A", parent_task_id=parent.id)
+        child_b = _task(manager, sample_project, title="Child B", parent_task_id=parent.id)
+        manager.close_task(child_a.id, force=True)
+        manager.close_task(child_b.id, force=True)
 
-    def test_subtree_one_open(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="open"))
-        mgr.add(FakeTask(id="#101", status="closed"), parent_id="#100")
-        mgr.add(FakeTask(id="#102", status="open"), parent_id="#100")
-        assert task_tree_complete(mgr, "#100") is False
+        assert task_tree_complete(manager, parent.id) is True
 
-    def test_nested_subtree(self) -> None:
-        """Grandchild must also be complete."""
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="open"))
-        mgr.add(FakeTask(id="#101", status="open"), parent_id="#100")
-        mgr.add(FakeTask(id="#102", status="closed"), parent_id="#101")
-        assert task_tree_complete(mgr, "#100") is True
+    def test_subtree_one_open(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        parent = _task(manager, sample_project, title="Parent")
+        child_a = _task(manager, sample_project, title="Child A", parent_task_id=parent.id)
+        _task(manager, sample_project, title="Child B", parent_task_id=parent.id)
+        manager.close_task(child_a.id, force=True)
 
-    def test_nested_subtree_incomplete(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="open"))
-        mgr.add(FakeTask(id="#101", status="open"), parent_id="#100")
-        mgr.add(FakeTask(id="#102", status="open"), parent_id="#101")
-        assert task_tree_complete(mgr, "#100") is False
+        assert task_tree_complete(manager, parent.id) is False
 
+    def test_nested_subtree(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        parent = _task(manager, sample_project, title="Parent")
+        child = _task(manager, sample_project, title="Child", parent_task_id=parent.id)
+        grandchild = _task(manager, sample_project, title="Grandchild", parent_task_id=child.id)
+        manager.close_task(grandchild.id, force=True)
 
-# ---------------------------------------------------------------------------
-# task_needs_human_review — escalated status check
-# ---------------------------------------------------------------------------
+        assert task_tree_complete(manager, parent.id) is True
+
+    def test_nested_subtree_incomplete(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        parent = _task(manager, sample_project, title="Parent")
+        child = _task(manager, sample_project, title="Child", parent_task_id=parent.id)
+        _task(manager, sample_project, title="Grandchild", parent_task_id=child.id)
+
+        assert task_tree_complete(manager, parent.id) is False
 
 
 class TestTaskNeedsHumanReview:
-    def test_int_task_id_escalated(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#9438", status="escalated"))
-        assert task_needs_human_review(mgr, 9438) is True
+    def test_int_task_id_escalated(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.escalate_task(task.id, reason="needs human")
 
-    def test_int_task_id_not_escalated(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#9438", status="open"))
-        assert task_needs_human_review(mgr, 9438) is False
+        assert task_needs_human_review(manager, task.seq_num) is True
 
-    def test_needs_review_is_not_human_review(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="needs_review"))
-        assert task_needs_human_review(mgr, "#100") is False
+    def test_int_task_id_not_escalated(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
 
-    def test_string_task_id(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#100", status="escalated"))
-        assert task_needs_human_review(mgr, "#100") is True
+        assert task_needs_human_review(manager, task.seq_num) is False
 
-    def test_none_returns_false(self) -> None:
-        assert task_needs_human_review(FakeTaskManager(), None) is False
+    def test_needs_review_is_not_human_review(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+        manager.mark_task_needs_review(task.id)
+
+        assert task_needs_human_review(manager, task.id) is False
+
+    def test_string_task_id(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project)
+        manager.escalate_task(task.id, reason="needs human")
+
+        assert task_needs_human_review(manager, task.id) is True
+
+    def test_none_returns_false(self, temp_db) -> None:
+        assert task_needs_human_review(_manager(temp_db), None) is False
 
     def test_no_manager_returns_false(self) -> None:
         assert task_needs_human_review(None, "#100") is False
 
 
-# ---------------------------------------------------------------------------
-# task_has_label_prefix — interactive-lock mutex helper
-# ---------------------------------------------------------------------------
-
-
 class TestTaskHasLabelPrefix:
-    """Covers the helper consumed by block-front-half-on-interactive-lock."""
-
-    def test_matching_label_returns_true(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(
-            FakeTask(
-                id="#42",
-                labels=["planning-round:1", "interactive:planning-in-progress:sess-abc"],
-            )
+    def test_matching_label_returns_true(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(
+            manager,
+            sample_project,
+            labels=["planning-round:1", "interactive:planning-in-progress:sess-abc"],
         )
-        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True
 
-    def test_non_matching_prefix_returns_false(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#42", labels=["planning-round:1"]))
-        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
+        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is True
 
-    def test_prefix_is_strict_startswith_not_substring(self) -> None:
-        """A label that *contains* the prefix mid-string must not match."""
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#42", labels=["prefixed-interactive:planning-in-progress:x"]))
-        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
+    def test_non_matching_prefix_returns_false(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, labels=["planning-round:1"])
 
-    def test_empty_labels_returns_false(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#42", labels=[]))
-        assert task_has_label_prefix(mgr, "#42", "interactive:") is False
+        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is False
 
-    def test_none_labels_returns_false(self) -> None:
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#42", labels=None))
-        assert task_has_label_prefix(mgr, "#42", "interactive:") is False
+    def test_prefix_is_strict_startswith_not_substring(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, labels=["prefixed-interactive:planning:x"])
 
-    def test_missing_task_returns_false(self) -> None:
-        assert task_has_label_prefix(FakeTaskManager(), "#404", "interactive:") is False
+        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is False
 
-    def test_none_task_id_returns_false(self) -> None:
-        assert task_has_label_prefix(FakeTaskManager(), None, "interactive:") is False
+    def test_empty_labels_returns_false(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, labels=[])
+
+        assert task_has_label_prefix(manager, task.id, "interactive:") is False
+
+    def test_missing_task_returns_false(self, temp_db) -> None:
+        assert task_has_label_prefix(_manager(temp_db), "#404", "interactive:") is False
+
+    def test_none_task_id_returns_false(self, temp_db) -> None:
+        assert task_has_label_prefix(_manager(temp_db), None, "interactive:") is False
 
     def test_no_manager_returns_false(self) -> None:
         assert task_has_label_prefix(None, "#42", "interactive:") is False
 
-    def test_int_task_id_normalizes(self) -> None:
-        """Numeric seq_num must be normalized to `#N` before lookup, matching the
-        convention used by the other helpers."""
-        mgr = FakeTaskManager()
-        mgr.add(FakeTask(id="#9438", labels=["interactive:planning-in-progress:s"]))
-        assert task_has_label_prefix(mgr, 9438, "interactive:planning-in-progress:") is True
+    def test_int_task_id_normalizes(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, labels=["interactive:planning-in-progress:s"])
 
-    def test_any_matching_label_is_enough(self) -> None:
-        """Multiple interactive locks accumulated on the same parent still match."""
-        mgr = FakeTaskManager()
-        mgr.add(
-            FakeTask(
-                id="#42",
-                labels=[
-                    "interactive:planning-in-progress:session-a",
-                    "interactive:planning-in-progress:session-b",
-                    "planning-round:2",
-                ],
-            )
+        assert (
+            task_has_label_prefix(manager, task.seq_num, "interactive:planning-in-progress:")
+            is True
         )
-        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True
+
+    def test_any_matching_label_is_enough(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(
+            manager,
+            sample_project,
+            labels=[
+                "interactive:planning-in-progress:session-a",
+                "interactive:planning-in-progress:session-b",
+                "planning-round:2",
+            ],
+        )
+
+        assert task_has_label_prefix(manager, task.id, "interactive:planning-in-progress:") is True

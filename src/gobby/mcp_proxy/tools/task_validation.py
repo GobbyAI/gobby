@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+from gobby.tasks.state_semantics import projected_task_state
 from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_history import ValidationHistoryManager
 
@@ -100,7 +101,7 @@ def create_validation_registry(
 
         if children:
             # Parent task: validate based on child completion
-            open_children = [c for c in children if c.status != "closed"]
+            open_children = [c for c in children if projected_task_state(c) != "closed"]
             all_closed = len(open_children) == 0
 
             from gobby.tasks.validation import ValidationResult
@@ -443,21 +444,19 @@ def create_validation_registry(
 
     @registry.tool(
         name="de_escalate_task",
-        description="Return an escalated task to an explicit next status after human intervention resolves the issue.",
+        description="Return an escalated task to its preserved current stage after human intervention resolves the issue.",
     )
     def de_escalate_task(
         task_id: str,
         reason: str,
-        target_status: str | None = None,
         reset_validation: bool = False,
     ) -> dict[str, Any]:
         """
-        De-escalate a task to an explicit next status.
+        De-escalate a task to its preserved current stage.
 
         Args:
             task_id: Task reference: #N, N (seq_num), path (1.2.3), or UUID
             reason: Reason for de-escalation (required)
-            target_status: Where the task should return (default: open)
             reset_validation: Also reset validation fail count (default: False)
 
         Returns:
@@ -473,17 +472,17 @@ def create_validation_registry(
         if not task:
             return {"success": False, "error": f"Task {task_id} not found"}
 
-        if task.status != "escalated":
+        current_state = projected_task_state(task)
+        if current_state != "escalated":
             return {
                 "success": False,
-                "error": f"Task {task_id} is not escalated (current status: {task.status})",
+                "error": f"Task {task_id} is not escalated (current state: {current_state})",
             }
 
         try:
             updated_task = task_manager.de_escalate_task(
                 task.id,
                 reason=reason,
-                target_status=target_status,
                 reset_validation=reset_validation,
             )
         except ValueError as e:
@@ -492,11 +491,10 @@ def create_validation_registry(
         return {
             "success": True,
             "task_id": updated_task.id,
-            "status": updated_task.status,
+            "state": projected_task_state(updated_task),
             "escalated_at": updated_task.escalated_at,
             "escalation_reason": updated_task.escalation_reason,
             "de_escalation_reason": reason,
-            "target_status": updated_task.status,
             "validation_reset": reset_validation,
         }
 
