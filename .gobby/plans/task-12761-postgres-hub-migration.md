@@ -2647,7 +2647,7 @@ Cutover is blocked until:
 
 **Goal**: a single command imports an entire SQLite hub database into a fresh Postgres database, validates deterministically, and leaves SQLite untouched.
 
-### 5.1 Implement `gobby postgres migrate-from-sqlite` [category: code] (depends: P4)
+### 5.1 Implement `gobby postgres migrate-from-sqlite` [category: code] (depends: P4, 5.2, 5.3)
 `kind: deliverable`
 
 Target: `src/gobby/cli/postgres.py`, `src/gobby/storage/migration/sqlite_to_postgres.py` (new)
@@ -2723,7 +2723,7 @@ If a table fails mid-copy, the entire import transaction rolls back. The operato
 
 - 5.1.1 — `gobby postgres migrate-from-sqlite` performs the one-shot data migration. symbol: `gobby.cli.postgres.migrate_from_sqlite`.
 
-### 5.2 Implement validation checks [category: code] (depends: 5.1)
+### 5.2 Implement validation checks [category: code] (depends: P4, 5.3)
 `kind: deliverable`
 
 Target: `src/gobby/storage/migration/validation.py` (new)
@@ -2751,7 +2751,7 @@ Output format: one line per check with `✓` / `✗`, plus a summary JSON artifa
 - 5.2.1 — Migration validation checks compare row counts and content invariants between SQLite and PostgreSQL. file: `src/gobby/storage/migration/validation.py`.
 - 5.2.2 — Postgres-only table exclusion list is the union of `_PRE_BASELINE_INFRA_TABLES` (§3.3) with `gobby_migration_state` and `schema_migrations`. Validation passes when the target carries `_pgaudit_probe` from §6.0 Docker-mode initdb; validation fails loudly on any other unexpected Postgres-only table. test: `tests/storage/migration/test_validation_postgres_only_exclusion.py::test_pgaudit_probe_excluded_unknown_table_fails`.
 
-### 5.3 Implement sequence / identity reseed [category: code] (depends: 5.1)
+### 5.3 Implement sequence / identity reseed [category: code] (depends: P4)
 `kind: deliverable`
 
 Target: `src/gobby/storage/migration/reseed.py` (new)
