@@ -4,7 +4,8 @@ import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { markdownComponents } from './shared/MarkdownComponents'
-import { codeTheme } from './shared/codeTheme'
+import { codeTheme, CODE_CHROME_VARS } from './shared/codeTheme'
+import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
 import { undo, redo } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
 import type { FileEntry, OpenFile, Project, GitStatus } from '../hooks/useFiles'
@@ -335,7 +336,7 @@ export function FilesPage({
                   paddingRight: '1em',
                   textAlign: 'right',
                   userSelect: 'none',
-                  color: '#555',
+                  color: CODE_CHROME_VARS.gutterText,
                 }}
                 customStyle={{
                   margin: 0,
@@ -609,7 +610,7 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
           paddingRight: '1em',
           textAlign: 'right',
           userSelect: 'none',
-          color: '#555',
+          color: CODE_CHROME_VARS.gutterText,
         }}
         customStyle={{
           margin: 0,
@@ -649,7 +650,7 @@ function formatSize(bytes: number): string {
 
 function ProjectIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
       <line x1="8" y1="21" x2="16" y2="21" />
       <line x1="12" y1="17" x2="12" y2="21" />
@@ -660,34 +661,21 @@ function ProjectIcon() {
 function FolderIcon({ open }: { open: boolean }) {
   if (open) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={FOLDER_ICON_COLOR_VAR} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
         <line x1="9" y1="14" x2="15" y2="14" />
       </svg>
     )
   }
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={FOLDER_ICON_COLOR_VAR} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   )
 }
 
 function FileIcon({ extension, size = 14 }: { extension: string; size?: number }) {
-  let color = '#a3a3a3'
-  const ext = extension.toLowerCase()
-  if (['ts', 'tsx'].includes(ext)) color = '#3178c6'
-  else if (['js', 'jsx'].includes(ext)) color = '#f7df1e'
-  else if (ext === 'py') color = '#3776ab'
-  else if (ext === 'rs') color = '#ce422b'
-  else if (ext === 'go') color = '#00add8'
-  else if (['json', 'yaml', 'yml', 'toml'].includes(ext)) color = '#cb8742'
-  else if (['md', 'txt', 'rst'].includes(ext)) color = '#737373'
-  else if (['css', 'scss', 'less'].includes(ext)) color = '#563d7c'
-  else if (['html', 'htm'].includes(ext)) color = '#e34c26'
-  else if (['sh', 'bash', 'zsh'].includes(ext)) color = '#4eaa25'
-  else if (['sql'].includes(ext)) color = '#e38c00'
-  else if (['rb'].includes(ext)) color = '#cc342d'
+  const color = getLanguageColorVar(extension)
 
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -699,7 +687,7 @@ function FileIcon({ extension, size = 14 }: { extension: string; size?: number }
 
 function BinaryIcon() {
   return (
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#737373" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
       <polyline points="13 2 13 9 20 9" />
       <line x1="9" y1="13" x2="15" y2="13" />
@@ -710,7 +698,7 @@ function BinaryIcon() {
 
 function FilesPlaceholderIcon() {
   return (
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#737373" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   )
