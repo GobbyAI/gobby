@@ -121,7 +121,12 @@ function identifyAgent(session: SessionData): { id: string; name: string; source
 
 function SuccessBar({ rate }: { rate: number }) {
   const pct = Math.round(rate * 100)
-  const color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444'
+  const color =
+    pct >= 80
+      ? 'var(--color-success-foreground)'
+      : pct >= 50
+        ? 'var(--color-warning-foreground)'
+        : 'var(--color-error)'
   return (
     <div className="agent-success-bar">
       <div className="agent-success-bar-fill" style={{ width: `${pct}%`, background: color }} />
@@ -135,16 +140,18 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
   const total = entries.reduce((sum, [, n]) => sum + n, 0)
   if (total === 0) return <span className="agent-muted">No tasks</span>
 
-  const COLORS: Record<string, string> = {
-    code: '#3b82f6',
-    test: '#22c55e',
-    docs: '#a855f7',
-    config: '#f59e0b',
-    refactor: '#06b6d4',
-    research: '#ec4899',
-    planning: '#737373',
-    manual: '#f97316',
-  }
+  const KNOWN_CATEGORIES = new Set([
+    'code',
+    'test',
+    'docs',
+    'config',
+    'refactor',
+    'research',
+    'planning',
+    'manual',
+  ])
+  const categoryColor = (cat: string) =>
+    KNOWN_CATEGORIES.has(cat) ? `var(--category-${cat})` : 'var(--category-default)'
 
   return (
     <div className="agent-category-chart">
@@ -155,7 +162,7 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
             className="agent-category-segment"
             style={{
               width: `${(count / total) * 100}%`,
-              background: COLORS[cat] || '#525252',
+              background: categoryColor(cat),
             }}
             title={`${cat}: ${count}`}
           />
@@ -164,7 +171,7 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
       <div className="agent-category-legend">
         {entries.slice(0, 4).map(([cat, count]) => (
           <span key={cat} className="agent-category-label">
-            <span className="agent-category-dot" style={{ background: COLORS[cat] || '#525252' }} />
+            <span className="agent-category-dot" style={{ background: categoryColor(cat) }} />
             {cat} ({count})
           </span>
         ))}
