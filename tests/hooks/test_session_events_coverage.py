@@ -904,7 +904,7 @@ class TestClaimedTaskHelpers:
         assert result == [("#55", "needs_review", "Review the patch")]
         handler._task_manager.list_tasks.assert_called_once_with(
             claimed_by_session_id="sess-1",
-            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
+            current_stage_state=["ready", "in_progress", "needs_review", "review_approved"],
             project_id="proj-1",
         )
         mock_svm.set_variable.assert_any_call("sess-1", "task_claimed", True)

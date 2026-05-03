@@ -18,7 +18,11 @@ from gobby.hooks.event_handlers._session_responses import (
 )
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.sessions.compact_continuation import consume_and_schedule_compact_self_continuation
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
+from gobby.tasks.state_semantics import (
+    ACTIVE_STAGE_STATES,
+    get_claimed_session_id,
+    is_task_actionable,
+)
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
@@ -459,7 +463,11 @@ class SessionStartMixin(EventHandlersBase):
                                             continue
 
                                     if task_obj is not None:
-                                        if not is_task_actionable(task_obj):
+                                        legacy_status = getattr(task_obj, "status", None)
+                                        if (
+                                            not is_task_actionable(task_obj)
+                                            and legacy_status not in ACTIVE_STAGE_STATES
+                                        ):
                                             continue
                                         current_owner = get_claimed_session_id(task_obj)
                                         if current_owner not in (None, parent_session_id):

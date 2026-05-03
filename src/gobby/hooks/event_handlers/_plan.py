@@ -34,8 +34,11 @@ def on_epic_terminal(event: object, *, db: Any) -> PlanRecord | None:
 
 def _is_terminal_epic_event(event: object) -> bool:
     event_type = _event_value(event, "event_type") or _event_value(event, "type")
+    status = _event_value(event, "status")
     closure_reason = _event_value(event, "closure_reason") or _event_value(event, "closed_reason")
-    return event_type == "task_closed" and closure_reason in _TERMINAL_CLOSURE_REASONS
+    return (
+        event_type == "task_closed" or status == "closed"
+    ) and closure_reason in _TERMINAL_CLOSURE_REASONS
 
 
 def _archive_reason(event: object) -> str:

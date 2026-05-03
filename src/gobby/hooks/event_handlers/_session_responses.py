@@ -27,7 +27,14 @@ def _task_state_label(task: Any) -> str:
     if state["is_escalated"]:
         return "escalated"
     current = state["current_stage"]
-    return current["state"] if current else "ready"
+    if isinstance(current, dict):
+        current_state = current.get("state")
+        if isinstance(current_state, str):
+            return current_state
+    legacy_status = getattr(task, "status", None)
+    if isinstance(legacy_status, str):
+        return legacy_status
+    return "ready"
 
 
 def get_claimed_task_info(
