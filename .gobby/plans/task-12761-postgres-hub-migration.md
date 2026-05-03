@@ -359,6 +359,29 @@ Acceptance: the schema fingerprint test passes; fresh installs initialize at v24
 
 **Goal**: PostgreSQL runs as a first-class local service and bootstrap can select it before DB-backed config loads.
 
+### 1.0 Add `psycopg` runtime driver dependency to `pyproject.toml` [category: config] (depends: P0)
+`kind: deliverable`
+
+Target: `pyproject.toml`
+
+This deliverable is the **single upstream owner** of the runtime PostgreSQL client dependency. Every code task that imports `psycopg`, `psycopg.rows`, or `psycopg_pool` must list `1.0` in its `depends:` clause so an expansion agent cannot land Postgres-importing code before the driver is on the lockfile. Splitting the runtime driver add out of §2.1 (test infra) closes the bad-sequencing hole where §1.2 (installer/status probes that connect to Postgres for `CREATE EXTENSION` and read-only checks) and §3.3 (`PostgresHubDatabase` adapter that imports `psycopg.rows.dict_row` and `psycopg_pool.ConnectionPool`) could schedule before §2.1 — both depend only on Phase 1 build artifacts and Phase 3 protocol/runner work, neither of which transitively requires §2.1.
+
+Add the following to the `[project] dependencies` array in `pyproject.toml`:
+
+```toml
+"psycopg[binary,pool]>=3.2",
+```
+
+Lockfile/wheel acquisition: run `uv lock` to refresh `uv.lock`, then `uv sync` so the binary wheel and pool extra are present in the local environment. The `binary` extra ships the libpq-bundled wheel (no system libpq required for development boxes); the `pool` extra brings `psycopg_pool` for `PostgresHubDatabase`'s `ConnectionPool`. Pinning at `>=3.2` ensures the project gets psycopg v3's typed `Cursor`/`Connection`/`AsyncConnection` API and the `psycopg_pool.ConnectionPool` rewrite that `PostgresHubDatabase` consumes; older 2.x is incompatible.
+
+This task does **not** add `pytest-xdist`. The test-time `pytest-xdist` dev-dep add stays in §2.1 because it is a test-infrastructure concern, not a runtime concern, and §2.1's expansion agent legitimately needs to touch `[project.optional-dependencies.test]` (or the equivalent dev-dep array) when wiring the parallel-worker test runner.
+
+Verification: `uv lock` succeeds; `uv sync` installs `psycopg` and `psycopg-pool` into the venv; `python -c "import psycopg; import psycopg_pool; print(psycopg.__version__)"` prints a version `>= 3.2`; `pyproject.toml` `[project] dependencies` array contains the exact `"psycopg[binary,pool]>=3.2"` line; `uv.lock` has matching `psycopg` and `psycopg-pool` entries with their content hashes recorded.
+
+**Acceptance:**
+
+- 1.0.1 — `psycopg[binary,pool]>=3.2` added to `[project] dependencies` in `pyproject.toml`; `uv.lock` regenerated with matching `psycopg` and `psycopg-pool` entries; `python -c "import psycopg, psycopg_pool"` smoke-imports cleanly. file: `pyproject.toml`. file: `uv.lock`. behavior: `uv sync` installs psycopg v3.2+ with the `binary` and `pool` extras into the project venv.
+
 ### 1.1 Add `postgres` service to compose template [category: config] (depends: P0)
 `kind: deliverable`
 
@@ -411,7 +434,7 @@ Verification (this section): static template checks only — YAML parses; `postg
 
 - 1.1.1 — `postgres` service block added to the compose template alongside qdrant/neo4j; static schema/template assertions pass; build/runtime smoke deferred to §1.4 CI. file: `src/gobby/data/docker-compose.services.yml`.
 
-### 1.2 Add PostgreSQL installer, uninstaller, and status CLI [category: code] (depends: 1.1, 1.4)
+### 1.2 Add PostgreSQL installer, uninstaller, and status CLI [category: code] (depends: 1.0, 1.1, 1.4)
 `kind: deliverable`
 
 Target: `src/gobby/cli/installers/postgres.py` (new), `src/gobby/cli/postgres.py` (new Click group), `src/gobby/cli/__init__.py`, `~/.gobby/bootstrap.yaml`, `~/.gobby/services/docker-compose.yml`, `~/.gobby/services/postgres-pgsearch/` (asset tree synced from `src/gobby/data/postgres-pgsearch/`), `~/.gobby/services/.env`, `docs/runbooks/postgres-native-macos.md` (new), `docs/runbooks/postgres-native-source.md` (new)
@@ -1033,7 +1056,7 @@ jobs:
 
 `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` are read from `src/gobby/data/postgres-pgsearch/version.json`, the single checked-in manifest shared with §1.1 (compose), §1.2 (native installer), §1.4 (Dockerfile), §6.0 (pgAudit setup), and this task. The CI workflow loads them via a `jq` step (e.g. `jq -r '.pg_search_version' src/gobby/data/postgres-pgsearch/version.json`) at the top of the job; bumping pg_search means editing one file and pushing the bump through the existing smoke-test gate.
 
-Add `psycopg[binary,pool]>=3.2` and `pytest-xdist` to `pyproject.toml`. Confirm the local test runner can reach the compose-provided `DATABASE_URL`.
+Add `pytest-xdist` to `pyproject.toml` (dev/test-extras only — the runtime `psycopg[binary,pool]>=3.2` add is owned upstream by §1.0 and is already on the lockfile by the time §2.1 lands). Confirm the local test runner can reach the compose-provided `DATABASE_URL`.
 
 **Acceptance:**
 
@@ -1564,7 +1587,7 @@ Upsert dialect translation is limited to placeholder rewriting; `ON CONFLICT` SQ
 - 3.2.2 — `_remap_placeholders` rewrites `$N` to `?` and rebuilds the param tuple to handle sequential, out-of-order, repeated, and skipped indices; preserves Postgres dollar-quoted bodies untouched. symbol: `gobby.storage.hub.sqlite._remap_placeholders`.
 - 3.2.3 — Placeholder-remap test suite covers sequential / out-of-order / repeated / IN-clause / skipped-index / dollar-quote / identifier-suffix / `executemany` / out-of-range-index cases. file: `tests/storage/hub/test_sqlite_placeholder_remap.py`.
 
-### 3.3 Implement `PostgresHubDatabase` [category: code] (depends: 3.1, 3.7, 4.2)
+### 3.3 Implement `PostgresHubDatabase` [category: code] (depends: 1.0, 3.1, 3.7, 4.2)
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/postgres.py` (new)
