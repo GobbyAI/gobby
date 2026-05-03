@@ -70,6 +70,13 @@ pub fn index_directory(
                 current_hashes.insert(rel, h);
             }
         }
+        for path in &content_only {
+            if let Ok(rel) = relative_path(path, root_path)
+                && let Ok(h) = hasher::file_content_hash(path)
+            {
+                current_hashes.insert(rel, h);
+            }
+        }
         Some(get_stale_files(conn, project_id, &current_hashes))
     } else {
         None
@@ -124,7 +131,17 @@ pub fn index_directory(
     for path in &content_only {
         let rel = relative_path(path, root_path).unwrap_or_default();
         progress.tick(&rel);
-        index_content_only(conn, path, project_id, root_path);
+        if let Some(ref stale_map) = stale
+            && !stale_map.contains_key(&rel)
+        {
+            result.files_skipped += 1;
+            continue;
+        }
+        if index_content_only(conn, path, project_id, root_path) {
+            result.files_indexed += 1;
+        } else {
+            result.files_skipped += 1;
+        }
     }
 
     progress.finish();
@@ -280,25 +297,25 @@ fn index_file(
 }
 
 /// Index content-only file (no AST, just chunks).
-fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_path: &Path) {
+fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_path: &Path) -> bool {
     let rel = match relative_path(path, root_path) {
         Ok(r) => r,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let meta = match path.metadata() {
         Ok(m) if m.len() > 0 && m.len() <= 10 * 1024 * 1024 => m,
-        _ => return,
+        _ => return false,
     };
 
     let source = match std::fs::read(path) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     // Skip binary
     if source[..source.len().min(8192)].contains(&0) {
-        return;
+        return false;
     }
 
     // Clear old chunks
@@ -308,12 +325,29 @@ fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_pat
     );
 
     let lang = path.extension().map(|e| e.to_string_lossy().to_string());
+    let content_hash = hasher::file_content_hash(path).unwrap_or_default();
+    upsert_file(
+        conn,
+        &IndexedFile {
+            id: IndexedFile::make_id(project_id, &rel),
+            project_id: project_id.to_string(),
+            file_path: rel.clone(),
+            language: lang.clone().unwrap_or_else(|| "unknown".to_string()),
+            content_hash,
+            symbol_count: 0,
+            byte_size: meta.len() as usize,
+            indexed_at: epoch_secs_str(),
+        },
+        has_graph_synced_column(conn),
+        has_vectors_synced_column(conn),
+    );
+
     let chunks = chunker::chunk_file_content(&source, &rel, project_id, lang.as_deref());
     if !chunks.is_empty() {
         upsert_content_chunks(conn, &chunks);
     }
 
-    let _ = meta; // used for size check above
+    true
 }
 
 /// Invalidate all index data for a project.
@@ -720,6 +754,49 @@ mod tests {
                 18,
             )
         );
+    }
+
+    #[test]
+    fn content_only_indexing_writes_indexed_file_row() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file_path = tmp.path().join("README.md");
+        std::fs::write(&file_path, "# Outline\n\ncontent").expect("write file");
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE code_indexed_files (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                language TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                symbol_count INTEGER NOT NULL DEFAULT 0,
+                byte_size INTEGER NOT NULL DEFAULT 0,
+                indexed_at TEXT NOT NULL
+            );
+            CREATE TABLE code_content_chunks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                language TEXT,
+                created_at TEXT
+            );",
+        )
+        .expect("create schema");
+
+        assert!(index_content_only(&conn, &file_path, "proj", tmp.path()));
+
+        let row: (String, i64) = conn
+            .query_row(
+                "SELECT language, symbol_count FROM code_indexed_files WHERE project_id = 'proj' AND file_path = 'README.md'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("indexed file row");
+        assert_eq!(row, ("md".to_string(), 0));
     }
 }
 

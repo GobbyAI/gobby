@@ -80,6 +80,27 @@ enum Command {
         /// Filter by symbol kind
         #[arg(long)]
         kind: Option<String>,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
+        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Exact-first symbol/name search with deterministic ranking
+    SearchSymbol {
+        query: String,
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        /// Filter by symbol kind
+        #[arg(long)]
+        kind: Option<String>,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
         /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
         #[arg(long)]
         path: Option<String>,
@@ -92,6 +113,9 @@ enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
         /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
         #[arg(long)]
         path: Option<String>,
@@ -104,6 +128,9 @@ enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
         /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
         #[arg(long)]
         path: Option<String>,
@@ -211,34 +238,66 @@ fn main() -> anyhow::Result<()> {
             limit,
             offset,
             kind,
+            language,
             path,
         } => commands::search::search(
             &ctx,
             &query,
+            commands::search::SearchOptions {
+                limit,
+                offset,
+                kind: kind.as_deref(),
+                language: language.as_deref(),
+                path: path.as_deref(),
+                format: cli.format,
+            },
+        ),
+        Command::SearchSymbol {
+            query,
             limit,
             offset,
-            kind.as_deref(),
-            path.as_deref(),
-            cli.format,
+            kind,
+            language,
+            path,
+        } => commands::search::search_symbol(
+            &ctx,
+            &query,
+            commands::search::SearchOptions {
+                limit,
+                offset,
+                kind: kind.as_deref(),
+                language: language.as_deref(),
+                path: path.as_deref(),
+                format: cli.format,
+            },
         ),
         Command::SearchText {
             query,
             limit,
             offset,
+            language,
             path,
-        } => {
-            commands::search::search_text(&ctx, &query, limit, offset, path.as_deref(), cli.format)
-        }
+        } => commands::search::search_text(
+            &ctx,
+            &query,
+            limit,
+            offset,
+            language.as_deref(),
+            path.as_deref(),
+            cli.format,
+        ),
         Command::SearchContent {
             query,
             limit,
             offset,
+            language,
             path,
         } => commands::search::search_content(
             &ctx,
             &query,
             limit,
             offset,
+            language.as_deref(),
             path.as_deref(),
             cli.format,
         ),
@@ -356,6 +415,54 @@ mod tests {
                 assert_eq!(depth, 3);
             }
             _ => panic!("expected top-level blast-radius command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_symbol_filters() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "search-symbol",
+            "outline",
+            "--kind",
+            "function",
+            "--language",
+            "rust",
+            "--path",
+            "src/**/*.rs",
+        ])
+        .expect("search-symbol parses");
+
+        match cli.command {
+            Command::SearchSymbol {
+                query,
+                limit,
+                offset,
+                kind,
+                language,
+                path,
+            } => {
+                assert_eq!(query, "outline");
+                assert_eq!(limit, 10);
+                assert_eq!(offset, 0);
+                assert_eq!(kind.as_deref(), Some("function"));
+                assert_eq!(language.as_deref(), Some("rust"));
+                assert_eq!(path.as_deref(), Some("src/**/*.rs"));
+            }
+            _ => panic!("expected search-symbol command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_language_filters() {
+        let cli = Cli::try_parse_from(["gcode", "search", "outline", "--language", "rust"])
+            .expect("search parses");
+
+        match cli.command {
+            Command::Search { language, .. } => {
+                assert_eq!(language.as_deref(), Some("rust"));
+            }
+            _ => panic!("expected search command"),
         }
     }
 }
