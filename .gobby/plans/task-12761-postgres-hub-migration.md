@@ -1,5 +1,7 @@
 # PostgreSQL Migration for Hub Storage
 
+**Plan ID:** 12761
+
 ## Overview
 
 `kind: framing`
@@ -3317,10 +3319,10 @@ Type changes:
   depends_on: []
   validation_criteria: Satisfy acceptance items 0.1.1, 0.1.2, 0.1.3, 0.1.4.
   labels:
-  - covers:unknown:0.1:0.1.1
-  - covers:unknown:0.1:0.1.2
-  - covers:unknown:0.1:0.1.3
-  - covers:unknown:0.1:0.1.4
+  - covers:12761:0.1:0.1.1
+  - covers:12761:0.1:0.1.2
+  - covers:12761:0.1:0.1.3
+  - covers:12761:0.1:0.1.4
   assigned_agent: backend-developer
   tdd: false
   source_section: '0.1'
@@ -3331,7 +3333,7 @@ Type changes:
   - '0.1'
   validation_criteria: Satisfy acceptance items 1.0.1.
   labels:
-  - covers:unknown:1.0:1.0.1
+  - covers:12761:1.0:1.0.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.0'
@@ -3342,7 +3344,7 @@ Type changes:
   - '0.1'
   validation_criteria: Satisfy acceptance items 1.1.1.
   labels:
-  - covers:unknown:1.1:1.1.1
+  - covers:12761:1.1:1.1.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.1'
@@ -3356,12 +3358,12 @@ Type changes:
   validation_criteria: Satisfy acceptance items 1.2.1, 1.2.2, 1.2.3, 1.2.4, 1.2.5,
     1.2.6.
   labels:
-  - covers:unknown:1.2:1.2.1
-  - covers:unknown:1.2:1.2.2
-  - covers:unknown:1.2:1.2.3
-  - covers:unknown:1.2:1.2.4
-  - covers:unknown:1.2:1.2.5
-  - covers:unknown:1.2:1.2.6
+  - covers:12761:1.2:1.2.1
+  - covers:12761:1.2:1.2.2
+  - covers:12761:1.2:1.2.3
+  - covers:12761:1.2:1.2.4
+  - covers:12761:1.2:1.2.5
+  - covers:12761:1.2:1.2.6
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.2'
@@ -3374,7 +3376,7 @@ Type changes:
   - '3.8'
   validation_criteria: Satisfy acceptance items 1.3.1.
   labels:
-  - covers:unknown:1.3:1.3.1
+  - covers:12761:1.3:1.3.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.3'
@@ -3385,10 +3387,10 @@ Type changes:
   - '1.1'
   validation_criteria: Satisfy acceptance items 1.4.1, 1.4.2, 1.4.3, 1.4.4.
   labels:
-  - covers:unknown:1.4:1.4.1
-  - covers:unknown:1.4:1.4.2
-  - covers:unknown:1.4:1.4.3
-  - covers:unknown:1.4:1.4.4
+  - covers:12761:1.4:1.4.1
+  - covers:12761:1.4:1.4.2
+  - covers:12761:1.4:1.4.3
+  - covers:12761:1.4:1.4.4
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.4'
@@ -3400,7 +3402,7 @@ Type changes:
   - '1.4'
   validation_criteria: Satisfy acceptance items 1.5.1.
   labels:
-  - covers:unknown:1.5:1.5.1
+  - covers:12761:1.5:1.5.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.5'
@@ -3412,7 +3414,7 @@ Type changes:
   - '1.4'
   validation_criteria: Satisfy acceptance items 2.1.1.
   labels:
-  - covers:unknown:2.1:2.1.1
+  - covers:12761:2.1:2.1.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '2.1'
@@ -3424,9 +3426,9 @@ Type changes:
   - '3.3'
   validation_criteria: Satisfy acceptance items 2.2.1, 2.2.2, 2.2.3.
   labels:
-  - covers:unknown:2.2:2.2.1
-  - covers:unknown:2.2:2.2.2
-  - covers:unknown:2.2:2.2.3
+  - covers:12761:2.2:2.2.1
+  - covers:12761:2.2:2.2.2
+  - covers:12761:2.2:2.2.3
   assigned_agent: test-architect
   tdd: false
   source_section: '2.2'
@@ -3440,7 +3442,7 @@ Type changes:
   - '3.3'
   validation_criteria: Satisfy acceptance items 2.3.1.
   labels:
-  - covers:unknown:2.3:2.3.1
+  - covers:12761:2.3:2.3.1
   assigned_agent: test-architect
   tdd: false
   source_section: '2.3'
@@ -3451,7 +3453,7 @@ Type changes:
   - '2.3'
   validation_criteria: Satisfy acceptance items 2.4.1.
   labels:
-  - covers:unknown:2.4:2.4.1
+  - covers:12761:2.4:2.4.1
   assigned_agent: test-architect
   tdd: false
   source_section: '2.4'
@@ -3462,7 +3464,7 @@ Type changes:
   - '0.1'
   validation_criteria: Satisfy acceptance items 3.1.1.
   labels:
-  - covers:unknown:3.1:3.1.1
+  - covers:12761:3.1:3.1.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '3.1'
@@ -3473,9 +3475,9 @@ Type changes:
   - '3.1'
   validation_criteria: Satisfy acceptance items 3.2.1, 3.2.2, 3.2.3.
   labels:
-  - covers:unknown:3.2:3.2.1
-  - covers:unknown:3.2:3.2.2
-  - covers:unknown:3.2:3.2.3
+  - covers:12761:3.2:3.2.1
+  - covers:12761:3.2:3.2.2
+  - covers:12761:3.2:3.2.3
   assigned_agent: backend-developer
   tdd: true
   source_section: '3.2'
@@ -3489,9 +3491,9 @@ Type changes:
   - '4.2'
   validation_criteria: Satisfy acceptance items 3.3.1, 3.3.2, 3.3.3.
   labels:
-  - covers:unknown:3.3:3.3.1
-  - covers:unknown:3.3:3.3.2
-  - covers:unknown:3.3:3.3.3
+  - covers:12761:3.3:3.3.1
+  - covers:12761:3.3:3.3.2
+  - covers:12761:3.3:3.3.3
   assigned_agent: backend-developer
   tdd: true
   source_section: '3.3'
@@ -3503,7 +3505,7 @@ Type changes:
   - '3.3'
   validation_criteria: Satisfy acceptance items 3.4.1.
   labels:
-  - covers:unknown:3.4:3.4.1
+  - covers:12761:3.4:3.4.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '3.4'
@@ -3514,7 +3516,7 @@ Type changes:
   - '3.4'
   validation_criteria: Satisfy acceptance items 3.5.1.
   labels:
-  - covers:unknown:3.5:3.5.1
+  - covers:12761:3.5:3.5.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '3.5'
@@ -3525,7 +3527,7 @@ Type changes:
   - '3.4'
   validation_criteria: Satisfy acceptance items 3.6.1.
   labels:
-  - covers:unknown:3.6:3.6.1
+  - covers:12761:3.6:3.6.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '3.6'
@@ -3537,8 +3539,8 @@ Type changes:
   - '3.2'
   validation_criteria: Satisfy acceptance items 3.7.1, 3.7.2.
   labels:
-  - covers:unknown:3.7:3.7.1
-  - covers:unknown:3.7:3.7.2
+  - covers:12761:3.7:3.7.1
+  - covers:12761:3.7:3.7.2
   assigned_agent: backend-developer
   tdd: true
   source_section: '3.7'
@@ -3550,9 +3552,9 @@ Type changes:
   - '3.7'
   validation_criteria: Satisfy acceptance items 3.8.1, 3.8.2, 3.8.3.
   labels:
-  - covers:unknown:3.8:3.8.1
-  - covers:unknown:3.8:3.8.2
-  - covers:unknown:3.8:3.8.3
+  - covers:12761:3.8:3.8.1
+  - covers:12761:3.8:3.8.2
+  - covers:12761:3.8:3.8.3
   assigned_agent: backend-developer
   tdd: false
   source_section: '3.8'
@@ -3563,7 +3565,7 @@ Type changes:
   - '3.7'
   validation_criteria: Satisfy acceptance items 4.1.1.
   labels:
-  - covers:unknown:4.1:4.1.1
+  - covers:12761:4.1:4.1.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '4.1'
@@ -3575,16 +3577,16 @@ Type changes:
   validation_criteria: Satisfy acceptance items 4.2.1, 4.2.2, 4.2.3, 4.2.4, 4.2.5,
     4.2.6, 4.2.7, 4.2.8, 4.2.9, 4.2.10.
   labels:
-  - covers:unknown:4.2:4.2.1
-  - covers:unknown:4.2:4.2.2
-  - covers:unknown:4.2:4.2.3
-  - covers:unknown:4.2:4.2.4
-  - covers:unknown:4.2:4.2.5
-  - covers:unknown:4.2:4.2.6
-  - covers:unknown:4.2:4.2.7
-  - covers:unknown:4.2:4.2.8
-  - covers:unknown:4.2:4.2.9
-  - covers:unknown:4.2:4.2.10
+  - covers:12761:4.2:4.2.1
+  - covers:12761:4.2:4.2.2
+  - covers:12761:4.2:4.2.3
+  - covers:12761:4.2:4.2.4
+  - covers:12761:4.2:4.2.5
+  - covers:12761:4.2:4.2.6
+  - covers:12761:4.2:4.2.7
+  - covers:12761:4.2:4.2.8
+  - covers:12761:4.2:4.2.9
+  - covers:12761:4.2:4.2.10
   assigned_agent: backend-developer
   tdd: true
   source_section: '4.2'
@@ -3597,7 +3599,7 @@ Type changes:
   - '3.8'
   validation_criteria: Satisfy acceptance items 4.3.1.
   labels:
-  - covers:unknown:4.3:4.3.1
+  - covers:12761:4.3:4.3.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '4.3'
@@ -3609,8 +3611,8 @@ Type changes:
   - '4.2'
   validation_criteria: Satisfy acceptance items 4.4.1, 4.4.2.
   labels:
-  - covers:unknown:4.4:4.4.1
-  - covers:unknown:4.4:4.4.2
+  - covers:12761:4.4:4.4.1
+  - covers:12761:4.4:4.4.2
   assigned_agent: backend-developer
   tdd: true
   source_section: '4.4'
@@ -3621,11 +3623,11 @@ Type changes:
   - '4.4'
   validation_criteria: Satisfy acceptance items 4.5.1, 4.5.2, 4.5.3, 4.5.4, 4.5.5.
   labels:
-  - covers:unknown:4.5:4.5.1
-  - covers:unknown:4.5:4.5.2
-  - covers:unknown:4.5:4.5.3
-  - covers:unknown:4.5:4.5.4
-  - covers:unknown:4.5:4.5.5
+  - covers:12761:4.5:4.5.1
+  - covers:12761:4.5:4.5.2
+  - covers:12761:4.5:4.5.3
+  - covers:12761:4.5:4.5.4
+  - covers:12761:4.5:4.5.5
   assigned_agent: backend-developer
   tdd: true
   source_section: '4.5'
@@ -3638,7 +3640,7 @@ Type changes:
   - '3.8'
   validation_criteria: Satisfy acceptance items 4.6.1.
   labels:
-  - covers:unknown:4.6:4.6.1
+  - covers:12761:4.6:4.6.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '4.6'
@@ -3657,7 +3659,7 @@ Type changes:
   - '4.6'
   validation_criteria: Satisfy acceptance items 4.7.1.
   labels:
-  - covers:unknown:4.7:4.7.1
+  - covers:12761:4.7:4.7.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '4.7'
@@ -3676,7 +3678,7 @@ Type changes:
   - '5.3'
   validation_criteria: Satisfy acceptance items 5.1.1.
   labels:
-  - covers:unknown:5.1:5.1.1
+  - covers:12761:5.1:5.1.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '5.1'
@@ -3694,8 +3696,8 @@ Type changes:
   - '5.3'
   validation_criteria: Satisfy acceptance items 5.2.1, 5.2.2.
   labels:
-  - covers:unknown:5.2:5.2.1
-  - covers:unknown:5.2:5.2.2
+  - covers:12761:5.2:5.2.1
+  - covers:12761:5.2:5.2.2
   assigned_agent: backend-developer
   tdd: true
   source_section: '5.2'
@@ -3712,7 +3714,7 @@ Type changes:
   - '4.7'
   validation_criteria: Satisfy acceptance items 5.3.1.
   labels:
-  - covers:unknown:5.3:5.3.1
+  - covers:12761:5.3:5.3.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '5.3'
@@ -3725,8 +3727,8 @@ Type changes:
   - '5.3'
   validation_criteria: Satisfy acceptance items 6.0.1, 6.0.2.
   labels:
-  - covers:unknown:6.0:6.0.1
-  - covers:unknown:6.0:6.0.2
+  - covers:12761:6.0:6.0.1
+  - covers:12761:6.0:6.0.2
   assigned_agent: backend-developer
   tdd: true
   source_section: '6.0'
@@ -3740,8 +3742,8 @@ Type changes:
   - '4.7'
   validation_criteria: Satisfy acceptance items 6.0a.1, 6.0a.2.
   labels:
-  - covers:unknown:6.0a:6.0a.1
-  - covers:unknown:6.0a:6.0a.2
+  - covers:12761:6.0a:6.0a.1
+  - covers:12761:6.0a:6.0a.2
   assigned_agent: backend-developer
   tdd: false
   source_section: 6.0a
@@ -3753,8 +3755,8 @@ Type changes:
   - 6.0a
   validation_criteria: Satisfy acceptance items 6.1.1, 6.1.2.
   labels:
-  - covers:unknown:6.1:6.1.1
-  - covers:unknown:6.1:6.1.2
+  - covers:12761:6.1:6.1.1
+  - covers:12761:6.1:6.1.2
   assigned_agent: backend-developer
   tdd: false
   source_section: '6.1'
@@ -3765,7 +3767,7 @@ Type changes:
   - '6.1'
   validation_criteria: Satisfy acceptance items 6.2.1.
   labels:
-  - covers:unknown:6.2:6.2.1
+  - covers:12761:6.2:6.2.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '6.2'
@@ -3776,7 +3778,7 @@ Type changes:
   - '6.2'
   validation_criteria: Satisfy acceptance items 7.0.1.
   labels:
-  - covers:unknown:7.0:7.0.1
+  - covers:12761:7.0:7.0.1
   assigned_agent: backend-developer
   tdd: true
   source_section: '7.0'
@@ -3787,7 +3789,7 @@ Type changes:
   - '7.0'
   validation_criteria: Satisfy acceptance items 7.1.1.
   labels:
-  - covers:unknown:7.1:7.1.1
+  - covers:12761:7.1:7.1.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '7.1'
@@ -3798,7 +3800,7 @@ Type changes:
   - '7.1'
   validation_criteria: Satisfy acceptance items 7.2.1.
   labels:
-  - covers:unknown:7.2:7.2.1
+  - covers:12761:7.2:7.2.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '7.2'
@@ -3809,7 +3811,7 @@ Type changes:
   - '7.2'
   validation_criteria: Satisfy acceptance items 7.3.1.
   labels:
-  - covers:unknown:7.3:7.3.1
+  - covers:12761:7.3:7.3.1
   assigned_agent: backend-developer
   tdd: false
   source_section: '7.3'

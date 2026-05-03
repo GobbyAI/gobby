@@ -90,6 +90,7 @@ class ExpansionService:
 
     reset_expansion_output = _reset.reset_expansion_output
     find_existing_expansion_output = _reset.find_existing_expansion_output
+    find_apply_blocking_expansion_output = _reset.find_apply_blocking_expansion_output
     _complete_parent_expansion_stage_if_current = _reset.complete_parent_expansion_stage_if_current
 
 

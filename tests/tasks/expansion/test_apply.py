@@ -314,3 +314,31 @@ def test_apply_refuses_duplicate_output_without_reset(temp_db, sample_project) -
 
     with pytest.raises(ValueError, match="Reset expansion output"):
         service.apply_run(second.id, session_id=None)
+
+
+def test_apply_ignores_closed_obsolete_historical_output(temp_db, sample_project) -> None:
+    service = _service(temp_db)
+    parent = service.task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Historical duplicate parent",
+        task_type="epic",
+    )
+    spec = {
+        "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
+        "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
+        "dependencies": [],
+    }
+    first = _save_run(service, parent, sample_project, spec)
+    applied = service.apply_run(first.id, session_id=None)
+    for task_id in applied.created_task_ids:
+        service.task_manager.close_task(task_id, reason="obsolete", force=True)
+    second_spec = {
+        **spec,
+        "tasks": [{**spec["tasks"][0], "id": "leaf-2"}],
+        "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf-2"]}],
+    }
+    second = _save_run(service, parent, sample_project, second_spec)
+
+    reapplied = service.apply_run(second.id, session_id=None)
+
+    assert "leaf-2" in reapplied.task_id_map

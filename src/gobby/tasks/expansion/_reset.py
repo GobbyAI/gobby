@@ -46,6 +46,19 @@ def find_existing_expansion_output(
     return None
 
 
+def find_apply_blocking_expansion_output(
+    self: Any,
+    parent_task_id: str,
+) -> ExpansionRun | None:
+    """Return the latest expansion run whose remaining output should block apply."""
+    parent = self.task_manager.get_task(parent_task_id)
+    for run in self.run_manager.list_for_task(parent.id, limit=50):
+        target_ids = _target_task_ids(self, parent, run)
+        if target_ids and _target_ids_block_apply(self, target_ids):
+            return cast(ExpansionRun, run)
+    return None
+
+
 def reset_expansion_output(
     self: Any,
     parent_task_id: str,
@@ -114,6 +127,34 @@ def _target_task_ids(self: Any, parent: Task, run: ExpansionRun) -> set[str]:
         target_ids.update(_ancestor_ids_between(self, task_id, parent.id))
     target_ids.discard(parent.id)
     return target_ids
+
+
+def _target_ids_block_apply(self: Any, target_ids: set[str]) -> bool:
+    for task_id in target_ids:
+        if not _is_closed_obsolete_task(self, task_id):
+            return True
+    for task_id in target_ids:
+        outside_children = self.db.fetchall(
+            """
+            SELECT id
+              FROM tasks
+             WHERE parent_task_id = ?
+            """,
+            (task_id,),
+        )
+        for child in outside_children:
+            child_id = child["id"]
+            if child_id not in target_ids and not _is_closed_obsolete_task(self, child_id):
+                return True
+    return False
+
+
+def _is_closed_obsolete_task(self: Any, task_id: str) -> bool:
+    try:
+        task = self.task_manager.get_task(task_id)
+    except Exception:
+        return False
+    return task.closed_at is not None and task.closed_reason == "obsolete"
 
 
 def _task_exists(self: Any, task_id: str) -> bool:
@@ -274,6 +315,7 @@ def _task_ref(task: Task) -> str:
 __all__ = [
     "ResetExpansionOutputResult",
     "complete_parent_expansion_stage_if_current",
+    "find_apply_blocking_expansion_output",
     "find_existing_expansion_output",
     "reset_expansion_output",
 ]

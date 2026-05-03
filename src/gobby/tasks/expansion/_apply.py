@@ -72,7 +72,7 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     if not validation["valid"]:
         errors = "; ".join(validation["errors"])
         raise ValueError(f"Cannot apply invalid compiled spec: {errors}")
-    existing_output = self.find_existing_expansion_output(task.id)
+    existing_output = self.find_apply_blocking_expansion_output(task.id)
     if existing_output is not None:
         raise ValueError(
             "Expansion output already exists for this task. "
