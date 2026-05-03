@@ -111,8 +111,10 @@
   width: 200px;
 }
 
-.workflows-search:focus {
+.workflows-search:focus-visible {
   border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .workflows-toolbar-btn {
