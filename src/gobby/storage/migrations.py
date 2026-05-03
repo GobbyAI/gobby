@@ -177,6 +177,39 @@ INSERT OR IGNORE INTO task_type_default_stages (task_type, stage_name, position)
 VALUES ('review_anchor', 'planning', 0);
 """
 
+_STALE_CONFIG_STORE_EXACT_KEYS = frozenset(
+    {
+        "_meta.yaml_imported",
+        "conductor.daily_budget_usd",
+        "conductor.throttle_threshold",
+        "conductor.tracking_window_days",
+        "conductor.warning_threshold",
+        "embeddings.provider",
+        "gobby_tasks.expansion.max_subtasks",
+        "gobby_tasks.validation.external_validator_mode",
+        "gobby_tasks.validation.use_external_validator",
+        "llm_providers.api_keys.openai_api_key",
+        "logging.watchdog",
+        "memory.mem0_url",
+        "ui_settings.defaultchatmode",
+        "ui_settings.fontsize",
+        "ui_settings.selectedprojectid",
+        "workflow.protected_tools",
+        "workflow.require_task_before_edit",
+    }
+)
+
+_STALE_CONFIG_STORE_PREFIXES = (
+    "gobby_tasks.enrichment.",
+    "review.",
+    "task_description.",
+    "title_synthesis.",
+    "hook_extensions.plugins.",
+    "llm_providers.litellm.",
+    "memory_extraction.",
+    "watchdog.",
+)
+
 _LEGACY_DELIVERY_ARTIFACT_COLUMNS = frozenset(
     {
         "pr_url",
@@ -206,10 +239,49 @@ def _apply_github_triage_schema(db: LocalDatabase) -> None:
             db.execute(statement)
 
 
+def _apply_config_store_cleanup(db: LocalDatabase) -> None:
+    row = db.fetchone(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'config_store'"
+    )
+    if row is None:
+        return
+
+    from gobby.config.app import _LOGGING_TO_TELEMETRY_FIELDS
+
+    legacy_logging_keys = set()
+    for old_field, new_field in _LOGGING_TO_TELEMETRY_FIELDS.items():
+        old_key = f"logging.{old_field}"
+        new_key = f"telemetry.{new_field}"
+        legacy_logging_keys.add(old_key)
+        db.execute(
+            """
+            INSERT INTO config_store (key, value, source, is_secret, updated_at)
+            SELECT ?, value, source, is_secret, datetime('now')
+              FROM config_store
+             WHERE key = ?
+               AND NOT EXISTS (SELECT 1 FROM config_store WHERE key = ?)
+            """,
+            (new_key, old_key, new_key),
+        )
+
+    delete_keys = _STALE_CONFIG_STORE_EXACT_KEYS | legacy_logging_keys
+    db.executemany(
+        "DELETE FROM config_store WHERE key = ?",
+        [(key,) for key in sorted(delete_keys)],
+    )
+
+    for prefix in _STALE_CONFIG_STORE_PREFIXES:
+        db.execute(
+            "DELETE FROM config_store WHERE substr(key, 1, ?) = ?",
+            (len(prefix), prefix),
+        )
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (240, "Add task delivery state tables", _apply_delivery_state_schema),
     (241, "Add GitHub issue triage tables", _apply_github_triage_schema),
     (242, "Add review anchor default planning stage", _REVIEW_ANCHOR_DEFAULT_STAGE_SCHEMA),
+    (243, "Clean stale config store keys", _apply_config_store_cleanup),
 ]
 
 

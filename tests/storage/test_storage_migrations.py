@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.config.app import load_config
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import (
     BASELINE_VERSION,
@@ -38,16 +40,16 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 242
-    assert [version for version, _description, _action in MIGRATIONS] == [240, 241, 242]
+    assert latest_known_version() == 243
+    assert [version for version, _description, _action in MIGRATIONS] == [240, 241, 242, 243]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 4
-    assert get_current_version(db) == 242
+    assert applied == 5
+    assert get_current_version(db) == 243
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242]
+    assert versions == [239, 240, 241, 242, 243]
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -58,9 +60,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 242
+    assert get_current_version(db) == 243
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242]
+    assert versions == [239, 240, 241, 242, 243]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -152,6 +154,118 @@ def test_review_anchor_migration_adds_default_planning_stage(tmp_path) -> None:
         """
     )
     assert dict(row) == {"stage_name": "planning", "position": 0}
+
+
+def test_config_store_cleanup_migrates_logging_and_removes_stale_keys(tmp_path) -> None:
+    db_path = tmp_path / "config_store_cleanup.db"
+    db = LocalDatabase(db_path)
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute("INSERT INTO schema_version (version) VALUES (242)")
+    db.execute(
+        """
+        CREATE TABLE config_store (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'user',
+            is_secret INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    store = ConfigStore(db)
+    active_direct_keys = {
+        "rules.enforcement_enabled": False,
+        "ui_settings.fontSize": 15,
+        "ui_settings.model": "opus",
+        "ui_settings.theme": "dark",
+        "ui_settings.defaultChatMode": "agent",
+        "ui_settings.postPlanChatMode": "ask",
+        "ui_settings.selectedProjectId": "project-123",
+    }
+    legacy_logging_keys = {
+        "logging.level": "debug",
+        "logging.format": "json",
+        "logging.client": "/tmp/legacy-client.log",
+        "logging.client_error": "/tmp/legacy-error.log",
+        "logging.hook_manager": "/tmp/legacy-hook.log",
+        "logging.mcp_server": "/tmp/legacy-mcp-server.log",
+        "logging.mcp_client": "/tmp/legacy-mcp-client.log",
+        "logging.max_size_mb": 42,
+        "logging.backup_count": 8,
+    }
+    stale_exact_keys = {
+        "_meta.yaml_imported": True,
+        "conductor.daily_budget_usd": 1,
+        "conductor.throttle_threshold": 0.8,
+        "conductor.tracking_window_days": 7,
+        "conductor.warning_threshold": 0.5,
+        "embeddings.provider": "openai",
+        "gobby_tasks.expansion.max_subtasks": 12,
+        "gobby_tasks.validation.external_validator_mode": "required",
+        "gobby_tasks.validation.use_external_validator": True,
+        "llm_providers.api_keys.openai_api_key": "sk-raw-test-key",
+        "logging.watchdog": True,
+        "memory.mem0_url": "http://localhost:8000",
+        "ui_settings.defaultchatmode": "legacy",
+        "ui_settings.fontsize": 99,
+        "ui_settings.selectedprojectid": "legacy-project",
+        "workflow.protected_tools": ["Edit"],
+        "workflow.require_task_before_edit": True,
+    }
+    stale_prefix_keys = {
+        "gobby_tasks.enrichment.enabled": False,
+        "review.provider": "claude",
+        "task_description.enabled": True,
+        "title_synthesis.model": "haiku",
+        "hook_extensions.plugins.old.enabled": True,
+        "llm_providers.litellm.api_base": "http://localhost:4000",
+        "memory_extraction.provider": "legacy",
+        "watchdog.enabled": True,
+    }
+    store.set_many(active_direct_keys)
+    store.set_many(legacy_logging_keys)
+    store.set_many(stale_exact_keys)
+    store.set_many(stale_prefix_keys)
+    store.set("telemetry.log_level", "warning")
+
+    applied = _run_migration_list(db, current_version=242, migrations=MIGRATIONS)
+
+    assert applied == 1
+    assert get_current_version(db) == 243
+
+    keys = set(store.list_keys())
+    for key, value in active_direct_keys.items():
+        assert store.get(key) == value
+        assert key in keys
+    for key in legacy_logging_keys | stale_exact_keys | stale_prefix_keys:
+        assert key not in keys
+    for prefix in (
+        "gobby_tasks.enrichment.",
+        "review.",
+        "task_description.",
+        "title_synthesis.",
+        "hook_extensions.plugins.",
+        "llm_providers.litellm.",
+        "memory_extraction.",
+        "watchdog.",
+    ):
+        assert not any(key.startswith(prefix) for key in keys)
+
+    assert store.get("telemetry.log_level") == "warning"
+    assert store.get("telemetry.log_format") == "json"
+    assert store.get("telemetry.log_file") == "/tmp/legacy-client.log"
+    assert store.get("telemetry.log_file_error") == "/tmp/legacy-error.log"
+    assert store.get("telemetry.log_file_hook_manager") == "/tmp/legacy-hook.log"
+    assert store.get("telemetry.log_file_mcp_server") == "/tmp/legacy-mcp-server.log"
+    assert store.get("telemetry.log_file_mcp_client") == "/tmp/legacy-mcp-client.log"
+    assert store.get("telemetry.max_size_mb") == 42
+    assert store.get("telemetry.backup_count") == 8
+
+    config = load_config(config_file=str(tmp_path / "bootstrap.yaml"), config_store=store)
+    assert config.telemetry.log_level == "warning"
+    assert config.telemetry.log_format == "json"
+    assert config.telemetry.max_size_mb == 42
 
 
 def test_migrations_recreate_missing_system_session(tmp_path) -> None:
