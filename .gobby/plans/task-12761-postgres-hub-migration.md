@@ -1308,9 +1308,28 @@ Replace `DatabaseProtocol`'s SQLite-specific surface with a backend-neutral cont
 # src/gobby/storage/hub/protocol.py
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, Literal, Protocol
+from typing import Any, ClassVar, Literal, Protocol
 
 Row = Mapping[str, Any]
+
+
+class LockAcquisitionOrderError(RuntimeError):
+    """Raised when nested transaction_immediate(lock) is called with a
+    LockTarget whose PRIORITY is not strictly greater than the highest
+    already held within the same transaction. Carries both PRIORITY values
+    and lock-key strings in the message so callers can debug the order."""
+
+
+class LockTarget(Protocol):
+    """Names the resource a transaction_immediate() block protects.
+    Concrete dataclass cases are owned by §3.8 (TaskSeqAllocation,
+    DispatchMutexRow, TaskSubtreeCascade, WebChatSessionBootstrap,
+    SessionRegistration, SessionRecoveryByProject, SystemSessionBootstrap).
+    Each concrete subclass pins a class-level PRIORITY (lower = outer);
+    nested locks must use strictly greater priority — see
+    Transaction.acquire_additional_lock."""
+    PRIORITY: ClassVar[int]
+
 
 class Cursor(Protocol):
     def fetchone(self) -> Row | None: ...
@@ -1358,7 +1377,7 @@ No row or cursor type leaks `sqlite3` objects. Transaction objects own savepoint
 
 **Acceptance:**
 
-- 3.1.1 — `HubDatabase` protocol defines the backend-neutral storage seam. symbol: `gobby.storage.hub.protocol.HubDatabase`.
+- 3.1.1 — `HubDatabase` protocol defines the backend-neutral storage seam, including `Transaction`, `Cursor`, `Savepoint`, the `LockTarget` protocol with `PRIORITY: ClassVar[int]`, and the `LockAcquisitionOrderError` exception that nested `transaction_immediate(lock)` calls raise on out-of-order priority. Concrete `LockTarget` subclasses (TaskSeqAllocation, DispatchMutexRow, …) are owned by §3.8; this section ships only the protocol + exception so §3.1 type-checks standalone. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.LockTarget`. symbol: `gobby.storage.hub.protocol.LockAcquisitionOrderError`.
 
 ### 3.2 Implement `SqliteHubDatabase` shim [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -2057,23 +2076,11 @@ class HubDatabase(Protocol):
 
 **Preserving `transaction_immediate()` with a typed lock target.** Today's `DatabaseProtocol.transaction_immediate()` is the SQLite write-intent lock entry point (`BEGIN IMMEDIATE`) and is reachable from runtime call sites including `src/gobby/storage/tasks/_crud.py`, `src/gobby/storage/tasks/_dispatch_mutex.py`, `src/gobby/storage/sessions/_crud.py`, and `src/gobby/storage/sessions/_constants.py`. The current zero-argument shape works on SQLite because `BEGIN IMMEDIATE` takes a global write lock, but it cannot map to Postgres without naming the resource being protected. `HubDatabase` therefore takes a typed `LockTarget` argument so the adapter can acquire the right Postgres lock per call site:
 
-```python
-# src/gobby/storage/hub/protocol.py
-class LockTarget(Protocol):
-    """Names the resource a transaction_immediate() block protects.
-    Adapters dispatch on the concrete subclass — SQLite ignores the target
-    (BEGIN IMMEDIATE is global write-intent), Postgres uses it to acquire
-    the matching SELECT ... FOR UPDATE / pg_advisory_xact_lock.
+The concrete `LockTarget` dataclass cases extend the protocol owned by §3.1 (`gobby.storage.hub.protocol.LockTarget`, `LockAcquisitionOrderError`) — §3.8 adds the cases below; the protocol itself is not redefined here.
 
-    Ordering for nested locks uses the explicit class-level `PRIORITY`
-    (ClassVar[int], lower = acquired first). Sort by lock-key STRING is
-    intentionally NOT used: alphabetical ordering is a fragile invariant
-    that breaks the moment a new prefix lands. Each concrete LockTarget
-    pins its priority in the class so the nested-acquisition contract is
-    decidable from the type system alone, and
-    `Transaction.acquire_additional_lock(lock)` enforces strict ascending
-    priority."""
-    PRIORITY: ClassVar[int]  # lower = outer; nested calls must use strictly higher priority
+```python
+# src/gobby/storage/hub/protocol.py — concrete cases (extending §3.1's LockTarget protocol)
+from gobby.storage.hub.protocol import LockTarget  # already defined in §3.1
 
 @dataclass(frozen=True)
 class TaskSeqAllocation(LockTarget):
