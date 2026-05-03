@@ -13,6 +13,7 @@ import {
 } from "./execution-utils";
 import { formatTime, formatDuration, formatJson } from "./executionFormatters";
 import "./PipelinesPage.css";
+import "./pipelines-reporting.css";
 
 type TypeFilter = "all" | "pipelines" | "agents";
 type StatusFilter = "all" | "running" | "waiting" | "completed" | "failed";
