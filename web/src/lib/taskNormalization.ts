@@ -1,6 +1,6 @@
 import type { ReviewPolicy, StageState5, StageStateView } from './stageActions'
 import type { CanonicalTaskState, TaskCompatProjection } from './taskState'
-import { getCanonicalTaskState } from './taskState'
+import { getCanonicalTaskState, getTaskDisplayState } from './taskState'
 
 const STAGE_STATES: readonly StageState5[] = [
   'ready',
@@ -190,7 +190,6 @@ export function normalizeTaskPayload<T extends RawTaskPayload>(
     ...task,
     ref: task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : task.id),
     title: task.title ?? '',
-    status: task.status ?? 'open',
     priority: task.priority ?? 2,
     task_type: task.task_type ?? task.type ?? 'task',
     parent_task_id: task.parent_task_id ?? null,
@@ -214,9 +213,11 @@ export function normalizeTaskPayload<T extends RawTaskPayload>(
       current_stage: currentStage,
     },
   })
+  const status = getTaskDisplayState({ ...projected, state: canonical })
 
   return {
     ...projected,
+    status,
     current_stage: canonical.current_stage,
     state: canonical,
   } as T & NormalizedTaskPayload

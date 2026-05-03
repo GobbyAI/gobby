@@ -72,9 +72,9 @@ def reopen_task(
     task_id: str,
     reason: str | None = None,
 ) -> None:
-    """Reopen a task to open status.
+    """Reopen a task to the ready state.
 
-    Works on any non-open status (in_progress, closed, needs_review, escalated, etc.).
+    Works from any non-ready state (in_progress, closed, needs_review, escalated, etc.).
     Clears closed fields, assignee, and resets validation_fail_count.
 
     Args:
@@ -83,7 +83,7 @@ def reopen_task(
         reason: Optional reason for reopening
 
     Raises:
-        ValueError: If task not found or already open
+        ValueError: If task not found or already ready
     """
     _reopen_task_transition(db, task_id, reason=reason)
 

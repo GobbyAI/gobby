@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
 
 
-def _task_status_label(task: object) -> str:
+def _task_state_label(task: object) -> str:
     state = serialize_task_state(task)
     if state["is_closed"]:
         return "closed"
@@ -265,7 +265,7 @@ class SessionLookupService:
                 event.metadata["_task_context"] = {
                     "id": task.id,
                     "title": task.title,
-                    "status": _task_status_label(task),
+                    "state": _task_state_label(task),
                 }
                 # Keep legacy field for backwards compatibility
                 event.metadata["_task_title"] = task.title

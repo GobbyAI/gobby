@@ -412,6 +412,12 @@ class TestGenerateSessionSummaries:
 class TestGetClaimedTasks:
     """Tests for _get_claimed_tasks()."""
 
+    def _task_state_defaults(self, task: MagicMock, state: str) -> None:
+        task.closed_at = None
+        task.escalated_at = None
+        task.is_escalated = False
+        task.current_stage = {"state": state}
+
     def test_returns_empty_on_no_tasks(self) -> None:
         """Returns empty string when session has no tasks."""
         from gobby.sessions.summarize import _get_claimed_tasks
@@ -429,7 +435,7 @@ class TestGetClaimedTasks:
         mock_task = MagicMock()
         mock_task.id = "task-uuid-1234"
         mock_task.seq_num = 42
-        mock_task.status = "in_progress"
+        self._task_state_defaults(mock_task, "in_progress")
         mock_task.title = "Fix the bug"
         mock_task.description = "A short description"
 
@@ -454,7 +460,7 @@ class TestGetClaimedTasks:
         mock_task = MagicMock()
         mock_task.id = "task-uuid-1234-full"
         mock_task.seq_num = None
-        mock_task.status = "open"
+        self._task_state_defaults(mock_task, "ready")
         mock_task.title = "No seq num task"
         mock_task.description = None
 
@@ -468,7 +474,7 @@ class TestGetClaimedTasks:
             result = _get_claimed_tasks("sess-1", mock_db)
 
         assert "task-uui" in result
-        assert "[open]" in result
+        assert "[ready]" in result
 
     def test_formats_task_with_blockers(self) -> None:
         """Tasks with blocking dependencies show blocker info."""
@@ -477,7 +483,7 @@ class TestGetClaimedTasks:
         mock_task = MagicMock()
         mock_task.id = "task-uuid-1234"
         mock_task.seq_num = 5
-        mock_task.status = "blocked"
+        self._task_state_defaults(mock_task, "ready")
         mock_task.title = "Blocked task"
         mock_task.description = None
 
@@ -504,7 +510,7 @@ class TestGetClaimedTasks:
         mock_task = MagicMock()
         mock_task.id = "task-uuid-1234"
         mock_task.seq_num = 1
-        mock_task.status = "open"
+        self._task_state_defaults(mock_task, "ready")
         mock_task.title = "Long desc task"
         mock_task.description = "A" * 200
 

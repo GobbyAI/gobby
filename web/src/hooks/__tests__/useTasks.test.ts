@@ -53,12 +53,36 @@ function createDeferred<T>() {
   return { promise, resolve, reject }
 }
 
+function stageState(
+  state: 'ready' | 'in_progress' | 'needs_review' | 'review_approved' | 'done' = 'ready',
+) {
+  return {
+    name: 'build',
+    display_name: 'Build',
+    category: 'delivery',
+    state,
+    review_policy: 'required',
+    updated_at: '2026-05-02T00:00:00Z',
+  }
+}
+
+function canonicalState(
+  state: 'ready' | 'in_progress' | 'needs_review' | 'review_approved' | 'done' = 'ready',
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    current_stage: stageState(state),
+    ...overrides,
+  }
+}
+
 const SAMPLE_TASKS = [
   {
     id: 'task-1',
     ref: '#100',
     title: 'Fix bug',
-    status: 'open',
+    state: canonicalState('ready'),
+    current_stage: stageState('ready'),
     priority: 1,
     type: 'task',
     parent_task_id: null,
@@ -78,7 +102,8 @@ const SAMPLE_TASKS = [
     id: 'task-2',
     ref: '#101',
     title: 'Add feature',
-    status: 'open',
+    state: canonicalState('ready'),
+    current_stage: stageState('ready'),
     priority: 2,
     type: 'task',
     parent_task_id: null,
@@ -99,7 +124,7 @@ const SAMPLE_TASKS = [
 const TASK_LIST_RESPONSE = {
   tasks: SAMPLE_TASKS,
   total: 2,
-  stats: { open: 2, closed: 0 },
+  stats: { ready: 2, closed: 0 },
   limit: 200,
   offset: 0,
 }
@@ -344,7 +369,15 @@ describe('useTasks', () => {
   })
 
   it('closeTask posts and re-fetches', async () => {
-    const closed = { ...SAMPLE_TASKS[0], status: 'closed' }
+    const closed = {
+      ...SAMPLE_TASKS[0],
+      state: canonicalState('done', {
+        is_closed: true,
+        closed_at: '2026-03-03T00:00:00Z',
+      }),
+      current_stage: stageState('done'),
+      closed_at: '2026-03-03T00:00:00Z',
+    }
     mockFetch.mockJsonResponse(/\/api\/tasks\/task-1\/close/, closed)
 
     const { result } = renderHook(() => useTasks())
@@ -356,7 +389,11 @@ describe('useTasks', () => {
   })
 
   it('releaseTaskClaim posts to the release-claim route', async () => {
-    const released = { ...SAMPLE_TASKS[0], status: 'open' }
+    const released = {
+      ...SAMPLE_TASKS[0],
+      state: canonicalState('ready'),
+      current_stage: stageState('ready'),
+    }
     mockFetch.mockJsonResponse(/\/api\/tasks\/task-1\/release-claim/, released)
 
     const { result } = renderHook(() => useTasks())
@@ -364,11 +401,15 @@ describe('useTasks', () => {
 
     const task = await act(() => result.current.releaseTaskClaim('task-1'))
 
-    expect(task?.status).toBe('open')
+    expect(task?.status).toBe('ready')
   })
 
   it('reopenTask posts and re-fetches', async () => {
-    const reopened = { ...SAMPLE_TASKS[0], status: 'open' }
+    const reopened = {
+      ...SAMPLE_TASKS[0],
+      state: canonicalState('ready'),
+      current_stage: stageState('ready'),
+    }
     mockFetch.mockJsonResponse(/\/api\/tasks\/task-1\/reopen/, reopened)
 
     const { result } = renderHook(() => useTasks())
@@ -376,7 +417,7 @@ describe('useTasks', () => {
 
     const task = await act(() => result.current.reopenTask('task-1'))
 
-    expect(task?.status).toBe('open')
+    expect(task?.status).toBe('ready')
   })
 
   it('deleteTask deletes and re-fetches', async () => {
@@ -463,7 +504,17 @@ describe('useTasks', () => {
       ...TASK_LIST_RESPONSE,
       tasks: [
         SAMPLE_TASKS[0],
-        { ...SAMPLE_TASKS[1], id: 'task-closed', status: 'closed', title: 'Closed task' },
+        {
+          ...SAMPLE_TASKS[1],
+          id: 'task-closed',
+          title: 'Closed task',
+          state: canonicalState('done', {
+            is_closed: true,
+            closed_at: '2026-03-03T00:00:00Z',
+          }),
+          current_stage: stageState('done'),
+          closed_at: '2026-03-03T00:00:00Z',
+        },
       ],
     })
 
@@ -485,12 +536,19 @@ describe('useTasks', () => {
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       ...TASK_LIST_RESPONSE,
       tasks: [
-        { ...SAMPLE_TASKS[0], id: 'task-review', status: 'needs_review', title: 'Needs review' },
+        {
+          ...SAMPLE_TASKS[0],
+          id: 'task-review',
+          title: 'Needs review',
+          state: canonicalState('needs_review'),
+          current_stage: stageState('needs_review'),
+        },
         {
           ...SAMPLE_TASKS[1],
           id: 'task-approved',
-          status: 'review_approved',
           title: 'Approved task',
+          state: canonicalState('review_approved'),
+          current_stage: stageState('review_approved'),
         },
       ],
     })
@@ -513,6 +571,7 @@ describe('useTasks', () => {
       state: {
         current_stage: { name: 'development', state: 'needs_review' },
       },
+      current_stage: { name: 'development', state: 'needs_review' },
       stages: [
         {
           stage_name: 'development',

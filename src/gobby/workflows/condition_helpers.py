@@ -127,13 +127,6 @@ def task_state_in(task_manager: Any, task_id: str | int | None, *states: str) ->
     return projected_task_state(task) in normalized_states
 
 
-def task_status_in(task_manager: Any, task_id: str | int | None, *statuses: str) -> bool:
-    """Compatibility alias for older rules; prefer task_state_in."""
-    legacy_state_map = {"open": "ready"}
-    states = tuple(legacy_state_map.get(status, status) for status in statuses)
-    return task_state_in(task_manager, task_id, *states)
-
-
 def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
     """Check if a single task and its subtree are complete."""
     task = _get_task(task_manager, task_id)

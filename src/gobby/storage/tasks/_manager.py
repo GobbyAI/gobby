@@ -8,7 +8,7 @@ from gobby.storage.tasks._aggregates import (
     count_blocked_tasks as _count_blocked_tasks,
 )
 from gobby.storage.tasks._aggregates import (
-    count_by_status as _count_by_status,
+    count_by_state as _count_by_state,
 )
 from gobby.storage.tasks._aggregates import (
     count_closed_since as _count_closed_since,
@@ -547,9 +547,9 @@ class LocalTaskManager:
         task_id: str,
         reason: str | None = None,
     ) -> Task:
-        """Reopen a task to open status.
+        """Reopen a task to the ready state.
 
-        Works on any non-open status. Clears assignee, closed fields,
+        Works from any non-ready state. Clears assignee, closed fields,
         and resets validation_fail_count.
 
         Args:
@@ -557,7 +557,7 @@ class LocalTaskManager:
             reason: Optional reason for reopening
 
         Raises:
-            ValueError: If task not found or already open
+            ValueError: If task not found or already ready
         """
         _reopen_task(self.db, task_id=task_id, reason=reason)
         self._notify_listeners()
@@ -856,16 +856,16 @@ class LocalTaskManager:
             current_stage_state=current_stage_state,
         )
 
-    def count_by_status(self, project_id: str | None = None) -> dict[str, int]:
-        """Count tasks grouped by status.
+    def count_by_state(self, project_id: str | None = None) -> dict[str, int]:
+        """Count tasks grouped by canonical task state.
 
         Args:
             project_id: Optional project filter
 
         Returns:
-            Dictionary mapping status to count
+            Dictionary mapping state to count
         """
-        return _count_by_status(self.db, project_id=project_id)
+        return _count_by_state(self.db, project_id=project_id)
 
     def count_ready_tasks(self, project_id: str | None = None) -> int:
         """Count tasks that are ready (open or in_progress) and not blocked.

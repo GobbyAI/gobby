@@ -44,7 +44,7 @@ class TestAdminRoutes:
         server.session_manager.count_by_status.return_value = {"active": 1, "paused": 0}
 
         server.task_manager = MagicMock()
-        server.task_manager.count_by_status.return_value = {"open": 2}
+        server.task_manager.count_by_state.return_value = {"ready": 2}
         server.task_manager.count_ready_tasks.return_value = 1
         server.task_manager.count_blocked_tasks.return_value = 0
 

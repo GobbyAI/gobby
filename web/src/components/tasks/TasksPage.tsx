@@ -105,10 +105,10 @@ const STATE_FILTER_OPTIONS: TaskDisplayState[] = [
 ]
 
 const FILTER_DOT_STATUS: Record<TaskDisplayState, string> = {
-  ready: 'open',
+  ready: 'ready',
   in_progress: 'in_progress',
   needs_review: 'needs_review',
-  blocked: 'escalated',
+  blocked: 'blocked',
   review_approved: 'review_approved',
   closed: 'closed',
 }

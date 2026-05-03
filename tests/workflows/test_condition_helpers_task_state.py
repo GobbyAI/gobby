@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
-from gobby.workflows.condition_helpers import task_state_in, task_status_in
+from gobby.workflows.condition_helpers import task_state_in
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
 pytestmark = pytest.mark.unit
@@ -48,17 +48,8 @@ def test_task_state_in_defaults_to_ready_without_current_stage(temp_db, sample_p
     assert task_state_in(manager, task.id, "ready") is True
 
 
-def test_task_status_in_compatibility_alias_maps_open_to_ready(temp_db, sample_project) -> None:
-    manager = _manager(temp_db)
-    task = _task(manager, sample_project)
-
-    assert task_status_in(manager, task.id, "open") is True
-    assert task_status_in(manager, task.id, "closed") is False
-
-
 def test_helpers_return_false_without_task_manager() -> None:
     assert task_state_in(None, "#42", "ready") is False
-    assert task_status_in(None, "#42", "open") is False
 
 
 def test_safe_evaluator_exposes_task_state_in(temp_db, sample_project) -> None:
@@ -77,4 +68,3 @@ def test_safe_evaluator_stubs_task_state_helpers_without_manager() -> None:
     evaluator = SafeExpressionEvaluator(ctx, helpers)
 
     assert evaluator.evaluate("task_state_in('#42', 'ready')") is False
-    assert evaluator.evaluate("task_status_in('#42', 'open')") is False

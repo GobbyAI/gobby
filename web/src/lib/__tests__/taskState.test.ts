@@ -36,15 +36,16 @@ describe('taskState helpers', () => {
     expect(getTaskDisplayState({ state: { is_closed: true } })).toBe('closed')
   })
 
-  it('falls back to compat projection when canonical rows are missing', () => {
+  it('uses canonical owner projection when stage rows are missing', () => {
     const state = getCanonicalTaskState({
-      status: 'in_progress',
-      assignee: 'legacy-owner',
+      state: { owner_session_id: 'sess-1', is_claimed: true },
     })
 
-    expect(state.owner_session_id).toBe('legacy-owner')
+    expect(state.owner_session_id).toBe('sess-1')
     expect(state.is_claimed).toBe(true)
-    expect(getTaskDisplayState({ status: 'in_progress' })).toBe('in_progress')
+    expect(getTaskDisplayState({ state: { owner_session_id: 'sess-1', is_claimed: true } })).toBe(
+      'in_progress',
+    )
   })
 
   it('counts tasks by display state', () => {

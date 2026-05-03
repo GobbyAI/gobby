@@ -341,9 +341,6 @@ class TranscriptAnalyzer:
                     return f"Created task: {title}"
                 elif tool == "update_task":
                     task_id = args.get("task_id", "?")
-                    status = args.get("status")
-                    if status:
-                        return f"Updated task {task_id}: status → {status}"
                     return f"Updated task {task_id}"
                 elif tool == "close_task":
                     task_id = args.get("task_id", "?")

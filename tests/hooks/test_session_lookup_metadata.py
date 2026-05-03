@@ -84,7 +84,7 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     session_manager.get_session_id.assert_called_once_with("claude-external", "claude")
 
 
-def test_task_context_uses_stage_native_status() -> None:
+def test_task_context_uses_stage_native_state() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
         id="platform-session", project_id="project-1"
@@ -110,5 +110,5 @@ def test_task_context_uses_stage_native_status() -> None:
     assert event.metadata["_task_context"] == {
         "id": "task-1",
         "title": "Stage-native task",
-        "status": "in_progress",
+        "state": "in_progress",
     }

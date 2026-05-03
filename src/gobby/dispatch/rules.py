@@ -547,9 +547,10 @@ def _is_epic(task: object) -> bool:
 
 
 def _is_closed(task: object) -> bool:
-    return bool(_field(task, "is_closed", False) or _field(task, "closed_at")) or (
-        _field(task, "status") == "closed"
-    )
+    state = _field(task, "state")
+    if isinstance(state, dict) and state.get("is_closed"):
+        return True
+    return bool(_field(task, "is_closed", False) or _field(task, "closed_at"))
 
 
 def _isolation(task: object) -> str:

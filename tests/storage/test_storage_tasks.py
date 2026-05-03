@@ -1394,25 +1394,25 @@ class TestLocalTaskManager:
         count = task_manager.count_tasks(project_id=project_id)
         assert count == 0
 
-    def test_count_by_status(self, task_manager, project_id) -> None:
-        """Test grouping task counts by status."""
+    def test_count_by_state(self, task_manager, project_id) -> None:
+        """Test grouping task counts by canonical state."""
         task_manager.create_task(project_id, "Open 1")
         task_manager.create_task(project_id, "Open 2")
         t3 = task_manager.create_task(project_id, "Closed")
         task_manager.close_task(t3.id)
 
-        counts = task_manager.count_by_status(project_id=project_id)
+        counts = task_manager.count_by_state(project_id=project_id)
 
-        assert counts.get("open") == 2
+        assert counts.get("ready") == 2
         assert counts.get("closed") == 1
 
-    def test_count_by_status_all_projects(self, task_manager, project_id) -> None:
-        """Test counting by status without project filter."""
+    def test_count_by_state_all_projects(self, task_manager, project_id) -> None:
+        """Test counting by state without project filter."""
         task_manager.create_task(project_id, "Task")
 
-        counts = task_manager.count_by_status()
+        counts = task_manager.count_by_state()
 
-        assert counts.get("open", 0) >= 1
+        assert counts.get("ready", 0) >= 1
 
     def test_count_ready_tasks(self, task_manager, dep_manager, project_id) -> None:
         """Test counting ready tasks."""

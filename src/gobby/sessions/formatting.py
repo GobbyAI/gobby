@@ -24,6 +24,25 @@ class HandoffContext(Protocol):
     recent_activity: list[str]
 
 
+def _active_task_state(task: dict[str, Any]) -> str | None:
+    state = task.get("state")
+    if isinstance(state, str):
+        return state
+    if isinstance(state, dict):
+        if state.get("is_closed"):
+            return "closed"
+        if state.get("is_escalated"):
+            return "escalated"
+        current_stage = state.get("current_stage")
+        if isinstance(current_stage, dict) and isinstance(current_stage.get("state"), str):
+            return current_stage["state"]
+        return "ready"
+    current_stage = task.get("current_stage")
+    if isinstance(current_stage, dict) and isinstance(current_stage.get("state"), str):
+        return current_stage["state"]
+    return None
+
+
 def format_handoff_as_markdown(
     ctx: HandoffContext, prompt_template: str | None = None, cwd: Path | None = None
 ) -> str:
@@ -42,10 +61,11 @@ def format_handoff_as_markdown(
     # Active task section
     if ctx.active_gobby_task:
         task = ctx.active_gobby_task
+        task_state = _active_task_state(task)
         sections.append(
             f"### Active Task\n"
             f"**{task.get('title', 'Untitled')}** ({task.get('id', 'unknown')})\n"
-            f"Status: {task.get('status', 'unknown')}"
+            f"State: {task_state or 'unknown'}"
         )
 
     # Worktree context section
@@ -94,12 +114,10 @@ def format_handoff_as_markdown(
 
     # Initial goal section - only if task is still active (not closed/completed)
     if ctx.initial_goal:
-        task_status = None
+        task_state = None
         if ctx.active_gobby_task:
-            task_status = ctx.active_gobby_task.get("status")
-        # Only include if no task or task is still open/in_progress.
-        # Note: None, "open", and "in_progress" are considered active states.
-        if task_status in (None, "open", "in_progress"):
+            task_state = _active_task_state(ctx.active_gobby_task)
+        if task_state in (None, "ready", "in_progress"):
             sections.append(f"### Original Goal\n{ctx.initial_goal}")
 
     # Recent activity section

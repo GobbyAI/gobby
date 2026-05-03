@@ -105,7 +105,7 @@ def detect_task_claim(
     """Detect gobby-tasks calls that claim or release a task for this session.
 
     Sets ``task_claimed: true`` in variables when the agent successfully
-    creates a task or updates a task to in_progress status.
+    creates or claims a task.
 
     Clears ``task_claimed: false`` when the agent closes a task, requiring
     them to claim another task before making further file modifications.
@@ -171,14 +171,8 @@ def detect_task_claim(
             )
         return
 
-    if inner_tool_name not in ("create_task", "update_task", "claim_task"):
+    if inner_tool_name not in ("create_task", "claim_task"):
         return
-
-    # For update_task, only count if status is being set to in_progress
-    if inner_tool_name == "update_task":
-        arguments = tool_input.get("arguments", {}) or {}
-        if arguments.get("status") != "in_progress":
-            return
 
     # Check if the call succeeded
     if isinstance(tool_output, dict):
@@ -192,7 +186,7 @@ def detect_task_claim(
     arguments = tool_input.get("arguments", {}) or {}
     task_id: str | None = None
 
-    if inner_tool_name in ("update_task", "claim_task"):
+    if inner_tool_name == "claim_task":
         raw_task_id = arguments.get("task_id")
         if raw_task_id and task_manager:
             try:
@@ -237,7 +231,7 @@ def detect_task_claim(
     logger.info(f"Session {session_id}: added {task_id} to claimed_tasks (via {inner_tool_name})")
 
     # Auto-link task to session
-    if inner_tool_name in ("update_task", "claim_task"):
+    if inner_tool_name == "claim_task":
         if task_id and session_task_manager:
             try:
                 session_task_manager.link_task(session_id, task_id, "worked_on")

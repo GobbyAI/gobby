@@ -64,18 +64,19 @@ export function StatusBadge({ status }: { status: string }) {
 // StatusDot (minimal dot-only variant)
 // =============================================================================
 
+function displayStateFromStatus(status: string | undefined): TaskDisplayState {
+  if (status === 'open') return 'ready'
+  if (status && TASK_STATE_ORDER.includes(status as TaskDisplayState)) {
+    return status as TaskDisplayState
+  }
+  return 'ready'
+}
+
 export function StatusDot({ status, task }: { status?: string; task?: TaskStateLike }) {
-  const isKnownState = Boolean(status && TASK_STATE_ORDER.includes(status as TaskDisplayState))
-  const displayState = task
-    ? getTaskDisplayState(task)
-    : isKnownState
-      ? status as TaskDisplayState
-      : getTaskDisplayState({ status })
+  const displayState = task ? getTaskDisplayState(task) : displayStateFromStatus(status)
   const label = task
     ? getTaskStateSummary(task)
-    : isKnownState
-      ? TASK_STATE_LABELS[status as TaskDisplayState]
-      : (status ?? 'unknown').replace(/_/g, ' ')
+    : TASK_STATE_LABELS[displayState]
   return (
     <span
       className={TASK_BADGE_DOT_STANDALONE_CLS}

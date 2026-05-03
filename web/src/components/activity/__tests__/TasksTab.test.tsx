@@ -46,12 +46,47 @@ vi.mock("../../chat/artifacts/ResizeHandle", () => ({
 
 let mockFetch: MockFetchInstance;
 
+type TestStageState =
+  | "ready"
+  | "in_progress"
+  | "needs_review"
+  | "review_approved"
+  | "done";
+
+function stagePayload(
+  state: TestStageState = "ready",
+  name = "development",
+) {
+  return {
+    name,
+    display_name: name
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" "),
+    category: "delivery",
+    state,
+    review_policy: "required",
+    updated_at: "2026-04-12T00:00:00Z",
+  };
+}
+
+function taskStatePayload(
+  state: TestStageState = "ready",
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    current_stage: stagePayload(state),
+    ...overrides,
+  };
+}
+
 const taskList = [
   {
     id: "task-review",
     ref: "#401",
     title: "Review approved task",
-    status: "review_approved",
+    state: taskStatePayload("review_approved"),
+    current_stage: stagePayload("review_approved"),
     priority: 2,
     task_type: "task",
     parent_task_id: null,
@@ -71,7 +106,8 @@ const taskList = [
     id: `task-${index + 1}`,
     ref: `#${410 + index}`,
     title: `Open task ${index + 1}`,
-    status: "open",
+    state: taskStatePayload("ready"),
+    current_stage: stagePayload("ready"),
     priority: 2,
     task_type: "task",
     parent_task_id: null,
@@ -91,7 +127,12 @@ const taskList = [
     id: "task-closed",
     ref: "#499",
     title: "Closed task",
-    status: "closed",
+    state: taskStatePayload("done", {
+      is_closed: true,
+      closed_at: "2026-04-13T00:00:00Z",
+    }),
+    current_stage: stagePayload("done"),
+    closed_at: "2026-04-13T00:00:00Z",
     priority: 2,
     task_type: "task",
     parent_task_id: null,
@@ -181,7 +222,12 @@ describe("TasksTab", () => {
         id: `closed-${index + 1}`,
         ref: `#${700 + index}`,
         title: `Closed task ${index + 1}`,
-        status: "closed",
+        state: taskStatePayload("done", {
+          is_closed: true,
+          closed_at: `2026-03-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
+        }),
+        current_stage: stagePayload("done"),
+        closed_at: `2026-03-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
         priority: 2,
         task_type: "task",
         parent_task_id: null,
@@ -224,7 +270,8 @@ describe("TasksTab", () => {
         id: "root-medium",
         ref: "#701",
         title: "Root medium",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: null,
@@ -244,7 +291,8 @@ describe("TasksTab", () => {
         id: "root-high-late",
         ref: "#702",
         title: "Root high late",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 1,
         task_type: "task",
         parent_task_id: null,
@@ -264,7 +312,8 @@ describe("TasksTab", () => {
         id: "root-high-early",
         ref: "#703",
         title: "Root high early",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 1,
         task_type: "task",
         parent_task_id: null,
@@ -284,7 +333,8 @@ describe("TasksTab", () => {
         id: "parent-root",
         ref: "#704",
         title: "Parent root",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "epic",
         parent_task_id: null,
@@ -304,7 +354,8 @@ describe("TasksTab", () => {
         id: "child-medium-new",
         ref: "#705",
         title: "Child medium new",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: "parent-root",
@@ -324,7 +375,8 @@ describe("TasksTab", () => {
         id: "child-critical",
         ref: "#706",
         title: "Child critical",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 0,
         task_type: "bug",
         parent_task_id: "parent-root",
@@ -344,7 +396,8 @@ describe("TasksTab", () => {
         id: "child-medium-old",
         ref: "#707",
         title: "Child medium old",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: "parent-root",
@@ -402,7 +455,8 @@ describe("TasksTab", () => {
           id: "parent-task",
           ref: "#801",
           title: "Expandable parent",
-          status: "open",
+          state: taskStatePayload("ready"),
+          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: null,
@@ -422,7 +476,8 @@ describe("TasksTab", () => {
           id: "child-task",
           ref: "#802",
           title: "Nested child",
-          status: "open",
+          state: taskStatePayload("ready"),
+          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: "parent-task",
@@ -445,7 +500,8 @@ describe("TasksTab", () => {
         id: "parent-task",
         ref: "#801",
         title: "Expandable parent",
-        status: "open",
+        state: taskStatePayload("ready"),
+        current_stage: stagePayload("ready"),
         priority: 2,
         task_type: "task",
         parent_task_id: null,
@@ -675,7 +731,12 @@ describe("TasksTab", () => {
       id: "task-detail",
       ref: "#510",
       title: "Detail pane task",
-      status: "open",
+      state: {
+        ...taskStatePayload("needs_review"),
+        owner_session_id: "session-123",
+        is_claimed: true,
+        current_stage: { name: "development", state: "needs_review" },
+      },
       priority: 2,
       task_type: "bug",
       parent_task_id: null,
@@ -733,7 +794,12 @@ describe("TasksTab", () => {
           id: "task-closed-only",
           ref: "#777",
           title: "Closed only task",
-          status: "closed",
+          state: taskStatePayload("done", {
+            is_closed: true,
+            closed_at: "2026-04-13T00:00:00Z",
+          }),
+          current_stage: stagePayload("done"),
+          closed_at: "2026-04-13T00:00:00Z",
           priority: 2,
           task_type: "task",
           parent_task_id: null,
@@ -782,7 +848,8 @@ describe("TasksTab", () => {
           id: "task-ws-new",
           ref: "#900",
           title: "WS created task",
-          status: "open",
+          state: taskStatePayload("ready"),
+          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: null,
@@ -837,7 +904,8 @@ describe("TasksTab", () => {
           id: "task-other",
           ref: "#999",
           title: "Other project task",
-          status: "open",
+          state: taskStatePayload("ready"),
+          current_stage: stagePayload("ready"),
           priority: 2,
           task_type: "task",
           parent_task_id: null,

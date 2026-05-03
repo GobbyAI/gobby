@@ -1,7 +1,7 @@
 """Linear sync service that orchestrates between gobby tasks and Linear.
 
 This service delegates all Linear operations to the official Linear MCP server,
-avoiding custom API client code. Supports bidirectional sync with status, priority,
+avoiding custom API client code. Supports bidirectional sync with state, priority,
 dedup, and cron-based polling.
 """
 
@@ -72,7 +72,7 @@ class LinearSyncService:
 
     This service orchestrates bidirectional sync between gobby tasks and Linear:
     - Import Linear issues as gobby tasks (with dedup)
-    - Sync task updates back to Linear issues (status + priority)
+    - Sync task updates back to Linear issues (state + priority)
     - Pull updates from Linear to gobby tasks
     - Push dirty gobby tasks to Linear
     - Full bidirectional sync with loop prevention via project cursor
@@ -201,7 +201,7 @@ class LinearSyncService:
     async def sync_task_to_linear(self, task_id: str) -> dict[str, Any]:
         """Sync a gobby task to its linked Linear issue.
 
-        Updates the Linear issue title, description, status, and priority.
+        Updates the Linear issue title, description, state, and priority.
 
         Args:
             task_id: ID of the task to sync.
@@ -218,7 +218,7 @@ class LinearSyncService:
                 f"Task {task_id} has no linked Linear issue. Set linear_issue_id to sync."
             )
 
-        linear_state = self.map_gobby_status_to_linear(self._project_gobby_state_for_linear(task))
+        linear_state = self.map_gobby_state_to_linear(self._project_gobby_state_for_linear(task))
 
         update_args: dict[str, Any] = {
             "issueId": task.linear_issue_id,
@@ -427,41 +427,41 @@ class LinearSyncService:
             "synced_at": datetime.now(UTC).isoformat(),
         }
 
-    def map_gobby_status_to_linear(self, gobby_status: str) -> str:
-        """Map gobby task status to Linear issue state name.
+    def map_gobby_state_to_linear(self, gobby_state: str) -> str:
+        """Map gobby task state to Linear issue state name.
 
         Note: This returns the state *name*, not the state ID.
         The Linear MCP server resolves names to IDs internally.
         """
-        status_map = {
-            "open": "Todo",
+        state_map = {
+            "ready": "Todo",
             "in_progress": "In Progress",
             "needs_review": "In Review",
             "review_approved": "Done",
             "closed": "Done",
             "escalated": "Canceled",
         }
-        return status_map.get(gobby_status, "Todo")
+        return state_map.get(gobby_state, "Todo")
 
     def _project_gobby_state_for_linear(self, task: Any) -> str:
         if is_task_closed(task):
             return "closed"
         if is_task_escalated(task):
             return "escalated"
-        return current_stage_state(task) or "open"
+        return current_stage_state(task) or "ready"
 
-    def map_linear_status_to_gobby(self, linear_state: str) -> str:
-        """Map Linear issue state to gobby task status."""
+    def map_linear_state_to_gobby(self, linear_state: str) -> str:
+        """Map Linear issue state to gobby task state."""
         state_map = {
-            "Todo": "open",
+            "Todo": "ready",
             "In Progress": "in_progress",
             "Done": "closed",
             "Canceled": "closed",
             "In Review": "in_progress",
-            "Backlog": "open",
-            "Triage": "open",
+            "Backlog": "ready",
+            "Triage": "ready",
         }
-        return state_map.get(linear_state, "open")
+        return state_map.get(linear_state, "ready")
 
 
 def create_linear_sync_handler(

@@ -12,9 +12,16 @@ import pytest
 from gobby.mcp_proxy.tools.hub import create_hub_registry
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+from gobby.storage.tasks import LocalTaskManager
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
+
+
+def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
+    current = task_manager.stage_states.current_stage(task_id)
+    assert current is not None
+    task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=None)
 
 
 @pytest.fixture
@@ -44,28 +51,25 @@ def multi_project_hub(hub_dir):
             (project_name, project_name.replace("-", " ").title(), project_dir),
         )
 
+        task_manager = LocalTaskManager(hub_db)
         # Insert tasks for this project
-        for j, (status, task_type) in enumerate(
+        for j, (state, task_type) in enumerate(
             [
-                ("open", "task"),
+                ("ready", "task"),
                 ("in_progress", "feature"),
                 ("closed", "bug"),
             ]
         ):
-            hub_db.execute(
-                """
-                INSERT INTO tasks (id, project_id, title, status, task_type, priority, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-                """,
-                (
-                    f"task-{project_name}-{j}",
-                    project_name,
-                    f"Task {j} for {project_name}",
-                    status,
-                    task_type,
-                    j + 1,
-                ),
+            task = task_manager.create_task(
+                project_id=project_name,
+                title=f"Task {j} for {project_name}",
+                task_type=task_type,
+                priority=j + 1,
             )
+            if state == "in_progress":
+                _start_current_stage(task_manager, task.id)
+            elif state == "closed":
+                task_manager.close_task(task.id)
 
         # Insert sessions for this project
         for k, (source, status) in enumerate(
@@ -150,22 +154,22 @@ class TestHubQueryIntegration:
         assert "project-frontend" in project_ids
         assert "project-backend" in project_ids
 
-    def test_list_cross_project_tasks_filters_by_status(self, multi_project_hub) -> None:
-        """Test that list_cross_project_tasks correctly filters by status."""
+    def test_list_cross_project_tasks_filters_by_state(self, multi_project_hub) -> None:
+        """Test that list_cross_project_tasks correctly filters by projected state."""
         import asyncio
 
         registry = create_hub_registry(hub_db_path=multi_project_hub)
         tool = registry.get_tool("list_cross_project_tasks")
         assert tool is not None
 
-        # Filter for open tasks only
-        result = asyncio.run(tool(status="open"))
+        # Filter for ready tasks only
+        result = asyncio.run(tool(state="ready"))
 
         assert result["success"] is True
-        assert result["count"] == 2  # 1 open task per project
+        assert result["count"] == 2  # 1 ready task per project
 
         for task in result["tasks"]:
-            assert task["status"] == "open"
+            assert task["state"]["current_stage"]["state"] == "ready"
 
     def test_list_cross_project_tasks_respects_limit(self, multi_project_hub) -> None:
         """Test that list_cross_project_tasks respects the limit parameter."""
@@ -231,10 +235,10 @@ class TestHubQueryIntegration:
 
         # 6 total tasks (3 per project)
         assert stats["tasks"]["total"] == 6
-        # Status breakdown: 2 open, 2 in_progress, 2 closed
-        assert stats["tasks"]["by_status"]["open"] == 2
-        assert stats["tasks"]["by_status"]["in_progress"] == 2
-        assert stats["tasks"]["by_status"]["closed"] == 2
+        # State breakdown: 2 ready, 2 in_progress, 2 closed
+        assert stats["tasks"]["by_state"]["ready"] == 2
+        assert stats["tasks"]["by_state"]["in_progress"] == 2
+        assert stats["tasks"]["by_state"]["closed"] == 2
 
         # 4 total sessions (2 per project)
         assert stats["sessions"]["total"] == 4
@@ -325,10 +329,10 @@ class TestHubQueryEdgeCases:
         )
         db.execute(
             """
-            INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            INSERT INTO tasks (id, project_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, datetime('now'), datetime('now'))
             """,
-            ("task-only-1", "tasks-only-project", "A Task", "open"),
+            ("task-only-1", "tasks-only-project", "A Task"),
         )
         db.close()
 

@@ -31,10 +31,10 @@ def _task_state_bucket_sql(task_alias: str = "task") -> str:
         f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
         f"WHEN {task_alias}.escalated_at IS NOT NULL "
         f"OR COALESCE({task_alias}.is_escalated, 0) = 1 THEN 'escalated' "
-        "WHEN current_stage.state = 'ready' THEN 'open' "
+        "WHEN current_stage.state = 'ready' THEN 'ready' "
         "WHEN current_stage.state IN ('in_progress', 'needs_review', 'review_approved') "
         "THEN current_stage.state "
-        "ELSE 'open' END"
+        "ELSE 'ready' END"
     )
 
 
@@ -93,30 +93,30 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         # --- Tasks ---
         task_stats: dict[str, Any] = {
-            "open": 0,
+            "ready": 0,
             "in_progress": 0,
             "closed": 0,
             "needs_review": 0,
             "review_approved": 0,
             "escalated": 0,
-            "ready": 0,
+            "ready_unblocked": 0,
             "blocked": 0,
             "closed_24h": 0,
         }
         try:
             state_bucket = _task_state_bucket_sql("task")
             rows = db.fetchall(
-                f"SELECT {state_bucket} as status, COUNT(*) as cnt FROM tasks task "
+                f"SELECT {state_bucket} as task_state, COUNT(*) as cnt FROM tasks task "
                 f"{_current_stage_join_sql('task')} "
-                f"WHERE 1=1 {time_filter} GROUP BY status",
+                f"WHERE 1=1 {time_filter} GROUP BY task_state",
                 tuple(params),
             )
             for row in rows:
-                status = row["status"]
-                if status in task_stats:
-                    task_stats[status] = row["cnt"]
+                state = row["task_state"]
+                if state in task_stats:
+                    task_stats[state] = row["cnt"]
 
-            # Ready = canonically executable tasks with no unresolved blocking deps
+            # Available ready work with no unresolved blocking deps.
             tf_aliased, _ = _build_filters(
                 hours,
                 days,
@@ -137,7 +137,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 ")",
                 tuple(params),
             )
-            task_stats["ready"] = ready_rows[0]["cnt"] if ready_rows else 0
+            task_stats["ready_unblocked"] = ready_rows[0]["cnt"] if ready_rows else 0
 
             # Blocked = unresolved tasks with unresolved blocking deps
             blocked_rows = db.fetchall(

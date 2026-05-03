@@ -13,8 +13,15 @@ import pytest
 from gobby.mcp_proxy.tools.hub import create_hub_registry
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
+
+
+def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
+    current = task_manager.stage_states.current_stage(task_id)
+    assert current is not None
+    task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=None)
 
 
 @pytest.fixture
@@ -53,28 +60,12 @@ def populated_hub_db(temp_hub_db: Path) -> Path:
         ("project-beta", "Project Beta", "/path/beta", None),
     )
 
-    # Insert test tasks
-    db.execute(
-        """
-        INSERT INTO tasks (id, project_id, title, status, task_type, priority, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-        """,
-        ("task-1", "project-alpha", "Task 1", "open", "task", 1),
-    )
-    db.execute(
-        """
-        INSERT INTO tasks (id, project_id, title, status, task_type, priority, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-        """,
-        ("task-2", "project-alpha", "Task 2", "closed", "task", 2),
-    )
-    db.execute(
-        """
-        INSERT INTO tasks (id, project_id, title, status, task_type, priority, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-        """,
-        ("task-3", "project-beta", "Task 3", "in_progress", "feature", 1),
-    )
+    task_manager = LocalTaskManager(db)
+    task_manager.create_task("project-alpha", "Task 1", task_type="task", priority=1)
+    task2 = task_manager.create_task("project-alpha", "Task 2", task_type="task", priority=2)
+    task_manager.close_task(task2.id)
+    task3 = task_manager.create_task("project-beta", "Task 3", task_type="feature", priority=1)
+    _start_current_stage(task_manager, task3.id)
 
     # Insert test sessions with correct columns
     db.execute(
@@ -202,16 +193,16 @@ class TestListCrossProjectTasks:
         assert result["success"] is True
         assert result["count"] == 3
 
-    def test_list_cross_project_tasks_with_status_filter(self, populated_hub_db: Path) -> None:
-        """Test list_cross_project_tasks with status filter."""
+    def test_list_cross_project_tasks_with_state_filter(self, populated_hub_db: Path) -> None:
+        """Test list_cross_project_tasks with state filter."""
         registry = create_hub_registry(hub_db_path=populated_hub_db)
         tool = registry.get_tool("list_cross_project_tasks")
 
-        result = asyncio.run(tool(status="open"))
+        result = asyncio.run(tool(state="ready"))
 
         assert result["success"] is True
         assert result["count"] == 1
-        assert result["tasks"][0]["status"] == "open"
+        assert result["tasks"][0]["state"]["current_stage"]["state"] == "ready"
 
     def test_list_cross_project_tasks_with_limit(self, populated_hub_db: Path) -> None:
         """Test list_cross_project_tasks respects limit."""
@@ -290,8 +281,8 @@ class TestHubStats:
         assert stats["tasks"]["total"] == 3
         assert stats["sessions"]["total"] == 3
 
-    def test_hub_stats_includes_status_breakdown(self, populated_hub_db: Path) -> None:
-        """Test hub_stats includes breakdown by status."""
+    def test_hub_stats_includes_state_breakdown(self, populated_hub_db: Path) -> None:
+        """Test hub_stats includes task breakdown by state."""
         registry = create_hub_registry(hub_db_path=populated_hub_db)
         tool = registry.get_tool("hub_stats")
 
@@ -299,9 +290,9 @@ class TestHubStats:
 
         assert result["success"] is True
         stats = result["stats"]
-        assert stats["tasks"]["by_status"]["open"] == 1
-        assert stats["tasks"]["by_status"]["closed"] == 1
-        assert stats["tasks"]["by_status"]["in_progress"] == 1
+        assert stats["tasks"]["by_state"]["ready"] == 1
+        assert stats["tasks"]["by_state"]["closed"] == 1
+        assert stats["tasks"]["by_state"]["in_progress"] == 1
 
     def test_hub_stats_empty_database(self, temp_hub_db: Path) -> None:
         """Test hub_stats handles empty database gracefully."""

@@ -393,11 +393,11 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 for item in task_dicts:
                     item["stages"] = stages_by_task.get(item["id"], [])
 
-            status_counts = server.task_manager.count_by_status(project_id=resolved_project)
+            state_counts = server.task_manager.count_by_state(project_id=resolved_project)
             return {
                 "tasks": task_dicts,
                 "total": total,
-                "stats": status_counts,
+                "stats": state_counts,
                 "limit": limit,
                 "offset": offset,
             }

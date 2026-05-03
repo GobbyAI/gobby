@@ -13,6 +13,13 @@ from gobby.sync.linear import LinearSyncService
 pytestmark = pytest.mark.unit
 
 
+def _set_task_state(task: MagicMock, state: str) -> None:
+    task.closed_at = None
+    task.escalated_at = None
+    task.is_escalated = False
+    task.current_stage = {"state": state}
+
+
 @pytest.fixture
 def mock_mcp_manager():
     """Create a mock MCPClientManager."""
@@ -216,7 +223,7 @@ class TestLinearSyncServiceSync:
         mock_task.linear_team_id = "team-123"
         mock_task.title = "Updated Title"
         mock_task.description = "Updated description"
-        mock_task.status = "in_progress"
+        _set_task_state(mock_task, "in_progress")
         mock_task.priority = 2
 
         sync_service.task_manager.get_task.return_value = mock_task
@@ -302,40 +309,40 @@ class TestLinearSyncServiceCreate:
             await service.create_issue_for_task(task_id="test-task")
 
 
-class TestStatusMapping:
-    """Test status mapping functions."""
+class TestStateMapping:
+    """Test state mapping functions."""
 
-    def test_map_gobby_status_to_linear_open(self, sync_service) -> None:
-        """map_gobby_status_to_linear converts open to Todo."""
-        assert sync_service.map_gobby_status_to_linear("open") == "Todo"
+    def test_map_gobby_state_to_linear_ready(self, sync_service) -> None:
+        """map_gobby_state_to_linear converts ready to Todo."""
+        assert sync_service.map_gobby_state_to_linear("ready") == "Todo"
 
-    def test_map_gobby_status_to_linear_in_progress(self, sync_service) -> None:
-        """map_gobby_status_to_linear converts in_progress to In Progress."""
-        assert sync_service.map_gobby_status_to_linear("in_progress") == "In Progress"
+    def test_map_gobby_state_to_linear_in_progress(self, sync_service) -> None:
+        """map_gobby_state_to_linear converts in_progress to In Progress."""
+        assert sync_service.map_gobby_state_to_linear("in_progress") == "In Progress"
 
-    def test_map_gobby_status_to_linear_closed(self, sync_service) -> None:
-        """map_gobby_status_to_linear converts closed to Done."""
-        assert sync_service.map_gobby_status_to_linear("closed") == "Done"
+    def test_map_gobby_state_to_linear_closed(self, sync_service) -> None:
+        """map_gobby_state_to_linear converts closed to Done."""
+        assert sync_service.map_gobby_state_to_linear("closed") == "Done"
 
-    def test_map_gobby_status_to_linear_unknown(self, sync_service) -> None:
-        """map_gobby_status_to_linear defaults to Todo for unknown status."""
-        assert sync_service.map_gobby_status_to_linear("unknown") == "Todo"
+    def test_map_gobby_state_to_linear_unknown(self, sync_service) -> None:
+        """map_gobby_state_to_linear defaults to Todo for unknown state."""
+        assert sync_service.map_gobby_state_to_linear("unknown") == "Todo"
 
-    def test_map_linear_status_to_gobby_todo(self, sync_service) -> None:
-        """map_linear_status_to_gobby converts Todo to open."""
-        assert sync_service.map_linear_status_to_gobby("Todo") == "open"
+    def test_map_linear_state_to_gobby_todo(self, sync_service) -> None:
+        """map_linear_state_to_gobby converts Todo to ready."""
+        assert sync_service.map_linear_state_to_gobby("Todo") == "ready"
 
-    def test_map_linear_status_to_gobby_in_progress(self, sync_service) -> None:
-        """map_linear_status_to_gobby converts In Progress to in_progress."""
-        assert sync_service.map_linear_status_to_gobby("In Progress") == "in_progress"
+    def test_map_linear_state_to_gobby_in_progress(self, sync_service) -> None:
+        """map_linear_state_to_gobby converts In Progress to in_progress."""
+        assert sync_service.map_linear_state_to_gobby("In Progress") == "in_progress"
 
-    def test_map_linear_status_to_gobby_done(self, sync_service) -> None:
-        """map_linear_status_to_gobby converts Done to closed."""
-        assert sync_service.map_linear_status_to_gobby("Done") == "closed"
+    def test_map_linear_state_to_gobby_done(self, sync_service) -> None:
+        """map_linear_state_to_gobby converts Done to closed."""
+        assert sync_service.map_linear_state_to_gobby("Done") == "closed"
 
-    def test_map_linear_status_to_gobby_unknown(self, sync_service) -> None:
-        """map_linear_status_to_gobby defaults to open for unknown state."""
-        assert sync_service.map_linear_status_to_gobby("Unknown State") == "open"
+    def test_map_linear_state_to_gobby_unknown(self, sync_service) -> None:
+        """map_linear_state_to_gobby defaults to ready for unknown state."""
+        assert sync_service.map_linear_state_to_gobby("Unknown State") == "ready"
 
 
 class TestLinearSyncIntegration:
@@ -369,7 +376,7 @@ class TestLinearSyncIntegration:
         mock_task.linear_team_id = "team-123"
         mock_task.title = "Updated Title"
         mock_task.description = "Updated description"
-        mock_task.status = "in_progress"
+        _set_task_state(mock_task, "in_progress")
         mock_task.priority = 2
         mock_task.to_dict.return_value = {"id": "gt-test123", "title": "Updated Title"}
         mock_task_manager.create_task.return_value = mock_task
@@ -455,7 +462,7 @@ class TestLinearSyncErrorHandling:
         mock_task.linear_team_id = "team-123"
         mock_task.title = "Test"
         mock_task.description = "Test desc"
-        mock_task.status = "open"
+        _set_task_state(mock_task, "ready")
         mock_task.priority = 2
         mock_task_manager.get_task.return_value = mock_task
 

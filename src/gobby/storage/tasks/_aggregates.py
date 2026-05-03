@@ -25,10 +25,10 @@ def _task_state_bucket_sql(task_alias: str = "t") -> str:
         f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
         f"WHEN {task_alias}.escalated_at IS NOT NULL "
         f"OR COALESCE({task_alias}.is_escalated, 0) = 1 THEN 'escalated' "
-        "WHEN current_stage.state = 'ready' THEN 'open' "
+        "WHEN current_stage.state = 'ready' THEN 'ready' "
         "WHEN current_stage.state IN ('in_progress', 'needs_review', 'review_approved') "
         "THEN current_stage.state "
-        "ELSE 'open' END"
+        "ELSE 'ready' END"
     )
 
 
@@ -115,11 +115,11 @@ def count_tasks(
     return result["count"] if result else 0
 
 
-def count_by_status(
+def count_by_state(
     db: DatabaseProtocol,
     project_id: str | None = None,
 ) -> dict[str, int]:
-    """Count tasks grouped by externally reported state bucket.
+    """Count tasks grouped by canonical state bucket.
 
     Args:
         db: Database protocol instance

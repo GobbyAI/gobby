@@ -37,13 +37,17 @@ class TestFormatHandoffAsMarkdown:
     def test_formats_active_task(self) -> None:
         """Should format active task section."""
         ctx = self.MockHandoffContext(
-            active_gobby_task={"id": "gt-123", "title": "Fix auth bug", "status": "in_progress"}
+            active_gobby_task={
+                "id": "gt-123",
+                "title": "Fix auth bug",
+                "state": {"current_stage": {"state": "in_progress"}},
+            }
         )
         result = format_handoff_as_markdown(ctx)
 
         assert "### Active Task" in result
         assert "**Fix auth bug** (gt-123)" in result
-        assert "Status: in_progress" in result
+        assert "State: in_progress" in result
 
     def test_formats_active_task_with_missing_fields(self) -> None:
         """Should handle missing fields in active task with defaults."""
@@ -52,7 +56,7 @@ class TestFormatHandoffAsMarkdown:
 
         assert "### Active Task" in result
         assert "**Untitled** (unknown)" in result
-        assert "Status: unknown" in result
+        assert "State: unknown" in result
 
     def test_formats_worktree_context(self) -> None:
         """Should format worktree context section."""
@@ -150,21 +154,29 @@ class TestFormatHandoffAsMarkdown:
         assert "### Original Goal" in result
         assert "Implement user authentication" in result
 
-    def test_initial_goal_shown_for_open_task(self) -> None:
-        """Should show initial goal when task status is open."""
+    def test_initial_goal_shown_for_ready_task(self) -> None:
+        """Should show initial goal when task state is ready."""
         ctx = self.MockHandoffContext(
             initial_goal="Fix the bug",
-            active_gobby_task={"id": "gt-123", "title": "Fix bug", "status": "open"},
+            active_gobby_task={
+                "id": "gt-123",
+                "title": "Fix bug",
+                "state": {"current_stage": {"state": "ready"}},
+            },
         )
         result = format_handoff_as_markdown(ctx)
 
         assert "### Original Goal" in result
 
     def test_initial_goal_shown_for_in_progress_task(self) -> None:
-        """Should show initial goal when task status is in_progress."""
+        """Should show initial goal when task state is in_progress."""
         ctx = self.MockHandoffContext(
             initial_goal="Fix the bug",
-            active_gobby_task={"id": "gt-123", "title": "Fix bug", "status": "in_progress"},
+            active_gobby_task={
+                "id": "gt-123",
+                "title": "Fix bug",
+                "state": {"current_stage": {"state": "in_progress"}},
+            },
         )
         result = format_handoff_as_markdown(ctx)
 
@@ -174,17 +186,21 @@ class TestFormatHandoffAsMarkdown:
         """Should not show initial goal when task is closed."""
         ctx = self.MockHandoffContext(
             initial_goal="Fix the bug",
-            active_gobby_task={"id": "gt-123", "title": "Fix bug", "status": "closed"},
+            active_gobby_task={"id": "gt-123", "title": "Fix bug", "state": {"is_closed": True}},
         )
         result = format_handoff_as_markdown(ctx)
 
         assert "### Original Goal" not in result
 
-    def test_initial_goal_hidden_for_completed_task(self) -> None:
-        """Should not show initial goal when task is completed."""
+    def test_initial_goal_hidden_for_review_task(self) -> None:
+        """Should not show initial goal when task is in review."""
         ctx = self.MockHandoffContext(
             initial_goal="Fix the bug",
-            active_gobby_task={"id": "gt-123", "title": "Fix bug", "status": "completed"},
+            active_gobby_task={
+                "id": "gt-123",
+                "title": "Fix bug",
+                "state": {"current_stage": {"state": "needs_review"}},
+            },
         )
         result = format_handoff_as_markdown(ctx)
 

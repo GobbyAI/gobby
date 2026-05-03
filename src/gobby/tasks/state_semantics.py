@@ -36,6 +36,12 @@ def current_stage(task: Any) -> Any | None:
     if task is None:
         return None
 
+    state_payload = _read_field(task, "state")
+    if isinstance(state_payload, dict):
+        direct_from_state = state_payload.get("current_stage")
+        if direct_from_state is not None:
+            return direct_from_state
+
     direct = _read_field(task, "current_stage")
     if direct is not None:
         return direct
@@ -69,6 +75,13 @@ def is_task_closed(task: Any) -> bool:
     """Return whether close metadata marks the task as closed."""
     if task is None:
         return False
+    state_payload = _read_field(task, "state")
+    if isinstance(state_payload, dict):
+        if state_payload.get("is_closed") is True:
+            return True
+        state_closed_at = state_payload.get("closed_at")
+        if isinstance(state_closed_at, str) and bool(state_closed_at):
+            return True
     closed_at = _read_field(task, "closed_at")
     return isinstance(closed_at, str) and bool(closed_at)
 
@@ -76,6 +89,13 @@ def is_task_closed(task: Any) -> bool:
 def _task_is_escalated(task: Any) -> bool:
     if task is None or is_task_closed(task):
         return False
+    state_payload = _read_field(task, "state")
+    if isinstance(state_payload, dict):
+        if state_payload.get("is_escalated") is True:
+            return True
+        state_escalated_at = state_payload.get("escalated_at")
+        if isinstance(state_escalated_at, str) and bool(state_escalated_at):
+            return True
     raw_flag = _read_field(task, "is_escalated")
     escalated_at = _read_field(task, "escalated_at")
     return raw_flag is True or (isinstance(escalated_at, str) and bool(escalated_at))
@@ -96,6 +116,11 @@ def get_claimed_session_id(task: Any) -> str | None:
     """Return the best available owning session ID for a task-like object."""
     if task is None:
         return None
+    state_payload = _read_field(task, "state")
+    if isinstance(state_payload, dict):
+        owner_session_id = state_payload.get("owner_session_id")
+        if isinstance(owner_session_id, str) and owner_session_id:
+            return owner_session_id
     claimed_by_session_id = _read_field(task, "claimed_by_session_id")
     if isinstance(claimed_by_session_id, str) and claimed_by_session_id:
         return claimed_by_session_id

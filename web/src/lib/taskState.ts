@@ -30,12 +30,10 @@ export interface CanonicalTaskState {
 }
 
 export interface TaskCompatProjection {
-  status?: string | null
   assignee?: string | null
 }
 
 export interface TaskStateLike {
-  status?: string | null
   assignee?: string | null
   claimed_by_session_id?: string | null
   closed_at?: string | null
@@ -95,27 +93,6 @@ export const TASK_STATE_BG: Record<TaskDisplayState, string> = {
   closed: 'color-mix(in srgb, var(--text-muted) 15%, transparent)',
 }
 
-function statusDisplayState(status: string | null | undefined): TaskDisplayState | null {
-  switch (status) {
-    case 'closed':
-      return 'closed'
-    case 'escalated':
-    case 'blocked':
-      return 'blocked'
-    case 'review_approved':
-      return 'review_approved'
-    case 'needs_review':
-      return 'needs_review'
-    case 'in_progress':
-      return 'in_progress'
-    case 'open':
-    case 'ready':
-      return 'ready'
-    default:
-      return null
-  }
-}
-
 function deriveCurrentStage(task: TaskStateLike): StageStateView | null {
   const direct = task.state?.current_stage ?? task.current_stage ?? null
   if (direct) return direct
@@ -132,8 +109,6 @@ function deriveCurrentStage(task: TaskStateLike): StageStateView | null {
 }
 
 export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
-  const compatStatus = task.compat?.status ?? task.status ?? null
-  const statusState = statusDisplayState(compatStatus)
   const compatAssignee = task.compat?.assignee ?? task.assignee ?? null
   const ownerSessionId =
     task.state?.owner_session_id ??
@@ -143,27 +118,21 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
   const current = deriveCurrentStage(task)
   const currentState = current?.state ?? null
   const isClosed =
-    (task.state?.is_closed ?? Boolean(task.closed_at)) ||
-    statusState === 'closed' ||
-    currentState === 'done'
+    (task.state?.is_closed ?? Boolean(task.closed_at)) || currentState === 'done'
   const isEscalated =
     !isClosed &&
-    ((task.state?.is_escalated ?? Boolean(task.escalated_at)) || statusState === 'blocked')
+    (task.state?.is_escalated ?? Boolean(task.escalated_at))
   const isBlocked = !isClosed && (task.state?.is_blocked ?? task.is_blocked ?? isEscalated)
   const isMergeReady =
     !isClosed &&
     !isEscalated &&
-    (
-      task.state?.is_merge_ready ??
-      (currentState === 'review_approved' || statusState === 'review_approved')
-    )
+    (task.state?.is_merge_ready ?? currentState === 'review_approved')
 
   return {
     owner_session_id: ownerSessionId,
     current_stage: current,
     is_claimed: task.state?.is_claimed ?? (
-      Boolean(ownerSessionId) ||
-      statusState === 'in_progress'
+      Boolean(ownerSessionId)
     ),
     is_closed: Boolean(isClosed),
     is_escalated: Boolean(isEscalated),
@@ -188,7 +157,7 @@ export function getTaskDisplayState(task: TaskStateLike): TaskDisplayState {
   if (state.current_stage?.state === 'needs_review') return 'needs_review'
   if (state.current_stage?.state === 'in_progress' || state.is_claimed) return 'in_progress'
 
-  return statusDisplayState(task.compat?.status ?? task.status ?? null) ?? 'ready'
+  return 'ready'
 }
 
 export function isTaskClosed(task: TaskStateLike): boolean {

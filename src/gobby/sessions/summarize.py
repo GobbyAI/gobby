@@ -472,7 +472,7 @@ def _get_claimed_tasks(session_id: str, db: DatabaseProtocol) -> str:
         db: Database instance.
 
     Returns:
-        Formatted string with task refs, titles, statuses, and dependencies.
+        Formatted string with task refs, titles, states, and dependencies.
     """
     try:
         from gobby.storage.session_tasks import SessionTaskManager
@@ -483,13 +483,14 @@ def _get_claimed_tasks(session_id: str, db: DatabaseProtocol) -> str:
             return ""
 
         from gobby.storage.task_dependencies import TaskDependencyManager
+        from gobby.tasks.state_semantics import projected_task_state
 
         dep_mgr = TaskDependencyManager(db)
         lines: list[str] = []
         for row in task_rows:
             task = row["task"]
             ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-            status = task.status
+            state = projected_task_state(task)
             title = task.title
             desc_snippet = ""
             if task.description:
@@ -497,7 +498,7 @@ def _get_claimed_tasks(session_id: str, db: DatabaseProtocol) -> str:
                 if len(task.description) > 120:
                     desc_snippet += "..."
 
-            line = f"- {ref} [{status}] {title}"
+            line = f"- {ref} [{state}] {title}"
             if desc_snippet:
                 line += f"\n  {desc_snippet}"
 
