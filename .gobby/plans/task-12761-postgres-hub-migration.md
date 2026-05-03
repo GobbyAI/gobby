@@ -1947,7 +1947,7 @@ class HubDatabase(Protocol):
     @contextmanager
     def transaction(self) -> Iterator[Transaction]: ...
     @contextmanager
-    def transaction_immediate(self) -> Iterator[Transaction]: ...
+    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]: ...
     def apply_migrations(self) -> None: ...
     def close(self) -> None: ...
 
@@ -1991,15 +1991,35 @@ class TaskSeqAllocation(LockTarget):
 @dataclass(frozen=True)
 class DispatchMutexRow(LockTarget):
     """tasks/_dispatch_mutex.py: protects the per-task dispatch lease row.
-    Postgres: SELECT 1 FROM task_dispatch_mutex WHERE task_id = $1 FOR UPDATE."""
+    The mutex row is normally absent before acquisition, so SELECT ... FOR UPDATE
+    would lock nothing and let two contenders both observe no lease. Postgres
+    therefore uses a transaction-scoped advisory lock keyed by task_id, which
+    serializes the read-then-upsert path even when the row does not yet exist:
+    Postgres: SELECT pg_advisory_xact_lock(hashtext('dispatch_mutex:' || task_id))."""
     task_id: str
 
 @dataclass(frozen=True)
 class SessionRegistration(LockTarget):
-    """sessions/_crud.py: protects session uniqueness/recovery.
-    Postgres: pg_advisory_xact_lock(hashtext('session:' || session_id))
-    because the session row may not exist yet at lock time."""
-    session_id: str
+    """sessions/_crud.py::register(): serializes first-time session registration.
+    Keyed by the natural lookup tuple — the session UUID does not exist before
+    registration, so the race is over (external_id, machine_id, source,
+    project_id, session_type), which is what the lookup branch reads.
+    Postgres: pg_advisory_xact_lock(hashtext('session_register:' ||
+        external_id || '|' || machine_id || '|' || source || '|' ||
+        coalesce(project_id, '') || '|' || session_type))."""
+    external_id: str
+    machine_id: str
+    source: str
+    project_id: str | None
+    session_type: str
+
+@dataclass(frozen=True)
+class SessionRecoveryByProject(LockTarget):
+    """sessions/_crud.py::register() any-project recovery branch: serializes
+    the project-scoped recovery scan. Keyed by project_id alone because
+    recovery merges across all sessions in the project.
+    Postgres: pg_advisory_xact_lock(hashtext('session_recovery:' || project_id))."""
+    project_id: str
 
 @dataclass(frozen=True)
 class SystemSessionBootstrap(LockTarget):
@@ -2016,12 +2036,26 @@ class HubDatabase(Protocol):
 Adapter behavior:
 
 - `SqliteHubDatabase.transaction_immediate(lock)` issues `BEGIN IMMEDIATE` regardless of `lock` — SQLite serializes writers globally. The `lock` argument is documentary but enforced by the lint below.
-- `PostgresHubDatabase.transaction_immediate(lock)` opens `BEGIN` and **executes the lock acquisition immediately** before yielding the transaction: `TaskSeqAllocation` → `SELECT 1 FROM projects WHERE id = $1 FOR UPDATE`; `DispatchMutexRow` → `SELECT 1 FROM task_dispatch_mutex WHERE task_id = $1 FOR UPDATE`; `SessionRegistration` and `SystemSessionBootstrap` → `SELECT pg_advisory_xact_lock(hashtext($1))` with the documented lock-key string. The lock is bound to the transaction (`pg_advisory_xact_lock`, not the session-scoped variant) so it auto-releases on commit/rollback.
+- `PostgresHubDatabase.transaction_immediate(lock)` opens `BEGIN` and **executes the lock acquisition immediately** before yielding the transaction:
+  - `TaskSeqAllocation` → `SELECT 1 FROM projects WHERE id = $1 FOR UPDATE` (the `projects` row is the resource being serialized; if the project row may not exist yet, fall back to `pg_advisory_xact_lock(hashtext('task_seq:' || project_id))`).
+  - `DispatchMutexRow` → `SELECT pg_advisory_xact_lock(hashtext('dispatch_mutex:' || task_id))` — advisory lock, **not** `SELECT FOR UPDATE` on `task_dispatch_mutex`, because the row is normally absent before acquisition and `FOR UPDATE` on a non-existent row locks nothing. The advisory lock serializes the read-then-upsert path uniformly whether the row exists or not.
+  - `SessionRegistration` → `SELECT pg_advisory_xact_lock(hashtext('session_register:' || external_id || '|' || machine_id || '|' || source || '|' || coalesce(project_id, '') || '|' || session_type))`.
+  - `SessionRecoveryByProject` → `SELECT pg_advisory_xact_lock(hashtext('session_recovery:' || project_id))`.
+  - `SystemSessionBootstrap` → `SELECT pg_advisory_xact_lock(hashtext('system_session_bootstrap'))`.
+
+  The lock is bound to the transaction (`pg_advisory_xact_lock`, not the session-scoped variant) so it auto-releases on commit/rollback.
 - `Transaction.is_immediate` is `True` for transactions opened via `transaction_immediate(...)`, `False` otherwise. The ambient registry uses this to forbid `transaction_immediate()` nested inside a non-immediate `transaction()` (you cannot escalate to write-intent locking mid-transaction without potential deadlock).
 
 The §3.8 sweep at each existing `transaction_immediate()` call site converts `with db.transaction_immediate():` → `with db.transaction_immediate(TaskSeqAllocation(project_id=...))` (or the matching target). The lint in `src/gobby/storage/` fails on any `transaction_immediate()` call **without a `LockTarget` argument** so the type system enforces the contract before runtime.
 
-Concurrency tests cover each call-site pattern: two coroutines/threads racing on the same `TaskSeqAllocation(project_id="X")` serialize correctly on both backends; a `DispatchMutexRow` block acquired by session A blocks session B until commit; `SystemSessionBootstrap` is exclusive across daemon starts; mixing `transaction()` and `transaction_immediate(...)` raises the documented contract error.
+Concurrency tests cover each call-site pattern:
+
+- **TaskSeqAllocation**: two coroutines/threads racing on the same `TaskSeqAllocation(project_id="X")` serialize correctly on both backends.
+- **DispatchMutexRow (absent-row race)**: two sessions race to acquire a previously nonexistent `task_dispatch_mutex` row for the same `task_id`; exactly one upsert succeeds, the other observes the now-existing lease and returns `False`. SQLite's `BEGIN IMMEDIATE` and Postgres's advisory lock both produce this outcome.
+- **SessionRegistration (concurrent first-time)**: two processes register the same `(external_id, machine_id, source, project_id, session_type)` tuple concurrently; the second observes the row inserted by the first and returns the existing session UUID instead of inserting a duplicate.
+- **SessionRecoveryByProject**: two recovery scans for the same `project_id` serialize and produce the same merged outcome.
+- **SystemSessionBootstrap**: exclusive across daemon starts; second start sees the row from the first.
+- **Mixed contract violation**: `transaction_immediate(...)` inside a non-immediate `transaction()` raises the documented contract error on both backends.
 
 **Ambient-transaction semantics, adapter-scoped.** The current storage layer has many `with db.transaction(): db.execute(...); db.execute(...)` blocks that group multiple manager calls into one atomic unit. Under a naive auto-commit convenience layer, the inner `db.execute` calls would each open their own transaction nested inside the outer block — broken atomicity on SQLite (savepoint nesting), pool-leak hazards on Postgres. Both adapters therefore use a **per-adapter, contextvar-scoped ambient-transaction registry** so convenience methods detect an active outer transaction *for the same adapter* and reuse it. Crucially, the registry keys by adapter identity so a transaction on a SqliteHubDatabase does not leak into a coexisting PostgresHubDatabase (a real concern during migration/import code and the §2.3 dual-backend test fixture):
 
@@ -2101,7 +2135,7 @@ Add two lints in `src/gobby/storage/`:
 **Acceptance:**
 
 - 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate(lock: LockTarget)` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate(lock)` accepts a typed `LockTarget` (`TaskSeqAllocation`, `DispatchMutexRow`, `SessionRegistration`, `SystemSessionBootstrap`); SqliteHubDatabase issues `BEGIN IMMEDIATE` (target ignored — global write-intent), PostgresHubDatabase opens `BEGIN` and immediately executes the matching `SELECT ... FOR UPDATE` row lock or `pg_advisory_xact_lock(hashtext(...))` advisory lock per target. `Transaction.is_immediate` (added to §3.1's protocol) is `True` for transactions opened via `transaction_immediate`, `False` otherwise; the ambient registry uses it to forbid escalating to immediate inside a non-immediate `transaction()`. Both adapters implement the convenience methods via `_resolve_executor(self)` so calls join an active ambient transaction (per-adapter, keyed by `id(adapter)`) or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`. symbol: `gobby.storage.hub.protocol.LockTarget`.
-- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget` (`TaskSeqAllocation` for `tasks/_crud.py`, `DispatchMutexRow` for `_dispatch_mutex.py`, `SessionRegistration` for `sessions/_crud.py`, `SystemSessionBootstrap` for `sessions/_constants.py`). file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
+- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget`: `TaskSeqAllocation(project_id)` for `tasks/_crud.py`, `DispatchMutexRow(task_id)` for `_dispatch_mutex.py`, `SessionRegistration(external_id, machine_id, source, project_id, session_type)` for `sessions/_crud.py::register()` lookup branch, `SessionRecoveryByProject(project_id)` for the any-project recovery branch, `SystemSessionBootstrap()` for `sessions/_constants.py`. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
 - 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
