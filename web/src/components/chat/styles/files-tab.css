@@ -83,7 +83,10 @@
   color: var(--text-secondary);
   font-size: calc(var(--font-size-base) * 0.7);
   cursor: pointer;
-  transition: all 0.1s;
+  transition:
+    color 0.1s,
+    background-color 0.1s,
+    border-color 0.1s;
 }
 
 .file-viewer-action:hover {

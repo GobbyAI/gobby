@@ -248,7 +248,7 @@
   color: var(--color-error);
   font-size: var(--text-2xs);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: background-color 0.1s;
 }
 
 .session-kill-btn:hover {
@@ -266,7 +266,10 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background-color 0.15s;
   opacity: 0;
   flex-shrink: 0;
 }
@@ -288,7 +291,10 @@
   color: var(--text-muted);
   font-size: calc(var(--font-size-base) * 0.7);
   cursor: pointer;
-  transition: all 0.1s;
+  transition:
+    color 0.1s,
+    border-color 0.1s,
+    background-color 0.1s;
 }
 
 .session-mode-btn:hover {
@@ -387,7 +393,9 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
   flex-shrink: 0;
 }
 

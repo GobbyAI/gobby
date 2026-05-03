@@ -59,7 +59,9 @@
   cursor: pointer;
   padding: 0.25rem;
   border-radius: 0.25rem;
-  transition: all 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
 }
 
 .code-block-copy:hover {

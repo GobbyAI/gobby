@@ -214,7 +214,10 @@
   color: var(--text-secondary);
   font-size: calc(var(--font-size-base) * 0.75);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    border-color 0.15s;
   text-transform: capitalize;
 }
 

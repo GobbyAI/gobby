@@ -74,7 +74,9 @@
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
 .workflows-filter-icon-btn:hover {
@@ -216,7 +218,10 @@
   color: var(--text-secondary);
   font-size: calc(var(--font-size-base) * 0.625);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .workflows-filter-chip:hover {
@@ -469,7 +474,9 @@
   color: var(--text-secondary);
   font-size: calc(var(--font-size-base) * 0.625);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
 .workflows-action-btn:hover {
@@ -596,7 +603,9 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
 .workflows-action-icon:hover {
