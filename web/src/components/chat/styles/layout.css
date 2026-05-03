@@ -289,6 +289,15 @@
   }
 }
 
+/* Wide-viewport tier (1024px+): the chat container's 75ch max-width
+   leaves dead space when the viewport opens up; nudge the command-bar
+   horizontal padding up so chrome density tracks the wider canvas. */
+@media (min-width: 1024px) {
+  .command-bar {
+    padding: 0 1rem;
+  }
+}
+
 .command-bar-session:hover {
   background: var(--bg-tertiary);
 }

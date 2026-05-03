@@ -444,6 +444,21 @@ body {
   transition: transform 0.2s ease;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
+  container-name: sidebar;
+}
+
+/* Density compaction: when --sidebar-width drops below ~200px the
+   navigation collapses into an icon-only rail. Item labels hide; icons
+   stay centered in the remaining width. */
+@container sidebar (max-width: 200px) {
+  .sidebar-item-label {
+    display: none;
+  }
+  .sidebar-item {
+    justify-content: center;
+    gap: 0;
+  }
 }
 
 .sidebar.open {
