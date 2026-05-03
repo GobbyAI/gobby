@@ -3258,7 +3258,7 @@ Type changes:
   category: config
   task_type: feature
   depends_on:
-  - P0
+  - '0.1'
   validation_criteria: Satisfy acceptance items 1.0.1.
   labels:
   - covers:unknown:1.0:1.0.1
@@ -3269,7 +3269,7 @@ Type changes:
   category: config
   task_type: feature
   depends_on:
-  - P0
+  - '0.1'
   validation_criteria: Satisfy acceptance items 1.1.1.
   labels:
   - covers:unknown:1.1:1.1.1
@@ -3389,7 +3389,7 @@ Type changes:
   category: code
   task_type: feature
   depends_on:
-  - P0
+  - '0.1'
   validation_criteria: Satisfy acceptance items 3.1.1.
   labels:
   - covers:unknown:3.1:3.1.1
@@ -3501,7 +3501,7 @@ Type changes:
   category: code
   task_type: feature
   depends_on:
-  - P0
+  - '0.1'
   validation_criteria: Satisfy acceptance items 4.2.1, 4.2.2, 4.2.3, 4.2.4, 4.2.5,
     4.2.6, 4.2.7, 4.2.8, 4.2.9, 4.2.10.
   labels:
@@ -3595,7 +3595,13 @@ Type changes:
   category: code
   task_type: feature
   depends_on:
-  - P4
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '4.4'
+  - '4.5'
+  - '4.6'
+  - '4.7'
   - '5.2'
   - '5.3'
   validation_criteria: Satisfy acceptance items 5.1.1.
@@ -3608,7 +3614,13 @@ Type changes:
   category: code
   task_type: feature
   depends_on:
-  - P4
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '4.4'
+  - '4.5'
+  - '4.6'
+  - '4.7'
   - '5.3'
   validation_criteria: Satisfy acceptance items 5.2.1, 5.2.2.
   labels:
@@ -3621,7 +3633,13 @@ Type changes:
   category: code
   task_type: feature
   depends_on:
-  - P4
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '4.4'
+  - '4.5'
+  - '4.6'
+  - '4.7'
   validation_criteria: Satisfy acceptance items 5.3.1.
   labels:
   - covers:unknown:5.3:5.3.1
@@ -3632,7 +3650,9 @@ Type changes:
   category: code
   task_type: feature
   depends_on:
-  - P5
+  - '5.1'
+  - '5.2'
+  - '5.3'
   validation_criteria: Satisfy acceptance items 6.0.1, 6.0.2.
   labels:
   - covers:unknown:6.0:6.0.1
@@ -3644,7 +3664,9 @@ Type changes:
   category: research
   task_type: feature
   depends_on:
-  - P5
+  - '5.1'
+  - '5.2'
+  - '5.3'
   - '4.7'
   validation_criteria: Satisfy acceptance items 6.0a.1, 6.0a.2.
   labels:
