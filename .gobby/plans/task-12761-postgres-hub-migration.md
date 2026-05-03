@@ -207,7 +207,7 @@ Protocol requirements:
 Replace FTS5 with `pg_search` (ParadeDB, BM25 via Tantivy):
 
 - `CREATE INDEX ... USING bm25` on content columns (tasks.title/description, memories.content/tags, code_symbols.name/body, code_content.content, skills.description/content).
-- Query construction uses the `@@@` operator with pg_search's query DSL: `WHERE title @@@ $1 ORDER BY paradedb.rank(...) DESC LIMIT $2`.
+- Query construction uses the `@@@` operator with pg_search's query DSL and the legacy `pdb.score(<key_field>)` scoring expression (see §4.4 for the version-pin contract): `WHERE title @@@ $1 ORDER BY pdb.score(id) DESC LIMIT $2`.
 - `pg_trgm` (ships standard) remains available for trigram fuzzy matches where needed.
 
 Ranking is BM25. This gives parity with the existing FTS5 `bm25()` ordering — user-visible search behavior does not regress during the migration. Phase 2.4 parity tests assert representative-query ordering matches across SQLite-FTS5 and Postgres-pg_search.
@@ -1498,7 +1498,7 @@ Upsert dialect translation is limited to placeholder rewriting; `ON CONFLICT` SQ
 - 3.2.2 — `_remap_placeholders` rewrites `$N` to `?` and rebuilds the param tuple to handle sequential, out-of-order, repeated, and skipped indices; preserves Postgres dollar-quoted bodies untouched. symbol: `gobby.storage.hub.sqlite._remap_placeholders`.
 - 3.2.3 — Placeholder-remap test suite covers sequential / out-of-order / repeated / IN-clause / skipped-index / dollar-quote / identifier-suffix / `executemany` / out-of-range-index cases. file: `tests/storage/hub/test_sqlite_placeholder_remap.py`.
 
-### 3.3 Implement `PostgresHubDatabase` [category: code] (depends: 3.1, 4.2)
+### 3.3 Implement `PostgresHubDatabase` [category: code] (depends: 3.1, 3.7, 4.2)
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/postgres.py` (new)
@@ -1765,7 +1765,7 @@ For `INSERT OR REPLACE`-style full-row replacement (`agents.py:360`), spell the 
 
 - 3.6.1 — `ON CONFLICT` replaces SQLite-specific upsert syntax across hub-storage writes. file: `src/gobby/storage/`.
 
-### 3.7 Rewrite the migration runner with dollar-quote-aware splitting for both backends [category: code] (depends: 3.2, 3.3)
+### 3.7 Rewrite the migration runner with dollar-quote-aware splitting for both backends [category: code] (depends: 3.1, 3.2)
 `kind: deliverable`
 
 Target: `src/gobby/storage/migrations.py`, `src/gobby/storage/migrations/` (new data directory; sibling-by-name to the `migrations.py` runner module — Python disambiguates: `migrations.py` is the importable module, `migrations/` is a data directory loaded via `importlib.resources.files("gobby.storage").joinpath("migrations")`. The directory MUST NOT contain an `__init__.py` — adding one would make it a package and shadow the module.)
