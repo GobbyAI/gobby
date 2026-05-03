@@ -924,9 +924,10 @@ export function ReportsPage({
             className={DETAIL_BACKDROP_CLS}
             onClick={() => setSelectedId(null)}
           />
-          <div
+          <aside
             className={cn(DETAIL_PANEL_BASE_CLS, selectedId && DETAIL_PANEL_OPEN_CLS)}
             style={{ width: panelWidth }}
+            aria-label={selectedPipeline ? "Pipeline details" : "Agent run details"}
           >
             <div
               className={DETAIL_RESIZE_HANDLE_CLS}
@@ -952,7 +953,7 @@ export function ReportsPage({
                 onClose={() => setSelectedId(null)}
               />
             )}
-          </div>
+          </aside>
         </>
       )}
     </main>

@@ -200,7 +200,11 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
     <>
       {isOpen && <div className={BACKDROP_CLS} onClick={onClose} />}
 
-      <div className={cn(PANEL_CLS, isOpen && PANEL_OPEN_CLS)}>
+      <aside
+        className={cn(PANEL_CLS, isOpen && PANEL_OPEN_CLS)}
+        aria-labelledby={task ? 'task-detail-title' : undefined}
+        aria-hidden={!isOpen}
+      >
         {isLoading ? (
           <div className={LOADING_CLS}>Loading...</div>
         ) : task ? (
@@ -208,7 +212,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             <div className={HEADER_CLS}>
               <div className={HEADER_TOP_CLS}>
                 <span className={REF_CLS}>{task.ref}</span>
-                <button className={TASK_MODAL_CLOSE_BTN_CLS} onClick={onClose} title="Close">
+                <button className={TASK_MODAL_CLOSE_BTN_CLS} onClick={onClose} title="Close" aria-label="Close task details">
                   <CloseIcon />
                 </button>
               </div>
@@ -220,7 +224,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
                   ← Parent task
                 </button>
               )}
-              <h2 className={TITLE_CLS}>{task.title}</h2>
+              <h2 id="task-detail-title" className={TITLE_CLS}>{task.title}</h2>
               <div className={BADGES_CLS}>
                 <TaskStateBadges task={task} />
                 <PriorityBadge priority={task.priority} />
@@ -399,7 +403,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             )}
           </>
         ) : null}
-      </div>
+      </aside>
     </>
   )
 }

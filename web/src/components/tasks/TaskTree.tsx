@@ -116,10 +116,13 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
             <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenu(null)} />
             <div
               className={CTX_MENU_CLS}
+              role="menu"
+              aria-label="Task actions"
               style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
             >
               <button
                 className={CTX_ITEM_CLS}
+                role="menuitem"
                 onClick={e => {
                   e.stopPropagation()
                   setCtxMenu(null)

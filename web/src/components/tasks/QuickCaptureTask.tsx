@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 
 interface QuickCaptureTaskProps {
   isOpen: boolean
@@ -34,6 +35,8 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
   const [taskType, setTaskType] = useState('task')
   const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen, onClose })
 
   useEffect(() => {
     if (isOpen) {
@@ -69,24 +72,19 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
     onClose()
   }, [title, taskType, submitting, onClose])
 
-  useEffect(() => {
-    if (!isOpen) return
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [isOpen, onClose])
-
   if (!isOpen) return null
 
   return (
-    <>
-      <div className={BACKDROP_CLS} onClick={onClose} />
-      <div className={MODAL_CLS}>
+    <div className={BACKDROP_CLS} onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className={MODAL_CLS}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Quick capture task"
+        tabIndex={-1}
+        onClick={e => e.stopPropagation()}
+      >
         <form className={FORM_CLS} onSubmit={handleSubmit}>
           <input
             ref={inputRef}
@@ -123,6 +121,6 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
           </div>
         </form>
       </div>
-    </>
+    </div>
   )
 }

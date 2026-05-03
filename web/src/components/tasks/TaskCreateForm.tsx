@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { cn } from '../../lib/utils'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import {
   TASK_MODAL_BACKDROP_BASE_CLS,
   TASK_MODAL_CLOSE_BTN_CLS,
@@ -67,6 +68,7 @@ const SUBMIT_BTN_CLS =
   'min-w-[100px] cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 
 export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: TaskCreateFormProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [taskType, setTaskType] = useState('task')
@@ -75,6 +77,19 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   const [labelsInput, setLabelsInput] = useState('')
   const [validationCriteria, setValidationCriteria] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const handleClose = useCallback(() => {
+    setTitle('')
+    setDescription('')
+    setTaskType('task')
+    setPriority(2)
+    setParentTaskId('')
+    setLabelsInput('')
+    setValidationCriteria('')
+    onClose()
+  }, [onClose])
+
+  useDialogFocus({ ref: dialogRef, isOpen, onClose: handleClose })
 
   useEffect(() => {
     if (isOpen) {
@@ -87,16 +102,6 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       setValidationCriteria(defaults?.validationCriteria || '')
     }
   }, [isOpen, defaults])
-
-  const reset = useCallback(() => {
-    setTitle('')
-    setDescription('')
-    setTaskType('task')
-    setPriority(2)
-    setParentTaskId('')
-    setLabelsInput('')
-    setValidationCriteria('')
-  }, [])
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
@@ -117,28 +122,29 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
 
     try {
       await onSubmit(params)
-      reset()
-      onClose()
+      handleClose()
     } catch (err) {
       console.error('Failed to create task:', err)
     } finally {
       setSubmitting(false)
     }
-  }, [title, description, taskType, priority, parentTaskId, labelsInput, validationCriteria, onSubmit, onClose, reset])
-
-  const handleClose = useCallback(() => {
-    reset()
-    onClose()
-  }, [reset, onClose])
+  }, [title, description, taskType, priority, parentTaskId, labelsInput, validationCriteria, onSubmit, handleClose])
 
   if (!isOpen) return null
 
   const parentOptions = tasks.filter(t => t.task_type === 'epic' || t.task_type === 'task')
 
   return (
-    <>
-      <div className={BACKDROP_CLS} onClick={handleClose} />
-      <div className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="task-create-form-title">
+    <div className={BACKDROP_CLS} onClick={handleClose}>
+      <div
+        ref={dialogRef}
+        className={MODAL_CLS}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-create-form-title"
+        tabIndex={-1}
+        onClick={e => e.stopPropagation()}
+      >
         <div className={TASK_MODAL_HEADER_CLS}>
           <h2 id="task-create-form-title" className={TITLE_CLS}>{defaults?.title ? 'Clone Task' : 'New Task'}</h2>
           <button className={TASK_MODAL_CLOSE_BTN_CLS} onClick={handleClose} title="Close">
@@ -254,7 +260,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
           </div>
         </form>
       </div>
-    </>
+    </div>
   )
 }
 

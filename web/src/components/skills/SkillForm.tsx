@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { GobbySkill } from '../../hooks/useSkills'
 import { MemoizedMarkdown } from '../shared/MemoizedMarkdown'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
 
 const OVERLAY_CLS =
@@ -58,6 +59,8 @@ interface SkillFormProps {
 }
 
 export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose: onCancel })
   const [name, setName] = useState(skill?.name || '')
   const [description, setDescription] = useState(skill?.description || '')
   const [content, setContent] = useState(skill?.content || '')
@@ -92,7 +95,7 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
 
   return (
     <div className={OVERLAY_CLS} onClick={onCancel}>
-      <div className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-form-title" onClick={e => e.stopPropagation()}>
+      <div ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-form-title" tabIndex={-1} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
           <h2 id="skill-form-title" className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h2>
           <button

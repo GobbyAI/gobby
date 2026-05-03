@@ -1,0 +1,69 @@
+import { useEffect, type RefObject } from 'react'
+
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+interface UseDialogFocusOptions {
+  ref: RefObject<HTMLElement | null>
+  isOpen: boolean
+  onClose: () => void
+  trap?: boolean
+}
+
+export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogFocusOptions): void {
+  useEffect(() => {
+    if (!isOpen) return
+    const node = ref.current
+    if (!node) return
+
+    const previouslyFocused = document.activeElement as HTMLElement | null
+
+    const focusables = () =>
+      Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+        .filter(el => !el.hasAttribute('aria-hidden') && el.offsetParent !== null)
+
+    const initial = node.querySelector<HTMLElement>('[autofocus]') ?? focusables()[0] ?? node
+    requestAnimationFrame(() => {
+      if (!node.contains(document.activeElement)) initial.focus()
+    })
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+        return
+      }
+      if (!trap || e.key !== 'Tab') return
+      const items = focusables()
+      if (items.length === 0) {
+        e.preventDefault()
+        node.focus()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey && (active === first || !node.contains(active))) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+
+    node.addEventListener('keydown', handleKey)
+    return () => {
+      node.removeEventListener('keydown', handleKey)
+      if (previouslyFocused && document.contains(previouslyFocused)) {
+        previouslyFocused.focus()
+      }
+    }
+  }, [isOpen, onClose, ref, trap])
+}

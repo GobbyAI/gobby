@@ -5,6 +5,7 @@ import { AgentsTab } from "./AgentsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { CodeMirrorEditor } from "../shared/CodeMirrorEditor";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import "./WorkflowsPage.css";
 
 type ActiveTab = "pipelines" | "agents" | "rules";
@@ -564,6 +565,7 @@ export function YamlEditorModal({
   onClose: () => void;
 }) {
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -602,14 +604,18 @@ export function YamlEditorModal({
     onClose();
   };
 
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose: () => { void handleClose(); } });
+
   return (
     <div className="workflows-modal-overlay" onClick={handleClose}>
       {ConfirmDialogElement}
       <div
+        ref={dialogRef}
         className="workflows-yaml-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="workflows-yaml-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="workflows-yaml-header">

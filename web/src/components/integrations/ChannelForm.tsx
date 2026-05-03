@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { Channel, ChannelType } from '../../hooks/useIntegrations'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { PlatformIcon } from './IntegrationsPage'
 import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
 import {
@@ -85,6 +86,8 @@ interface ChannelFormProps {
 }
 
 export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: ChannelFormProps) {
+  const typeSelectRef = useRef<HTMLDivElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
   const [selectedType, setSelectedType] = useState<ChannelType | null>(
     mode === 'edit' ? (channel?.channel_type ?? null) : (presetType ?? null)
   )
@@ -109,6 +112,10 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
   const [saving, setSaving] = useState(false)
 
   const fields = selectedType ? CHANNEL_TYPE_FIELDS[selectedType] : []
+
+  const showTypePicker = mode === 'add' && !selectedType
+  useDialogFocus({ ref: typeSelectRef, isOpen: showTypePicker, onClose })
+  useDialogFocus({ ref: formRef, isOpen: !showTypePicker, onClose })
 
   const setValue = useCallback((key: string, val: string) => {
     setValues(prev => ({ ...prev, [key]: val }))
@@ -168,13 +175,21 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
   }
 
   // Type selection grid (add mode, no preset)
-  if (mode === 'add' && !selectedType) {
+  if (showTypePicker) {
     return (
       <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
-        <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
+        <div
+          ref={typeSelectRef}
+          className={MODAL_CLS}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="channel-type-title"
+          tabIndex={-1}
+          onClick={e => e.stopPropagation()}
+        >
           <div className={MODAL_HEADER_CLS}>
-            <h3 className={MODAL_HEADER_TITLE_CLS}>Add Integration</h3>
-            <button className={MODAL_CLOSE_CLS} onClick={onClose}>&times;</button>
+            <h2 id="channel-type-title" className={MODAL_HEADER_TITLE_CLS}>Add Integration</h2>
+            <button className={MODAL_CLOSE_CLS} onClick={onClose} aria-label="Close">&times;</button>
           </div>
           <div className={MODAL_BODY_CLS}>
             <p className={FORM_HELP_CLS}>Select a platform:</p>
@@ -199,10 +214,18 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
 
   return (
     <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
-      <form className={MODAL_CLS} onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+      <form
+        ref={formRef}
+        className={MODAL_CLS}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="channel-form-title"
+        onClick={e => e.stopPropagation()}
+        onSubmit={handleSubmit}
+      >
         <div className={MODAL_HEADER_CLS}>
-          <h3 className={MODAL_HEADER_TITLE_CLS}>{mode === 'add' ? 'Add' : 'Edit'} {selectedType ? CHANNEL_DISPLAY_NAMES[selectedType] : ''} Channel</h3>
-          <button type="button" className={MODAL_CLOSE_CLS} onClick={onClose}>&times;</button>
+          <h2 id="channel-form-title" className={MODAL_HEADER_TITLE_CLS}>{mode === 'add' ? 'Add' : 'Edit'} {selectedType ? CHANNEL_DISPLAY_NAMES[selectedType] : ''} Channel</h2>
+          <button type="button" className={MODAL_CLOSE_CLS} onClick={onClose} aria-label="Close">&times;</button>
         </div>
 
         <div className={MODAL_BODY_CLS}>

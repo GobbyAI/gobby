@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAgentSpawn } from '../../hooks/useAgentSpawn'
 import type { AgentDefinition, SpawnResult } from '../../hooks/useAgentSpawn'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import {
   AUTO_REASONING_EFFORT,
   fetchProviderModelCatalog,
@@ -107,6 +108,8 @@ export function LaunchAgentDialog({
   onClose,
   onSpawned,
 }: LaunchAgentDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen, onClose })
   const { spawn, spawning, fetchDefinitions, previewPrompt, getDefaults, saveDefaults } = useAgentSpawn()
 
   const [agentName, setAgentName] = useState('default')
@@ -223,12 +226,19 @@ export function LaunchAgentDialog({
 
   if (result) {
     return (
-      <>
-        <div className={BACKDROP_CLS} onClick={onClose} />
-        <div className={MODAL_CLS}>
+      <div className={BACKDROP_CLS} onClick={onClose}>
+        <div
+          ref={dialogRef}
+          className={MODAL_CLS}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="launch-agent-result-title"
+          tabIndex={-1}
+          onClick={e => e.stopPropagation()}
+        >
           <div className={HEADER_CLS}>
-            <span className={TITLE_CLS}>Agent Launched</span>
-            <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
+            <h2 id="launch-agent-result-title" className={TITLE_CLS}>Agent Launched</h2>
+            <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
           </div>
           <div className={SUCCESS_CLS}>
             <div className={SUCCESS_ICON_CLS}>✓</div>
@@ -241,19 +251,26 @@ export function LaunchAgentDialog({
             </button>
           </div>
         </div>
-      </>
+      </div>
     )
   }
 
   return (
-    <>
-      <div className={BACKDROP_CLS} onClick={onClose} />
-      <div className={MODAL_CLS}>
+    <div className={BACKDROP_CLS} onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className={MODAL_CLS}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="launch-agent-title"
+        tabIndex={-1}
+        onClick={e => e.stopPropagation()}
+      >
         <div className={HEADER_CLS}>
-          <span className={TITLE_CLS}>
+          <h2 id="launch-agent-title" className={TITLE_CLS}>
             <RocketIcon /> Launch Agent
-          </span>
-          <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
+          </h2>
+          <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
         </div>
 
         <div className={BODY_CLS}>
@@ -407,7 +424,7 @@ export function LaunchAgentDialog({
           </button>
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -418,6 +435,8 @@ export function BatchLaunchAgentDialog({
   onClose,
   onSpawned,
 }: BatchLaunchAgentDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen, onClose })
   const { spawnBatch, spawning, fetchDefinitions } = useAgentSpawn()
 
   const [agentName, setAgentName] = useState('default')
@@ -491,12 +510,19 @@ export function BatchLaunchAgentDialog({
 
   if (batchResult) {
     return (
-      <>
-        <div className={BACKDROP_CLS} onClick={onClose} />
-        <div className={MODAL_CLS}>
+      <div className={BACKDROP_CLS} onClick={onClose}>
+        <div
+          ref={dialogRef}
+          className={MODAL_CLS}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="batch-launch-result-title"
+          tabIndex={-1}
+          onClick={e => e.stopPropagation()}
+        >
           <div className={HEADER_CLS}>
-            <span className={TITLE_CLS}>Batch Launch Complete</span>
-            <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
+            <h2 id="batch-launch-result-title" className={TITLE_CLS}>Batch Launch Complete</h2>
+            <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
           </div>
           <div className={SUCCESS_CLS}>
             <div className={SUCCESS_ICON_CLS}>✓</div>
@@ -509,19 +535,26 @@ export function BatchLaunchAgentDialog({
             </button>
           </div>
         </div>
-      </>
+      </div>
     )
   }
 
   return (
-    <>
-      <div className={BACKDROP_CLS} onClick={onClose} />
-      <div className={`${MODAL_CLS} ${MODAL_BATCH_CLS}`}>
+    <div className={BACKDROP_CLS} onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className={`${MODAL_CLS} ${MODAL_BATCH_CLS}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="batch-launch-title"
+        tabIndex={-1}
+        onClick={e => e.stopPropagation()}
+      >
         <div className={HEADER_CLS}>
-          <span className={TITLE_CLS}>
+          <h2 id="batch-launch-title" className={TITLE_CLS}>
             <RocketIcon /> Launch Agents ({activeCount} task{activeCount !== 1 ? 's' : ''})
-          </span>
-          <button className={CLOSE_CLS} onClick={onClose}><CloseIcon /></button>
+          </h2>
+          <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
         </div>
 
         <div className={BODY_CLS}>
@@ -631,6 +664,6 @@ export function BatchLaunchAgentDialog({
           </button>
         </div>
       </div>
-    </>
+    </div>
   )
 }

@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { cn } from '../../lib/utils'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { SOURCE_BADGE_CLS, SOURCE_BADGE_BG, FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
 
 const OVERLAY_CLS =
@@ -32,6 +33,8 @@ function detectSourceType(source: string): string {
 }
 
 export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose })
   const [source, setSource] = useState('')
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,12 +57,11 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !importing) handleImport()
-    if (e.key === 'Escape') onClose()
-  }, [handleImport, importing, onClose])
+  }, [handleImport, importing])
 
   return (
     <div className={OVERLAY_CLS} onClick={onClose}>
-      <div className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-import-title" onClick={e => e.stopPropagation()}>
+      <div ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-import-title" tabIndex={-1} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
           <h2 id="skill-import-title" className={HEADER_TITLE_CLS}>Import Skill</h2>
           <button

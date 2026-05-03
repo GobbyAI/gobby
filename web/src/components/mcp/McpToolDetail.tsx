@@ -91,12 +91,16 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
         className={cn(BACKDROP_CLS, isOpen && BACKDROP_OPEN_CLS)}
         onClick={onClose}
       />
-      <div className={cn(SLIDE_CLS, isOpen && SLIDE_OPEN_CLS)}>
+      <aside
+        className={cn(SLIDE_CLS, isOpen && SLIDE_OPEN_CLS)}
+        aria-labelledby={isOpen ? 'mcp-tool-detail-title' : undefined}
+        aria-hidden={!isOpen}
+      >
         {isOpen && (
           <div className={DETAIL_CLS}>
             <div className={DETAIL_HEADER_CLS}>
-              <h2 className={DETAIL_HEADER_TITLE_CLS}>{toolName}</h2>
-              <button className={DETAIL_CLOSE_CLS} onClick={onClose}>
+              <h2 id="mcp-tool-detail-title" className={DETAIL_HEADER_TITLE_CLS}>{toolName}</h2>
+              <button className={DETAIL_CLOSE_CLS} onClick={onClose} aria-label="Close tool details">
                 &times;
               </button>
             </div>
@@ -151,7 +155,7 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
             )}
           </div>
         )}
-      </div>
+      </aside>
     </>
   )
 }
