@@ -1,8 +1,7 @@
-import React, { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import type { ToolCall, ToolResult } from '../../types/chat'
 import type { ArtifactType } from '../../types/artifacts'
 import { cn } from '../../lib/utils'
@@ -16,7 +15,6 @@ import {
   buildChainSummary,
   COMPACT_HEADER_NAMES,
   COMPACT_HEADER_TOOL_TYPES,
-  computeLineDiff,
   defaultExpandedForCall,
   extractBase64Image,
   extractResultContent,
@@ -43,6 +41,8 @@ import {
   ToolResultBody,
 } from './ToolResultBlocks'
 import { ToolResultImage } from './ToolResultImage'
+import { InlineDiff } from './ToolCallCard.diff'
+import { highlighterTheme, lineNumberStyle, TOOL_ERROR_PRE_CLASS } from './ToolCallCard.styles'
 
 interface ToolCallCardProps {
   toolCalls: ToolCall[]
@@ -62,75 +62,6 @@ interface AskUserQuestionItem {
   header: string
   options: AskUserOption[]
   multiSelect: boolean
-}
-
-const TOOL_ERROR_PRE_CLASS =
-  'bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words ' +
-  'overflow-x-hidden text-destructive-foreground'
-
-const highlighterTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: 'var(--code-bg)',
-    margin: '0',
-    padding: '0.75rem',
-    fontSize: '0.75rem',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-  },
-}
-
-function InlineDiff({ oldStr, newStr, language }: { oldStr: string; newStr: string; language: string }) {
-  const diff = useMemo(() => computeLineDiff(oldStr, newStr), [oldStr, newStr])
-  const content = useMemo(() => diff.map(e => {
-    const prefix = e.type === 'add' ? '+' : e.type === 'remove' ? '-' : ' '
-    return `${prefix} ${e.line}`
-  }).join('\n'), [diff])
-
-  const lineProps = useCallback((lineNumber: number): React.HTMLProps<HTMLElement> => {
-    const entry = diff[lineNumber - 1]
-    if (!entry) return { style: { display: 'block' } }
-    const bg = entry.type === 'add' ? 'color-mix(in srgb, var(--color-success-foreground) 15%, transparent)'
-             : entry.type === 'remove' ? 'color-mix(in srgb, var(--color-error) 25%, transparent)'
-             : 'transparent'
-    return { style: { background: bg, display: 'block' } }
-  }, [diff])
-
-  const diffLineNumberStyle = useCallback((lineNumber: number) => {
-    const entry = diff[lineNumber - 1]
-    const color = entry?.type === 'add' ? 'var(--color-success-foreground)'
-               : entry?.type === 'remove' ? 'var(--color-error)'
-               : 'var(--text-muted)'
-    return { ...lineNumberStyle, color }
-  }, [diff])
-
-  return (
-    <SyntaxHighlighter
-      style={highlighterTheme}
-      language={language}
-      PreTag="div"
-      showLineNumbers
-      startingLineNumber={1}
-      wrapLines
-      lineProps={lineProps}
-      lineNumberStyle={diffLineNumberStyle}
-      customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
-    >
-      {content}
-    </SyntaxHighlighter>
-  )
-}
-
-const lineNumberStyle = {
-  minWidth: '2.5em',
-  paddingRight: '1em',
-  textAlign: 'right' as const,
-  userSelect: 'none' as const,
-  color: 'var(--text-muted)',
 }
 
 function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
