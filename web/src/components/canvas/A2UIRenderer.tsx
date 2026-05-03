@@ -135,7 +135,7 @@ export const A2UIRenderer: React.FC<A2UIRendererProps> = ({ surfaceState, onActi
 
   return (
     <div className={`rounded-lg border border-accent/30 bg-accent/5 p-3 flex flex-col gap-2 relative ${completed ? 'opacity-60 pointer-events-none' : ''}`}>
-      {completed && <div className="absolute top-2 right-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest bg-background/80 px-2 py-0.5 rounded backdrop-blur">Completed</div>}
+      {completed && <div className="absolute top-2 right-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest bg-background border border-border px-2 py-0.5 rounded">Completed</div>}
       <RenderComponent
         componentId={rootId}
         surface={surfaceState.surface}
