@@ -191,7 +191,7 @@ class HTTPServer:
 
         # Initialize tool summarizer config
         if services.config:
-            from gobby.tools.summarizer import init_summarizer_config
+            from gobby.utils.tool_summarizer import init_summarizer_config
 
             init_summarizer_config(
                 services.config.tool_summarizer,

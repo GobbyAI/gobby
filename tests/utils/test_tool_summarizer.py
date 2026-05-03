@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.tools.summarizer import (
+from gobby.utils.tool_summarizer import (
     MAX_DESCRIPTION_LENGTH,
     summarize_tools,
 )
@@ -104,7 +104,7 @@ class TestSummarizeTools:
 
         # Mock the summarization function to return a fallback
         with patch(
-            "gobby.tools.summarizer._summarize_description_with_llm",
+            "gobby.utils.tool_summarizer._summarize_description_with_llm",
             new_callable=AsyncMock,
             return_value="Shortened description",
         ) as mock_summarize:
@@ -134,7 +134,7 @@ class TestMaxDescriptionLength:
         tool.inputSchema = {}
 
         with patch(
-            "gobby.tools.summarizer._summarize_description_with_llm",
+            "gobby.utils.tool_summarizer._summarize_description_with_llm",
             new_callable=AsyncMock,
         ) as mock_summarize:
             result = await summarize_tools([tool])
@@ -154,7 +154,7 @@ class TestMaxDescriptionLength:
         tool.inputSchema = {}
 
         with patch(
-            "gobby.tools.summarizer._summarize_description_with_llm",
+            "gobby.utils.tool_summarizer._summarize_description_with_llm",
             new_callable=AsyncMock,
             return_value="Short",
         ) as mock_summarize:
@@ -170,7 +170,7 @@ class TestSummarizeDescriptionWithClaude:
     @pytest.mark.asyncio
     async def test_summarize_description_success(self):
         """Test successful summarization via configured provider."""
-        from gobby.tools.summarizer import _summarize_description_with_llm
+        from gobby.utils.tool_summarizer import _summarize_description_with_llm
 
         mock_config = MagicMock()
         mock_config.prompt_path = "features/tool_summary"
@@ -184,9 +184,9 @@ class TestSummarizeDescriptionWithClaude:
         mock_loader.render.return_value = "Long description " * 10
 
         with (
-            patch("gobby.tools.summarizer._get_config", return_value=mock_config),
-            patch("gobby.tools.summarizer._loader", mock_loader),
-            patch("gobby.tools.summarizer._llm_service", mock_llm_service),
+            patch("gobby.utils.tool_summarizer._get_config", return_value=mock_config),
+            patch("gobby.utils.tool_summarizer._loader", mock_loader),
+            patch("gobby.utils.tool_summarizer._llm_service", mock_llm_service),
         ):
             result = await _summarize_description_with_llm("Long description " * 10)
             assert result == "Summarized text"
@@ -195,11 +195,11 @@ class TestSummarizeDescriptionWithClaude:
     @pytest.mark.asyncio
     async def test_summarize_description_failure_fallback(self):
         """Test fallback when summarization fails."""
-        from gobby.tools.summarizer import _summarize_description_with_llm
+        from gobby.utils.tool_summarizer import _summarize_description_with_llm
 
         with (
-            patch("gobby.tools.summarizer._get_config"),
-            patch("gobby.tools.summarizer._llm_service", None),
+            patch("gobby.utils.tool_summarizer._get_config"),
+            patch("gobby.utils.tool_summarizer._llm_service", None),
         ):
             long_desc = "A" * 250
             result = await _summarize_description_with_llm(long_desc)
@@ -216,7 +216,7 @@ class TestGenerateServerDescription:
     @pytest.mark.asyncio
     async def test_generate_server_description_success(self):
         """Test successful server description generation."""
-        from gobby.tools.summarizer import generate_server_description
+        from gobby.utils.tool_summarizer import generate_server_description
 
         tool_summaries = [{"name": "tool1", "description": "desc1"}]
 
@@ -232,9 +232,9 @@ class TestGenerateServerDescription:
         mock_loader.render.return_value = "Describe server1"
 
         with (
-            patch("gobby.tools.summarizer._get_config", return_value=mock_config),
-            patch("gobby.tools.summarizer._loader", mock_loader),
-            patch("gobby.tools.summarizer._llm_service", mock_llm_service),
+            patch("gobby.utils.tool_summarizer._get_config", return_value=mock_config),
+            patch("gobby.utils.tool_summarizer._loader", mock_loader),
+            patch("gobby.utils.tool_summarizer._llm_service", mock_llm_service),
         ):
             result = await generate_server_description("server1", tool_summaries)
             assert result == "Server does things."
@@ -242,7 +242,7 @@ class TestGenerateServerDescription:
     @pytest.mark.asyncio
     async def test_generate_server_description_failure_fallback(self):
         """Test fallback when generation fails."""
-        from gobby.tools.summarizer import generate_server_description
+        from gobby.utils.tool_summarizer import generate_server_description
 
         tool_summaries = [
             {"name": "tool1", "description": "desc1"},
@@ -251,15 +251,15 @@ class TestGenerateServerDescription:
             {"name": "tool4", "description": "desc4"},
         ]
 
-        with patch("gobby.tools.summarizer._llm_service", None):
+        with patch("gobby.utils.tool_summarizer._llm_service", None):
             result = await generate_server_description("server1", tool_summaries)
             assert "Provides tool1, tool2, tool3 and more" in result
 
     @pytest.mark.asyncio
     async def test_generate_server_description_fallback_no_tools(self):
         """Test fallback with no tools."""
-        from gobby.tools.summarizer import generate_server_description
+        from gobby.utils.tool_summarizer import generate_server_description
 
-        with patch("gobby.tools.summarizer._llm_service", None):
+        with patch("gobby.utils.tool_summarizer._llm_service", None):
             result = await generate_server_description("server1", [])
             assert result == "MCP server: server1"

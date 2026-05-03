@@ -1,4 +1,4 @@
-"""Tool description summarization for MCP metadata."""
+"""MCP tool description summarization."""
 
 from __future__ import annotations
 
