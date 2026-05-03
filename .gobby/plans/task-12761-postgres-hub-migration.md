@@ -2007,7 +2007,7 @@ Add a lint (custom ruff plugin or pre-commit grep) in `src/gobby/storage/` that 
 
 - 4.3.1 — Hub-storage SQL uses `$1` parameter placeholders consistently across both backends. file: `src/gobby/storage/`.
 
-### 4.4 Replace FTS5 with `pg_search` BM25 indexes [category: code] (depends: 4.2)
+### 4.4 Replace FTS5 with `pg_search` BM25 indexes [category: code] (depends: 3.3, 4.2)
 `kind: deliverable`
 
 Target: `src/gobby/storage/postgres_baseline_schema.sql`, migration files for `tasks_fts`, `memories_fts`, `code_symbols_fts`, `code_content_fts`, `skills_fts` replacements
