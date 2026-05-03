@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +139,55 @@ __all__ = [
 ]
 
 
+def _stage_cap_value(stage_name: str, field_name: str, value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"stage_caps.{stage_name}.{field_name} must be an integer >= 1")
+    return value
+
+
+def _stage_cap_overrides(
+    stage_caps: Sequence[Mapping[str, object]] | None,
+) -> dict[str, tuple[int | None, int | None]]:
+    overrides: dict[str, tuple[int | None, int | None]] = {}
+    for item in stage_caps or ():
+        raw_stage_name = item.get("stage_name")
+        if not isinstance(raw_stage_name, str) or not raw_stage_name.strip():
+            raise ValueError("stage_caps entries require a non-empty stage_name")
+        stage_name = raw_stage_name.strip()
+        overrides[stage_name] = (
+            _stage_cap_value(stage_name, "max_work_attempts", item.get("max_work_attempts")),
+            _stage_cap_value(stage_name, "max_review_rounds", item.get("max_review_rounds")),
+        )
+    return overrides
+
+
+def _stage_manifest_specs(
+    default_stages: Iterable[tuple[str, int]],
+    stage_caps: Sequence[Mapping[str, object]] | None,
+) -> list[StageManifestSpec]:
+    cap_by_stage = _stage_cap_overrides(stage_caps)
+    specs: list[StageManifestSpec] = []
+    seen_names: set[str] = set()
+    for stage_name, position in default_stages:
+        seen_names.add(stage_name)
+        work_cap, review_cap = cap_by_stage.get(stage_name, (None, None))
+        specs.append(
+            StageManifestSpec(
+                stage_name=stage_name,
+                position=position,
+                max_work_attempts=work_cap,
+                max_review_rounds=review_cap,
+            )
+        )
+
+    unknown_caps = sorted(set(cap_by_stage) - seen_names)
+    if unknown_caps:
+        raise ValueError(f"stage_caps target stage not in task manifest: {unknown_caps[0]}")
+    return specs
+
+
 class LocalTaskManager:
     def __init__(self, db: DatabaseProtocol):
         self.db = db
@@ -226,6 +275,7 @@ class LocalTaskManager:
         github_repo: str | None = None,
         linear_issue_id: str | None = None,
         linear_team_id: str | None = None,
+        stage_caps: Sequence[Mapping[str, object]] | None = None,
         **kwargs: Any,
     ) -> Task:
         """Create a new task with collision handling."""
@@ -252,10 +302,11 @@ class LocalTaskManager:
             linear_team_id=linear_team_id,
         )
         default_stages = self.stages_registry.list_default_stages(task_type)
-        if default_stages:
+        specs = _stage_manifest_specs(default_stages, stage_caps)
+        if specs:
             self.stage_states.initialize_manifest(
                 task_id,
-                [StageManifestSpec.from_position_tuple(item) for item in default_stages],
+                specs,
                 by_session_id=created_in_session_id,
             )
         self._notify_listeners()
@@ -913,6 +964,7 @@ class LocalTaskManager:
         validation_criteria: str | None = None,
         assigned_agent: str | None = None,
         additional_skills: list[str] | None = None,
+        stage_caps: Sequence[Mapping[str, object]] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Create a task and return result dict."""
@@ -930,6 +982,7 @@ class LocalTaskManager:
             validation_criteria=validation_criteria,
             assigned_agent=assigned_agent,
             additional_skills=additional_skills,
+            stage_caps=stage_caps,
         )
         return {"task": task.to_dict()}
 

@@ -195,9 +195,9 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
   `[TDD]` / `[IMPL]` / `[REF]` prefixes, "Write tests for...", "Ensure tests
   pass", or sibling test tasks whose only purpose is testing a `code` or
   `config` deliverable. Expansion auto-inserts those wrappers. Standalone
-  `category: test` deliverables are valid when they carry their own target,
-  acceptance criteria, and test-infrastructure, parity, characterization, or
-  regression purpose.
+  `category: test` deliverables are valid explicit test tasks only when they
+  carry their own target, acceptance criteria, and test-infrastructure, parity,
+  characterization, or regression purpose.
 - **Concrete target file paths** — every `code` / `config` task must specify a
   file path (`Target: src/foo/bar.py` or inline). Vague tasks like
   "update the backend" are un-actionable.

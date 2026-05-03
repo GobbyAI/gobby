@@ -1159,6 +1159,15 @@ class StageStatesManager:
 
         try:
             escalate_task(self.db, task_id, reason=reason)
+        except ValueError:
+            row = self.db.fetchone(
+                "SELECT is_escalated, escalation_reason FROM tasks WHERE id = ?",
+                (task_id,),
+            )
+            if row is not None and bool(row["is_escalated"]) and row["escalation_reason"] == reason:
+                return
+            logger.exception("failed to escalate task %s after stage failure", task_id)
+            raise
         except Exception:
             logger.exception("failed to escalate task %s after stage failure", task_id)
             raise

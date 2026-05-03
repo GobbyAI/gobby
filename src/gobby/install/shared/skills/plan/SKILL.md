@@ -534,14 +534,23 @@ new claims. Typical run: 1-2 passes.
 
 ### 7.4. Create the per-round anchor and spawn the adversary
 
-Create a fresh anchor task scoped to this round, then spawn against it:
+Create a fresh anchor task scoped to this round, then spawn against it. Never
+reuse an anchor between rounds.
 
 ```text
+old_anchor_id = get_variable(name="active_anchor_id", session_id="#<self>")
+if old_anchor_id:
+    old_anchor = get_task(old_anchor_id)
+    if old_anchor.state not in ("closed", "escalated"):
+        close_task(task_id=old_anchor_id, reason="superseded by new adversary round")
+    set_variable(name="active_anchor_id", value=None, session_id="#<self>")
+
 anchor = create_task(
     parent_task_id=planning_task_id,
     task_type="review_anchor",
     category="planning",
     title=f"Plan-adversary review — round {current_round + 1}",
+    stage_caps=[{"stage_name": "planning", "max_review_rounds": max_rounds + 1}],
 )
 set_variable(name="active_anchor_id", value=anchor.id, session_id="#<self>")
 
@@ -609,7 +618,10 @@ anchor = get_task(anchor_id)
 
 The adversary's findings live in `anchor.description` under the heading `## Adversary Findings — Round {current_round + 1}`. If raw run details are needed for diagnostics, call `get_agent_result(run_id=adversary_run_id)`.
 
-After reading the verdict, **close the anchor** so it does not linger. Then branch:
+After reading the verdict, **close the anchor** so it does not linger. Whenever
+an anchor is closed below, immediately
+`set_variable(name="active_anchor_id", value=None, session_id="#<self>")` so
+the next round must create a fresh anchor. Then branch:
 
 - **`review_approved`** → close the anchor with reason "round approved"; go to Step 8.
 - **current stage `ready`** after `reject_review`

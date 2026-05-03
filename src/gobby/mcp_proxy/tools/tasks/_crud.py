@@ -47,6 +47,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         project: str | None = None,
         start_date: str | None = None,
         due_date: str | None = None,
+        stage_caps: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Create a single task in the current project.
 
@@ -119,6 +120,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             category=category,
             validation_criteria=validation_criteria,
             created_in_session_id=resolved_session_id,
+            stage_caps=stage_caps,
         )
 
         task = ctx.task_manager.get_task(create_result["task"]["id"])
@@ -314,6 +316,20 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "due_date": {
                     "type": "string",
                     "description": "Expected completion date (ISO 8601, e.g. '2025-03-15'). Optional.",
+                    "default": None,
+                },
+                "stage_caps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "stage_name": {"type": "string"},
+                            "max_work_attempts": {"type": "integer", "minimum": 1},
+                            "max_review_rounds": {"type": "integer", "minimum": 1},
+                        },
+                        "required": ["stage_name"],
+                    },
+                    "description": "Optional per-stage cap overrides for the created task's stage manifest.",
                     "default": None,
                 },
             },

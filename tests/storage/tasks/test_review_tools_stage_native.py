@@ -195,6 +195,64 @@ def test_fresh_review_anchor_task_has_planning_review_stage(temp_db, sample_proj
     assert planning["reviewer_agent"] == "plan-adversary"
 
 
+def test_review_anchor_stage_caps_persist_planning_review_rounds(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Plan review round anchor",
+        task_type="review_anchor",
+        category="planning",
+        stage_caps=[{"stage_name": "planning", "max_review_rounds": 100}],
+    )
+
+    planning = stage_row(temp_db, task.id, "planning")
+    assert planning["max_review_rounds"] == 100
+    assert planning["max_work_attempts"] is None
+
+
+def test_planning_stage_allows_99_rejections_with_100_round_cap(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="High budget plan review anchor",
+        task_type="review_anchor",
+        category="planning",
+        stage_caps=[{"stage_name": "planning", "max_review_rounds": 100}],
+    )
+
+    for round_number in range(1, 100):
+        set_stage_state(temp_db, task.id, "planning", "needs_review")
+        updated = manager.reject_review(
+            task.id,
+            "planning",
+            rejection_notes=f"Round {round_number} findings",
+            round_number=round_number,
+        )
+        assert not updated.is_escalated
+
+    planning = stage_row(temp_db, task.id, "planning")
+    assert planning["state"] == "ready"
+    assert planning["review_round_count"] == 99
+    assert manager.get_task(task.id).is_escalated is False
+
+
+def test_duplicate_stage_escalation_with_same_reason_is_noop(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Plan review round anchor",
+        task_type="review_anchor",
+        category="planning",
+    )
+
+    manager.stage_states._escalate(task.id, "planning_review_failed:max")
+    manager.stage_states._escalate(task.id, "planning_review_failed:max")
+
+    updated = manager.get_task(task.id)
+    assert updated.is_escalated
+    assert updated.escalation_reason == "planning_review_failed:max"
+
+
 def test_needs_review_calls_submit_for_review_no_legacy_writes(
     temp_db, sample_project, monkeypatch
 ) -> None:

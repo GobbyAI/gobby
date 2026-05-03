@@ -105,12 +105,17 @@ def test_step_7_4_prepares_review_anchor_before_spawn(body: str) -> None:
     assert "### 7.4. Create the per-round anchor and spawn the adversary" in body
     assert 'task_type="review_anchor"' in body
     assert 'category="planning"' in body
+    assert '"max_review_rounds": max_rounds + 1' in body
+    assert "stage_caps=[" in body
+    assert "old_anchor_id = get_variable" in body
+    assert 'set_variable(name="active_anchor_id", value=None' in body
     assert 'set_variable(name="active_anchor_id", value=anchor.id' in body
     assert 'start_stage(task_id=anchor.id, stage_name="planning")' in body
     assert 'submit_for_review(task_id=anchor.id, stage_name="planning")' in body
 
+    stale = body.index("old_anchor_id = get_variable")
     active = body.index('set_variable(name="active_anchor_id", value=anchor.id')
     start = body.index('start_stage(task_id=anchor.id, stage_name="planning")')
     submit = body.index('submit_for_review(task_id=anchor.id, stage_name="planning")')
     spawn = body.index("run = spawn_agent(", submit)
-    assert active < start < submit < spawn
+    assert stale < active < start < submit < spawn
