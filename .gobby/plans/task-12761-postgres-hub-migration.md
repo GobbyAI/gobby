@@ -1179,17 +1179,46 @@ def _reset_schema(
 
 
 @pytest.fixture
-def postgres_db(postgres_schema: str) -> Iterator[PostgresHubDatabase]:
-    """Per-test hub database over a reset worker schema."""
+@pytest.fixture(scope="session")
+def postgres_canonical_seed(postgres_schema: str) -> dict[str, list[tuple[Any, ...]]]:
+    """One-time per-worker capture of fresh-baseline seed rows.
+
+    Runs `PostgresHubDatabase.apply_migrations()` once against the worker
+    schema, opens a connection with that schema on `search_path`, and snapshots
+    every `_SEED_BEARING_TABLES` table. The snapshot is the source of truth
+    for `_reset_schema`'s re-INSERT step on every per-test reset.
+    """
+    url = os.environ["DATABASE_URL"]
+    db = PostgresHubDatabase(url + f"?options=-csearch_path%3D{postgres_schema}")
+    db.apply_migrations()
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute(f"SET search_path TO {postgres_schema}")
+        return _capture_canonical_seed(conn)
+
+
+@pytest.fixture
+def postgres_db(
+    postgres_schema: str,
+    postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
+) -> Iterator[PostgresHubDatabase]:
+    """Per-test hub database over a reset worker schema.
+
+    Both entry and exit resets receive the same canonical seed snapshot
+    captured once per worker by `postgres_canonical_seed`.
+    """
     url = os.environ["DATABASE_URL"] + f"?options=-csearch_path%3D{postgres_schema}"
     db = PostgresHubDatabase(url)
-    db.apply_migrations()  # no-op after first run in this schema
-    _reset_schema(os.environ["DATABASE_URL"], postgres_schema)
+    # apply_migrations is already idempotent; the session-scoped seed fixture
+    # ran it before this test was created. Calling again is a no-op.
+    db.apply_migrations()
+    _reset_schema(os.environ["DATABASE_URL"], postgres_schema, postgres_canonical_seed)
     try:
         yield db
     finally:
-        _reset_schema(os.environ["DATABASE_URL"], postgres_schema)
+        _reset_schema(os.environ["DATABASE_URL"], postgres_schema, postgres_canonical_seed)
 ```
+
+The `Any` import comes from `typing`; add `from typing import Any` at the top of `tests/fixtures/postgres.py` alongside the existing `from collections.abc import Iterator`.
 
 The reset-based approach is intentional: a single outer savepoint is not sufficient once the runtime uses pooled connections, because work can commit on a different connection and bypass that savepoint entirely. Resetting the worker schema gives real isolation without constraining production code to a single test-only connection model.
 
@@ -1197,7 +1226,7 @@ The reset-based approach is intentional: a single outer savepoint is not suffici
 
 - 2.2.1 — Per-worker `postgres_schema` session fixture creates `gobby_test_<epoch>_<pid>_<worker>_<nonce>` schemas, drops them on teardown, and sweeps aged orphans on startup. Per-test `postgres_db` fixture wires `PostgresHubDatabase` against the worker's schema with `TRUNCATE … RESTART IDENTITY CASCADE` reset on entry and exit. symbol: `tests.fixtures.postgres.postgres_schema`.
 - 2.2.2 — `postgres_db` per-test fixture yields a `PostgresHubDatabase` scoped to the worker schema with reset semantics suitable for pooled connections. symbol: `tests.fixtures.postgres.postgres_db`.
-- 2.2.3 — `_reset_schema` restores each test to a state byte-for-byte equivalent to a fresh `PostgresHubDatabase.apply_migrations()` schema by (a) leaving `_BOOKKEEPING_TABLES` (`schema_migrations`) untouched, (b) TRUNCATE-ing each `_SEED_BEARING_TABLES` table (`projects`, `task_type_default_stages`, `gobby_migration_state`) and re-inserting the canonical seed snapshot captured once per worker, (c) TRUNCATE-ing all other application tables. Test inserts into `projects` or `gobby_migration_state` made by a prior test do not leak into the next. symbol: `tests.fixtures.postgres._reset_schema`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset` (asserts: insert extra `projects` row → reset → only the four placeholders remain; mutate a `task_type_default_stages` row → reset → row matches the canonical snapshot; insert a `gobby_migration_state` key → reset → key is gone).
+- 2.2.3 — Session-scoped `postgres_canonical_seed` fixture runs `PostgresHubDatabase.apply_migrations()` once per worker and snapshots `_SEED_BEARING_TABLES` via `_capture_canonical_seed`. Per-test `postgres_db(postgres_schema, postgres_canonical_seed)` passes that snapshot to `_reset_schema` on both entry and exit. `_reset_schema` restores each test to a state byte-for-byte equivalent to a fresh `apply_migrations()` schema by (a) leaving `_BOOKKEEPING_TABLES` (`schema_migrations`) untouched, (b) TRUNCATE-ing each `_SEED_BEARING_TABLES` table (`projects`, `task_type_default_stages`, `gobby_migration_state`) and re-inserting the canonical seed snapshot, (c) TRUNCATE-ing all other application tables. Test inserts into `projects` or `gobby_migration_state` made by a prior test do not leak into the next. symbol: `tests.fixtures.postgres.postgres_canonical_seed`. symbol: `tests.fixtures.postgres._reset_schema`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset` (asserts: capture happens before the first reset; entry and exit resets receive the same snapshot; insert extra `projects` row → reset → only the four placeholders remain; mutate a `task_type_default_stages` row → reset → row matches the canonical snapshot; insert a `gobby_migration_state` key → reset → key is gone).
 
 ### 2.3 Parametrize storage fixtures over both backends [category: test] (depends: 2.2, 3.1, 3.2, 3.3)
 `kind: deliverable`
