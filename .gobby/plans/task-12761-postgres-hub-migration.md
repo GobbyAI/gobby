@@ -2027,6 +2027,35 @@ class SystemSessionBootstrap(LockTarget):
     Postgres: pg_advisory_xact_lock(hashtext('system_session_bootstrap'))
     — global, no row, idempotent across daemon starts."""
 
+@dataclass(frozen=True)
+class WebChatSessionBootstrap(LockTarget):
+    """sessions/_crud.py::create_web_chat_session: wraps register() + the
+    follow-up update inside one immediate transaction so the new web-chat
+    session row and its derived metadata commit atomically. The race here is
+    over the same external-session tuple that SessionRegistration uses, so
+    the lock key reuses that derivation and additionally serializes the
+    follow-up update against any concurrent updater of the same row.
+    Postgres: pg_advisory_xact_lock(hashtext('web_chat_session:' ||
+        external_id || '|' || machine_id || '|' || source || '|' ||
+        coalesce(project_id, '') || '|' || session_type))."""
+    external_id: str
+    machine_id: str
+    source: str
+    project_id: str | None
+    session_type: str
+
+@dataclass(frozen=True)
+class TaskSubtreeCascade(LockTarget):
+    """tasks/_crud.py::apply_build_controls_cascade: serializes the recursive
+    build-controls subtree update so two concurrent cascades on overlapping
+    subtrees cannot interleave reads and writes. Keyed by the root task_id
+    of the cascade — overlapping subtrees rooted at different ancestors are
+    serialized at the root-id level, accepting the rare false-contention
+    case (two cascades targeting unrelated subtrees that happen to share an
+    ancestor in the path_cache) as cheaper than per-row locking.
+    Postgres: pg_advisory_xact_lock(hashtext('task_subtree:' || root_task_id))."""
+    root_task_id: str
+
 class HubDatabase(Protocol):
     @contextmanager
     def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]: ...
@@ -2041,6 +2070,8 @@ Adapter behavior:
   - `DispatchMutexRow` → `SELECT pg_advisory_xact_lock(hashtext('dispatch_mutex:' || task_id))` — advisory lock, **not** `SELECT FOR UPDATE` on `task_dispatch_mutex`, because the row is normally absent before acquisition and `FOR UPDATE` on a non-existent row locks nothing. The advisory lock serializes the read-then-upsert path uniformly whether the row exists or not.
   - `SessionRegistration` → `SELECT pg_advisory_xact_lock(hashtext('session_register:' || external_id || '|' || machine_id || '|' || source || '|' || coalesce(project_id, '') || '|' || session_type))`.
   - `SessionRecoveryByProject` → `SELECT pg_advisory_xact_lock(hashtext('session_recovery:' || project_id))`.
+  - `WebChatSessionBootstrap` → `SELECT pg_advisory_xact_lock(hashtext('web_chat_session:' || external_id || '|' || machine_id || '|' || source || '|' || coalesce(project_id, '') || '|' || session_type))`.
+  - `TaskSubtreeCascade` → `SELECT pg_advisory_xact_lock(hashtext('task_subtree:' || root_task_id))`.
   - `SystemSessionBootstrap` → `SELECT pg_advisory_xact_lock(hashtext('system_session_bootstrap'))`.
 
   The lock is bound to the transaction (`pg_advisory_xact_lock`, not the session-scoped variant) so it auto-releases on commit/rollback.
@@ -2135,7 +2166,7 @@ Add two lints in `src/gobby/storage/`:
 **Acceptance:**
 
 - 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate(lock: LockTarget)` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate(lock)` accepts a typed `LockTarget` (`TaskSeqAllocation`, `DispatchMutexRow`, `SessionRegistration`, `SystemSessionBootstrap`); SqliteHubDatabase issues `BEGIN IMMEDIATE` (target ignored — global write-intent), PostgresHubDatabase opens `BEGIN` and immediately executes the matching `SELECT ... FOR UPDATE` row lock or `pg_advisory_xact_lock(hashtext(...))` advisory lock per target. `Transaction.is_immediate` (added to §3.1's protocol) is `True` for transactions opened via `transaction_immediate`, `False` otherwise; the ambient registry uses it to forbid escalating to immediate inside a non-immediate `transaction()`. Both adapters implement the convenience methods via `_resolve_executor(self)` so calls join an active ambient transaction (per-adapter, keyed by `id(adapter)`) or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`. symbol: `gobby.storage.hub.protocol.LockTarget`.
-- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget`: `TaskSeqAllocation(project_id)` for `tasks/_crud.py`, `DispatchMutexRow(task_id)` for `_dispatch_mutex.py`, `SessionRegistration(external_id, machine_id, source, project_id, session_type)` for `sessions/_crud.py::register()` lookup branch, `SessionRecoveryByProject(project_id)` for the any-project recovery branch, `SystemSessionBootstrap()` for `sessions/_constants.py`. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
+- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget` from a fresh `rg "transaction_immediate\(" src/gobby/storage` inventory at implementation time. The known call sites and their targets are: `TaskSeqAllocation(project_id)` for `tasks/_crud.py` (seq allocation), `DispatchMutexRow(task_id)` for `_dispatch_mutex.py`, `SessionRegistration(external_id, machine_id, source, project_id, session_type)` for `sessions/_crud.py::register()` lookup branch, `SessionRecoveryByProject(project_id)` for the any-project recovery branch, `WebChatSessionBootstrap(...)` for `sessions/_crud.py::create_web_chat_session` (register + follow-up update group), `TaskSubtreeCascade(root_task_id)` for `tasks/_crud.py::apply_build_controls_cascade` (recursive subtree update), `SystemSessionBootstrap()` for `sessions/_constants.py`. Any new call site discovered by the implementation-time `rg` inventory must be added to the `LockTarget` enumeration in the same patch — adding a call site without a target is a type error. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
 - 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
@@ -2528,7 +2559,19 @@ Execution order:
 2. Open SQLite source read-only (`file:<path>?mode=ro&immutable=1`).
 3. Compare the SQLite source schema fingerprint / semantic schema version to the expected baseline and fail early if they differ.
 3a. **External-mode preflight** (skip for `docker` / `native` modes): connect to the Postgres target and run `SELECT 1 FROM gobby_install_ownership WHERE key = 'singleton'`. If zero rows are returned, fail with the same missing-sentinel error used by `status` and `activate`: "external-ownership sentinel missing — was the database recreated or is this a different install? Re-run `gobby postgres install --mode external --dsn ...` to recreate the sentinel, then restart the import." This catches the case where an operator drops or recreates the external database between install and import; without this preflight, the importer would proceed against a target that no longer satisfies the ownership contract, defeating §1.2's design.
-4. Open Postgres target and run `apply_migrations()` to create the schema.
+4. Open Postgres target and run `apply_migrations()` to create the schema. **`apply_migrations()` seeds the canonical placeholder rows** (`projects` placeholders, `task_type_default_stages` defaults, etc.) per §4.2, but the SQLite source carries the same seed rows from its own baseline. Bulk-inserting on top would PK-collide on every seed-bearing table.
+4a. **Reset seed-bearing tables on the importer-created target** so the SQLite source rows can be inserted verbatim. The reset uses the same `_SEED_BEARING_TABLES` constant defined in §2.2 (which is, by construction, the set of seed-bearing application tables) plus the additional importer-only invariant that `_BOOKKEEPING_TABLES` (`schema_migrations`) and `_PRE_BASELINE_INFRA_TABLES` (`gobby_install_ownership`, `_pgaudit_probe`) are **never** truncated:
+    ```python
+    # Truncate seed-bearing application tables ONLY. The Postgres-only set
+    # (_POSTGRES_ONLY_TABLES from §5.2 — bookkeeping + install infra) is
+    # preserved. After this step, the SQLite source becomes authoritative
+    # for every seed row in the target.
+    for table in _SEED_BEARING_TABLES:
+        cur.execute(sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(
+            sql.Identifier(table)
+        ))
+    ```
+    This step is idempotent and gated behind a single `--reset-seeded-tables` boolean already-true default that `--dry-run` honors. It runs **outside** the deferred-FK import transaction (steps 6–8) so the truncate's own constraint cascades commit before the bulk copy begins.
 5. Drop BM25 indexes created by the baseline schema so bulk load does not pay per-row index maintenance cost.
 6. Begin a single import transaction and `SET CONSTRAINTS ALL DEFERRED`. Because the Postgres baseline uses deferrable FKs, this preserves real FK validation at `COMMIT` while still allowing cyclical references to load.
 7. For each table in dependency-safe order, stream rows from SQLite and bulk-insert via psycopg v3 `copy()`:
@@ -2569,7 +2612,7 @@ Runs after bulk copy. All checks must pass for the migration command to exit 0.
 - **Row counts**: `SELECT COUNT(*) FROM <t>` on both sides for every table in the comparison set; must match exactly.
 - **FK integrity**: primarily validated by the commit of the deferred-constraint import transaction in step 5.1.7. Validation also runs explicit orphan checks generated from `pg_constraint` metadata so we do not trust transaction success alone.
 - **Content hashes**: for a representative set of tables (`sessions`, `tasks`, `memories`, `config_store`, `code_symbols`, `agents`, `metrics`, workflow audit), compute an order-independent hash of canonical JSON-encoded rows on both sides and compare. Order-independence is achieved by sorting by primary key before hashing; JSON encoding uses sorted keys.
-- **Sequence reseed**: for every identity column, `SELECT last_value FROM <sequence>` must equal `MAX(id) + 1` (or `MAX(id)` if the sequence `is_called=false`).
+- **Sequence reseed**: for every identity column, `SELECT last_value, is_called FROM <sequence>` must satisfy the §5.3 convention exactly. The convention is `setval(sequence, MAX(id), true)` — i.e., `last_value = MAX(id)` and `is_called = true` so the next `nextval()` returns `MAX(id) + 1`. Empty source tables (`MAX(id) IS NULL`) reseed to `setval(sequence, 1, false)` so the first `nextval()` returns `1`; the validator accepts that as `last_value = 1, is_called = false` for the empty-table case only.
 - **BM25 index coverage**: for each FTS-replacement table, confirm the BM25 index exists (`pg_class` lookup), was populated (`pg_stat_user_indexes.idx_tup_read > 0` after a smoke query), and returns non-zero hits on a canned query built from a random sampled row's searchable content. This catches silent index-build failures that pg_search can in principle produce on malformed input.
 - **CHECK constraints**: enumerate CHECK constraints from `pg_constraint`, evaluate `NOT (<check_expression>)` counts per table, and require zero violations. Emit `✓` / `✗` lines and include sampled failing rows on error.
 - **UNIQUE constraints**: enumerate UNIQUE constraints, run `GROUP BY ... HAVING COUNT(*) > 1` checks for each constrained key set, and require zero duplicates. Emit `✓` / `✗` lines and include sampled failing groups on error.
@@ -2590,12 +2633,20 @@ Target: `src/gobby/storage/migration/reseed.py` (new)
 For every identity column on the target, reseed using the actual data max so subsequent inserts don't collide with migrated rows:
 
 ```sql
-SELECT setval(
-    pg_get_serial_sequence($1, 'id'),
-    COALESCE((SELECT MAX(id) FROM <t>), 0) + 1,
-    false
-);
+-- Non-empty table: setval(sequence, MAX(id), true) →
+--   last_value = MAX(id), is_called = true, next nextval() returns MAX(id)+1.
+-- Empty table: setval(sequence, 1, false) →
+--   last_value = 1, is_called = false, first nextval() returns 1.
+WITH max_row AS (SELECT MAX(id) AS max_id FROM <t>)
+SELECT
+    CASE
+        WHEN max_id IS NULL THEN setval(pg_get_serial_sequence($1, 'id'), 1, false)
+        ELSE setval(pg_get_serial_sequence($1, 'id'), max_id, true)
+    END
+FROM max_row;
 ```
+
+The validator in §5.2 reads `last_value` and `is_called` and asserts the convention this section establishes — non-empty: `last_value = MAX(id), is_called = true`; empty: `last_value = 1, is_called = false`. The validator and reseeder share a single helper to keep the convention from drifting.
 
 The table list is discovered dynamically from Postgres identity/sequence metadata (`information_schema.columns.is_identity = 'YES'` plus `pg_get_serial_sequence(...)` where applicable) — no hand-maintained list and no fragile `column_default LIKE 'nextval%'` heuristic.
 
