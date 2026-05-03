@@ -17,6 +17,7 @@ from gobby.hooks.event_handlers._session_responses import (
     get_claimed_task_info,
 )
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.sessions.compact_continuation import consume_and_schedule_compact_self_continuation
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
@@ -528,6 +529,15 @@ class SessionStartMixin(EventHandlersBase):
         if session_id and self._session_manager:
             session_obj = self._session_manager.get(session_id)
 
+        if session_source == "compact" and session_obj and self._session_manager:
+            consume_and_schedule_compact_self_continuation(
+                self._session_manager.db,
+                pending_session_id=session_id,
+                fallback_pending_session_id=parent_session_id,
+                target_session=session_obj,
+                loop=getattr(self._session_coordinator, "_event_loop", None),
+            )
+
         # Fetch claimed task info for system_message tree display
         claimed_tasks_info = get_claimed_task_info(self, session_id, project_id)
 
@@ -692,6 +702,14 @@ class SessionStartMixin(EventHandlersBase):
 
         # Fetch claimed task info for system_message tree display
         claimed_tasks_info = get_claimed_task_info(self, session_id, session_obj.project_id)
+
+        if input_data.get("source") == "compact" and self._session_manager:
+            consume_and_schedule_compact_self_continuation(
+                self._session_manager.db,
+                pending_session_id=session_id,
+                target_session=session_obj,
+                loop=getattr(self._session_coordinator, "_event_loop", None),
+            )
 
         return compose_session_response(
             self,

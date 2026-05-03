@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.sessions.compact_continuation import (
+    clear_compact_self_continuation_pending,
+    mark_compact_self_continuation_pending,
+)
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.storage.agents import LocalAgentRunManager
 
@@ -94,23 +98,52 @@ async def _send_codex_compaction_command(
     *,
     settle_seconds: float | None = None,
 ) -> tuple[bool, str | None]:
-    """Interrupt Codex, then submit the compaction slash command."""
+    """Backward-compatible wrapper for tests around the terminal compaction flow."""
+    ok, reason, _continuation_pending = await _send_terminal_compaction_command(
+        tmux,
+        target,
+        command,
+        session_id,
+        mark_continuation_pending=lambda: False,
+        clear_continuation_pending=lambda: False,
+        settle_seconds=settle_seconds,
+    )
+    return ok, reason
+
+
+async def _send_terminal_compaction_command(
+    tmux: TmuxSessionManager,
+    target: str,
+    command: str,
+    session_id: str,
+    *,
+    mark_continuation_pending: Any,
+    clear_continuation_pending: Any,
+    settle_seconds: float | None = None,
+) -> tuple[bool, str | None, bool]:
+    """Interrupt the active prompt, mark continuation pending, then compact."""
     ok, reason = await _send_tmux_keys(
         tmux,
         target,
         _CODEX_INTERRUPT_KEY,
         session_id,
         literal=False,
-        action="sending Codex interrupt",
+        action="sending compaction interrupt",
     )
     if not ok:
-        return False, reason
+        return False, reason, False
 
     delay = _CODEX_INTERRUPT_SETTLE_SECONDS if settle_seconds is None else settle_seconds
     if delay > 0:
         await asyncio.sleep(delay)
 
-    return await _send_compaction_command(tmux, target, command, session_id)
+    continuation_pending = bool(mark_continuation_pending())
+    ok, reason = await _send_compaction_command(tmux, target, command, session_id)
+    if not ok:
+        if continuation_pending:
+            clear_continuation_pending()
+        return False, reason, False
+    return True, None, continuation_pending
 
 
 def _resolve_tmux_target(
@@ -294,15 +327,20 @@ def register_terminal_tools(
         assert target is not None
         assert tmux is not None
 
-        if source == "codex":
-            ok, reason = await _send_codex_compaction_command(
-                tmux,
-                target,
-                command,
+        ok, reason, continuation_pending = await _send_terminal_compaction_command(
+            tmux,
+            target,
+            command,
+            resolved_session_id,
+            mark_continuation_pending=lambda: mark_compact_self_continuation_pending(
+                db,
                 resolved_session_id,
-            )
-        else:
-            ok, reason = await _send_compaction_command(tmux, target, command, resolved_session_id)
+            ),
+            clear_continuation_pending=lambda: clear_compact_self_continuation_pending(
+                db,
+                resolved_session_id,
+            ),
+        )
 
         if not ok:
             return {
@@ -314,9 +352,9 @@ def register_terminal_tools(
             "command": command,
             "cli": source,
             "via": "tmux",
+            "interrupted": True,
+            "continuation_pending": continuation_pending,
         }
-        if source == "codex":
-            result["interrupted"] = True
         return result
 
     @registry.tool(

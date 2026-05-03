@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
+from gobby.sessions.compact_continuation import (
+    COMPACT_SELF_CONTINUE_VARIABLE,
+    mark_compact_self_continuation_pending,
+)
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
+from gobby.workflows.state_manager import SessionVariableManager
 
 from ._event_handler_helpers import make_event
 
@@ -16,6 +24,22 @@ pytestmark = pytest.mark.unit
 
 class TestSessionStartHandoff:
     """Test session handoff context injection on /clear and /compact."""
+
+    def _make_db(self, tmp_path):
+        db = LocalDatabase(tmp_path / "compact-continuation.db")
+        run_migrations(db)
+        return db
+
+    def _make_precreated_session(self, session_id: str = "sess-compact") -> MagicMock:
+        session = MagicMock()
+        session.id = session_id
+        session.seq_num = 45
+        session.project_id = "proj-1"
+        session.parent_session_id = None
+        session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        session.agent_run_id = None
+        session.workflow_name = None
+        return session
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_finds_parent(
@@ -176,7 +200,11 @@ class TestSessionStartHandoff:
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
         mock_dependencies["session_task_manager"] = MagicMock()
-        claimed_task = MagicMock(status="in_progress", assignee="parent-sess-123")
+        claimed_task = MagicMock(
+            status="in_progress",
+            assignee="parent-sess-123",
+            current_stage={"state": "in_progress"},
+        )
         mock_dependencies["task_manager"].get_task.return_value = claimed_task
 
         handlers = EventHandlers(**mock_dependencies)
@@ -294,7 +322,11 @@ class TestSessionStartHandoff:
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-600"
         mock_dependencies["session_task_manager"] = MagicMock()
-        claimed_task = MagicMock(status="needs_review", assignee="parent-sess-500")
+        claimed_task = MagicMock(
+            status="needs_review",
+            assignee="parent-sess-500",
+            current_stage={"state": "needs_review"},
+        )
         mock_dependencies["task_manager"].get_task.return_value = claimed_task
 
         handlers = EventHandlers(**mock_dependencies)
@@ -408,3 +440,110 @@ class TestSessionStartHandoff:
             "new-sess-789",
             {"task_context": "You are working on task: Fix login bug (task-abc)"},
         )
+
+    def test_compact_start_with_pending_flag_clears_and_schedules_continuation(
+        self, tmp_path, mock_dependencies: dict
+    ) -> None:
+        db = self._make_db(tmp_path)
+        try:
+            session = self._make_precreated_session()
+            mark_compact_self_continuation_pending(db, session.id)
+            mock_dependencies["session_storage"].db = db
+            mock_dependencies["session_storage"].get.return_value = session
+            mock_dependencies["task_manager"].list_tasks.return_value = []
+
+            handlers = EventHandlers(**mock_dependencies)
+            event = make_event(
+                HookEventType.SESSION_START,
+                session_id=session.id,
+                data={"source": "compact", "cwd": "/some/dir"},
+                metadata={},
+            )
+
+            with (
+                patch.object(handlers, "_activate_default_agent", return_value=None),
+                patch(
+                    "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+                    return_value=True,
+                ) as mock_schedule,
+            ):
+                response = handlers.handle_session_start(event)
+
+            assert response.decision == "allow"
+            variables = SessionVariableManager(db).get_variables(session.id)
+            assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+            mock_schedule.assert_called_once()
+            assert mock_schedule.call_args.args[:2] == (
+                session,
+                "Continue where you last left off.",
+            )
+        finally:
+            db.close()
+
+    def test_manual_compact_without_pending_flag_does_not_schedule_continuation(
+        self, tmp_path, mock_dependencies: dict
+    ) -> None:
+        db = self._make_db(tmp_path)
+        try:
+            session = self._make_precreated_session()
+            mock_dependencies["session_storage"].db = db
+            mock_dependencies["session_storage"].get.return_value = session
+            mock_dependencies["task_manager"].list_tasks.return_value = []
+
+            handlers = EventHandlers(**mock_dependencies)
+            event = make_event(
+                HookEventType.SESSION_START,
+                session_id=session.id,
+                data={"source": "compact", "cwd": "/some/dir"},
+                metadata={},
+            )
+
+            with (
+                patch.object(handlers, "_activate_default_agent", return_value=None),
+                patch(
+                    "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+                    return_value=True,
+                ) as mock_schedule,
+            ):
+                response = handlers.handle_session_start(event)
+
+            assert response.decision == "allow"
+            mock_schedule.assert_not_called()
+        finally:
+            db.close()
+
+    def test_stale_compact_pending_flag_clears_without_scheduling_continuation(
+        self, tmp_path, mock_dependencies: dict
+    ) -> None:
+        db = self._make_db(tmp_path)
+        try:
+            session = self._make_precreated_session()
+            stale_time = datetime.now(UTC) - timedelta(seconds=601)
+            mark_compact_self_continuation_pending(db, session.id, now=stale_time)
+            mock_dependencies["session_storage"].db = db
+            mock_dependencies["session_storage"].get.return_value = session
+            mock_dependencies["task_manager"].list_tasks.return_value = []
+
+            handlers = EventHandlers(**mock_dependencies)
+            event = make_event(
+                HookEventType.SESSION_START,
+                session_id=session.id,
+                data={"source": "compact", "cwd": "/some/dir"},
+                metadata={},
+            )
+
+            with (
+                patch.object(handlers, "_activate_default_agent", return_value=None),
+                patch(
+                    "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+                    return_value=True,
+                ) as mock_schedule,
+            ):
+                response = handlers.handle_session_start(event)
+
+            assert response.decision == "allow"
+            variables = SessionVariableManager(db).get_variables(session.id)
+            assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+            mock_schedule.assert_not_called()
+        finally:
+            db.close()

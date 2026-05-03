@@ -74,9 +74,12 @@ def _register_compact_self(session: MagicMock, tmux_send_keys_returns: bool = Tr
 def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwargs: Any) -> Any:
     compact_self = registry.get_tool("compact_self")
     assert compact_self is not None
-    with patch(
-        "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
-        return_value=tmux_manager,
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+            return_value=tmux_manager,
+        ),
+        patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
     ):
         return asyncio.run(compact_self(**kwargs))
 
@@ -110,15 +113,19 @@ class TestCompactSelfTerminalPath:
             "command": "/compact",
             "cli": "claude",
             "via": "tmux",
+            "interrupted": True,
+            "continuation_pending": True,
         }
-        tmux.send_keys.assert_awaited_once_with("%12", "/compact\n", literal=True)
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "Escape", literal=False),
+            call("%12", "/compact\n", literal=True),
+        ]
 
     def test_codex_session_interrupts_then_fires_slash_compact(self) -> None:
         session = _make_terminal_session("codex")
         registry, tmux = _register_compact_self(session)
 
-        with patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0):
-            result = _call_compact_self(registry, tmux, session_id="s1")
+        result = _call_compact_self(registry, tmux, session_id="s1")
 
         assert result == {
             "compacted": True,
@@ -126,6 +133,7 @@ class TestCompactSelfTerminalPath:
             "cli": "codex",
             "via": "tmux",
             "interrupted": True,
+            "continuation_pending": True,
         }
         assert tmux.send_keys.await_args_list == [
             call("%12", "Escape", literal=False),
@@ -147,7 +155,7 @@ class TestCompactSelfTerminalPath:
 
         assert ok is False
         assert reason is not None
-        assert "Codex interrupt" in reason
+        assert "compaction interrupt" in reason
         tmux.send_keys.assert_awaited_once_with("%12", "Escape", literal=False)
 
     def test_gemini_session_fires_slash_compress(self) -> None:
@@ -158,7 +166,12 @@ class TestCompactSelfTerminalPath:
 
         assert result["compacted"] is True
         assert result["command"] == "/compress"
-        tmux.send_keys.assert_awaited_once_with("%12", "/compress\n", literal=True)
+        assert result["interrupted"] is True
+        assert result["continuation_pending"] is True
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "Escape", literal=False),
+            call("%12", "/compress\n", literal=True),
+        ]
 
     def test_qwen_session_fires_slash_compress(self) -> None:
         session = _make_terminal_session("qwen")
@@ -167,6 +180,12 @@ class TestCompactSelfTerminalPath:
         result = _call_compact_self(registry, tmux, session_id="s1")
 
         assert result["command"] == "/compress"
+        assert result["interrupted"] is True
+        assert result["continuation_pending"] is True
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "Escape", literal=False),
+            call("%12", "/compress\n", literal=True),
+        ]
 
     def test_droid_session_fires_slash_compress(self) -> None:
         session = _make_terminal_session("droid")
@@ -175,6 +194,62 @@ class TestCompactSelfTerminalPath:
         result = _call_compact_self(registry, tmux, session_id="s1")
 
         assert result["command"] == "/compress"
+        assert result["interrupted"] is True
+        assert result["continuation_pending"] is True
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "Escape", literal=False),
+            call("%12", "/compress\n", literal=True),
+        ]
+
+    def test_terminal_session_marks_continuation_before_slash_command(self) -> None:
+        events: list[tuple[str, str]] = []
+        session = _make_terminal_session("claude")
+        registry, tmux = _register_compact_self(session)
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            events.append(("tmux", keys))
+            return True
+
+        def mark_pending(_db: Any, session_id: str) -> bool:
+            events.append(("mark", session_id))
+            return True
+
+        tmux.send_keys.side_effect = send_keys
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending",
+            side_effect=mark_pending,
+        ) as mock_mark:
+            result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["continuation_pending"] is True
+        assert events == [
+            ("tmux", "Escape"),
+            ("mark", "s1"),
+            ("tmux", "/compact\n"),
+        ]
+        mock_mark.assert_called_once()
+
+    def test_terminal_session_clears_continuation_on_slash_command_failure(self) -> None:
+        session = _make_terminal_session("claude")
+        registry, tmux = _register_compact_self(session)
+        tmux.send_keys.side_effect = [True, False]
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending",
+                return_value=True,
+            ) as mock_mark,
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.clear_compact_self_continuation_pending",
+                return_value=True,
+            ) as mock_clear,
+        ):
+            result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is False
+        assert "tmux send-keys failed" in result["reason"]
+        mock_mark.assert_called_once()
+        mock_clear.assert_called_once()
 
 
 class TestCompactSelfFailureModes:
@@ -202,12 +277,16 @@ class TestCompactSelfFailureModes:
         session = _make_terminal_session("ubergoose")
         registry, tmux = _register_compact_self(session)
 
-        result = _call_compact_self(registry, tmux, session_id="s1")
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending"
+        ) as mock_mark:
+            result = _call_compact_self(registry, tmux, session_id="s1")
 
         assert result["compacted"] is False
         assert "no compaction command known" in result["reason"]
         assert "ubergoose" in result["reason"]
         tmux.send_keys.assert_not_called()
+        mock_mark.assert_not_called()
 
     def test_no_tmux_pane_returns_compacted_false(self) -> None:
         session = _make_terminal_session("claude", tmux_pane=None)
@@ -304,7 +383,10 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending"
+        ) as mock_mark:
+            result = asyncio.run(compact_self(session_id="db-id"))
 
         assert result == {
             "compacted": True,
@@ -313,6 +395,7 @@ class TestCompactSelfWebChatPath:
             "queued": False,
         }
         live_session.send_message.assert_called_once_with("/compact")
+        mock_mark.assert_not_called()
 
     def test_web_chat_missing_live_session_returns_compacted_false(self) -> None:
         session = MagicMock()
