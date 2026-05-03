@@ -87,11 +87,11 @@ export function ResumeSessionModal({
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-2xl h-[70vh] p-0 overflow-hidden flex flex-col">
-        <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border-color, #333)" }}>
+        <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)" }}>
           <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>
             Resume Session
           </h2>
-          <p style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted, #888)" }}>
+          <p style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted)" }}>
             Pick a session to resume in web chat with full conversation context.
           </p>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -104,10 +104,10 @@ export function ResumeSessionModal({
               style={{
                 flex: 1,
                 padding: "8px 12px",
-                border: "1px solid var(--border-color, #444)",
+                border: "1px solid var(--border)",
                 borderRadius: "6px",
-                background: "var(--input-bg, #1a1a1a)",
-                color: "var(--text-color, #e0e0e0)",
+                background: "var(--bg-secondary)",
+                color: "var(--text-primary)",
                 fontSize: "14px",
                 outline: "none",
               }}
@@ -118,7 +118,7 @@ export function ResumeSessionModal({
                 alignItems: "center",
                 gap: "4px",
                 fontSize: "12px",
-                color: "var(--text-muted, #888)",
+                color: "var(--text-muted)",
                 cursor: "pointer",
                 whiteSpace: "nowrap",
                 userSelect: "none",
@@ -128,7 +128,7 @@ export function ResumeSessionModal({
                 type="checkbox"
                 checked={showSubagents}
                 onChange={(e) => setShowSubagents(e.target.checked)}
-                style={{ accentColor: "#c084fc" }}
+                style={{ accentColor: "var(--accent)" }}
               />
               Subagents
             </label>
@@ -136,11 +136,11 @@ export function ResumeSessionModal({
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
           {loading ? (
-            <p style={{ textAlign: "center", color: "var(--text-muted, #888)", padding: "24px 0", fontSize: "14px" }}>
+            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "14px" }}>
               Loading...
             </p>
           ) : filteredSessions.length === 0 ? (
-            <p style={{ textAlign: "center", color: "var(--text-muted, #888)", padding: "24px 0", fontSize: "14px" }}>
+            <p style={{ textAlign: "center", color: "var(--text-muted)", padding: "24px 0", fontSize: "14px" }}>
               {search ? "No matching sessions" : "No resumable sessions"}
             </p>
           ) : (
@@ -160,13 +160,13 @@ export function ResumeSessionModal({
                   border: "none",
                   borderRadius: "6px",
                   background: "transparent",
-                  color: "var(--text-color, #e0e0e0)",
+                  color: "var(--text-primary)",
                   cursor: "pointer",
                   textAlign: "left",
                   fontSize: "14px",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--hover-bg, #2a2a2a)";
+                  e.currentTarget.style.background = "var(--bg-tertiary)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "transparent";
@@ -178,7 +178,7 @@ export function ResumeSessionModal({
                     width: "8px",
                     height: "8px",
                     borderRadius: "50%",
-                    background: SOURCE_COLORS[session.source] ?? "#737373",
+                    background: SOURCE_COLORS[session.source] ?? "var(--text-muted)",
                     flexShrink: 0,
                   }}
                 />
@@ -186,13 +186,13 @@ export function ResumeSessionModal({
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {session.seq_num != null ? `#${session.seq_num}: ` : ''}{getSessionTitleText(session.title)}
                   </div>
-                  <div style={{ fontSize: "12px", color: "var(--text-muted, #888)", marginTop: "2px" }}>
+                  <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
                     {SOURCE_LABELS[session.source] ?? session.source}
                     {" · "}
                     {formatRelativeTime(session.updated_at)}
                     {session.message_count > 0 && ` · ${session.message_count} msgs`}
                     {(session.agent_depth ?? 0) > 0 && (
-                      <span style={{ color: "#f59e0b", marginLeft: "4px" }}>
+                      <span style={{ color: "var(--color-warning-foreground)", marginLeft: "4px" }}>
                         depth {session.agent_depth}
                       </span>
                     )}
