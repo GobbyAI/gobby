@@ -13,6 +13,7 @@ import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 import { yaml } from '@codemirror/lang-yaml'
 import { StreamLanguage } from '@codemirror/language'
+import { CODE_CHROME_VARS } from './codeTheme'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 
@@ -120,19 +121,19 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
         '&': {
           height: '100%',
           fontSize: '14px',
-          backgroundColor: '#0a0a0a',
+          backgroundColor: CODE_CHROME_VARS.bg,
         },
         '.cm-scroller': {
           fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
           overflow: 'auto',
         },
         '.cm-gutters': {
-          backgroundColor: '#0a0a0a',
-          borderRight: '1px solid #262626',
-          color: '#555',
+          backgroundColor: CODE_CHROME_VARS.bg,
+          borderRight: `1px solid ${CODE_CHROME_VARS.gutterBorder}`,
+          color: CODE_CHROME_VARS.gutterText,
         },
         '.cm-activeLineGutter': {
-          background: '#1a1a1a',
+          background: CODE_CHROME_VARS.activeLineBg,
         },
         '.cm-activeLine': {
           background: 'rgba(255, 255, 255, 0.03)',

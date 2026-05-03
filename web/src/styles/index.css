@@ -166,6 +166,13 @@
   --isolation-none: oklch(60% 0.005 125);
   --isolation-inherit: oklch(70% 0.005 250);
 
+  /* Code-chrome palette — see components/shared/codeTheme.ts. */
+  --code-bg: oklch(11% 0.005 125);
+  --code-bg-block: oklch(13% 0.005 125);
+  --code-gutter-border: oklch(28% 0.005 125);
+  --code-gutter-text: oklch(45% 0.005 125);
+  --code-active-line-bg: oklch(18% 0.005 125);
+
   --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
   /* stylelint-disable value-keyword-case */
   --font-sans:
@@ -321,6 +328,13 @@
   --isolation-worktree: oklch(58% 0.16 75);
   --isolation-none: oklch(45% 0.005 125);
   --isolation-inherit: oklch(45% 0.005 250);
+
+  /* Code-chrome palette — light theme variants. */
+  --code-bg: oklch(97% 0.003 125);
+  --code-bg-block: oklch(95% 0.005 125);
+  --code-gutter-border: oklch(85% 0.008 125);
+  --code-gutter-text: oklch(55% 0.005 125);
+  --code-active-line-bg: oklch(92% 0.005 125);
 }
 
 /* Light theme overrides: shared status badges */

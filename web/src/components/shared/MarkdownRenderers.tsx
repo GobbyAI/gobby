@@ -1,12 +1,13 @@
 import React from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { CODE_CHROME_VARS } from './codeTheme'
 
 const customTheme = {
   ...oneDark,
   'pre[class*="language-"]': {
     ...oneDark['pre[class*="language-"]'],
-    background: '#0d0d0d',
+    background: CODE_CHROME_VARS.bgBlock,
     margin: '0.75rem 0',
     padding: '1rem',
     borderRadius: '0.5rem',
@@ -63,7 +64,7 @@ export function MarkdownCodeBlock({ children, className, ...props }: CodeProps) 
           paddingRight: '1em',
           textAlign: 'right',
           userSelect: 'none',
-          color: '#555',
+          color: CODE_CHROME_VARS.gutterText,
         }}
         customStyle={{
           margin: language ? '0' : '0.75rem 0',
