@@ -290,9 +290,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
             except Exception:
                 pass
 
-        # Sort alphabetically, skip always-apply skills (already advertised)
+        # Sort alphabetically, skip always-apply skills and the router entrypoint.
         user_skills = sorted(
-            [s for s in skills if not s.is_always_apply()],
+            [s for s in skills if not s.is_always_apply() and s.name != "gobby"],
             key=lambda s: s.name,
         )
 
@@ -304,11 +304,16 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         fallback = (
             "# Gobby Skills\n\n"
-            "Invoke skills directly with `/gobby skillname` syntax:\n\n"
+            "Installed skills below are generated from `discover_core_skills()`. "
+            "Invoke one with `/gobby <skill>`:\n\n"
             f"{skills_list}\n\n"
-            "**MCP access**: `list_skills()` / `get_skill(name)` on `gobby-skills`.\n"
-            "**Hub search**: `search_hub(query)` on `gobby-skills`.\n"
-            "**MCP tools**: `list_mcp_servers()` for tool discovery."
+            '**Skill discovery**: `list_skills()` / `get_skill(name="skill-name")` '
+            "on `gobby-skills`.\n"
+            '**Hub search**: `search_hub(query="...")` on `gobby-skills`.\n'
+            "**MCP tools**: use progressive discovery: `list_mcp_servers()`, "
+            '`list_tools(server_name="...")`, '
+            '`get_tool_schema(server_name="...", tool_name="...")`, then '
+            '`call_tool(server_name="...", tool_name="...", arguments={...})`.'
         )
 
         return _load_agent_prompt("help-content", {"skills_list": skills_list}, fallback)

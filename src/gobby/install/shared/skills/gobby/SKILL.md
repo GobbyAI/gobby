@@ -1,45 +1,42 @@
 ---
 name: gobby
-description: "Gobby help and skill discovery. Lists available skills and MCP servers."
+description: "Router contract for /gobby help and installed skill dispatch."
 version: "2.0.0"
 category: core
 triggers: help
 ---
 
-# /gobby — Help & Skill Discovery
+# /gobby Router
 
-You have been invoked as the `/gobby` help command.
+`/gobby` is a router entrypoint. It advertises installed skills on bare help
+requests and routes named skill requests through `gobby-skills`.
 
-## What to Do
+## Help Requests
 
-1. If this is a bare `/gobby` or `/gobby help` invocation, show the user what's available:
-   - Run `list_mcp_servers()` and `list_skills()` on the gobby-skills server if not already done this session
-   - Show available skills with `/gobby skillname` invocation syntax
-   - Show available MCP servers
+For `/gobby` and `/gobby help`, show dynamic help generated from installed
+skills. Do not maintain a hand-written shortcut list.
 
-2. If invoked as `/gobby skillname`, hooks provide a directive instead of the skill body. Call get_skill(name="<skill>") on gobby-skills, then continue with the user's arguments.
+Use `list_skills` on `gobby-skills` when skill discovery is needed. Present
+user-invoked skills with `/gobby <skill>` syntax.
 
-## Skill Invocation
+## Skill Requests
 
-Users invoke skills with `/gobby skillname` syntax:
+These forms route to `get_skill(name="<skill>")` on `gobby-skills`:
 
 ```text
-/gobby tasks         # Task management
-/gobby expand        # Expand task into subtasks
-/gobby plan          # Specification planning
-/gobby memory        # Persistent memory
-/gobby sessions      # Session management
-/gobby worktrees     # Git worktree management
-/gobby merge         # Launch a merge campaign (surveys + routes to worker/orchestrator)
-/gobby agents        # Agent spawning
-/gobby doctor        # Systems diagnostics
-/gobby commit        # Resolves to source-control
+/gobby <skill> [args]
+/gobby skill <skill> [args]
+/gobby:<skill> [args]
 ```
+
+The router emits a fetch directive only. It does not inline skill bodies. Preserve
+the user's trailing arguments and continue after the named skill is loaded.
 
 ## MCP Server Discovery
 
 For MCP tool access, use progressive discovery:
+
 1. `list_mcp_servers()` — discover servers
 2. `list_tools(server_name="...")` — discover tools
-3. `get_tool_schema(server_name, tool_name)` — get parameters
-4. `call_tool(server_name, tool_name, args)` — execute
+3. `get_tool_schema(server_name="...", tool_name="...")` — get parameters
+4. `call_tool(server_name="...", tool_name="...", arguments={...})` — execute

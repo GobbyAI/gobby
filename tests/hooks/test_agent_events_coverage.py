@@ -368,6 +368,34 @@ class TestGenerateHelpContent:
             result = handler._generate_help_content()
         assert result == "help content"
 
+    def test_generate_help_lists_user_invoked_skills(self) -> None:
+        handler = _TestHandler()
+        expand_skill = MagicMock()
+        expand_skill.name = "expand"
+        expand_skill.description = "Expand tasks. Into subtasks."
+        expand_skill.is_always_apply.return_value = False
+
+        plan_skill = MagicMock()
+        plan_skill.name = "plan"
+        plan_skill.description = "Draft plans."
+        plan_skill.is_always_apply.return_value = False
+
+        handler._skill_manager.discover_core_skills.return_value = [
+            plan_skill,
+            expand_skill,
+        ]
+
+        with patch(
+            "gobby.hooks.event_handlers._agent._load_agent_prompt",
+            return_value="help",
+        ) as mock_load:
+            handler._generate_help_content()
+
+        skills_list = mock_load.call_args.args[1]["skills_list"]
+        assert "- `/gobby expand` — Expand tasks" in skills_list
+        assert "- `/gobby plan` — Draft plans" in skills_list
+        assert skills_list.index("/gobby expand") < skills_list.index("/gobby plan")
+
     def test_generate_help_filters_always_apply(self) -> None:
         handler = _TestHandler()
         regular_skill = MagicMock()
@@ -394,6 +422,33 @@ class TestGenerateHelpContent:
             skills_list = mock_load.call_args.args[1]["skills_list"]
             assert "expand" in skills_list
             assert "auto-inject" not in skills_list
+
+    def test_generate_help_filters_router_skill(self) -> None:
+        handler = _TestHandler()
+        regular_skill = MagicMock()
+        regular_skill.name = "expand"
+        regular_skill.description = "Expand tasks."
+        regular_skill.is_always_apply.return_value = False
+
+        router_skill = MagicMock()
+        router_skill.name = "gobby"
+        router_skill.description = "Router."
+        router_skill.is_always_apply.return_value = False
+
+        handler._skill_manager.discover_core_skills.return_value = [
+            regular_skill,
+            router_skill,
+        ]
+
+        with patch(
+            "gobby.hooks.event_handlers._agent._load_agent_prompt",
+            return_value="help",
+        ) as mock_load:
+            handler._generate_help_content()
+
+        skills_list = mock_load.call_args.args[1]["skills_list"]
+        assert "/gobby expand" in skills_list
+        assert "/gobby gobby" not in skills_list
 
     def test_no_skill_manager(self) -> None:
         handler = _TestHandler()
