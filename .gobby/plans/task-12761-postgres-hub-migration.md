@@ -1020,7 +1020,7 @@ Add `psycopg[binary,pool]>=3.2` and `pytest-xdist` to `pyproject.toml`. Confirm 
 
 - 2.1.1 — PostgreSQL added to the test compose stack and CI workflow. file: `.github/workflows/ci.yml`.
 
-### 2.2 Add a schema-per-worker pytest fixture [category: test] (depends: 2.1)
+### 2.2 Add a schema-per-worker pytest fixture [category: test] (depends: 2.1, 3.3)
 `kind: deliverable`
 
 Target: `tests/fixtures/postgres.py` (new), `tests/conftest.py`
@@ -1136,7 +1136,7 @@ The reset-based approach is intentional: a single outer savepoint is not suffici
 - 2.2.1 — Per-worker `postgres_schema` session fixture creates `gobby_test_<epoch>_<pid>_<worker>_<nonce>` schemas, drops them on teardown, and sweeps aged orphans on startup. Per-test `postgres_db` fixture wires `PostgresHubDatabase` against the worker's schema with `TRUNCATE … RESTART IDENTITY CASCADE` reset on entry and exit. symbol: `tests.fixtures.postgres.postgres_schema`.
 - 2.2.2 — `postgres_db` per-test fixture yields a `PostgresHubDatabase` scoped to the worker schema with reset semantics suitable for pooled connections. symbol: `tests.fixtures.postgres.postgres_db`.
 
-### 2.3 Parametrize storage fixtures over both backends [category: test] (depends: 2.2)
+### 2.3 Parametrize storage fixtures over both backends [category: test] (depends: 2.2, 3.1, 3.2, 3.3)
 `kind: deliverable`
 
 Target: `tests/conftest.py`, selected storage test files under `tests/storage/`
@@ -1149,7 +1149,7 @@ Expected footprint for this task: around 15 of the 48 `tests/storage/` files mig
 
 - 2.3.1 — Storage fixtures parametrize over SQLite and PostgreSQL backends. file: `tests/conftest.py`.
 
-### 2.4 Add dialect parity regression tests [category: test] (depends: 2.2)
+### 2.4 Add dialect parity regression tests [category: test] (depends: 2.3)
 `kind: deliverable`
 
 Target: `tests/storage/test_dialect_parity.py` (new)
@@ -1455,9 +1455,86 @@ class PostgresHubDatabase:
 
 `dict_row` gives `Mapping[str, Any]` rows directly, eliminating per-query adapter code.
 
+**Placeholder remap — `$N` → `%s` for psycopg.** psycopg v3's Python binding API uses `%s` (positional) and `%(name)s` (named) placeholders, **not** `$N`. The plan standardizes author-facing SQL on `$N` (Rust/sqlx-portable). Therefore every parametrized execute against psycopg must remap `$N` placeholders to `%s` before psycopg sees the query, and reorder/duplicate the param tuple to match `%s` positional binding. The remapper lives next to `_PostgresTransaction` and is the symmetric Postgres counterpart of §3.2's SQLite-side `_remap_placeholders` (`$N` → `?`).
+
+```python
+def _remap_placeholders_to_psycopg(
+    sql: str, params: Sequence[Any]
+) -> tuple[str, tuple[Any, ...]]:
+    """Rewrite top-level $N -> %s and rebuild the param tuple.
+
+    Same scanner contract as gobby.storage.hub.sqlite._remap_placeholders:
+    skip dollar-quoted bodies ($$...$$ and $tag$...$tag$), single-quoted
+    strings (with '' escape), line comments (-- ...), block comments
+    (/* ... */), and identifier-suffix `foo$N` patterns. Top-level $N is
+    rewritten to a positional %s and the new tuple lists params in the
+    order they appear in the SQL, duplicating values for repeated $N.
+
+    Raises ValueError on unterminated dollar-quote tags or $N references
+    outside the input tuple's range.
+    """
+
+
+class _PostgresTransaction:
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> Any:
+        new_sql, new_params = _remap_placeholders_to_psycopg(sql, tuple(params))
+        return self._conn.execute(new_sql, new_params)
+
+    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
+        new_sql, _ = _remap_placeholders_to_psycopg(sql, ())
+        # Per-row remap of params using the SQL's $N -> position map computed once.
+        # Implementation: cache the index permutation built by the first call and
+        # apply it to every row tuple to avoid rescanning SQL per row.
+        ...
+```
+
+**Migration files vs application code.** SQL files under `src/gobby/storage/migrations/` (Phase 3.7) are **DDL** in the common case — no parameter binding — and therefore pass through psycopg unchanged with `params=()`. Postgres reads `$N` natively on the wire, so a parameter-less migration file written in `$N` form works as-is. Migration files that DO bind parameters must declare so explicitly and route through the same `_remap_placeholders_to_psycopg` helper so the runtime contract is uniform.
+
+Required tests in `tests/storage/hub/test_postgres_placeholder_remap.py` (mirroring §3.2 test coverage):
+
+- sequential: `SELECT $1, $2`, params `("a","b")` → `("SELECT %s, %s", ("a","b"))`
+- out-of-order: `WHERE a = $2 AND b = $1`, `("x","y")` → `("WHERE a = %s AND b = %s", ("y","x"))`
+- repeated: `WHERE a = $1 OR b = $1`, `("z",)` → `("WHERE a = %s OR b = %s", ("z","z"))`
+- IN clause: `WHERE id IN ($1, $2, $3)`, `(1,2,3)` → `("WHERE id IN (%s, %s, %s)", (1,2,3))`
+- skipped indices preserved: `SELECT $3, $1` rewrites with the third and first params
+- empty dollar-quote pass-through: `CREATE FUNCTION ... AS $$ BEGIN PERFORM 1; END; $$` unchanged, `new_params=()`
+- dollar-quote with embedded `$N` pass-through: `AS $$ BEGIN RETURN $1 + 1; END; $$` keeps `$1` byte-for-byte
+- named-tag dollar quote with embedded `$N` pass-through: `AS $body$ ... $1 ... $body$` unchanged
+- bind placeholder adjacent to a function body: only top-level `$1`/`$2` are rewritten; `$$abc$$` body is unchanged
+- bind placeholder inside a single-quoted string preserved; `''` escape inside string handled correctly
+- bind placeholder inside line/block comments preserved
+- identifier-suffix: `SELECT foo$1, $1 FROM t` keeps `foo$1` and rewrites only the bare `$1`
+- `executemany` parity: SQL rewritten exactly once, every row tuple permuted by the cached index map
+- raises `ValueError` when SQL references a `$N` outside the param tuple's range
+- raises `ValueError` on an unterminated dollar-quote tag
+
+**Postgres baseline application.** A fresh Postgres database (no `schema_migrations` table, no `gobby_migration_state` table) **must** receive `postgres_baseline_schema.sql` before the file-based migration runner walks the on-disk migration directory. `PostgresHubDatabase.apply_migrations()` ensures this by gating on the presence of `schema_migrations`:
+
+```python
+def apply_migrations(self) -> None:
+    runner = MigrationRunner(self)
+    if not self._postgres_baseline_already_applied():
+        self._apply_postgres_baseline()  # reads postgres_baseline_schema.sql
+    runner.apply_pending()  # walks src/gobby/storage/migrations/*.sql
+```
+
+`_apply_postgres_baseline` uses an advisory-lock guard (`SELECT pg_advisory_lock(...)`) so concurrent daemon starts cannot double-apply, executes `postgres_baseline_schema.sql` inside a transaction, and seeds `schema_migrations` with `(244, NOW())` on commit. `_postgres_baseline_already_applied` returns `True` iff the public-schema-equivalent search-path contains `schema_migrations` and a row at version 244 already exists; ambiguous partial states (e.g., `schema_migrations` exists but at a version below 244, or core baseline tables missing while `schema_migrations` reports 244) raise `MigrationUnsupportedError` with explicit recovery guidance ("dump-and-restore from a known-good baseline").
+
+Required tests:
+
+- empty Postgres DB → `apply_migrations()` creates baseline tables, `schema_migrations`, and `gobby_migration_state`; subsequent `apply_migrations()` is idempotent.
+- partial-baseline Postgres DB (some tables present, `schema_migrations` missing) → raises `MigrationUnsupportedError`.
+- already-baselined Postgres DB at v244 → `_apply_postgres_baseline` is skipped; runner walks file-based migrations only.
+- concurrent `apply_migrations()` calls (two pool connections racing): advisory lock serializes them; baseline is applied exactly once.
+
 **Acceptance:**
 
 - 3.3.1 — `PostgresHubDatabase` implements `HubDatabase` over psycopg/PostgreSQL. symbol: `gobby.storage.hub.postgres.PostgresHubDatabase`.
+- 3.3.2 — `_remap_placeholders_to_psycopg` rewrites `$N` to `%s` and rebuilds the param tuple to handle sequential, out-of-order, repeated, IN-clause, skipped-index, dollar-quote, identifier-suffix, `executemany`, and out-of-range-index cases; preserves dollar-quoted bodies, single-quoted strings (with `''` escape), and line/block comments untouched. symbol: `gobby.storage.hub.postgres._remap_placeholders_to_psycopg`. test: `tests/storage/hub/test_postgres_placeholder_remap.py`.
+- 3.3.3 — `PostgresHubDatabase.apply_migrations()` applies `postgres_baseline_schema.sql` exactly once on an uninitialized database before running file-based migrations, is idempotent under repeat calls, serializes concurrent calls via a Postgres advisory lock, and raises `MigrationUnsupportedError` on partial-baseline states. symbol: `gobby.storage.hub.postgres.PostgresHubDatabase._apply_postgres_baseline`. test: `tests/storage/hub/test_postgres_baseline_application.py`.
 
 ### 3.4 Port row consumers off `sqlite3.Row` [category: refactor] (depends: 3.2, 3.3)
 `kind: deliverable`
