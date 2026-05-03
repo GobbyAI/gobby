@@ -926,7 +926,7 @@ def deactivate_cmd() -> None:
 ## P2 Phase 2: Test infrastructure for dual-backend work
 `kind: framing`
 
-**Goal**: the suite runs against Postgres before Phase 3 lands any dual-backend code, so every subsequent task is validated against the real backend.
+**Goal**: stand up the PostgreSQL-side test infrastructure that the rest of the migration validates against. §2.1 (compose stack + CI) lands early as a Phase 1 dependent and is consumable by Phase 3 once it exists. §2.2 (`postgres_db` fixture), §2.3 (dual-backend `hub_db` fixture), and §2.4 (dialect-parity tests) require the Phase 3 adapter foundation (§§3.1, 3.2, 3.3) to import their target classes — they therefore depend forward into Phase 3 and land alongside the row-consumer / placeholder / upsert refactors that complete the parity work. Phase 2 is the test-infra spine; Phase 3 is the code spine; their leaves interleave by deliverable rather than by phase number.
 
 ### 2.1 Add PostgreSQL to the test compose stack and CI [category: config] (depends: 1.1, 1.4)
 `kind: deliverable`
@@ -1096,49 +1096,86 @@ def postgres_schema(worker_id: str) -> Iterator[str]:
                 conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
-_SEED_PRESERVING_TABLES: frozenset[str] = frozenset({
-    "schema_migrations",
-    "gobby_migration_state",
-    # Static baseline seed rows that fresh PostgresHubDatabase.apply_migrations()
-    # produces; tests rely on these existing in the same shape on Postgres as on
-    # SQLite. If §4.2's baseline ships additional static seed-bearing tables,
-    # add them here in lockstep.
-    "task_type_default_stages",
-    "projects",  # holds the _orphaned/_migrated/_personal/_global placeholders
+# Tables whose bookkeeping rows must survive reset verbatim. We never touch
+# their contents — they are written once by apply_migrations() and never
+# mutated by tests through the standard fixture path.
+_BOOKKEEPING_TABLES: frozenset[str] = frozenset({"schema_migrations"})
+
+# Static seed rows that fresh PostgresHubDatabase.apply_migrations() writes;
+# tests can ADD rows to these tables, so we can't TRUNCATE them, but we also
+# can't leave test-created rows behind. Reset deletes everything NOT in the
+# canonical seed and leaves the canonical seed exactly as fresh-baseline
+# produces it. The canonical seed is loaded once from the worker's freshly
+# applied schema and cached for subsequent resets.
+_SEED_BEARING_TABLES: frozenset[str] = frozenset({
+    "projects",                  # _orphaned / _migrated / _personal / _global placeholders
+    "task_type_default_stages",  # default stage manifests including review_anchor → planning
+    "gobby_migration_state",     # cutover/import marker keys (empty in fresh baseline)
 })
 
 
-def _reset_schema(url: str, schema: str) -> None:
-    """Truncate mutable user tables in the worker schema; preserve baseline seed rows.
+def _capture_canonical_seed(
+    conn: psycopg.Connection,
+) -> dict[str, list[tuple[Any, ...]]]:
+    """Snapshot the seed rows of every _SEED_BEARING_TABLES table from a fresh
+    apply_migrations() schema. Called once per worker before any test runs."""
+    snapshot: dict[str, list[tuple[Any, ...]]] = {}
+    for table in _SEED_BEARING_TABLES:
+        rows = conn.execute(
+            sql.SQL("SELECT * FROM {} ORDER BY 1").format(sql.Identifier(table))
+        ).fetchall()
+        snapshot[table] = [tuple(r) for r in rows]
+    return snapshot
 
-    Tables in `_SEED_PRESERVING_TABLES` are NOT truncated — they hold the
-    seed rows that `PostgresHubDatabase.apply_migrations()` writes once on
-    fresh databases (placeholder projects, default stage manifests, schema
-    bookkeeping). Truncating them would diverge `postgres_db` from a fresh
-    runtime database and would silently mask Postgres-side bugs that depend
-    on those seed rows being present (or hide SQLite-side regressions when
-    parametrized parity tests compare both backends).
 
-    For tests that explicitly want a stripped seed (e.g., to assert the seed
-    application logic itself), opt out of this fixture and use a raw psycopg
-    connection.
+def _reset_schema(
+    url: str,
+    schema: str,
+    canonical_seed: dict[str, list[tuple[Any, ...]]],
+) -> None:
+    """Reset mutable rows in the worker schema while restoring canonical seed.
+
+    Algorithm per table:
+      - _BOOKKEEPING_TABLES: untouched (rows are write-once invariants).
+      - _SEED_BEARING_TABLES: TRUNCATE then re-INSERT the canonical seed.
+        Restores test-mutations of placeholder rows and removes any
+        test-created rows beyond the seed (e.g., a project a test created).
+      - all other application tables: TRUNCATE … RESTART IDENTITY CASCADE.
+
+    After this call the schema is byte-for-byte equivalent to the state
+    PostgresHubDatabase.apply_migrations() produces on a fresh schema —
+    that's the invariant acceptance 2.2.3 enforces.
     """
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(f"SET search_path TO {schema}")
-        tables = [
+        all_tables = {
             row[0]
             for row in conn.execute(
-                """
-                SELECT tablename
-                FROM pg_tables
-                WHERE schemaname = current_schema()
-                """
+                "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
             ).fetchall()
-            if row[0] not in _SEED_PRESERVING_TABLES
-        ]
-        if tables:
-            joined = ", ".join(tables)
-            conn.execute(f"TRUNCATE {joined} RESTART IDENTITY CASCADE")
+        }
+        seed_tables = all_tables & _SEED_BEARING_TABLES
+        truncate_tables = all_tables - _BOOKKEEPING_TABLES - _SEED_BEARING_TABLES
+
+        with conn.transaction():
+            if truncate_tables:
+                joined = ", ".join(sorted(truncate_tables))
+                conn.execute(f"TRUNCATE {joined} RESTART IDENTITY CASCADE")
+            for table in sorted(seed_tables):
+                conn.execute(
+                    sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(
+                        sql.Identifier(table)
+                    )
+                )
+                rows = canonical_seed.get(table, [])
+                if rows:
+                    placeholders = ", ".join(["%s"] * len(rows[0]))
+                    conn.executemany(
+                        sql.SQL("INSERT INTO {} VALUES ({})").format(
+                            sql.Identifier(table), sql.SQL(placeholders)
+                        ),
+                        rows,
+                    )
 
 
 @pytest.fixture
@@ -1160,7 +1197,7 @@ The reset-based approach is intentional: a single outer savepoint is not suffici
 
 - 2.2.1 — Per-worker `postgres_schema` session fixture creates `gobby_test_<epoch>_<pid>_<worker>_<nonce>` schemas, drops them on teardown, and sweeps aged orphans on startup. Per-test `postgres_db` fixture wires `PostgresHubDatabase` against the worker's schema with `TRUNCATE … RESTART IDENTITY CASCADE` reset on entry and exit. symbol: `tests.fixtures.postgres.postgres_schema`.
 - 2.2.2 — `postgres_db` per-test fixture yields a `PostgresHubDatabase` scoped to the worker schema with reset semantics suitable for pooled connections. symbol: `tests.fixtures.postgres.postgres_db`.
-- 2.2.3 — `_reset_schema` preserves baseline seed-bearing tables (`schema_migrations`, `gobby_migration_state`, `task_type_default_stages`, `projects` placeholder rows) so each test starts from a state equivalent to a fresh `PostgresHubDatabase.apply_migrations()` invocation; only mutable application tables are truncated. symbol: `tests.fixtures.postgres._reset_schema`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset`.
+- 2.2.3 — `_reset_schema` restores each test to a state byte-for-byte equivalent to a fresh `PostgresHubDatabase.apply_migrations()` schema by (a) leaving `_BOOKKEEPING_TABLES` (`schema_migrations`) untouched, (b) TRUNCATE-ing each `_SEED_BEARING_TABLES` table (`projects`, `task_type_default_stages`, `gobby_migration_state`) and re-inserting the canonical seed snapshot captured once per worker, (c) TRUNCATE-ing all other application tables. Test inserts into `projects` or `gobby_migration_state` made by a prior test do not leak into the next. symbol: `tests.fixtures.postgres._reset_schema`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset` (asserts: insert extra `projects` row → reset → only the four placeholders remain; mutate a `task_type_default_stages` row → reset → row matches the canonical snapshot; insert a `gobby_migration_state` key → reset → key is gone).
 
 ### 2.3 Parametrize storage fixtures over both backends [category: test] (depends: 2.2, 3.1, 3.2, 3.3)
 `kind: deliverable`
@@ -1564,14 +1601,53 @@ def apply_migrations(self) -> None:
     runner.apply_pending()  # walks src/gobby/storage/migrations/*.sql
 ```
 
-`_apply_postgres_baseline` uses an advisory-lock guard (`SELECT pg_advisory_lock(...)`) so concurrent daemon starts cannot double-apply, executes `postgres_baseline_schema.sql` inside a transaction, and seeds `schema_migrations` with `(244, NOW())` on commit. `_postgres_baseline_already_applied` returns `True` iff the public-schema-equivalent search-path contains `schema_migrations` and a row at version 244 already exists; ambiguous partial states (e.g., `schema_migrations` exists but at a version below 244, or core baseline tables missing while `schema_migrations` reports 244) raise `MigrationUnsupportedError` with explicit recovery guidance ("dump-and-restore from a known-good baseline").
+`_apply_postgres_baseline` uses an advisory-lock guard (`SELECT pg_advisory_lock(...)`) so concurrent daemon starts cannot double-apply, executes `postgres_baseline_schema.sql` inside a transaction, and seeds `schema_migrations` with `(244, NOW())` on commit. `_postgres_baseline_already_applied` returns `True` iff the public-schema-equivalent search-path contains `schema_migrations` and a row at version 244 already exists.
 
-Required tests:
+**Pre-baseline infrastructure allowlist.** Two valid install paths intentionally create tables in the target database **before** `apply_migrations()` ever runs, and those tables must not be classified as a corrupt partial baseline:
 
-- empty Postgres DB → `apply_migrations()` creates baseline tables, `schema_migrations`, and `gobby_migration_state`; subsequent `apply_migrations()` is idempotent.
-- partial-baseline Postgres DB (some tables present, `schema_migrations` missing) → raises `MigrationUnsupportedError`.
-- already-baselined Postgres DB at v244 → `_apply_postgres_baseline` is skipped; runner walks file-based migrations only.
-- concurrent `apply_migrations()` calls (two pool connections racing): advisory lock serializes them; baseline is applied exactly once.
+```python
+_PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset({
+    "gobby_install_ownership",  # written by §1.2 external-mode installer
+    "_pgaudit_probe",           # written by §6.0 Docker-mode initdb.d/pgaudit-bootstrap.sh
+})
+```
+
+The partial-state classifier ignores any table in `_PRE_BASELINE_INFRA_TABLES` when deciding "is this a corrupt partial baseline?" — only **application tables** (anything not in the allowlist, not `schema_migrations`, not `gobby_migration_state`) trigger the error path:
+
+```python
+def _classify_baseline_state(conn: psycopg.Connection) -> Literal[
+    "fresh", "fresh_with_install_infra", "already_baselined", "corrupt_partial"
+]:
+    tables = {row[0] for row in conn.execute(
+        "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
+    ).fetchall()}
+    has_bookkeeping = "schema_migrations" in tables
+    application_tables = tables - _PRE_BASELINE_INFRA_TABLES - {
+        "schema_migrations", "gobby_migration_state"
+    }
+
+    if has_bookkeeping and _has_baseline_version(conn, 244):
+        return "already_baselined"
+    if has_bookkeeping and not application_tables:
+        # bookkeeping table only; no baseline rows, no app tables → fresh-ish
+        return "fresh"
+    if not has_bookkeeping and not application_tables:
+        # zero or more pre-baseline infra tables, nothing else → fresh
+        return "fresh_with_install_infra" if (tables & _PRE_BASELINE_INFRA_TABLES) else "fresh"
+    return "corrupt_partial"
+```
+
+`_apply_postgres_baseline` runs for `fresh` / `fresh_with_install_infra` (single, idempotent transaction); skips for `already_baselined`; raises `MigrationUnsupportedError` with explicit recovery guidance ("dump-and-restore from a known-good baseline") for `corrupt_partial`.
+
+Required tests in `tests/storage/hub/test_postgres_baseline_application.py`:
+
+- **fresh**: empty Postgres DB → `apply_migrations()` creates baseline tables, `schema_migrations`, and `gobby_migration_state`; subsequent `apply_migrations()` is idempotent.
+- **fresh_with_install_infra (external)**: Postgres DB with only `gobby_install_ownership` (as written by §1.2 external-mode installer) → `apply_migrations()` succeeds; baseline tables created alongside the existing ownership row.
+- **fresh_with_install_infra (Docker pgAudit)**: Postgres DB with only `_pgaudit_probe` (as written by §6.0 initdb seed) → `apply_migrations()` succeeds; probe row preserved.
+- **already_baselined**: Postgres DB at v244 → `_apply_postgres_baseline` is skipped; runner walks file-based migrations only.
+- **corrupt_partial**: Postgres DB with a real application table (e.g., `tasks`) but no `schema_migrations` → raises `MigrationUnsupportedError` with the dump-and-restore guidance.
+- **corrupt_partial with infra-only false-positive guard**: Postgres DB with `gobby_install_ownership` AND `tasks` (real app table) → still raises `MigrationUnsupportedError` (the allowlist does not whitewash genuine corruption).
+- **concurrent**: `apply_migrations()` calls from two pool connections racing → advisory lock serializes them; baseline is applied exactly once.
 
 **Acceptance:**
 
@@ -1910,9 +1986,20 @@ Target: `src/gobby/storage/postgres_baseline_schema.sql`, migration files for `t
 
 `pg_search` maintains its own inverted index transparently — no `tsvector` column, no refresh trigger. For each content table, create a BM25 index covering the searchable columns:
 
+**Extension creation belongs to install/provisioning, not the schema/migration path.** §1.1 (Docker compose) and §1.2 native-mode installer are responsible for `CREATE EXTENSION pg_search` against their owned databases (Docker via the local-build image's initdb seed; native via the installer running with sudo against the user's local Postgres). §1.2 external mode is contractually **read-only** against the operator's database — it probes `SELECT 1 FROM pg_extension WHERE extname='pg_search'` and fails closed with the documented manual-install guidance if absent. Therefore §4.4 **must not** issue `CREATE EXTENSION` from `postgres_baseline_schema.sql` or any migration file: doing so would violate the external-mode least-privilege contract and would fail for any operator role lacking the `CREATEEXTENSION` privilege on their own database.
+
+The runner's responsibility is reduced to a runtime probe with a clear error message: `_apply_postgres_baseline` checks `SELECT 1 FROM pg_extension WHERE extname='pg_search'` before reading `postgres_baseline_schema.sql`; if absent, raise `MigrationUnsupportedError("pg_search extension is not present on this database. Docker mode: rebuild the image. Native mode: rerun 'gobby postgres install --mode native'. External mode: install pg_search per docs/runbooks/postgres-pgsearch-install.md.")`. This shifts mode-specific responsibility to the install path while keeping the runtime check enforceable.
+
+Required tests (added to `tests/storage/hub/test_postgres_baseline_application.py`):
+
+- pg_search present → `apply_migrations()` proceeds.
+- pg_search absent → raises `MigrationUnsupportedError` with the mode-aware guidance string; no `CREATE EXTENSION` statement is executed.
+- external-mode target (probe-only) where pg_search is pre-installed → `apply_migrations()` succeeds and the runner issues no extension DDL (assert via `pg_stat_statements` or via wrapping the connection in a recorder that captures every executed SQL string).
+
 ```sql
--- One-time extension enable (idempotent; migration checks FIRST)
-CREATE EXTENSION IF NOT EXISTS pg_search;
+-- pg_search extension is provisioned by install (Docker initdb / native installer),
+-- not by this schema. The runner probes for its presence and refuses to baseline
+-- without it. See "Extension creation belongs to install/provisioning" above.
 
 -- Tasks
 CREATE INDEX tasks_search_bm25 ON tasks
