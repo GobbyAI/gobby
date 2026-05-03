@@ -812,6 +812,18 @@ def _validate_manifest_invariants(
             continue
         entries_by_section.setdefault(entry.source_section, []).append(entry)
 
+    valid_section_ids = {entry.source_section for entry in entries}
+    for entry in entries:
+        for dependency in entry.depends_on:
+            if dependency not in valid_section_ids:
+                errors.append(
+                    (
+                        entry.source_line,
+                        f"manifest entry source_section={entry.source_section!r} depends on "
+                        f"{dependency!r}, which has no manifest entry",
+                    )
+                )
+
     for section_id, deliverable in deliverables.items():
         bucket = entries_by_section.get(section_id, [])
         if not bucket:

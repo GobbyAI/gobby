@@ -60,6 +60,41 @@ _MINIMAL_MANIFEST = """
   source_section: "A1"
 """
 
+_TWO_DELIVERABLES = """
+## A1 Section
+`kind: deliverable`
+**Acceptance:**
+- A1.1 — file: `foo.py`
+
+## A2 Other Section
+`kind: deliverable`
+**Acceptance:**
+- A2.1 — file: `bar.py`
+"""
+
+_LINKED_MANIFEST = """
+- title: "Build foo"
+  category: code
+  task_type: feature
+  depends_on: ["A2"]
+  validation_criteria: "foo.py exists"
+  labels:
+    - "covers:test-plan:A1:A1.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "A1"
+- title: "Build bar"
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: "bar.py exists"
+  labels:
+    - "covers:test-plan:A2:A2.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "A2"
+"""
+
 
 def test_parse_mode_signature_accepts_three_values() -> None:
     """2.21.3 — parse_plan accepts parse_mode parameter with values draft/expansion/strict."""
@@ -174,6 +209,50 @@ def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
     assert entry.source_section == "A1"
     assert entry.tdd is True
     assert entry.labels == ("covers:test-plan:A1:A1.1",)
+
+
+@pytest.mark.parametrize("parse_mode", get_args(ParseMode))
+@pytest.mark.parametrize("missing_dependency", ["P0", "99.99"])
+def test_manifest_depends_on_must_reference_manifest_entry_source_section(
+    tmp_path: Path,
+    parse_mode: ParseMode,
+    missing_dependency: str,
+) -> None:
+    manifest_yaml = _LINKED_MANIFEST.replace(
+        'depends_on: ["A2"]',
+        f'depends_on: ["{missing_dependency}"]',
+    )
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_TWO_DELIVERABLES,
+        manifest_yaml=manifest_yaml,
+    )
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode=parse_mode)
+
+    message = str(excinfo.value)
+    assert "source_section='A1'" in message
+    assert f"depends on '{missing_dependency}'" in message
+    assert "has no manifest entry" in message
+
+
+@pytest.mark.parametrize("parse_mode", get_args(ParseMode))
+def test_manifest_depends_on_resolves_to_manifest_entry_source_section(
+    tmp_path: Path,
+    parse_mode: ParseMode,
+) -> None:
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_TWO_DELIVERABLES,
+        manifest_yaml=_LINKED_MANIFEST,
+    )
+
+    document = parse_plan(plan, parse_mode=parse_mode)
+
+    entries_by_section = {entry.source_section: entry for entry in document.manifest_entries}
+    assert entries_by_section["A1"].depends_on == ("A2",)
+    assert entries_by_section["A2"].depends_on == ()
 
 
 def test_test_category_with_tdd_true_fails(tmp_path: Path) -> None:

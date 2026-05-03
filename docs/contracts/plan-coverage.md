@@ -148,12 +148,16 @@ Entry schema (one entry per `kind: deliverable` section):
 | `title` | str | Human-readable title for the synthesized leaf |
 | `category` | enum | One of `VALID_CATEGORIES` |
 | `task_type` | enum | Task-type tag for the synthesized leaf |
-| `depends_on` | list[str] | References plan section IDs |
+| `depends_on` | list[str] | References `source_section` IDs of other manifest entries |
 | `validation_criteria` | str | One-line pass/fail |
 | `labels` | list[str] | Exactly one `covers:<plan-id>:<section-id>:<item-id>` label per acceptance item in the source section |
 | `assigned_agent` | str | Routes the leaf to a specific agent |
 | `tdd` | bool | True implies the deterministic compiler emits a TEST/IMPL/REF wrapper for eligible categories |
 | `source_section` | str | Must reference a `kind: deliverable` section ID |
+
+`depends_on` values name leaf deliverable dependencies by manifest
+`source_section` ID. They must resolve to another manifest entry. Phase IDs
+such as `P0` are invalid because phases are not implementation leaves.
 
 ### Category/TDD Policy
 
@@ -180,6 +184,8 @@ When the manifest is present, these invariants are checked regardless of mode:
 - Reject `tdd: true` unless the entry category is `code` or `config`.
 - Every `kind: deliverable` section has exactly one manifest entry referencing
   it via `source_section` (1:1 invariant).
+- Every `depends_on` value resolves to another manifest entry's
+  `source_section` ID.
 - Every `covers:` label resolves to a real acceptance item under the entry's
   `source_section`.
 - No orphan manifest entries — every entry's `source_section` resolves to a
