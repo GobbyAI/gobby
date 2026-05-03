@@ -2061,14 +2061,26 @@ class LockTarget(Protocol):
     """Names the resource a transaction_immediate() block protects.
     Adapters dispatch on the concrete subclass — SQLite ignores the target
     (BEGIN IMMEDIATE is global write-intent), Postgres uses it to acquire
-    the matching SELECT ... FOR UPDATE / pg_advisory_xact_lock."""
+    the matching SELECT ... FOR UPDATE / pg_advisory_xact_lock.
+
+    Ordering for nested locks uses the explicit class-level `PRIORITY`
+    (ClassVar[int], lower = acquired first). Sort by lock-key STRING is
+    intentionally NOT used: alphabetical ordering is a fragile invariant
+    that breaks the moment a new prefix lands. Each concrete LockTarget
+    pins its priority in the class so the nested-acquisition contract is
+    decidable from the type system alone, and
+    `Transaction.acquire_additional_lock(lock)` enforces strict ascending
+    priority."""
+    PRIORITY: ClassVar[int]  # lower = outer; nested calls must use strictly higher priority
 
 @dataclass(frozen=True)
 class TaskSeqAllocation(LockTarget):
     """tasks/_crud.py: serializes seq_num allocation per project.
     Postgres: SELECT ... FOR UPDATE on projects(id = project_id), or
     pg_advisory_xact_lock(hashtext('task_seq:' || project_id)) when the
-    project row is the resource being created in the same txn."""
+    project row is the resource being created in the same txn.
+    Standalone path (no nesting) — PRIORITY between subtree-cascade and session locks."""
+    PRIORITY: ClassVar[int] = 200
     project_id: str
 
 @dataclass(frozen=True)
@@ -2078,7 +2090,9 @@ class DispatchMutexRow(LockTarget):
     would lock nothing and let two contenders both observe no lease. Postgres
     therefore uses a transaction-scoped advisory lock keyed by task_id, which
     serializes the read-then-upsert path even when the row does not yet exist:
-    Postgres: SELECT pg_advisory_xact_lock(hashtext('dispatch_mutex:' || task_id))."""
+    Postgres: SELECT pg_advisory_xact_lock(hashtext('dispatch_mutex:' || task_id)).
+    Standalone path (no nesting)."""
+    PRIORITY: ClassVar[int] = 300
     task_id: str
 
 @dataclass(frozen=True)
@@ -2089,7 +2103,9 @@ class SessionRegistration(LockTarget):
     project_id, session_type), which is what the lookup branch reads.
     Postgres: pg_advisory_xact_lock(hashtext('session_register:' ||
         external_id || '|' || machine_id || '|' || source || '|' ||
-        coalesce(project_id, '') || '|' || session_type))."""
+        coalesce(project_id, '') || '|' || session_type)).
+    Inner lock when called from create_web_chat_session (PRIORITY > WebChatSessionBootstrap)."""
+    PRIORITY: ClassVar[int] = 600
     external_id: str
     machine_id: str
     source: str
@@ -2101,14 +2117,18 @@ class SessionRecoveryByProject(LockTarget):
     """sessions/_crud.py::register() any-project recovery branch: serializes
     the project-scoped recovery scan. Keyed by project_id alone because
     recovery merges across all sessions in the project.
-    Postgres: pg_advisory_xact_lock(hashtext('session_recovery:' || project_id))."""
+    Postgres: pg_advisory_xact_lock(hashtext('session_recovery:' || project_id)).
+    Inner lock when called from create_web_chat_session (PRIORITY > WebChatSessionBootstrap)."""
+    PRIORITY: ClassVar[int] = 700
     project_id: str
 
 @dataclass(frozen=True)
 class SystemSessionBootstrap(LockTarget):
     """sessions/_constants.py: protects the one-time system-session insert.
     Postgres: pg_advisory_xact_lock(hashtext('system_session_bootstrap'))
-    — global, no row, idempotent across daemon starts."""
+    — global, no row, idempotent across daemon starts.
+    Standalone path (no nesting)."""
+    PRIORITY: ClassVar[int] = 800
 
 @dataclass(frozen=True)
 class WebChatSessionBootstrap(LockTarget):
@@ -2120,7 +2140,10 @@ class WebChatSessionBootstrap(LockTarget):
     follow-up update against any concurrent updater of the same row.
     Postgres: pg_advisory_xact_lock(hashtext('web_chat_session:' ||
         external_id || '|' || machine_id || '|' || source || '|' ||
-        coalesce(project_id, '') || '|' || session_type))."""
+        coalesce(project_id, '') || '|' || session_type)).
+    Outer lock for the create_web_chat_session → register flow
+    (PRIORITY < SessionRegistration / SessionRecoveryByProject)."""
+    PRIORITY: ClassVar[int] = 500
     external_id: str
     machine_id: str
     source: str
@@ -2139,7 +2162,9 @@ class TaskSubtreeCascade(LockTarget):
     at project-level granularity. False contention between unrelated
     subtrees within the same project is accepted as the price of correctness;
     the build-controls cascade is rare relative to other write traffic.
-    Postgres: pg_advisory_xact_lock(hashtext('task_subtree_cascade:' || project_id))."""
+    Postgres: pg_advisory_xact_lock(hashtext('task_subtree_cascade:' || project_id)).
+    Standalone path (no nesting)."""
+    PRIORITY: ClassVar[int] = 400
     project_id: str
 
 class HubDatabase(Protocol):
@@ -2199,31 +2224,31 @@ def _enter_transaction(
     Nested transaction_immediate(lock) inside an existing immediate transaction
     on the same adapter does NOT silently reuse the outer transaction. It
     routes through `Transaction.acquire_additional_lock(lock)`, which enforces
-    a strict sorted-key acquisition contract:
+    a strict ascending-PRIORITY acquisition contract:
 
-    - Each Transaction tracks the set of advisory-lock keys already held
-      (the outer transaction's key and any subsequently acquired keys).
-    - acquire_additional_lock(lock) computes the new key and compares it to
-      the maximum already-held key. If the new key sorts STRICTLY ABOVE the
-      max, the lock is acquired in-order and added to the held set.
-    - If the new key sorts at or below the max, the contract is violated:
-      the call raises LockAcquisitionOrderError with both keys in the message.
-      The caller MUST roll back the entire outer transaction and retry from
-      scratch with locks acquired in sorted order (typically by reordering
-      source-level transaction_immediate calls or pre-sorting the LockTarget
-      pair before opening the outer block).
-    - This converts AB/BA deadlocks into deterministic fail-fast errors that
-      the test suite can pin and that prod can retry.
+    - Each Transaction tracks the highest LockTarget.PRIORITY already held
+      (the outer transaction's lock and any subsequently acquired locks).
+    - acquire_additional_lock(lock) compares lock.PRIORITY to the maximum
+      already-held priority. If the new priority is STRICTLY GREATER, the
+      lock is acquired and the max is updated.
+    - If the new priority is at or below the max, the contract is violated:
+      the call raises LockAcquisitionOrderError with both PRIORITY values
+      and lock-key strings in the message. The caller MUST roll back the
+      entire outer transaction and retry with the correct priority order.
+    - This converts AB/BA deadlocks into deterministic fail-fast errors.
 
-    Source-level convention: when a code path knows it will need locks A
-    and B, it opens a single transaction_immediate(LockTargetSet(A, B))
-    (a future helper) or pre-sorts the calls so the outer is the lower-key
-    target and the inner is the higher-key target. The two existing
-    multi-lock paths (WebChatSessionBootstrap + SessionRegistration on
-    register; WebChatSessionBootstrap + SessionRecoveryByProject on
-    register's recovery branch) already follow this convention because the
-    outer key prefix 'web_chat_session:' sorts below 'session_register:'
-    and 'session_recovery:'."""
+    Priority assignments are pinned in the LockTarget dataclass definitions
+    (see ClassVar[int] PRIORITY on each subclass) and chosen so the existing
+    nested paths acquire in ascending order:
+      WebChatSessionBootstrap (500) →
+        SessionRegistration (600) on the lookup branch
+        SessionRecoveryByProject (700) on the recovery branch
+    The non-nested LockTargets (TaskSeqAllocation=200, DispatchMutexRow=300,
+    TaskSubtreeCascade=400, SystemSessionBootstrap=800) interleave at distinct
+    priorities so future nesting can be added without renumbering. New
+    LockTarget classes must pick a priority that fits the existing partial
+    order; the §3.8 PR template asks the author to declare the intended
+    nesting position."""
     current = dict(_AMBIENT.get())
     existing = current.get(id(adapter))
     if existing is not None:
