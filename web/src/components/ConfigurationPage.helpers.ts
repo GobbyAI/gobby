@@ -33,27 +33,35 @@ export function getSchemaProperties(schema: Record<string, unknown>): Record<str
 }
 
 export function getSchemaType(fieldSchema: Record<string, unknown>): string {
-  const types: string[] = []
-  const addType = (value: unknown) => {
-    const values = Array.isArray(value) ? value : [value]
-    for (const item of values) {
-      if (typeof item === 'string' && item !== 'null' && !types.includes(item)) {
-        types.push(item)
-      }
-    }
-  }
-  const addSchemaTypes = (schema: unknown) => {
-    if (!schema || typeof schema !== 'object') return
-    const record = schema as Record<string, unknown>
-    addType(record.type)
-    for (const key of ['anyOf', 'oneOf', 'allOf']) {
-      const variants = record[key]
-      if (Array.isArray(variants)) {
-        variants.forEach(addSchemaTypes)
+  const types = collectSchemaTypes(fieldSchema)
+  return types[0] || 'string'
+}
+
+function collectSchemaTypes(schema: Record<string, unknown>): string[] {
+  const types = new Set<string>()
+  addSchemaType(schema.type, types)
+
+  for (const key of ['anyOf', 'oneOf', 'allOf']) {
+    const variants = schema[key]
+    if (!Array.isArray(variants)) continue
+    for (const variant of variants) {
+      if (variant && typeof variant === 'object') {
+        for (const type of collectSchemaTypes(variant as Record<string, unknown>)) {
+          types.add(type)
+        }
       }
     }
   }
 
-  addSchemaTypes(fieldSchema)
-  return types[0] || 'string'
+  return [...types]
+}
+
+function addSchemaType(value: unknown, types: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) addSchemaType(item, types)
+    return
+  }
+  if (typeof value === 'string' && value !== 'null') {
+    types.add(value)
+  }
 }

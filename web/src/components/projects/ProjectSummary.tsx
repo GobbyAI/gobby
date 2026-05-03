@@ -43,7 +43,7 @@ interface TaskStats {
 
 type TaskStatus = keyof TaskStats
 
-const STATUS_ORDER: TaskStatus[] = [
+const TASK_STATUS_ORDER: readonly TaskStatus[] = [
   'open',
   'in_progress',
   'needs_review',
@@ -144,7 +144,7 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
   }, [project.id])
 
   const activeStatuses = taskStats
-    ? STATUS_ORDER.filter(s => (taskStats[s] || 0) > 0)
+    ? TASK_STATUS_ORDER.filter(s => (taskStats[s] || 0) > 0)
     : []
 
   return (

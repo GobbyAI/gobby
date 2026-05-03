@@ -32,7 +32,8 @@ def _sync_bundled(db: LocalDatabase) -> None:
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     sync_bundled_rules(db, get_bundled_rules_path())
-    # Test-only source bypass: source-change validation is the behavior under test.
+    # Test-only bypass: source-change validation is the behavior under test,
+    # and the official update API would only add unrelated workflow policy checks.
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
 

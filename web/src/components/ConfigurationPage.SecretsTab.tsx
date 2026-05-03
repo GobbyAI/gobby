@@ -131,7 +131,7 @@ export function SecretsTab({ secrets, categories, onSave, onDelete, onRefresh }:
           <input
             className={INPUT_CLS}
             type="password"
-            aria-label="Secret value"
+            aria-label={editingName ? 'New secret value' : 'Secret value'}
             placeholder={editingName ? 'Enter new value' : 'Secret value'}
             value={formValue}
             onChange={e => setFormValue(e.target.value)}

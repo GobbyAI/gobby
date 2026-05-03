@@ -65,40 +65,46 @@ def _load_run(name: str, data: dict[str, Any]) -> ScenarioRun:
 
 def _assert_contract(result: SkillScenarioResult, assertions: dict[str, Any]) -> None:
     assert result.skill not in result.baseline.loaded_skills, (
-        f"{result.skill}: baseline unexpectedly loaded {result.baseline.loaded_skills}"
+        f"{result.skill}: baseline unexpectedly loaded skill; "
+        f"actual={result.baseline.loaded_skills!r}"
     )
     assert result.skill in result.loaded.loaded_skills, (
-        f"{result.skill}: loaded skills {result.loaded.loaded_skills} missing expected skill"
+        f"{result.skill}: loaded run did not include skill; "
+        f"actual={result.loaded.loaded_skills!r}"
     )
     assert result.has_behavioral_delta, (
-        f"{result.skill}: expected behavioral delta between excluded and loaded runs"
+        f"{result.skill}: expected loaded behavior to differ from baseline; "
+        f"baseline={result.baseline.actions!r} loaded={result.loaded.actions!r}"
     )
 
     loaded_order = tuple(assertions.get("loaded_action_order", ()))
     if loaded_order:
         assert result.loaded.action_names == loaded_order, (
-            f"{result.skill}: loaded action order {result.loaded.action_names} "
-            f"!= expected {loaded_order}"
+            f"{result.skill}: loaded action order mismatch; "
+            f"expected={loaded_order!r} actual={result.loaded.action_names!r}"
         )
 
     baseline_order = tuple(assertions.get("baseline_action_order", ()))
     if baseline_order:
         assert result.baseline.action_names == baseline_order, (
-            f"{result.skill}: baseline action order {result.baseline.action_names} "
-            f"!= expected {baseline_order}"
+            f"{result.skill}: baseline action order mismatch; "
+            f"expected={baseline_order!r} actual={result.baseline.action_names!r}"
         )
 
     for text in assertions.get("baseline_text_contains", ()):
         assert str(text) in result.baseline.combined_text, (
-            f"{result.skill}: baseline text missing expected fragment {text!r}"
+            f"{result.skill}: baseline text missing {text!r}; "
+            f"actual={result.baseline.combined_text!r}"
         )
 
     for text in assertions.get("loaded_text_contains", ()):
         assert str(text) in result.loaded.combined_text, (
-            f"{result.skill}: loaded text missing expected fragment {text!r}"
+            f"{result.skill}: loaded text missing {text!r}; "
+            f"actual={result.loaded.combined_text!r}"
         )
 
     for text in assertions.get("loaded_text_forbids", ()):
         assert str(text) not in result.loaded.combined_text, (
-            f"{result.skill}: loaded text included forbidden fragment {text!r}"
+            f"{result.skill}: loaded text contained forbidden {text!r}; "
+            f"actual={result.loaded.combined_text!r}"
         )
