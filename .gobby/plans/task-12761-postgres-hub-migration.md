@@ -2681,7 +2681,20 @@ Example test names:
 - `test_after_commit_async_reader_uses_committed_state`
 - `test_savepoint_callback_rollback_safe_with_pgbouncer`
 
-Audit report template:
+Audit report format and provenance:
+
+`docs/postgres-concurrency-audit.md` carries a frontmatter block at the top of the document with the v1 audit's provenance so the post-Phase-5 re-audit (§6.0a) has a reliable lower-bound git ref to diff against:
+
+```yaml
+---
+audit_version: 1
+phase_baseline: P4
+audit_commit: <40-char SHA of the commit at which the §4.7 audit was performed>
+audited_at: <ISO 8601 UTC>
+---
+```
+
+The `audit_commit` SHA is the canonical reference §6.0a reads as its `prior_audit_commit` — there is no symbolic `4.7-baseline` ref; the SHA itself is the contract. Followed by the per-callback table:
 
 | Callback Site | Risk Level | Read-Modify-Write Risk | Isolation Assumption | Constraint Handling | Remediation | Test Coverage |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -2697,7 +2710,7 @@ Cutover is blocked until:
 
 **Acceptance:**
 
-- 4.7.1 — Concurrency audit report committed; every High and Medium finding has a remediation PR merged and is covered by an MVCC integration test. file: `docs/postgres-concurrency-audit.md`.
+- 4.7.1 — Concurrency audit report committed with v1 provenance frontmatter (`audit_version: 1`, `phase_baseline: P4`, `audit_commit: <40-char SHA>`, `audited_at: <ISO 8601 UTC>`); every High and Medium finding has a remediation PR merged and is covered by an MVCC integration test. The recorded `audit_commit` SHA is the lower-bound git reference §6.0a reads as `prior_audit_commit` for the post-Phase-5 diff. file: `docs/postgres-concurrency-audit.md`.
 
 ## P5 Phase 5: One-shot SQLite → PostgreSQL migration tool
 `kind: framing`
@@ -2982,21 +2995,21 @@ that rollback safety is reduced.
 ### 6.0a Post-Phase-5 concurrency re-audit [category: research] (depends: P5, 4.7)
 `kind: deliverable`
 
-Target: `docs/postgres-concurrency-audit.md`, `tests/storage/test_postgres_mvcc.py`, `docs/runbooks/postgres-cutover.md`, `src/gobby/storage/`, `src/gobby/cli/postgres.py`, `src/gobby/storage/migration/`, and any remediation source files identified by the re-audit pass (concrete file paths captured in the audit report itself; see §4.7's per-callback inventory format for the schema each new entry must satisfy).
+Target: `docs/postgres-concurrency-audit.md`, `tests/storage/test_postgres_mvcc.py`, `src/gobby/storage/`, `src/gobby/cli/postgres.py`, `src/gobby/storage/migration/`, and any remediation source files identified by the re-audit pass (concrete file paths captured in the audit report itself; see §4.7's per-callback inventory format for the schema each new entry must satisfy). The cutover runbook (`docs/runbooks/postgres-cutover.md`) is **owned by §6.1**, not this section — §6.0a only produces the post-Phase-5 audit report; §6.1 reads the report's `audit_commit` SHA and records it in the runbook's pre-activation checklist as part of §6.1's own deliverable.
 
 §4.7 establishes the audit methodology, risk classification, integration-test scenarios, and remediation playbook against the codebase that exists at the end of Phase 4. **§6.0a is the dedicated deliverable that re-runs that audit against the integrated Phase 5 importer code** so the cutover-blocking gate referenced by §6.1 is the post-Phase-5 report version, not the original. Without this section, an expansion agent assigned only §6.0 (pgAudit/write-capture) would have no contract to perform the re-audit and §6.1 could be satisfied while skipping the load-bearing post-Phase-5 review entirely.
 
 Re-audit scope:
 
-- Re-run §4.7's per-callback-site inventory against every `after_commit`, `_run_after_commit_callbacks`, `savepoint()`, `conn.in_transaction`, and read-modify-write update site — the same set §4.7 originally audited — but evaluated against the **integrated end-of-Phase-5 codebase**. The integration delta MUST include §5.1's importer transaction (`SET CONSTRAINTS ALL DEFERRED`, the all-or-nothing import transaction, the deferred-FK commit point), §5.1's per-mode recovery preflights (the `gobby_install_ownership` read in `--dry-run` and the `imported_from_sqlite_at` stale-marker probe), §5.2's validation-time read-modify-write paths (BM25 index coverage probes, sequence reseed assertions, CHECK/UNIQUE/NOT NULL count-and-sample queries), §5.3's `setval(..., true)` reseeder, and any new callsite introduced by an intervening task on the §4.7 → §6.0a path (the audit MUST diff `git log --oneline 4.7-baseline..HEAD -- src/gobby/storage/ src/gobby/cli/postgres.py src/gobby/storage/migration/` against the §4.7 baseline commit recorded in the original audit report and enumerate every new callsite in the diff).
+- Re-run §4.7's per-callback-site inventory against every `after_commit`, `_run_after_commit_callbacks`, `savepoint()`, `conn.in_transaction`, and read-modify-write update site — the same set §4.7 originally audited — but evaluated against the **integrated end-of-Phase-5 codebase**. The integration delta MUST include §5.1's importer transaction (`SET CONSTRAINTS ALL DEFERRED`, the all-or-nothing import transaction, the deferred-FK commit point), §5.1's per-mode recovery preflights (the `gobby_install_ownership` read in `--dry-run` and the `imported_from_sqlite_at` stale-marker probe), §5.2's validation-time read-modify-write paths (BM25 index coverage probes, sequence reseed assertions, CHECK/UNIQUE/NOT NULL count-and-sample queries), §5.3's `setval(..., true)` reseeder, and any new callsite introduced by an intervening task on the §4.7 → §6.0a path. The audit reads the v1 audit's `audit_commit` SHA from `docs/postgres-concurrency-audit.md`'s frontmatter (per §4.7's report format) and runs `git log --oneline <v1-audit_commit-SHA>..HEAD -- src/gobby/storage/ src/gobby/cli/postgres.py src/gobby/storage/migration/` against that SHA, enumerating every new callsite in the diff. There is no symbolic `4.7-baseline` git ref; the v1 audit's recorded `audit_commit` SHA is the contract.
 - For every new callsite found in the diff, classify it under §4.7's risk-level criteria (High/Medium/Low), produce a remediation PR for every High and Medium item using §4.7's playbook (move read inside originating transaction, force fresh `BEGIN` on reading session, or move into post-snapshot-safe transaction), and add a corresponding MVCC integration test under `tests/storage/test_postgres_mvcc.py` covering the same five required-scenarios list §4.7 enumerates.
 - Re-evaluate every entry that was already on §4.7's report against the integrated codebase: any item whose risk classification changed (e.g. Low → Medium because Phase 5 introduced a concurrent reader) is treated as a new finding for remediation purposes.
 
 Report format and provenance:
 
-- Append-only update to `docs/postgres-concurrency-audit.md`: the re-audit MUST add a new section titled `## Post-Phase-5 re-audit` with a frontmatter block recording `audit_version: 2`, `phase_baseline: P5`, `audit_commit: <40-char SHA>` (the commit at which the re-audit was performed), `prior_audit_commit: <40-char SHA>` (the §4.7 baseline commit), and `audited_at: <ISO 8601 UTC>`. The original §4.7 sections remain unchanged for traceability — the re-audit is additive, not destructive.
+- Append-only update to `docs/postgres-concurrency-audit.md`: the re-audit MUST add a new section titled `## Post-Phase-5 re-audit` with a frontmatter block recording `audit_version: 2`, `phase_baseline: P5`, `audit_commit: <40-char SHA>` (the commit at which the re-audit was performed), `prior_audit_commit: <40-char SHA>` (read verbatim from the v1 audit's `audit_commit` frontmatter per §4.7's report format), and `audited_at: <ISO 8601 UTC>`. The original §4.7 sections remain unchanged for traceability — the re-audit is additive, not destructive.
 - The new section carries the same callback-site table format §4.7 establishes (`| Callback Site | Risk Level | Read-Modify-Write Risk | Isolation Assumption | Constraint Handling | Remediation | Test Coverage |`) for every new callsite plus every reclassified original-callsite. A row that did not change since §4.7 is omitted (the v1 report still covers it).
-- Cross-link the new section from `docs/runbooks/postgres-cutover.md` so the runbook explicitly references the post-Phase-5 report version, not the original.
+- The cutover runbook's pre-activation checklist references the post-Phase-5 `audit_commit` SHA — that wiring belongs to §6.1, which owns the runbook file. §6.0a's responsibility ends at producing the report with the recorded SHA in its `## Post-Phase-5 re-audit` frontmatter.
 
 Cutover blocking criteria for the post-Phase-5 report (these are what §6.1 actually gates on):
 
@@ -3004,15 +3017,14 @@ Cutover blocking criteria for the post-Phase-5 report (these are what §6.1 actu
 - All remediation PRs identified by the re-audit are merged.
 - All new MVCC integration tests added by the re-audit pass in CI for three consecutive runs.
 - No known broken `savepoint()` / `conn.in_transaction` usages remain after the re-audit.
-- The post-Phase-5 audit's `audit_commit` SHA is recorded in `docs/runbooks/postgres-cutover.md` step 7's pre-activation checklist (so the runbook reader can verify that the report they're looking at is the integrated post-Phase-5 version, not a stale §4.7-baseline copy).
+- The post-Phase-5 audit's `audit_commit` SHA is the value §6.1's pre-activation checklist consumes; §6.0a's contract is to record that SHA in the `## Post-Phase-5 re-audit` frontmatter, and §6.1 is responsible for echoing it into the runbook step 7 checklist.
 
-Verification: a focused test asserts `docs/postgres-concurrency-audit.md` parses cleanly and contains the `## Post-Phase-5 re-audit` section with all required frontmatter keys; an integration test runs `pytest tests/storage/test_postgres_mvcc.py -v` and asserts every `test_*` function added by the re-audit passes; `docs/runbooks/postgres-cutover.md` includes the post-Phase-5 `audit_commit` SHA and links the post-Phase-5 section.
+Verification: a focused test asserts `docs/postgres-concurrency-audit.md` parses cleanly and contains the `## Post-Phase-5 re-audit` section with all required frontmatter keys; an integration test runs `pytest tests/storage/test_postgres_mvcc.py -v` and asserts every `test_*` function added by the re-audit passes.
 
 **Acceptance:**
 
-- 6.0a.1 — `docs/postgres-concurrency-audit.md` carries an additive `## Post-Phase-5 re-audit` section with `audit_version: 2`, `phase_baseline: P5`, recorded `audit_commit` and `prior_audit_commit` SHAs, and one row per new-or-reclassified callsite. file: `docs/postgres-concurrency-audit.md`. behavior: the report enumerates every callsite introduced or reclassified by the §4.7 → end-of-Phase-5 git diff against `src/gobby/storage/`, `src/gobby/cli/postgres.py`, and `src/gobby/storage/migration/`.
+- 6.0a.1 — `docs/postgres-concurrency-audit.md` carries an additive `## Post-Phase-5 re-audit` section with `audit_version: 2`, `phase_baseline: P5`, recorded `audit_commit` and `prior_audit_commit` SHAs, and one row per new-or-reclassified callsite. The recorded `audit_commit` SHA is the value §6.1 reads into its pre-activation checklist. file: `docs/postgres-concurrency-audit.md`. behavior: the report enumerates every callsite introduced or reclassified by the v1-audit-commit-to-end-of-Phase-5 git diff against `src/gobby/storage/`, `src/gobby/cli/postgres.py`, and `src/gobby/storage/migration/`.
 - 6.0a.2 — Every High and Medium finding in the post-Phase-5 re-audit has a remediation PR merged and is covered by an MVCC integration test in `tests/storage/test_postgres_mvcc.py`. file: `tests/storage/test_postgres_mvcc.py`. test: `tests/storage/test_postgres_mvcc.py` passes for three consecutive CI runs.
-- 6.0a.3 — `docs/runbooks/postgres-cutover.md` step 7 records the post-Phase-5 `audit_commit` SHA in its pre-activation checklist and links the `## Post-Phase-5 re-audit` section so cutover blocks on the integrated post-Phase-5 report, not the §4.7 baseline. file: `docs/runbooks/postgres-cutover.md`.
 
 ### 6.1 Cutover runbook [category: docs] (depends: 6.0, 6.0a)
 `kind: deliverable`
@@ -3060,11 +3072,12 @@ Explicit watch-list for the validation window:
 - latency regressions > 2× baseline on storage-bound endpoints
 - health of the `pgAudit` append-only write log enabled in step 7
 
-Do not enter the validation window until the **§6.0a post-Phase-5 concurrency re-audit** is green: the post-Phase-5 audit report (`docs/postgres-concurrency-audit.md` `## Post-Phase-5 re-audit` section, `audit_version: 2`) has zero unresolved High or Medium items, every remediation PR it lists is merged, every MVCC integration test it adds passes for three consecutive CI runs, and the post-Phase-5 `audit_commit` SHA recorded in step 7's pre-activation checklist matches the SHA in the report's frontmatter. The original §4.7 v1 audit alone does not unblock cutover — the integrated post-Phase-5 report is what §6.1 gates on, per §6.0a.3.
+Do not enter the validation window until the **§6.0a post-Phase-5 concurrency re-audit** is green: the post-Phase-5 audit report (`docs/postgres-concurrency-audit.md` `## Post-Phase-5 re-audit` section, `audit_version: 2`) has zero unresolved High or Medium items, every remediation PR it lists is merged, every MVCC integration test it adds passes for three consecutive CI runs, and the post-Phase-5 `audit_commit` SHA recorded in step 7's pre-activation checklist matches the SHA in the report's frontmatter. The original §4.7 v1 audit alone does not unblock cutover — the integrated post-Phase-5 report is what §6.1 gates on, per acceptance 6.1.2 below.
 
 **Acceptance:**
 
 - 6.1.1 — Cutover runbook documented end-to-end. file: `docs/runbooks/postgres-cutover.md`.
+- 6.1.2 — Step 7's pre-activation checklist records the §6.0a post-Phase-5 `audit_commit` SHA (read from the `## Post-Phase-5 re-audit` frontmatter in `docs/postgres-concurrency-audit.md`) and links the post-Phase-5 section so cutover blocks on the integrated post-Phase-5 report version, not the §4.7 v1 baseline. The runbook prose makes the contract reader-explicit: a stale §4.7-baseline copy of the audit report does not unblock cutover. file: `docs/runbooks/postgres-cutover.md`.
 
 ### 6.2 Rollback runbook [category: docs] (depends: 6.1)
 `kind: deliverable`
