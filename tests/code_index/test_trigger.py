@@ -256,7 +256,6 @@ async def test_flush_cancel_before_subprocess_assignment_is_clean(
     """Cancellation before create_subprocess_exec assigns proc should not raise UnboundLocalError."""
     root_key = trigger._root_key("/repo")
     trigger._pending_by_root[root_key] = {"/src/foo.py"}
-    trigger._root_paths_by_root[root_key] = root_key
 
     with (
         patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),

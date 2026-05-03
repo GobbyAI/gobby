@@ -23,6 +23,11 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
     if (!node) return
 
     const previouslyFocused = document.activeElement as HTMLElement | null
+    const hadTabIndex = node.hasAttribute('tabindex')
+    const previousTabIndex = node.getAttribute('tabindex')
+    if (!hadTabIndex) {
+      node.setAttribute('tabindex', '-1')
+    }
 
     const focusables = () =>
       Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
@@ -61,6 +66,11 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
     node.addEventListener('keydown', handleKey)
     return () => {
       node.removeEventListener('keydown', handleKey)
+      if (hadTabIndex && previousTabIndex !== null) {
+        node.setAttribute('tabindex', previousTabIndex)
+      } else {
+        node.removeAttribute('tabindex')
+      }
       if (previouslyFocused && document.contains(previouslyFocused)) {
         previouslyFocused.focus()
       }

@@ -779,7 +779,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
         # Register GitHub issue triage reconciliation handlers.
         try:
             from gobby.github_triage.cron import register_github_triage_cron
-            from gobby.storage.projects import LocalProjectManager
 
             registered = register_github_triage_cron(
                 cron_storage=runner.cron_storage,
@@ -787,7 +786,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 db=runner.database,
                 mcp_manager=runner.mcp_proxy,
                 task_manager=runner.task_manager,
-                project_manager=LocalProjectManager(runner.database),
+                project_manager=pm,
                 memory_manager=runner.memory_manager,
                 secret_store=runner.secret_store,
             )

@@ -45,12 +45,28 @@ export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
     }
   }
 
+  const handleRestart = async () => {
+    setErrors([])
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        throw new Error(`Restart failed: ${res.status}`)
+      }
+      setShowRestart(false)
+    } catch (err) {
+      console.error('Failed to restart daemon:', err)
+      setErrors(['Failed to restart daemon'])
+    }
+  }
+
   return (
     <div className={YAML_CLS}>
       {showRestart && (
         <div className={RESTART_BANNER_CLS}>
           <span>Configuration saved to database. Restart the daemon to apply changes.</span>
-          <button type="button" className={RESTART_BTN_CLS} onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
+          <button type="button" className={RESTART_BTN_CLS} onClick={handleRestart}>
             Restart Now
           </button>
         </div>

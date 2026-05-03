@@ -350,7 +350,6 @@ class GitHubTriageStore:
                 content_hash = excluded.content_hash,
                 verdict = excluded.verdict,
                 decision_json = excluded.decision_json,
-                task_id = excluded.task_id,
                 vector_point_id = excluded.vector_point_id,
                 dedup_issue_key = excluded.dedup_issue_key,
                 source = excluded.source,

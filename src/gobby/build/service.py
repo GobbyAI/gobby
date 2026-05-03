@@ -509,25 +509,28 @@ def _cascade_target_branch_to_subtree(
 ) -> None:
     if not target_branch:
         return
-    rows = task_manager.db.fetchall(
-        """
-        WITH RECURSIVE subtree(id) AS (
-            SELECT id
-            FROM tasks
-            WHERE parent_task_id = ?
-            UNION ALL
-            SELECT child.id
-            FROM tasks child
-            JOIN subtree parent ON child.parent_task_id = parent.id
+    with task_manager.db.transaction() as conn:
+        conn.execute(
+            """
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id
+                FROM tasks
+                WHERE parent_task_id = ?
+                UNION ALL
+                SELECT child.id
+                FROM tasks child
+                JOIN subtree parent ON child.parent_task_id = parent.id
+            )
+            INSERT INTO task_artifacts (task_id, target_branch, updated_at)
+            SELECT id, ?, datetime('now')
+            FROM subtree
+            WHERE 1
+            ON CONFLICT(task_id) DO UPDATE SET
+                target_branch = excluded.target_branch,
+                updated_at = datetime('now')
+            """,
+            (epic_id, target_branch),
         )
-        SELECT id
-        FROM tasks
-        WHERE id IN (SELECT id FROM subtree)
-        """,
-        (epic_id,),
-    )
-    for row in rows:
-        task_manager.artifacts.set_artifacts_atomic(row["id"], target_branch=target_branch)
 
 
 def _current_stage_name(

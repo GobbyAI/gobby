@@ -42,6 +42,7 @@ export function SchemaField({ name, fieldSchema, value, onChange, path, secretKe
   const fullPath = path ? `${path}.${name}` : name
 
   if (enumValues) {
+    const hasEnumValues = enumValues.length > 0
     return (
       <div className={FORM_FIELD_CLS}>
         <label className={FIELD_LABEL_CLS}>{formatFieldName(name)}</label>
@@ -49,11 +50,16 @@ export function SchemaField({ name, fieldSchema, value, onChange, path, secretKe
         <select
           className={SELECT_CLS}
           value={String(value ?? '')}
+          disabled={!hasEnumValues}
           onChange={e => onChange(fullPath, e.target.value)}
         >
-          {enumValues.map(v => (
-            <option key={v} value={v}>{v}</option>
-          ))}
+          {hasEnumValues ? (
+            enumValues.map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))
+          ) : (
+            <option value="">No options available</option>
+          )}
         </select>
       </div>
     )
@@ -134,19 +140,26 @@ export function SchemaSection({ name, sectionSchema, values, onChange, parentPat
   const props = getSchemaProperties(sectionSchema)
   const description = sectionSchema.description as string | undefined
   const path = parentPath ? `${parentPath}.${name}` : name
+  const bodyId = `schema-section-${path.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 
   const sectionValues = (values || {}) as Record<string, unknown>
 
   return (
     <div className={FORM_SECTION_CLS}>
-      <div className={SECTION_HEADER_CLS} onClick={() => setOpen(!open)}>
+      <button
+        type="button"
+        className={SECTION_HEADER_CLS}
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={bodyId}
+      >
         <div>
           <span className={SECTION_TITLE_CLS}>{formatFieldName(name)}</span>
           {description && <span className={cn(FIELD_HELP_CLS, 'ml-2')}>{description}</span>}
         </div>
         <span className={cn(SECTION_TOGGLE_CLS, open && SECTION_TOGGLE_OPEN_CLS)}>&#9654;</span>
-      </div>
-      <div className={cn(SECTION_BODY_CLS, !open && SECTION_BODY_COLLAPSED_CLS)}>
+      </button>
+      <div id={bodyId} className={cn(SECTION_BODY_CLS, !open && SECTION_BODY_COLLAPSED_CLS)}>
         {Object.entries(props).map(([fieldName, fieldSchema]) => {
           const fs = fieldSchema as Record<string, unknown>
           const fieldType = getSchemaType(fs)

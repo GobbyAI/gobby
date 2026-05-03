@@ -57,9 +57,9 @@ export const SOURCE_LABELS: Record<string, string> = {
 }
 
 export const ISOLATION_COLORS: Record<string, string> = {
-  clone: '#ef4444',
-  worktree: '#eab308',
-  none: '#6b7280',
+  clone: 'var(--color-error)',
+  worktree: 'var(--color-warning-foreground)',
+  none: 'var(--text-muted)',
 }
 
 export const DEFAULT_FORM: AgentFormData = {
@@ -78,6 +78,7 @@ export function agentDefToYaml(d: AgentDefInfo['definition']): string {
   if (d.instructions) obj.instructions = d.instructions
   obj.provider = d.provider
   if (d.model) obj.model = d.model
+  if (d.is_local !== undefined && d.is_local !== null) obj.is_local = d.is_local
   if (d.reasoning_effort) obj.reasoning_effort = d.reasoning_effort
   if (d.reasoning_required !== undefined && d.reasoning_required !== null) {
     obj.reasoning_required = d.reasoning_required
@@ -88,8 +89,25 @@ export function agentDefToYaml(d: AgentDefInfo['definition']): string {
   obj.base_branch = d.base_branch
   obj.timeout = d.timeout
   obj.max_turns = d.max_turns
+  if (d.default_workflow) obj.default_workflow = d.default_workflow
   if (d.workflows) obj.workflows = d.workflows
+  if (d.lifecycle_variables && Object.keys(d.lifecycle_variables).length > 0) {
+    obj.lifecycle_variables = d.lifecycle_variables
+  }
+  if (d.default_variables && Object.keys(d.default_variables).length > 0) {
+    obj.default_variables = d.default_variables
+  }
   if (d.sandbox) obj.sandbox = d.sandbox
+  if (d.skill_profile) obj.skill_profile = d.skill_profile
+  if (d.steps && d.steps.length > 0) obj.steps = d.steps
+  if (d.step_variables && Object.keys(d.step_variables).length > 0) {
+    obj.step_variables = d.step_variables
+  }
+  if (d.exit_condition) obj.exit_condition = d.exit_condition
+  if (d.blocked_tools && d.blocked_tools.length > 0) obj.blocked_tools = d.blocked_tools
+  if (d.blocked_mcp_tools && d.blocked_mcp_tools.length > 0) {
+    obj.blocked_mcp_tools = d.blocked_mcp_tools
+  }
   return yaml.dump(obj, { lineWidth: 120, noRefs: true })
 }
 

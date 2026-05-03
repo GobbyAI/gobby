@@ -714,7 +714,16 @@ function VariablesTab() {
                 <td className={SECRETS_TD_CLS} data-label="Default Value"><code>{getDisplayValue(v.definition_json)}</code></td>
                 <td className={SECRETS_TD_CLS} data-label="Description">{v.description || '-'}</td>
                 <td className={SECRETS_TD_CLS} data-label="Source">
-                  <span className={cn(PROMPT_BADGE_CLS, PROMPT_BADGE_BG[v.source] ?? '')}>{v.source}</span>
+                  <span
+                    className={cn(
+                      PROMPT_BADGE_CLS,
+                      v.source === 'bundled' || v.source === 'overridden'
+                        ? PROMPT_BADGE_BG[v.source]
+                        : ''
+                    )}
+                  >
+                    {v.source}
+                  </span>
                 </td>
                 <td className={SECRETS_TD_CLS} data-label="Enabled">
                   <button type="button"

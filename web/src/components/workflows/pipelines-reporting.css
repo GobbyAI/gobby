@@ -285,7 +285,7 @@
   padding: 0.625rem 0.75rem;
   margin: 0;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
   max-height: 280px;
   overflow-y: auto;
   overflow-x: auto;

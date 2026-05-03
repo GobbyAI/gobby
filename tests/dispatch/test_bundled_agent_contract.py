@@ -9,6 +9,7 @@ import yaml
 pytestmark = pytest.mark.unit
 
 AGENTS_DIR = Path("src/gobby/install/shared/workflows/agents")
+# Keep this local until the runtime exposes a shared external MCP schema provider.
 EXTERNAL_TOOL_INVENTORY = {
     "github": {
         "create_pull_request",

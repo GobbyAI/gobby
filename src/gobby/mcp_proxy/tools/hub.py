@@ -36,19 +36,6 @@ def _current_stage_join_sql(task_alias: str = "t") -> str:
     """
 
 
-def _task_state_bucket_sql(task_alias: str = "t") -> str:
-    return (
-        "CASE "
-        f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
-        f"WHEN {task_alias}.escalated_at IS NOT NULL "
-        f"OR COALESCE({task_alias}.is_escalated, 0) = 1 THEN 'escalated' "
-        "WHEN current_stage.state = 'ready' THEN 'ready' "
-        "WHEN current_stage.state IN ('in_progress', 'needs_review', 'review_approved') "
-        "THEN current_stage.state "
-        "ELSE 'ready' END"
-    )
-
-
 def _task_state_from_row(row: dict[str, Any]) -> dict[str, Any]:
     closed_at = row["closed_at"]
     escalated_at = row["escalated_at"]
@@ -214,11 +201,10 @@ def create_hub_registry(
             return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
 
         try:
-            state_bucket = _task_state_bucket_sql("t")
             where_clause = ""
             params: tuple[Any, ...]
             if state:
-                where_clause = f"WHERE {state_bucket} = ?"
+                where_clause = "WHERE t.state_bucket = ?"
                 params = (state, limit)
             else:
                 params = (limit,)
@@ -358,10 +344,9 @@ def create_hub_registry(
             stats["project_count"] = project_count_result["count"] if project_count_result else 0
 
             task_stats = db.fetchall(
-                f"""
-                SELECT {_task_state_bucket_sql("t")} as task_state, COUNT(*) as count
+                """
+                SELECT t.state_bucket as task_state, COUNT(*) as count
                 FROM tasks t
-                {_current_stage_join_sql("t")}
                 GROUP BY task_state
                 """
             )

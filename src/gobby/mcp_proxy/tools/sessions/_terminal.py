@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -117,8 +118,8 @@ async def _send_terminal_compaction_command(
     command: str,
     session_id: str,
     *,
-    mark_continuation_pending: Any,
-    clear_continuation_pending: Any,
+    mark_continuation_pending: Callable[[], bool],
+    clear_continuation_pending: Callable[[], bool],
     settle_seconds: float | None = None,
 ) -> tuple[bool, str | None, bool]:
     """Interrupt the active prompt, mark continuation pending, then compact."""

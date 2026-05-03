@@ -43,6 +43,10 @@ class CronExecutor:
         """
         self._handlers[name] = handler
 
+    def has_handler(self, name: str) -> bool:
+        """Return whether a named handler is registered."""
+        return name in self._handlers
+
     async def execute(self, job: CronJob, run: CronRun) -> CronRun:
         """Execute a cron job and update the run record.
 

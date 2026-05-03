@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.build.service import BuildOptions, build
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._crud import list_automation_candidates
 
 pytestmark = pytest.mark.unit
@@ -26,7 +26,7 @@ def _options(**overrides: object) -> BuildOptions:
 def _expanded_epic(
     task_manager: LocalTaskManager,
     project_id: str,
-) -> tuple[object, list[object]]:
+) -> tuple[Task, list[Task]]:
     epic = task_manager.create_task(
         project_id=project_id,
         title="Readiness epic",

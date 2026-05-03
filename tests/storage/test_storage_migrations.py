@@ -40,16 +40,22 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 243
-    assert [version for version, _description, _action in MIGRATIONS] == [240, 241, 242, 243]
+    assert latest_known_version() == 244
+    assert [version for version, _description, _action in MIGRATIONS] == [
+        240,
+        241,
+        242,
+        243,
+        244,
+    ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 5
-    assert get_current_version(db) == 243
+    assert applied == 6
+    assert get_current_version(db) == 244
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243]
+    assert versions == [239, 240, 241, 242, 243, 244]
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -60,9 +66,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 243
+    assert get_current_version(db) == 244
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243]
+    assert versions == [239, 240, 241, 242, 243, 244]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -144,7 +150,8 @@ def test_review_anchor_migration_adds_default_planning_stage(tmp_path) -> None:
     )
     db.execute("INSERT INTO task_stages_registry (name) VALUES ('planning')")
 
-    _run_migration_list(db, current_version=241, migrations=MIGRATIONS)
+    review_anchor_migration = [migration for migration in MIGRATIONS if migration[0] == 242]
+    _run_migration_list(db, current_version=241, migrations=review_anchor_migration)
 
     row = db.fetchone(
         """
@@ -229,7 +236,8 @@ def test_config_store_cleanup_migrates_logging_and_removes_stale_keys(tmp_path) 
     store.set_many(stale_prefix_keys)
     store.set("telemetry.log_level", "warning")
 
-    applied = _run_migration_list(db, current_version=242, migrations=MIGRATIONS)
+    cleanup_migration = [migration for migration in MIGRATIONS if migration[0] == 243]
+    applied = _run_migration_list(db, current_version=242, migrations=cleanup_migration)
 
     assert applied == 1
     assert get_current_version(db) == 243
@@ -454,7 +462,9 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
         "idx_tasks_claimed_session",
         "idx_tasks_closed_session",
         "idx_tasks_dispatch_scan",
+        "idx_tasks_state_bucket",
     }.issubset(_index_names(db, "tasks"))
+    assert "state_bucket" in _column_names(db, "tasks")
     assert "idx_tasks_status" not in _index_names(db, "tasks")
     assert "idx_tasks_lifecycle_stage" not in _index_names(db, "tasks")
     assert {"idx_sessions_prune_status_updated_at", "idx_sessions_parent_session"}.issubset(
@@ -468,6 +478,44 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
     claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
     assert claimed_fk["on_delete"] == "SET NULL"
+
+
+def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:
+    """The persisted task state bucket follows stage and close changes."""
+    from gobby.storage.tasks import LocalTaskManager
+
+    db_path = tmp_path / "task_state_bucket.db"
+    db = LocalDatabase(db_path)
+    run_migrations(db)
+
+    db.execute(
+        """
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (?, ?, datetime('now'), datetime('now'))
+        """,
+        ("proj-state", "State Project"),
+    )
+    manager = LocalTaskManager(db)
+    task = manager.create_task("proj-state", "Track state")
+
+    assert (
+        db.fetchone("SELECT state_bucket FROM tasks WHERE id = ?", (task.id,))["state_bucket"]
+        == "ready"
+    )
+
+    current = manager.stage_states.current_stage(task.id)
+    assert current is not None
+    manager.stage_states.start_stage(task.id, current.stage_name, by_session_id=None)
+    assert (
+        db.fetchone("SELECT state_bucket FROM tasks WHERE id = ?", (task.id,))["state_bucket"]
+        == "in_progress"
+    )
+
+    manager.close_task(task.id, force=True)
+    assert (
+        db.fetchone("SELECT state_bucket FROM tasks WHERE id = ?", (task.id,))["state_bucket"]
+        == "closed"
+    )
 
 
 def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:

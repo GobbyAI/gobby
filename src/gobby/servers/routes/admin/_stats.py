@@ -25,19 +25,6 @@ def _current_stage_join_sql(task_alias: str = "task") -> str:
     """
 
 
-def _task_state_bucket_sql(task_alias: str = "task") -> str:
-    return (
-        "CASE "
-        f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
-        f"WHEN {task_alias}.escalated_at IS NOT NULL "
-        f"OR COALESCE({task_alias}.is_escalated, 0) = 1 THEN 'escalated' "
-        "WHEN current_stage.state = 'ready' THEN 'ready' "
-        "WHEN current_stage.state IN ('in_progress', 'needs_review', 'review_approved') "
-        "THEN current_stage.state "
-        "ELSE 'ready' END"
-    )
-
-
 def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
     return (
         f"{task_alias}.closed_at IS NULL "
@@ -104,10 +91,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             "closed_24h": 0,
         }
         try:
-            state_bucket = _task_state_bucket_sql("task")
             rows = db.fetchall(
-                f"SELECT {state_bucket} as task_state, COUNT(*) as cnt FROM tasks task "
-                f"{_current_stage_join_sql('task')} "
+                "SELECT task.state_bucket as task_state, COUNT(*) as cnt FROM tasks task "
                 f"WHERE 1=1 {time_filter} GROUP BY task_state",
                 tuple(params),
             )

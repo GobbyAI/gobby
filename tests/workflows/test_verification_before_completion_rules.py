@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from gobby.storage.database import LocalDatabase
@@ -14,7 +16,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(tmp_path) -> Iterator[LocalDatabase]:
     database = LocalDatabase(tmp_path / "verification_rules.db")
     run_migrations(database)
     yield database
@@ -53,6 +55,7 @@ def test_schema_lookup_rule_mentions_lifecycle_completion_tools(db, manager) -> 
         "record_pr_opened",
         "record_pr_verdict",
         "record_merge_result",
+        "close_linked_github_issue",
         "merge_apply",
     ):
         assert tool_name in when

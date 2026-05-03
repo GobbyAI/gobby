@@ -189,7 +189,7 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
         >
           <div className={MODAL_HEADER_CLS}>
             <h2 id="channel-type-title" className={MODAL_HEADER_TITLE_CLS}>Add Integration</h2>
-            <button className={MODAL_CLOSE_CLS} onClick={onClose} aria-label="Close">&times;</button>
+            <button type="button" className={MODAL_CLOSE_CLS} onClick={onClose} aria-label="Close">&times;</button>
           </div>
           <div className={MODAL_BODY_CLS}>
             <p className={FORM_HELP_CLS}>Select a platform:</p>

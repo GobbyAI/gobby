@@ -21,6 +21,7 @@ import {
   SELECT_CLS,
   TOOLBAR_BTN_CLS,
   TOOLBAR_BTN_PRIMARY_CLS,
+  YAML_ERRORS_CLS,
 } from './ConfigurationPage.styles'
 
 interface SecretsTabProps {
@@ -28,27 +29,37 @@ interface SecretsTabProps {
   categories: string[]
   onSave: (name: string, value: string, category?: string, description?: string) => Promise<boolean>
   onDelete: (name: string) => Promise<boolean>
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>
 }
 
-export function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) {
+export function SecretsTab({ secrets, categories, onSave, onDelete, onRefresh }: SecretsTabProps) {
   const [showForm, setShowForm] = useState(false)
   const [formName, setFormName] = useState('')
   const [formValue, setFormValue] = useState('')
   const [formCategory, setFormCategory] = useState('general')
   const [formDescription, setFormDescription] = useState('')
   const [editingName, setEditingName] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async () => {
     if (!formName.trim() || !formValue.trim()) return
-    const ok = await onSave(formName.trim(), formValue, formCategory, formDescription || undefined)
-    if (ok) {
-      setShowForm(false)
-      setEditingName(null)
-      setFormName('')
-      setFormValue('')
-      setFormCategory('general')
-      setFormDescription('')
+    setError(null)
+    try {
+      const ok = await onSave(formName.trim(), formValue, formCategory, formDescription || undefined)
+      if (ok) {
+        setShowForm(false)
+        setEditingName(null)
+        setFormName('')
+        setFormValue('')
+        setFormCategory('general')
+        setFormDescription('')
+        await onRefresh()
+      } else {
+        setError('Failed to save secret')
+      }
+    } catch (err) {
+      console.error('Failed to save secret:', err)
+      setError('Failed to save secret')
     }
   }
 
@@ -63,7 +74,18 @@ export function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTab
 
   const handleDelete = async (name: string) => {
     if (!confirm(`Delete secret "${name}"? This cannot be undone.`)) return
-    await onDelete(name)
+    setError(null)
+    try {
+      const ok = await onDelete(name)
+      if (ok) {
+        await onRefresh()
+      } else {
+        setError('Failed to delete secret')
+      }
+    } catch (err) {
+      console.error('Failed to delete secret:', err)
+      setError('Failed to delete secret')
+    }
   }
 
   return (
@@ -126,6 +148,8 @@ export function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTab
           </div>
         </div>
       )}
+
+      {error && <div className={YAML_ERRORS_CLS}>{error}</div>}
 
       {secrets.length === 0 ? (
         <div className={cn(EMPTY_CLS, 'p-10')}>

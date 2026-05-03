@@ -27,5 +27,10 @@ def test_writing_skills_requires_scenario_before_skill_body() -> None:
     result = run_recorded_skill_scenario(SCENARIOS / "writing-skills/create-discipline-skill.yaml")
 
     assert result.baseline.action_names == ("write_skill", "respond")
-    assert result.loaded.action_names[0] == "add_pressure_scenario"
+    assert result.loaded.action_names == (
+        "add_pressure_scenario",
+        "write_skill",
+        "run_skill_tdd",
+        "respond",
+    )
     assert result.has_behavioral_delta

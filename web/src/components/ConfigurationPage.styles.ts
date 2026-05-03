@@ -28,7 +28,7 @@ export const RESTART_BTN_CLS =
 export const FORM_CLS = 'max-w-[800px] p-4 max-md:p-3'
 export const FORM_SECTION_CLS = 'mb-5 overflow-hidden rounded-lg border border-[var(--border)]'
 export const SECTION_HEADER_CLS =
-  'flex cursor-pointer select-none items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5 hover:bg-[var(--bg-tertiary)]'
+  'flex w-full cursor-pointer select-none items-center justify-between border-0 border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5 text-left font-[inherit] hover:bg-[var(--bg-tertiary)]'
 export const SECTION_HEADER_STATIC_CLS =
   'flex select-none items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5'
 export const SECTION_TITLE_CLS = 'text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
@@ -102,7 +102,7 @@ export const PROMPT_CARD_DESC_CLS = 'mt-0.5 text-[length:var(--text-xs)] text-[v
 
 export const PROMPT_BADGE_CLS =
   'shrink-0 rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.3px]'
-export const PROMPT_BADGE_BG: Record<string, string> = {
+export const PROMPT_BADGE_BG: Record<'bundled' | 'overridden', string> = {
   bundled:
     'bg-[color-mix(in_srgb,var(--color-success-foreground)_8%,transparent)] text-[var(--color-success-foreground)]',
   overridden:

@@ -111,6 +111,7 @@ export function getGitStatusColorVar(status: string): string {
   if (status === "A") return "var(--git-status-added)";
   if (status === "D") return "var(--git-status-deleted)";
   if (status === "R") return "var(--git-status-renamed)";
+  if (status === "??") return "var(--git-status-untracked)";
   return "var(--git-status-untracked)";
 }
 

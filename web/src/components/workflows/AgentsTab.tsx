@@ -795,7 +795,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                       {d.isolation && (
                         <span
                           className="agent-def-badge agent-def-badge--filled"
-                          style={{ background: ISOLATION_COLORS[d.isolation] || '#666' }}
+                          style={{ background: ISOLATION_COLORS[d.isolation] || 'var(--text-muted)' }}
                         >
                           {d.isolation}
                         </span>

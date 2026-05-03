@@ -80,12 +80,12 @@ export function PipelineDetail({
       </div>
 
       <div className={DETAIL_BODY_CLS}>
-        {(execution as any).trace_id && onNavigateToTrace && (
+        {execution.trace_id && onNavigateToTrace && (
           <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
               className={BTN_BASE_CLS}
-              onClick={() => onNavigateToTrace((execution as any).trace_id)}
+              onClick={() => onNavigateToTrace(execution.trace_id!)}
               title="View telemetry trace for this execution"
             >
               <svg
@@ -167,8 +167,8 @@ export function PipelineDetail({
                   </div>
                 );
               }
-            } catch {
-              /* ignore */
+            } catch (err) {
+              if (import.meta.env.DEV) console.debug("Failed to parse pipeline outputs JSON", err);
             }
             return null;
           })()}

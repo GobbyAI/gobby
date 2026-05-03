@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 from hashlib import sha256
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -174,11 +175,10 @@ async def test_triage_issue_dedup_closes_duplicate_without_task(temp_db, sample_
             },
         )
     ]
-    memory_manager = type(
-        "MemoryManagerStub",
-        (),
-        {"vector_store": vector_store, "embed_fn": AsyncMock(return_value=[0.1, 0.2])},
-    )()
+    memory_manager = SimpleNamespace(
+        vector_store=vector_store,
+        embed_fn=AsyncMock(return_value=[0.1, 0.2]),
+    )
     github = FakeGitHubMCP()
     service = GitHubIssueTriageService(
         db=temp_db,
@@ -230,6 +230,7 @@ async def test_reconcile_project_repos_lists_open_issues_and_triages(
 
     assert result == {"scanned": 2, "triaged": 2, "errors": 0}
     assert github.called("list_issues")[0]["state"] == "open"
+    assert github.called("list_issues")[0]["page"] == 1
 
 
 @pytest.mark.asyncio

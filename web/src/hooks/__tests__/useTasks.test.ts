@@ -124,7 +124,14 @@ const SAMPLE_TASKS = [
 const TASK_LIST_RESPONSE = {
   tasks: SAMPLE_TASKS,
   total: 2,
-  stats: { ready: 2, closed: 0 },
+  stats: {
+    ready: 2,
+    closed: 0,
+    in_progress: 0,
+    needs_review: 0,
+    blocked: 0,
+    review_approved: 0,
+  },
   limit: 200,
   offset: 0,
 }

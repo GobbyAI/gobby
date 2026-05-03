@@ -76,13 +76,42 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
   return function TaskNode({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
     const task = node.data.task
     const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+    const menuRef = useRef<HTMLDivElement | null>(null)
 
-    const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    const handleContextMenu = (e: React.MouseEvent) => {
       if (!onSubtreeKanban || !node.isInternal) return
       e.preventDefault()
       e.stopPropagation()
       setCtxMenu({ x: e.clientX, y: e.clientY })
-    }, [node.isInternal])
+    }
+
+    useEffect(() => {
+      if (!ctxMenu) return
+      requestAnimationFrame(() => {
+        menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+      })
+    }, [ctxMenu])
+
+    const handleMenuKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setCtxMenu(null)
+        return
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+      const items = Array.from(
+        menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []
+      )
+      if (items.length === 0) return
+      e.preventDefault()
+      const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+      const nextIndex =
+        e.key === 'Home' ? 0 :
+        e.key === 'End' ? items.length - 1 :
+        e.key === 'ArrowUp' ? (activeIndex <= 0 ? items.length - 1 : activeIndex - 1) :
+        (activeIndex + 1) % items.length
+      items[nextIndex]?.focus()
+    }, [])
 
     return (
       <div
@@ -115,12 +144,15 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
           <>
             <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenu(null)} />
             <div
+              ref={menuRef}
               className={CTX_MENU_CLS}
               role="menu"
               aria-label="Task actions"
               style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
+              onKeyDown={handleMenuKeyDown}
             >
               <button
+                type="button"
                 className={CTX_ITEM_CLS}
                 role="menuitem"
                 onClick={e => {

@@ -336,7 +336,16 @@ CREATE TABLE tasks (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 , is_escalated INTEGER NOT NULL DEFAULT 0
-                    CHECK(is_escalated IN (0, 1)));
+                    CHECK(is_escalated IN (0, 1)),
+    state_bucket TEXT NOT NULL DEFAULT 'ready'
+        CHECK(state_bucket IN (
+            'ready',
+            'in_progress',
+            'needs_review',
+            'review_approved',
+            'closed',
+            'escalated'
+        )));
 
 CREATE INDEX idx_tasks_project ON tasks(project_id);
 
@@ -1618,6 +1627,174 @@ CREATE INDEX idx_task_stage_states_open
 
 CREATE INDEX idx_tasks_dispatch_scan
                 ON tasks(allow_automation, closed_at, is_escalated);
+
+CREATE INDEX idx_tasks_state_bucket
+                ON tasks(state_bucket);
+
+CREATE TRIGGER tasks_state_bucket_ai
+        AFTER INSERT ON tasks
+        BEGIN
+            UPDATE tasks
+               SET state_bucket = CASE
+                    WHEN closed_at IS NOT NULL THEN 'closed'
+                    WHEN escalated_at IS NOT NULL OR COALESCE(is_escalated, 0) = 1 THEN 'escalated'
+                    ELSE COALESCE(
+                        (
+                            SELECT CASE
+                                WHEN stage_scan.state IN (
+                                    'ready', 'in_progress', 'needs_review', 'review_approved'
+                                )
+                                THEN stage_scan.state
+                                ELSE 'ready'
+                            END
+                              FROM task_stage_states stage_scan
+                             WHERE stage_scan.task_id = NEW.id
+                               AND stage_scan.state != 'done'
+                             ORDER BY stage_scan.position
+                             LIMIT 1
+                        ),
+                        'ready'
+                    )
+                END
+             WHERE id = NEW.id;
+        END;
+
+CREATE TRIGGER tasks_state_bucket_au
+        AFTER UPDATE OF closed_at, escalated_at, is_escalated ON tasks
+        BEGIN
+            UPDATE tasks
+               SET state_bucket = CASE
+                    WHEN closed_at IS NOT NULL THEN 'closed'
+                    WHEN escalated_at IS NOT NULL OR COALESCE(is_escalated, 0) = 1 THEN 'escalated'
+                    ELSE COALESCE(
+                        (
+                            SELECT CASE
+                                WHEN stage_scan.state IN (
+                                    'ready', 'in_progress', 'needs_review', 'review_approved'
+                                )
+                                THEN stage_scan.state
+                                ELSE 'ready'
+                            END
+                              FROM task_stage_states stage_scan
+                             WHERE stage_scan.task_id = NEW.id
+                               AND stage_scan.state != 'done'
+                             ORDER BY stage_scan.position
+                             LIMIT 1
+                        ),
+                        'ready'
+                    )
+                END
+             WHERE id = NEW.id;
+        END;
+
+CREATE TRIGGER task_stage_states_state_bucket_ai
+        AFTER INSERT ON task_stage_states
+        BEGIN
+            UPDATE tasks
+               SET state_bucket = CASE
+                    WHEN closed_at IS NOT NULL THEN 'closed'
+                    WHEN escalated_at IS NOT NULL OR COALESCE(is_escalated, 0) = 1 THEN 'escalated'
+                    ELSE COALESCE(
+                        (
+                            SELECT CASE
+                                WHEN stage_scan.state IN (
+                                    'ready', 'in_progress', 'needs_review', 'review_approved'
+                                )
+                                THEN stage_scan.state
+                                ELSE 'ready'
+                            END
+                              FROM task_stage_states stage_scan
+                             WHERE stage_scan.task_id = NEW.task_id
+                               AND stage_scan.state != 'done'
+                             ORDER BY stage_scan.position
+                             LIMIT 1
+                        ),
+                        'ready'
+                    )
+                END
+             WHERE id = NEW.task_id;
+        END;
+
+CREATE TRIGGER task_stage_states_state_bucket_au
+        AFTER UPDATE OF state, position ON task_stage_states
+        BEGIN
+            UPDATE tasks
+               SET state_bucket = CASE
+                    WHEN closed_at IS NOT NULL THEN 'closed'
+                    WHEN escalated_at IS NOT NULL OR COALESCE(is_escalated, 0) = 1 THEN 'escalated'
+                    ELSE COALESCE(
+                        (
+                            SELECT CASE
+                                WHEN stage_scan.state IN (
+                                    'ready', 'in_progress', 'needs_review', 'review_approved'
+                                )
+                                THEN stage_scan.state
+                                ELSE 'ready'
+                            END
+                              FROM task_stage_states stage_scan
+                             WHERE stage_scan.task_id = NEW.task_id
+                               AND stage_scan.state != 'done'
+                             ORDER BY stage_scan.position
+                             LIMIT 1
+                        ),
+                        'ready'
+                    )
+                END
+             WHERE id = NEW.task_id;
+
+            UPDATE tasks
+               SET state_bucket = CASE
+                    WHEN closed_at IS NOT NULL THEN 'closed'
+                    WHEN escalated_at IS NOT NULL OR COALESCE(is_escalated, 0) = 1 THEN 'escalated'
+                    ELSE COALESCE(
+                        (
+                            SELECT CASE
+                                WHEN stage_scan.state IN (
+                                    'ready', 'in_progress', 'needs_review', 'review_approved'
+                                )
+                                THEN stage_scan.state
+                                ELSE 'ready'
+                            END
+                              FROM task_stage_states stage_scan
+                             WHERE stage_scan.task_id = OLD.task_id
+                               AND stage_scan.state != 'done'
+                             ORDER BY stage_scan.position
+                             LIMIT 1
+                        ),
+                        'ready'
+                    )
+                END
+             WHERE id = OLD.task_id
+               AND OLD.task_id != NEW.task_id;
+        END;
+
+CREATE TRIGGER task_stage_states_state_bucket_ad
+        AFTER DELETE ON task_stage_states
+        BEGIN
+            UPDATE tasks
+               SET state_bucket = CASE
+                    WHEN closed_at IS NOT NULL THEN 'closed'
+                    WHEN escalated_at IS NOT NULL OR COALESCE(is_escalated, 0) = 1 THEN 'escalated'
+                    ELSE COALESCE(
+                        (
+                            SELECT CASE
+                                WHEN stage_scan.state IN (
+                                    'ready', 'in_progress', 'needs_review', 'review_approved'
+                                )
+                                THEN stage_scan.state
+                                ELSE 'ready'
+                            END
+                              FROM task_stage_states stage_scan
+                             WHERE stage_scan.task_id = OLD.task_id
+                               AND stage_scan.state != 'done'
+                             ORDER BY stage_scan.position
+                             LIMIT 1
+                        ),
+                        'ready'
+                    )
+                END
+             WHERE id = OLD.task_id;
+        END;
 
 -- Seed rows for projects
 INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));

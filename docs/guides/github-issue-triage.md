@@ -112,5 +112,5 @@ that project.
 
 Webhook registration is manual in v1. Cron-only mode is supported for private or
 local setups, but webhook-first is the documented default. Triage judgment is
-structured and side-effect free; Python owns task creation, GitHub comments,
+structured and side-effect-free; Python owns task creation, GitHub comments,
 labels, issue closing, vector writes, and build routing.

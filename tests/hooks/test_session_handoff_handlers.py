@@ -11,6 +11,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import (
     COMPACT_SELF_CONTINUE_VARIABLE,
+    consume_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
 )
 from gobby.storage.database import LocalDatabase
@@ -25,7 +26,7 @@ pytestmark = pytest.mark.unit
 class TestSessionStartHandoff:
     """Test session handoff context injection on /clear and /compact."""
 
-    def _make_db(self, tmp_path):
+    def _make_db(self, tmp_path) -> LocalDatabase:
         db = LocalDatabase(tmp_path / "compact-continuation.db")
         run_migrations(db)
         return db
@@ -40,6 +41,32 @@ class TestSessionStartHandoff:
         session.agent_run_id = None
         session.workflow_name = None
         return session
+
+    def _fake_compact_self_consumer(self, scheduled: list[tuple[object, str]]):
+        def _consume(
+            db: LocalDatabase,
+            *,
+            pending_session_id: str | None,
+            target_session: object,
+            fallback_pending_session_id: str | None = None,
+            loop: object | None = None,
+        ) -> bool:
+            _ = loop
+            prompt = None
+            if pending_session_id:
+                prompt = consume_compact_self_continuation_pending(db, pending_session_id)
+            if prompt is None and fallback_pending_session_id != pending_session_id:
+                if fallback_pending_session_id:
+                    prompt = consume_compact_self_continuation_pending(
+                        db,
+                        fallback_pending_session_id,
+                    )
+            if prompt is None:
+                return False
+            scheduled.append((target_session, prompt))
+            return True
+
+        return _consume
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_finds_parent(
@@ -444,6 +471,7 @@ class TestSessionStartHandoff:
     def test_compact_start_with_pending_flag_clears_and_schedules_continuation(
         self, tmp_path, mock_dependencies: dict
     ) -> None:
+        """A self-initiated compact schedules one continuation when the pending flag is fresh."""
         db = self._make_db(tmp_path)
         try:
             session = self._make_precreated_session()
@@ -460,11 +488,12 @@ class TestSessionStartHandoff:
                 metadata={},
             )
 
+            scheduled: list[tuple[object, str]] = []
             with (
                 patch.object(handlers, "_activate_default_agent", return_value=None),
                 patch(
-                    "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
-                    return_value=True,
+                    "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                    side_effect=self._fake_compact_self_consumer(scheduled),
                 ) as mock_schedule,
             ):
                 response = handlers.handle_session_start(event)
@@ -473,16 +502,14 @@ class TestSessionStartHandoff:
             variables = SessionVariableManager(db).get_variables(session.id)
             assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
             mock_schedule.assert_called_once()
-            assert mock_schedule.call_args.args[:2] == (
-                session,
-                "Continue where you last left off.",
-            )
+            assert scheduled == [(session, "Continue where you last left off.")]
         finally:
             db.close()
 
     def test_manual_compact_without_pending_flag_does_not_schedule_continuation(
         self, tmp_path, mock_dependencies: dict
     ) -> None:
+        """A manual compact without the pending flag does not schedule continuation."""
         db = self._make_db(tmp_path)
         try:
             session = self._make_precreated_session()
@@ -498,23 +525,26 @@ class TestSessionStartHandoff:
                 metadata={},
             )
 
+            scheduled: list[tuple[object, str]] = []
             with (
                 patch.object(handlers, "_activate_default_agent", return_value=None),
                 patch(
-                    "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
-                    return_value=True,
+                    "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                    side_effect=self._fake_compact_self_consumer(scheduled),
                 ) as mock_schedule,
             ):
                 response = handlers.handle_session_start(event)
 
             assert response.decision == "allow"
-            mock_schedule.assert_not_called()
+            mock_schedule.assert_called_once()
+            assert scheduled == []
         finally:
             db.close()
 
     def test_stale_compact_pending_flag_clears_without_scheduling_continuation(
         self, tmp_path, mock_dependencies: dict
     ) -> None:
+        """A stale self-compact flag is cleared without scheduling a continuation."""
         db = self._make_db(tmp_path)
         try:
             session = self._make_precreated_session()
@@ -532,11 +562,12 @@ class TestSessionStartHandoff:
                 metadata={},
             )
 
+            scheduled: list[tuple[object, str]] = []
             with (
                 patch.object(handlers, "_activate_default_agent", return_value=None),
                 patch(
-                    "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
-                    return_value=True,
+                    "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                    side_effect=self._fake_compact_self_consumer(scheduled),
                 ) as mock_schedule,
             ):
                 response = handlers.handle_session_start(event)
@@ -544,6 +575,7 @@ class TestSessionStartHandoff:
             assert response.decision == "allow"
             variables = SessionVariableManager(db).get_variables(session.id)
             assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
-            mock_schedule.assert_not_called()
+            mock_schedule.assert_called_once()
+            assert scheduled == []
         finally:
             db.close()

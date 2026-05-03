@@ -138,28 +138,29 @@ class TaskDeliveryStateManager:
 
     def get_state(self, task_id: str) -> dict[str, Any]:
         """Return the campaign row plus all unit rows for a task."""
-        campaign_row = self.db.fetchone(
-            """
-            SELECT task_id, state, merge_strategy, structured_pr_verdict,
-                   pr_report_ref, merge_sha, merge_report_ref, last_error,
-                   created_at, updated_at
-              FROM task_delivery_campaigns
-             WHERE task_id = ?
-            """,
-            (task_id,),
-        )
-        unit_rows = self.db.fetchall(
-            """
-            SELECT id, task_id, unit_key, worktree_id, repo, source_branch,
-                   target_branch, pr_required, protection_json, pr_url,
-                   github_pr_number, gate_snapshot_json, pr_state,
-                   local_update_attempts, last_error, created_at, updated_at
-              FROM task_delivery_units
-             WHERE task_id = ?
-             ORDER BY created_at, unit_key
-            """,
-            (task_id,),
-        )
+        with self.db.transaction() as conn:
+            campaign_row = conn.execute(
+                """
+                SELECT task_id, state, merge_strategy, structured_pr_verdict,
+                       pr_report_ref, merge_sha, merge_report_ref, last_error,
+                       created_at, updated_at
+                  FROM task_delivery_campaigns
+                 WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            unit_rows = conn.execute(
+                """
+                SELECT id, task_id, unit_key, worktree_id, repo, source_branch,
+                       target_branch, pr_required, protection_json, pr_url,
+                       github_pr_number, gate_snapshot_json, pr_state,
+                       local_update_attempts, last_error, created_at, updated_at
+                  FROM task_delivery_units
+                 WHERE task_id = ?
+                 ORDER BY created_at, unit_key
+                """,
+                (task_id,),
+            ).fetchall()
         return {
             "task_id": task_id,
             "campaign": self._campaign_view(dict(campaign_row)) if campaign_row else None,

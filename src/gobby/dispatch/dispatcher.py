@@ -469,14 +469,12 @@ def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> S
     return StageStatesManager(db, TaskLifecycleEventManager(db))
 
 
-def count_active_agents(*args: object, **kwargs: object) -> int:
+def count_active_agents(db: DatabaseProtocol | None, project_id: str | None = None) -> int:
     """Return pending/running agent runs, optionally scoped by parent-session project."""
-    db = args[0] if args else kwargs.get("db")
     if db is None:
         return 0
-    project_id = kwargs.get("project_id")
     if project_id:
-        row = cast(DatabaseProtocol, db).fetchone(
+        row = db.fetchone(
             """
             SELECT COUNT(*) AS count
             FROM agent_runs ar
@@ -487,7 +485,7 @@ def count_active_agents(*args: object, **kwargs: object) -> int:
             (project_id,),
         )
     else:
-        row = cast(DatabaseProtocol, db).fetchone(
+        row = db.fetchone(
             """
             SELECT COUNT(*) AS count
             FROM agent_runs

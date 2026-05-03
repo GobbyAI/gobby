@@ -1,6 +1,7 @@
 # PostgreSQL Migration for Hub Storage
 
 ## Overview
+
 `kind: framing`
 
 Replace SQLite as Gobby's runtime hub database with PostgreSQL. This is an internal migration with no external users, so we use a cold cutover (stop daemon, migrate, restart) rather than a long-lived dual-write rollout — dual-write solves a problem we do not have.
@@ -20,6 +21,7 @@ End state:
 The Python codebase is expected to be ported to Rust in a later effort. This plan prefers choices that survive that port unchanged: plain SQL migrations (consumable by `sqlx migrate run`), `$1` parameter placeholders, a bootstrap-sourced runtime DSN plus env-var-driven pool tuning, and a compose-based test harness that does not depend on language-specific testcontainers wiring.
 
 ## Constraints
+
 `kind: framing`
 
 - **Driver**: psycopg v3 (sync + async on one driver; pairs with `psycopg_pool`). This is the key migration choice because existing synchronous storage call sites can keep running while new async paths are added incrementally on the same driver. Not psycopg2 (sync-only, no async path). Not asyncpg (async-only would force a broad refactor of every synchronous storage call site up front instead of letting the codebase adopt async gradually). This is a Python-phase optimization only: it lets the Python codebase adopt async incrementally without a big-bang refactor, but the later Rust port on `sqlx` is still async-only and still requires a full sync→async conversion. That is why the migration artifacts themselves must stay Rust-portable (`sqlx migrate run`-compatible SQL files, `$1` placeholders, env-var-driven connection tuning, bootstrap-sourced DSN).
@@ -36,6 +38,7 @@ The Python codebase is expected to be ported to Rust in a later effort. This pla
 > Warning: `bootstrap.yaml` containing `database_url` is equivalent to storing the Postgres password in plaintext, just like today's `neo4j_password`. Treat that file as a secret-bearing credential file.
 
 ## Current Constraints in the Repo
+
 `kind: framing`
 
 This is not a connection-string swap. Key SQLite-specific coupling the migration must break:
@@ -52,6 +55,7 @@ This is not a connection-string swap. Key SQLite-specific coupling the migration
 - **Timestamps**: all `created_at` / `updated_at` stored as ISO8601 text. Python adapters assume UTC and add tzinfo; the `datetime('now')` DEFAULT produces naive UTC text. Migration must preserve UTC and align on `TIMESTAMPTZ`.
 
 ## Post-flattening starting point
+
 `kind: framing`
 
 A prior flatten consolidated the SQLite migration chain into baseline v239 at `src/gobby/storage/baseline_schema.sql`. Four post-baseline migrations have since landed in `migrations.py::MIGRATIONS`:
@@ -70,9 +74,11 @@ Phase 0 of this plan performs another flatten — folding the DDL and seed effec
 - **Synchronize with parallel work.** If additional post-baseline migrations land between adversary review and Phase 0 implementation, Phase 0 folds them into the same flatten and bumps the marker to `current_max + 1`. DDL and seed-data migrations contribute their effects to `baseline_schema.sql` AND keep their callables in `MIGRATIONS` so the upgrade band remains intact for users below the new ceiling. Data-cleanup-only callables (no DDL, just `DELETE`/`UPDATE` against existing rows) are dropped without a baseline equivalent — fresh installs have nothing to clean. The flatten captures whatever the current `MIGRATIONS` list contains at implementation time; the invariants are: (a) the post-Phase-0 baseline is the full schema as of the new version, (b) `MIGRATIONS` retains the callable upgrade band so users on prior versions still reach the new ceiling, (c) the marker entry is a no-op callable (never a `schema_version`-touching string), (d) data-cleanup-only callables are dropped.
 
 ## Target Architecture
+
 `kind: framing`
 
 ### Service packaging
+
 `kind: framing`
 
 Three install modes; Docker is the recommended path. The other two exist so users who can't or won't run Docker — limited hardware, distro-level Postgres already in use, container-disabled environments — are not locked out.
@@ -84,6 +90,7 @@ Three install modes; Docker is the recommended path. The other two exist so user
 | **`external`** | User-supplied via `--dsn`; installer only writes bootstrap (plus the ownership sentinel) | Probed read-only via `SELECT 1 FROM pg_extension WHERE extname='pg_search'`; fails closed with a manual install command if missing. Gobby never runs `CREATE EXTENSION` on the operator's database. | Self-hosted team Postgres, devs tunneling to staging, managed Postgres where the operator pre-installed pg_search. |
 
 #### Docker mode (recommended)
+
 `kind: framing`
 
 Add `postgres` to `src/gobby/data/docker-compose.services.yml`:
@@ -99,6 +106,7 @@ Add `postgres` to `src/gobby/data/docker-compose.services.yml`:
 **Why not `paradedb/paradedb:latest`.** That image bundles pg_analytics and pg_cron (both unused by Gobby), expands footprint to ~2GB, and broadens attack surface. The local-build Dockerfile adds only pg_search on top of `postgres:17`, keeping footprint close to stock Postgres (~600MB) and keeping Gobby-controlled version pinning.
 
 #### Native mode
+
 `kind: framing`
 
 Skips compose entirely. Installer detects platform and:
@@ -110,6 +118,7 @@ Skips compose entirely. Installer detects platform and:
 The installer never silently downgrades Docker → native or native → docker; the user opts into a mode explicitly.
 
 #### External mode (BYO DSN)
+
 `kind: framing`
 
 `gobby postgres install --mode external --dsn <url>` skips compose, skips installer-side pg_search install, and writes only bootstrap fields plus the `gobby_install_ownership` sentinel after probes pass. The probe phase is **strictly read-only** (see "Ownership contract for external mode" below) — `SELECT 1 FROM pg_extension WHERE extname='pg_search'` verifies the operator pre-installed pg_search, and the install exits with the upstream install command for the URL's reported `version()` platform if missing. Gobby never runs `CREATE EXTENSION` on the operator's database; the operator is responsible for keeping the extension installed and Gobby's role is to refuse to start against a Postgres without it.
@@ -150,6 +159,7 @@ After both phases:
 This contract makes external mode's recovery story coherent without requiring Gobby to inspect or fence the host Postgres beyond its own object footprint.
 
 #### CLI surface
+
 `kind: framing`
 
 Mirrors existing Qdrant / Neo4j installers, with the new `--mode` / `--dsn` flags:
@@ -161,11 +171,13 @@ Mirrors existing Qdrant / Neo4j installers, with the new `--mode` / `--dsn` flag
 - `gobby postgres activate` / `deactivate`
 
 ### Runtime database model
+
 `kind: framing`
 
 PostgreSQL is the only runtime hub database after cutover. SQLite is retained temporarily for migration input and rollback. SQLite is not a permanent fallback after Phase 7.
 
 ### Bootstrap and configuration
+
 `kind: framing`
 
 Backend selection must happen before DB-backed config is available. Bootstrap-level fields:
@@ -186,6 +198,7 @@ Rules:
 There is no `database_shadow_url`. No shadow-write phase.
 
 ### Storage compatibility layer
+
 `kind: framing`
 
 Keep raw SQL. Introduce a temporary `HubDatabase` protocol with two implementations:
@@ -202,6 +215,7 @@ Protocol requirements:
 - after-commit callbacks are defined with MVCC semantics in mind: callbacks fire after `COMMIT` returns, but cross-session reads may still see pre-commit snapshots until each reader starts a new transaction. Phase 4.7 audits every callback against that guarantee.
 
 ### Search architecture
+
 `kind: framing`
 
 Replace FTS5 with `pg_search` (ParadeDB, BM25 via Tantivy):
@@ -215,6 +229,7 @@ Ranking is BM25. This gives parity with the existing FTS5 `bm25()` ordering — 
 Search routes through `pick_search_backend(hub, table, mode)` for task, memory, skill, and code-index search. `mode` is a forward-compatible parameter: today the only value is `"keyword"` and dispatches to `BM25SearchBackend` (on Postgres) or `FTS5SearchBackend` (on SQLite during overlap). A future workstream adds `"semantic"` mode dispatching to a `QdrantSearchBackend`; this plan deliberately does not build that — the seam is the deliverable, not the implementation.
 
 #### Hybrid / fused search seam
+
 `kind: framing`
 
 The current fused search behavior does not live in the Python daemon today; it
@@ -246,6 +261,7 @@ wrapped against this seam, not replaced with a Postgres-only keyword path.
 `tsvector` + GIN was considered as a simpler, core-Postgres alternative and rejected: it loses BM25 ranking parity with FTS5 (ordering shifts become migration noise users will feel), and it does not pay off until you leave pg_search's operational envelope — which Gobby doesn't (it runs locally, not on managed Postgres).
 
 ### Test architecture
+
 `kind: framing`
 
 - `docker compose -f docker-compose.test.yml up -d --build postgres-test` before running the suite (local). CI does **not** use a GitHub Actions `services:` container spec — service containers can only pull registry images, and Gobby never publishes a pg_search-bearing image (AGPL posture, see §1.4). Instead, CI runs explicit `docker build` + `docker run` steps before the test job, exactly mirroring the local build path. See §2.1 for the canonical CI snippet.
@@ -257,6 +273,7 @@ wrapped against this seam, not replaced with a Postgres-only keyword path.
 - `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` come from a single checked-in manifest at `src/gobby/data/postgres-pgsearch/version.json` (consumed by §1.1 compose, §1.2 native installer, §1.4 Dockerfile, §2.1 test compose / CI, and §6.0 pgAudit setup). Bumping pg_search means editing one file; CI's pg_search smoke tests gate the bump.
 
 ### Gobby Pro compatibility
+
 `kind: framing`
 
 Gobby Pro is assumed to be a **sync and fleet-management hub**, not a hosted Gobby service. Local Gobby instances push/pull data to Gobby Pro over an API; Gobby Pro does not host a customer's Gobby database. This reframing has two important consequences for this plan:
@@ -279,6 +296,7 @@ Explicitly out of scope for this plan (tracked as follow-ups for Gobby Pro):
 - OS keyring integration for Postgres credentials: replace inline `database_url` storage in `bootstrap.yaml` with a keyring-backed reference plus a migration step that rewrites existing plaintext entries.
 
 ## P0 Phase 0: Re-flatten SQLite baseline
+
 `kind: framing`
 
 **Goal**: fold the DDL and seed effects of migrations 240/241/242 into the SQLite baseline, drop the v243 config-store cleanup callable, keep the v240/v241/v242 callables in `MIGRATIONS` as the v239→v244 upgrade band so existing user databases are not stranded, add a callable v244 no-op flatten marker so the runner records the version row without double-inserting, bump `BASELINE_VERSION = 244`, and hold `_MIN_MIGRATION_VERSION = 239` until Phase 3.7's file-based runner can safely advance the floor. The Postgres work starts from a clean single-source-of-truth `baseline_schema.sql` while the in-Python `MIGRATIONS` retains the four-entry compatibility band described in §0.1; Phase 3.7 supersedes that list with `src/gobby/storage/migrations/NNN_name.sql` files and re-empties `MIGRATIONS`. If additional post-baseline migrations land before Phase 0 implementation, Phase 0 folds DDL/seed into baseline AND keeps their callables in the band; data-cleanup-only callables (like v243) are dropped without baseline equivalent.
@@ -286,6 +304,7 @@ Explicitly out of scope for this plan (tracked as follow-ups for Gobby Pro):
 This phase is a hard prerequisite gate. Phase 1 cannot start until Phase 0 lands and ships in a release; the post-Phase-0 baseline is what Phase 4.2's translator reads.
 
 ### 0.1 Fold migrations 240–242 DDL/seed into the SQLite baseline; drop v243; add v244 no-op marker [category: refactor]
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/baseline_schema.sql`, `src/gobby/storage/migrations.py`, `tests/storage/test_phase0_flatten.py` (new)
@@ -299,6 +318,7 @@ Steps:
     - Migration 243 (`_apply_config_store_cleanup`) contributes nothing to baseline. It's a one-shot data cleanup against `config_store`; fresh installs have no rows to clean. The function and its `_STALE_CONFIG_STORE_EXACT_KEYS` / `_STALE_CONFIG_STORE_PREFIXES` constants are deleted in step 2 below; no baseline change is needed.
     - Strip the `IF NOT EXISTS` clauses on the folded `CREATE TABLE` / `CREATE INDEX` statements — the baseline starts from an empty database and IF-NOT-EXISTS noise hides genuine schema conflicts.
 2. **Restructure `MIGRATIONS` as a four-entry compatibility band.** In `migrations.py`, replace the `MIGRATIONS` list contents so it contains exactly four entries — the existing v240/v241/v242 callables, plus a new v244 no-op-callable marker:
+
     ```python
     def _apply_phase0_flatten_marker(db: LocalDatabase) -> None:
         """No-op v244 marker for Phase 0.
@@ -324,6 +344,7 @@ Steps:
         (244, "Phase 0 flatten marker", _apply_phase0_flatten_marker),
     ]
     ```
+
    In the same edit, delete the `_apply_config_store_cleanup` function and its `_STALE_CONFIG_STORE_EXACT_KEYS` / `_STALE_CONFIG_STORE_PREFIXES` constants — v243 is dropped from the chain entirely. **Keep** `_apply_delivery_state_schema`, `_apply_github_triage_schema`, `_DELIVERY_STATE_SCHEMA`, `_GITHUB_TRIAGE_SCHEMA`, `_LEGACY_DELIVERY_ARTIFACT_COLUMNS`, and `_REVIEW_ANCHOR_DEFAULT_STAGE_SCHEMA` — they remain in the upgrade band for users at v239 (or anywhere in the v239–v243 band) and are deleted in Phase 3.7 alongside `MIGRATIONS = []`. Keep the `MigrationAction` type alias and the runner docstring. **No additional entries may be added to `MIGRATIONS` between Phase 0 and Phase 3.7** — any post-baseline SQLite migration that lands in that window must wait for the file-based runner. Phase 3.7 supersedes this list with on-disk SQL files (canonical path defined there) and re-empties `MIGRATIONS`; it also widens the action type once the file-based runner lands.
 
    **Why callable, not inline SQL, for the marker.** The runner's `_run_migration_list` (`migrations.py:337-386`) wraps each migration in a transaction and unconditionally executes `INSERT INTO schema_version (version) VALUES (?)` with the migration's version after the action runs. For string actions, this happens *after* every statement parsed out of the inline SQL has executed; for callable actions, it happens after `action(db)` returns. An inline-SQL marker like `"INSERT INTO schema_version(version) VALUES (244) ON CONFLICT DO NOTHING"` would insert the row first, then collide with the runner's insert under the unique PK and abort the migration. A no-op callable lets the runner do the insert on its own — single insert, no collision, schema_version reaches 244 cleanly. (The same constraint applies to any future marker entry: keep them callable, or use SQL that does not touch `schema_version`.)
@@ -355,11 +376,13 @@ Acceptance: the schema fingerprint test passes; fresh installs initialize at v24
 - 0.1.4 — Upgrade-band test verifies that user databases at any version in `{239, 240, 241, 242, 243, 244}` reach `schema_version = 244` after `run_migrations`, applying only the subset of `[240, 241, 242, 244]` that exceeds their current version, without resurrecting the v243 config-store cleanup; databases below 239 raise `MigrationUnsupportedError`. test: `tests/storage/test_phase0_flatten.py::test_upgrade_band`.
 
 ## P1 Phase 1: PostgreSQL service and bootstrap support
+
 `kind: framing`
 
 **Goal**: PostgreSQL runs as a first-class local service and bootstrap can select it before DB-backed config loads.
 
 ### 1.0 Add `psycopg` runtime driver dependency to `pyproject.toml` [category: config] (depends: P0)
+
 `kind: deliverable`
 
 Target: `pyproject.toml`
@@ -383,6 +406,7 @@ Verification: `uv lock` succeeds; `uv sync` installs `psycopg` and `psycopg-pool
 - 1.0.1 — `psycopg[binary,pool]>=3.2` added to `[project] dependencies` in `pyproject.toml`; `uv.lock` regenerated with matching `psycopg` and `psycopg-pool` entries; `python -c "import psycopg, psycopg_pool"` smoke-imports cleanly. file: `pyproject.toml`. file: `uv.lock`. behavior: `uv sync` installs psycopg v3.2+ with the `binary` and `pool` extras into the project venv.
 
 ### 1.1 Add `postgres` service to compose template [category: config] (depends: P0)
+
 `kind: deliverable`
 
 Target: `src/gobby/data/docker-compose.services.yml`
@@ -435,6 +459,7 @@ Verification (this section): static template checks only — YAML parses; `postg
 - 1.1.1 — `postgres` service block added to the compose template alongside qdrant/neo4j; static schema/template assertions pass; build/runtime smoke deferred to §1.4 CI. file: `src/gobby/data/docker-compose.services.yml`.
 
 ### 1.2 Add PostgreSQL installer, uninstaller, and status CLI [category: code] (depends: 1.0, 1.1, 1.4)
+
 `kind: deliverable`
 
 Target: `src/gobby/cli/installers/postgres.py` (new), `src/gobby/cli/postgres.py` (new Click group), `src/gobby/cli/__init__.py`, `~/.gobby/bootstrap.yaml`, `~/.gobby/services/docker-compose.yml`, `~/.gobby/services/postgres-pgsearch/` (asset tree synced from `src/gobby/data/postgres-pgsearch/`), `~/.gobby/services/.env`, `docs/runbooks/postgres-native-macos.md` (new), `docs/runbooks/postgres-native-source.md` (new)
@@ -687,6 +712,7 @@ Register the group in `src/gobby/cli/__init__.py`. The `_active_install_mode()` 
 - 1.2.6 — Docker-mode install **recursively copies whatever asset tree exists at `importlib.resources.files("gobby").joinpath("data/postgres-pgsearch")`** into `~/.gobby/services/postgres-pgsearch/` and emits a `.env` shim at `~/.gobby/services/.env` with `GOBBY_PG_SEARCH_VERSION` and `GOBBY_PG_SEARCH_SHA256` resolved from `version.json`, so a bare `docker compose -f ~/.gobby/services/docker-compose.yml --profile postgres up -d` from the user's install resolves the build context, image args, and initdb scripts without falling back to repo-relative paths. The copy is recursive over the source tree shape — at §1.2 implementation time this covers `Dockerfile`, `version.json`, and `initdb.d/01-pg_search.sql`; later phases (§6.0 adds `initdb.d/02-pgaudit.sql` and `scripts/pg_audit_export.sh`) extend the same tree without further changes to this installer code. symbol: `gobby.cli.installers.postgres._sync_postgres_pgsearch_assets`. test: `tests/install/test_postgres_pgsearch_packaging.py::test_sync_copies_complete_tree_at_install_time`.
 
 ### 1.3 Extend bootstrap config with `hub_backend`, `database_url`, and `postgres_install_mode` [category: code] (depends: 1.2, 3.3, 3.8)
+
 `kind: deliverable`
 
 Target: `src/gobby/config/bootstrap.py`, `~/.gobby/bootstrap.yaml` schema, `src/gobby/runner_init.py` (functions `init_hub_database` and `init_storage_and_config`)
@@ -721,6 +747,7 @@ Update `init_hub_database` (and `init_storage_and_config` if it duplicates the w
 - 1.3.1 — Bootstrap config extended with `hub_backend`, `database_url`, and `postgres_install_mode`. symbol: `gobby.config.bootstrap.BootstrapConfig`.
 
 ### 1.4 Add local-build Dockerfile for the Docker mode [category: config] (depends: 1.1)
+
 `kind: deliverable`
 
 Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), `src/gobby/data/postgres-pgsearch/version.json` (new — single source of truth for `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256`, consumed by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup), `src/gobby/data/postgres-pgsearch/initdb.d/01-pg_search.sql` (new — `CREATE EXTENSION IF NOT EXISTS pg_search;` seed copied into the image's `/docker-entrypoint-initdb.d/` so the extension is installed before the first `apply_migrations()` probe; §6.0 adds a sibling `02-pgaudit.sql` to the same directory), `pyproject.toml` (package-data update to ship the nested asset tree in installed wheels), CI smoke-test workflow
@@ -793,6 +820,7 @@ License notice (AGPL-3.0 for pg_search, PostgreSQL license for Postgres) is pres
 - 1.4.4 — `pyproject.toml` declares recursive package data (`gobby = ["data/**/*"]` or hatchling equivalent) so the `src/gobby/data/postgres-pgsearch/` asset tree ships intact in installed wheels, and runtime lookups use `importlib.resources.files("gobby").joinpath("data/postgres-pgsearch")` (the invalid `gobby.data.postgres-pgsearch` form is forbidden). The §1.4 packaging smoke test asserts the assets §1.4 creates at this point (`Dockerfile`, `version.json`, `initdb.d/01-pg_search.sql`) resolve via the resource API in an isolated wheel install. The `_sync_postgres_pgsearch_assets` copy behavior is owned by §1.2 (acceptance 1.2.6); the `scripts/pg_audit_export.sh` resolution invariant is owned by §6.0 (acceptance 6.0.2). file: `pyproject.toml`. test: `tests/install/test_postgres_pgsearch_packaging.py::test_installed_wheel_ships_phase1_asset_tree`.
 
 ### 1.5 Add `gobby postgres activate` and `deactivate` commands [category: code] (depends: 1.3, 1.4)
+
 `kind: deliverable`
 
 Target: `src/gobby/cli/postgres.py`
@@ -966,11 +994,13 @@ def deactivate_cmd() -> None:
 - 1.5.1 — `gobby postgres activate` and `deactivate` CLI commands flip the runtime backend selection atomically. symbol: `gobby.cli.postgres`.
 
 ## P2 Phase 2: Test infrastructure for dual-backend work
+
 `kind: framing`
 
 **Goal**: stand up the PostgreSQL-side test infrastructure that the rest of the migration validates against. §2.1 (compose stack + CI) lands early as a Phase 1 dependent and is consumable by Phase 3 once it exists. §2.2 (`postgres_db` fixture), §2.3 (dual-backend `hub_db` fixture), and §2.4 (dialect-parity tests) require the Phase 3 adapter foundation (§§3.1, 3.2, 3.3) to import their target classes — they therefore depend forward into Phase 3 and land alongside the row-consumer / placeholder / upsert refactors that complete the parity work. Phase 2 is the test-infra spine; Phase 3 is the code spine; their leaves interleave by deliverable rather than by phase number.
 
 ### 2.1 Add PostgreSQL to the test compose stack and CI [category: config] (depends: 1.1, 1.4)
+
 `kind: deliverable`
 
 Target: `docker-compose.test.yml` (new), `.github/workflows/ci.yml`, `pyproject.toml`
@@ -1063,6 +1093,7 @@ Add `pytest-xdist` to `pyproject.toml` (dev/test-extras only — the runtime `ps
 - 2.1.1 — PostgreSQL added to the test compose stack and CI workflow. file: `.github/workflows/ci.yml`.
 
 ### 2.2 Add a schema-per-worker pytest fixture [category: test] (depends: 2.1, 3.3)
+
 `kind: deliverable`
 
 Target: `tests/fixtures/postgres.py` (new), `tests/conftest.py`
@@ -1283,6 +1314,7 @@ The reset-based approach is intentional: a single outer savepoint is not suffici
 - 2.2.3 — Session-scoped `postgres_canonical_seed` fixture runs `PostgresHubDatabase.apply_migrations()` once per worker and snapshots `_SEED_BEARING_TABLES` via `_capture_canonical_seed`. Per-test `postgres_db(postgres_schema, postgres_canonical_seed)` passes that snapshot to `_reset_schema` on both entry and exit. `_reset_schema` restores each test to a state byte-for-byte equivalent to a fresh `apply_migrations()` schema by (a) leaving every table in `_BOOKKEEPING_TABLES` (`schema_migrations`, `gobby_migration_state`) untouched — both rows and table existence preserved verbatim — (b) TRUNCATE-ing each `_SEED_BEARING_TABLES` table (`projects`, `task_type_default_stages`) and re-inserting the canonical seed snapshot, (c) TRUNCATE-ing all other application tables (computed as `all_tables - _BOOKKEEPING_TABLES - _SEED_BEARING_TABLES`, so `gobby_migration_state` and `schema_migrations` are excluded by construction). Test inserts into `projects` made by a prior test do not leak into the next; tests that mutate `gobby_migration_state` opt out of the standard fixture and own their cleanup. symbol: `tests.fixtures.postgres.postgres_canonical_seed`. symbol: `tests.fixtures.postgres._reset_schema`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset` (asserts: capture happens before the first reset; entry and exit resets receive the same snapshot; insert extra `projects` row → reset → only the four placeholders remain; mutate a `task_type_default_stages` row → reset → row matches the canonical snapshot; **insert an `imported_from_sqlite_at` row into `gobby_migration_state` → reset → row survives both entry and exit; `gobby_migration_state` is verifiably absent from the computed `truncate_tables` list**).
 
 ### 2.3 Parametrize storage fixtures over both backends [category: test] (depends: 2.2, 3.1, 3.2, 3.3)
+
 `kind: deliverable`
 
 Target: `tests/conftest.py`, selected storage test files under `tests/storage/`
@@ -1296,6 +1328,7 @@ Expected footprint for this task: around 15 of the 48 `tests/storage/` files mig
 - 2.3.1 — Storage fixtures parametrize over SQLite and PostgreSQL backends. file: `tests/conftest.py`.
 
 ### 2.4 Add dialect parity regression tests [category: test] (depends: 2.3)
+
 `kind: deliverable`
 
 Target: `tests/storage/test_dialect_parity.py` (new)
@@ -1316,11 +1349,13 @@ These tests catch silent semantic drift during Phase 3–4 work.
 - 2.4.1 — Dialect parity regression suite covers SQL surface differences across both backends. file: `tests/storage/test_dialect_parity.py`.
 
 ## P3 Phase 3: Backend-neutral storage seam and migration runner
+
 `kind: framing`
 
 **Goal**: storage call sites depend on a backend-neutral `HubDatabase` protocol, and the migration runner works on both backends.
 
 ### 3.1 Define the `HubDatabase` protocol [category: code] (depends: P0)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/protocol.py` (new)
@@ -1403,6 +1438,7 @@ No row or cursor type leaks `sqlite3` objects. Transaction objects own savepoint
 - 3.1.1 — `HubDatabase` protocol defines the backend-neutral storage seam, including `Transaction`, `Cursor`, `Savepoint`, the `LockTarget` protocol with `PRIORITY: ClassVar[int]`, and the `LockAcquisitionOrderError` exception that nested `transaction_immediate(lock)` calls raise on out-of-order priority. Concrete `LockTarget` subclasses (TaskSeqAllocation, DispatchMutexRow, …) are owned by §3.8; this section ships only the protocol + exception so §3.1 type-checks standalone. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.LockTarget`. symbol: `gobby.storage.hub.protocol.LockAcquisitionOrderError`.
 
 ### 3.2 Implement `SqliteHubDatabase` shim [category: code] (depends: 3.1)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/sqlite.py` (new), `tests/storage/hub/test_sqlite_placeholder_remap.py` (new)
@@ -1588,6 +1624,7 @@ Upsert dialect translation is limited to placeholder rewriting; `ON CONFLICT` SQ
 - 3.2.3 — Placeholder-remap test suite covers sequential / out-of-order / repeated / IN-clause / skipped-index / dollar-quote / identifier-suffix / `executemany` / out-of-range-index cases. file: `tests/storage/hub/test_sqlite_placeholder_remap.py`.
 
 ### 3.3 Implement `PostgresHubDatabase` [category: code] (depends: 1.0, 3.1, 3.7, 4.2)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/postgres.py` (new)
@@ -1812,6 +1849,7 @@ Required tests in `tests/storage/hub/test_postgres_baseline_application.py`:
 - 3.3.3 — `PostgresHubDatabase.apply_migrations()` applies `postgres_baseline_schema.sql` exactly once on an uninitialized database before running file-based migrations, is idempotent under repeat calls, serializes concurrent calls via a Postgres advisory lock, and raises `MigrationUnsupportedError` on partial-baseline states. symbol: `gobby.storage.hub.postgres.PostgresHubDatabase._apply_postgres_baseline`. test: `tests/storage/hub/test_postgres_baseline_application.py`.
 
 ### 3.4 Port row consumers off `sqlite3.Row` [category: refactor] (depends: 3.2, 3.3)
+
 `kind: deliverable`
 
 Target: every module under `src/gobby/storage/` (roughly 20 modules; scope via grep for `sqlite3.Row`, `sqlite3.Cursor`, and `.keys()`/`.values()` on query results)
@@ -1838,6 +1876,7 @@ No behavioral changes; type annotation and import cleanup only. The Phase 2.3 pa
 - 3.4.1 — Row consumers ported from `sqlite3.Row` to backend-neutral dict-like row access. file: `src/gobby/storage/`.
 
 ### 3.5 Replace `lastrowid` with `RETURNING id` [category: refactor] (depends: 3.4)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/task_dependencies.py:73`, `src/gobby/storage/task_affected_files.py:78` and `:114`, `src/gobby/storage/workflow_audit.py:102`, `src/gobby/storage/tasks/_lifecycle_events.py:89`, plus any additional `lastrowid` sites surfaced by a fresh `rg "\.lastrowid"` over `src/gobby/storage/` at implementation time. (`src/gobby/storage/token_events.py:158` uses `lastrowid` as a Python-internal "did the row commit?" boolean rather than capturing a generated ID — handle by checking `cursor.rowcount > 0` instead, or carry a dialect branch.)
@@ -1866,6 +1905,7 @@ audit_id = row["id"]
 - 3.5.1 — `RETURNING id` replaces `lastrowid` across hub-storage writes. file: `src/gobby/storage/`.
 
 ### 3.6 Replace `INSERT OR IGNORE` / `INSERT OR REPLACE` with `ON CONFLICT` [category: refactor] (depends: 3.4)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/projects.py:164`, `src/gobby/storage/session_tasks.py`, `src/gobby/storage/sessions/` (package — sweep `_crud.py`, `_field_update.py`, `_bulk_update.py`), `src/gobby/storage/pipelines.py`, `src/gobby/storage/agents.py:360`, plus any additional `INSERT OR IGNORE` / `INSERT OR REPLACE` sites surfaced by a fresh repo grep at implementation time (≈8 total)
@@ -1894,6 +1934,7 @@ For `INSERT OR REPLACE`-style full-row replacement (`agents.py:360`), spell the 
 - 3.6.1 — `ON CONFLICT` replaces SQLite-specific upsert syntax across hub-storage writes. file: `src/gobby/storage/`.
 
 ### 3.7 Rewrite the migration runner with dollar-quote-aware splitting for both backends [category: code] (depends: 3.1, 3.2)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/migrations.py`, `src/gobby/storage/migrations/` (new data directory; sibling-by-name to the `migrations.py` runner module — Python disambiguates: `migrations.py` is the importable module, `migrations/` is a data directory loaded via `importlib.resources.files("gobby.storage").joinpath("migrations")`. The directory MUST NOT contain an `__init__.py` — adding one would make it a package and shadow the module.)
@@ -2046,6 +2087,7 @@ Required tests in `tests/storage/test_migration_runner.py`:
 - 3.7.2 — `_migrate_bookkeeping_table` renames `schema_version` to `schema_migrations` exactly once on existing SQLite databases, preserves all version rows, is idempotent under repeat runs, drops a duplicate identical-rows `schema_version` if both tables exist, and raises `MigrationUnsupportedError` on divergent state. symbol: `gobby.storage.migrations._migrate_bookkeeping_table`. test: `tests/storage/test_migration_runner.py::test_bookkeeping_table_rename_paths`.
 
 ### 3.8 Port storage managers off `DatabaseProtocol` onto `HubDatabase` [category: refactor] (depends: 3.3, 3.7)
+
 `kind: deliverable`
 
 Target: every module under `src/gobby/storage/` that imports `DatabaseProtocol` or calls `db.execute` / `db.executemany` / `db.fetchone` / `db.fetchall` / `db.safe_update` / `db.connection` directly (roughly the same ~20-module footprint as §3.4).
@@ -2346,11 +2388,13 @@ Add two lints in `src/gobby/storage/`:
 - 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. **TaskSubtreeCascade ancestor-vs-descendant test**: cascade rooted at task A and cascade rooted at descendant task B serialize at the project level — exactly one observes the other's writes, never an interleave on shared rows. **Nested LockTarget acquisition test (lookup branch)**: `with db.transaction_immediate(WebChatSessionBootstrap(...)) as outer: with db.transaction_immediate(SessionRegistration(...)) as inner` acquires both advisory locks inside one transaction in valid ascending priority order (PRIORITY 500 → 600); a peer process cannot acquire either lock until the outer block commits. **Nested LockTarget acquisition test (recovery branch)**: `with db.transaction_immediate(WebChatSessionBootstrap(...)) as outer: with db.transaction_immediate(SessionRecoveryByProject(...)) as inner` acquires both advisory locks in priority order (500 → 700) on the any-project recovery path. **Out-of-order nested acquisition fails fast**: opening WebChatSessionBootstrap (PRIORITY=500) then attempting to acquire a target with PRIORITY ≤ 500 (e.g., a hypothetical lower-priority lock or the same target twice) raises `LockAcquisitionOrderError` with both PRIORITY values and lock-key strings, and the test asserts the error rather than blocking indefinitely on a deadlock. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`. test: `tests/storage/test_manager_surface_parity.py::test_subtree_cascade_serializes_overlapping_subtrees`. test: `tests/storage/test_manager_surface_parity.py::test_nested_lock_target_acquires_both_lookup_branch`. test: `tests/storage/test_manager_surface_parity.py::test_nested_lock_target_acquires_both_recovery_branch`. test: `tests/storage/test_manager_surface_parity.py::test_nested_lock_target_out_of_order_priority_raises`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
+
 `kind: framing`
 
 **Goal**: every query path runs natively on Postgres, FTS5 is replaced with `pg_search` BM25 indexes, and all Rust-portability hygiene is applied.
 
 ### 4.1 Verify no Python migration callables survive into Postgres paths [category: refactor] (depends: 3.7)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/migrations.py`, `src/gobby/storage/migration_helpers.py`, lint rule under `src/gobby/storage/`
@@ -2372,6 +2416,7 @@ No new `.sql` files are produced by this task. The prior-revision scope (port `_
 - 4.1.1 — No Python migration callables survive into the Postgres path; only declarative SQL files under `src/gobby/storage/migrations/`. The SQLite-only `_apply_*` callables in `migrations.py` and the FTS5 setup helpers in `migration_helpers.py` may persist (they are gated to the SQLite baseline path), but neither is invoked from the Postgres dialect path. behavior: "no Python migration callables in Postgres migration path" in `src/gobby/storage/migrations/`.
 
 ### 4.2 Add `postgres_baseline_schema.sql` [category: code] (depends: P0)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/postgres_baseline_schema.sql` (new)
@@ -2417,6 +2462,7 @@ Foreign keys in the Postgres baseline are declared `DEFERRABLE INITIALLY IMMEDIA
 - 4.2.10 — Foreign keys declared `DEFERRABLE INITIALLY IMMEDIATE` so the §5.1 importer can use `SET CONSTRAINTS ALL DEFERRED` for cyclical references like `sessions` ↔ `agent_runs`. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 
 ### 4.3 Standardize parameter style on `$1` [category: refactor] (depends: 3.2, 3.3, 3.8)
+
 `kind: deliverable`
 
 Target: every `.execute()` / `.executemany()` call site that currently uses `?`
@@ -2436,6 +2482,7 @@ Add a lint (custom ruff plugin or pre-commit grep) in `src/gobby/storage/` that 
 - 4.3.1 — Hub-storage SQL uses `$1` parameter placeholders consistently across both backends. file: `src/gobby/storage/`.
 
 ### 4.4 Replace FTS5 with `pg_search` BM25 indexes [category: code] (depends: 3.3, 4.2)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/postgres_baseline_schema.sql`, migration files for `tasks_fts`, `memories_fts`, `code_symbols_fts`, `code_content_fts`, `skills_fts` replacements
@@ -2541,6 +2588,7 @@ For the `memories` tag-stripping case, the `tags_text` generated column (backed 
 - 4.4.2 — Minimal `pdb.score(id)` smoke test compiles and orders correctly against the pinned `pg_search` version: seed three rows in `tasks` (titles "alpha alpha", "alpha beta", "gamma"), query `SELECT id, pdb.score(id) AS score FROM tasks WHERE title @@@ 'alpha' ORDER BY score DESC`, assert two rows returned (the "gamma" row excluded), the higher-frequency match ranks first, and no SQL compile error is raised. test: `tests/storage/hub/test_pg_search_score_api.py::test_pdb_score_compiles_and_orders`.
 
 ### 4.5 Port search backends [category: code] (depends: 4.4)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/tasks/_search.py`, `src/gobby/memory/manager.py` (keyword/vector/graph fan-out + `_rrf_merge`/`_rrf_scores` at lines 503–534), `src/gobby/skills/search.py`, `src/gobby/skills/manager.py` (and any MCP skills-registry wiring that instantiates `SkillSearch` against the hub), `src/gobby/code_index/storage.py` (production `code_symbols_fts` / `code_content_fts` query construction), `src/gobby/search/` (shared search abstractions only — code-index call sites live in `src/gobby/code_index/storage.py`, not here), `tests/storage/test_dialect_parity.py` (extend §2.4 with fused-search parity cases). At implementation time, run `rg -l "skills_fts|code_symbols_fts|code_content_fts|MATCH|bm25\\(" src/gobby/skills src/gobby/code_index src/gobby/search src/gobby/storage` to surface every FTS5 call site; each match must end up either deleted, gated behind `hub.dialect == "sqlite"`, or covered by the cross-backend parity tests below.
@@ -2610,6 +2658,7 @@ Concrete rewrites in `manager.py`:
 - 4.5.5 — Code-index search (symbol search and content search) routes through the `HubDatabase` seam: SQLite path uses FTS5 against `code_symbols_fts` / `code_content_fts`, Postgres path uses `pg_search` BM25 against the corresponding BM25 indexes. No direct FTS5 SQL or `MATCH`/`bm25()` calls remain in the Postgres code path under `src/gobby/code_index/`. A fresh `rg "code_symbols_fts|code_content_fts|MATCH|bm25\\(" src/gobby/code_index` surfaces only SQLite-dialect-gated lines. Cross-backend test asserts representative symbol-name and content queries return matching top-N ordering on both backends. file: `src/gobby/code_index/storage.py`. test: `tests/storage/test_dialect_parity.py::test_code_search_dialect_parity`.
 
 ### 4.6 Port remaining SQL (`json_extract`, `datetime`, `strftime`, `julianday`) [category: refactor] (depends: 4.2, 4.3, 3.8)
+
 `kind: deliverable`
 
 Target: any manager using these functions; ~17 `json_extract` sites plus sporadic `strftime` / `julianday`
@@ -2638,6 +2687,7 @@ These branches are deleted in Phase 7.2.
 - 4.6.1 — Remaining SQLite-specific SQL functions (`json_extract`, `datetime`, `strftime`, `julianday`) ported to PostgreSQL equivalents. file: `src/gobby/storage/`.
 
 ### 4.7 Audit PostgreSQL concurrency semantics under MVCC [category: research] (depends: 3.4, 3.5, 3.6, 3.7, 4.1, 4.3, 4.4, 4.5, 4.6)
+
 `kind: deliverable`
 
 Target: `docs/postgres-concurrency-audit.md` (new), `tests/storage/test_postgres_mvcc.py` (new), and every call site of `after_commit` callbacks or write path that assumes SQLite serialization (`after_commit`, `_run_after_commit_callbacks`, `savepoint()`, `conn.in_transaction`, read-modify-write updates).
@@ -2713,11 +2763,13 @@ Cutover is blocked until:
 - 4.7.1 — Concurrency audit report committed with v1 provenance frontmatter (`audit_version: 1`, `phase_baseline: P4`, `audit_commit: <40-char SHA>`, `audited_at: <ISO 8601 UTC>`); every High and Medium finding has a remediation PR merged and is covered by an MVCC integration test. The recorded `audit_commit` SHA is the lower-bound git reference §6.0a reads as `prior_audit_commit` for the post-Phase-5 diff. file: `docs/postgres-concurrency-audit.md`.
 
 ## P5 Phase 5: One-shot SQLite → PostgreSQL migration tool
+
 `kind: framing`
 
 **Goal**: a single command imports an entire SQLite hub database into a fresh Postgres database, validates deterministically, and leaves SQLite untouched.
 
 ### 5.1 Implement `gobby postgres migrate-from-sqlite` [category: code] (depends: P4, 5.2, 5.3)
+
 `kind: deliverable`
 
 Target: `src/gobby/cli/postgres.py`, `src/gobby/storage/migration/sqlite_to_postgres.py` (new)
@@ -2754,6 +2806,7 @@ Execution order:
 4a. **Stale-marker preflight + reset seed-bearing tables on the importer-created target.** First, fail-fast if the target already carries a completion marker — `imported_from_sqlite_at` in `gobby_migration_state` is the v1 cutover sentinel and must not exist on a "fresh" import target. Raise a precise error directing the operator to the recovery runbook (`gobby postgres uninstall --remove-data` for Docker mode, equivalent for native/external) before re-running the importer.
 
     Then reset the seed-bearing application tables so the SQLite source rows can be inserted verbatim. The reset uses the same `_SEED_BEARING_TABLES` constant defined in §2.2 (which now contains only `projects` and `task_type_default_stages` — `gobby_migration_state` is **deliberately excluded** because it is Postgres-only bookkeeping per §5.2's `_POSTGRES_ONLY_TABLES`). `_BOOKKEEPING_TABLES` (`schema_migrations`), `_PRE_BASELINE_INFRA_TABLES` (`gobby_install_ownership`, `_pgaudit_probe`), and `gobby_migration_state` are **never** truncated:
+
     ```python
     # Truncate seed-bearing application tables ONLY. The Postgres-only set
     # (_POSTGRES_ONLY_TABLES from §5.2 — bookkeeping + install infra) is
@@ -2764,6 +2817,7 @@ Execution order:
             sql.Identifier(table)
         ))
     ```
+
     This step is idempotent and gated behind a single `--reset-seeded-tables` boolean already-true default that `--dry-run` honors. It runs **outside** the deferred-FK import transaction (steps 6–8) so the truncate's own constraint cascades commit before the bulk copy begins.
 5. Drop BM25 indexes created by the baseline schema so bulk load does not pay per-row index maintenance cost.
 6. Begin a single import transaction and `SET CONSTRAINTS ALL DEFERRED`. Because the Postgres baseline uses deferrable FKs, this preserves real FK validation at `COMMIT` while still allowing cyclical references to load.
@@ -2794,6 +2848,7 @@ If a table fails mid-copy, the entire import transaction rolls back. The operato
 - 5.1.1 — `gobby postgres migrate-from-sqlite` performs the one-shot data migration. symbol: `gobby.cli.postgres.migrate_from_sqlite`.
 
 ### 5.2 Implement validation checks [category: code] (depends: P4, 5.3)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/migration/validation.py` (new)
@@ -2822,6 +2877,7 @@ Output format: one line per check with `✓` / `✗`, plus a summary JSON artifa
 - 5.2.2 — Postgres-only table exclusion list is the union of `_PRE_BASELINE_INFRA_TABLES` (§3.3) with `gobby_migration_state` and `schema_migrations`. Validation passes when the target carries `_pgaudit_probe` from §6.0 Docker-mode initdb; validation fails loudly on any other unexpected Postgres-only table. test: `tests/storage/migration/test_validation_postgres_only_exclusion.py::test_pgaudit_probe_excluded_unknown_table_fails`.
 
 ### 5.3 Implement sequence / identity reseed [category: code] (depends: P4)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/migration/reseed.py` (new)
@@ -2851,11 +2907,13 @@ The table list is discovered dynamically from Postgres identity/sequence metadat
 - 5.3.1 — Sequence/identity reseed runs after data migration so PG identities continue from the SQLite max. file: `src/gobby/storage/migration/reseed.py`.
 
 ## P6 Phase 6: Cold cutover to PostgreSQL runtime
+
 `kind: framing`
 
 **Goal**: flip the daemon to Postgres with a documented rollback window and zero tolerance for silent failures.
 
 ### 6.0 Implement validation-window audit log (Docker mode only, v1) [category: code] (depends: P5)
+
 `kind: deliverable`
 
 Target: `src/gobby/data/postgres-pgsearch/Dockerfile`, `src/gobby/data/postgres-pgsearch/initdb.d/02-pgaudit.sql` (new), `src/gobby/data/postgres-pgsearch/scripts/pg_audit_export.sh` (new), `src/gobby/data/docker-compose.services.yml`, `docs/runbooks/postgres-cutover.md`
@@ -2946,8 +3004,8 @@ Install-mode dispatch:
 
 - **Docker mode**: `gobby postgres activate` blocks unless pgAudit is loaded (`SELECT 1 FROM pg_extension WHERE extname = 'pgaudit'`) AND the audit log is writable (probe write + read back). No flags required — Docker mode owns the capture mechanism.
 - **Native mode** and **external mode**: `gobby postgres activate` requires **one of two structured flags** (mutual exclusion, neither default):
-    - `--capture-sink <type>:<location>` where `<type>` is one of exactly two values — `pgaudit-file` (location is an absolute path the sink writes to; activator runs file existence + write-test) or `wal-archive` (location is a DSN-style spec for an archive endpoint; activator checks `pg_replication_slots` for a matching slot). A `custom` escape hatch is **deliberately not provided** — it would re-introduce the click-through risk R2-F5 closed by allowing any sink with no probe. Operators with bespoke capture mechanisms must use `--accept-no-rollback-risk` and document their mechanism externally.
-    - `--accept-no-rollback-risk` requires the operator to type the literal phrase `I accept no-rollback risk` at a confirmation prompt (no `--yes` bypass).
+  - `--capture-sink <type>:<location>` where `<type>` is one of exactly two values — `pgaudit-file` (location is an absolute path the sink writes to; activator runs file existence + write-test) or `wal-archive` (location is a DSN-style spec for an archive endpoint; activator checks `pg_replication_slots` for a matching slot). A `custom` escape hatch is **deliberately not provided** — it would re-introduce the click-through risk R2-F5 closed by allowing any sink with no probe. Operators with bespoke capture mechanisms must use `--accept-no-rollback-risk` and document their mechanism externally.
+  - `--accept-no-rollback-risk` requires the operator to type the literal phrase `I accept no-rollback risk` at a confirmation prompt (no `--yes` bypass).
 - The `_active_install_mode()` helper is what gates which flag set is required; Docker mode rejects either flag with "not applicable in docker mode — pgAudit is the gate."
 - **Every** successful activation — Docker, native, or external — emits the cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json` after mode-specific gates pass. The artifact has one stable schema (see "Cutover-ticket artifact schema" below) so §6.1 step 11 (validation-window deadline tracking) and §6.2 step 2 (rollback export) can parse it the same way regardless of mode. This makes the runbook branch a structured choice that survives across mode boundaries, not a Docker-vs-non-Docker fork.
 
@@ -2993,6 +3051,7 @@ that rollback safety is reduced.
 - 6.0.2 — `pg_audit_export.sh` is installed into the image at `/usr/local/bin/pg_audit_export.sh` with executable permissions and passes a CI image-smoke check (`docker run --rm <image> /usr/local/bin/pg_audit_export.sh --help` exits 0) so §6.2's rollback runbook resolves the command at runtime. The script also resolves through the same `importlib.resources.files("gobby").joinpath("data/postgres-pgsearch/scripts/pg_audit_export.sh")` path in installed wheels (the §1.4 recursive `data/**/*` package-data rule already ships nested files; this acceptance only asserts that the file added by §6.0 is present in a fresh wheel install and is copied by `_sync_postgres_pgsearch_assets`). file: `src/gobby/data/postgres-pgsearch/scripts/pg_audit_export.sh`. test: `tests/install/test_postgres_pgsearch_packaging.py::test_installed_wheel_ships_pg_audit_export_script`.
 
 ### 6.0a Post-Phase-5 concurrency re-audit [category: research] (depends: P5, 4.7)
+
 `kind: deliverable`
 
 Target: `docs/postgres-concurrency-audit.md`, `tests/storage/test_postgres_mvcc.py`, `src/gobby/storage/`, `src/gobby/cli/postgres.py`, `src/gobby/storage/migration/`, and any remediation source files identified by the re-audit pass (concrete file paths captured in the audit report itself; see §4.7's per-callback inventory format for the schema each new entry must satisfy). The cutover runbook (`docs/runbooks/postgres-cutover.md`) is **owned by §6.1**, not this section — §6.0a only produces the post-Phase-5 audit report; §6.1 reads the report's `audit_commit` SHA and records it in the runbook's pre-activation checklist as part of §6.1's own deliverable.
@@ -3027,6 +3086,7 @@ Verification: a focused test asserts `docs/postgres-concurrency-audit.md` parses
 - 6.0a.2 — Every High and Medium finding in the post-Phase-5 re-audit has a remediation PR merged and is covered by an MVCC integration test in `tests/storage/test_postgres_mvcc.py`. file: `tests/storage/test_postgres_mvcc.py`. test: `tests/storage/test_postgres_mvcc.py` passes for three consecutive CI runs.
 
 ### 6.1 Cutover runbook [category: docs] (depends: 6.0, 6.0a)
+
 `kind: deliverable`
 
 Target: `docs/runbooks/postgres-cutover.md` (new)
@@ -3080,6 +3140,7 @@ Do not enter the validation window until the **§6.0a post-Phase-5 concurrency r
 - 6.1.2 — Step 7's pre-activation checklist records the §6.0a post-Phase-5 `audit_commit` SHA (read from the `## Post-Phase-5 re-audit` frontmatter in `docs/postgres-concurrency-audit.md`) and links the post-Phase-5 section so cutover blocks on the integrated post-Phase-5 report version, not the §4.7 v1 baseline. The runbook prose makes the contract reader-explicit: a stale §4.7-baseline copy of the audit report does not unblock cutover. file: `docs/runbooks/postgres-cutover.md`.
 
 ### 6.2 Rollback runbook [category: docs] (depends: 6.1)
+
 `kind: deliverable`
 
 Target: `docs/runbooks/postgres-rollback.md` (new)
@@ -3107,11 +3168,13 @@ Explicit data-loss rule: writes made to Postgres during the validation window ar
 - 6.2.1 — Rollback runbook documented end-to-end. file: `docs/runbooks/postgres-rollback.md`.
 
 ## P7 Phase 7: Remove SQLite runtime support
+
 `kind: framing`
 
 **Goal**: stop carrying dual-backend complexity once Postgres has proven stable in production.
 
 ### 7.0 Move bootstrap Postgres credentials into OS keyring [category: code] (depends: 6.2)
+
 `kind: deliverable`
 
 Target: `src/gobby/config/bootstrap.py`, `~/.gobby/bootstrap.yaml`, secret-store / keyring integration, startup validation
@@ -3132,6 +3195,7 @@ state.
 - 7.0.1 — Bootstrap Postgres credentials moved from disk to OS keyring. file: `src/gobby/config/bootstrap.py`.
 
 ### 7.1 Remove `SqliteHubDatabase` from runtime wiring [category: refactor] (depends: 7.0)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/__init__.py`, `src/gobby/runner.py`, `src/gobby/config/bootstrap.py`
@@ -3147,6 +3211,7 @@ Target: `src/gobby/storage/hub/__init__.py`, `src/gobby/runner.py`, `src/gobby/c
 - 7.1.1 — `SqliteHubDatabase` removed from runtime wiring; `PostgresHubDatabase` is the only runtime backend. file: `src/gobby/runner.py`.
 
 ### 7.2 Remove FTS5 runtime code and SQLite-specific migrations [category: refactor] (depends: 7.1)
+
 `kind: deliverable`
 
 Target: `src/gobby/storage/baseline_schema.sql`, `src/gobby/storage/migrations/*.sqlite.sql`, `src/gobby/storage/migrations/*.postgres.sql`, `src/gobby/search/fts5.py`, `src/gobby/storage/tasks/_search.py`
@@ -3161,6 +3226,7 @@ Target: `src/gobby/storage/baseline_schema.sql`, `src/gobby/storage/migrations/*
 - 7.2.1 — FTS5 runtime code and SQLite-specific migrations removed. file: `src/gobby/storage/`.
 
 ### 7.3 Update docs, comments, and user-facing text [category: docs] (depends: 7.2)
+
 `kind: deliverable`
 
 Target: `CLAUDE.md`, `README.md`, `docs/`, in-code comments referencing SQLite as the hub database
@@ -3175,6 +3241,7 @@ Target: `CLAUDE.md`, `README.md`, `docs/`, in-code comments referencing SQLite a
 - 7.3.1 — Docs, comments, and user-facing text updated to reflect PostgreSQL-only runtime. file: `README.md`.
 
 ## CLI and Interface Changes
+
 `kind: framing`
 
 New commands:
@@ -3206,6 +3273,7 @@ Type changes:
 - search implementations dispatch via `pick_search_backend`; FTS5 direct calls removed in Phase 7
 
 ## Acceptance Criteria
+
 `kind: framing`
 
 - PostgreSQL installs via `gobby postgres install` with the same ergonomics as the Qdrant / Neo4j installers, across all three install modes (`docker`, `native`, `external`).
@@ -3225,6 +3293,7 @@ Type changes:
 - Phase 7 removes `SqliteHubDatabase`, FTS5 code paths, and related shims; the codebase has one runtime backend.
 
 ## Assumptions
+
 `kind: framing`
 
 - Scope is the full hub database, not a partial migration.
@@ -3237,6 +3306,7 @@ Type changes:
 - Phase 0 ships and reaches users before Phase 1 starts. Users on databases at any version in the `[239, 244)` band reach v244 by chained migration through the v240/v241/v242 callables and the v244 no-op marker that Phase 0 leaves in `MIGRATIONS`; users below v239 hit `MigrationUnsupportedError` and must reset or recover from backup. Anyone already at v244 (fresh installs from the post-Phase-0 build) is no-op.
 
 ## M1 Task Manifest
+
 `kind: manifest`
 
 ```yaml

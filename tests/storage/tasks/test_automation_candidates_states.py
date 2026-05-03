@@ -57,7 +57,6 @@ def test_list_automation_candidates_excludes_done_and_null_current_stage(
         task_type="task",
         allow_automation=True,
     )
-    update_task(temp_db, no_manifest.id, allow_automation=True)
     temp_db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (no_manifest.id,))
 
     candidate_ids = {

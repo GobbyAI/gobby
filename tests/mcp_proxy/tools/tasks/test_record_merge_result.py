@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -245,7 +246,13 @@ async def test_close_linked_github_issue_tool_comments_labels_and_closes(
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, object]]] = []
 
-        async def call_tool(self, *, server_name: str, tool_name: str, arguments: dict):
+        async def call_tool(
+            self,
+            *,
+            server_name: str,
+            tool_name: str,
+            arguments: dict[str, Any],
+        ) -> dict[str, Any]:
             assert server_name == "github"
             self.calls.append((tool_name, arguments))
             return {}

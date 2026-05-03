@@ -181,6 +181,7 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
     assert row["closed_commit_sha"] == "merge-final123"
 
 
+@pytest.mark.asyncio
 async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

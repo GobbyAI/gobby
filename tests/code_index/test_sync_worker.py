@@ -63,7 +63,7 @@ async def test_sync_file_ensures_missing_vector_collection_before_upsert(
     file_path = "src/app.py"
     root = tmp_path
     source_file = root / file_path
-    source_file.parent.mkdir(parents=True)
+    source_file.parent.mkdir(parents=True, exist_ok=True)
     source_file.write_text("def greet(name: str) -> str:\n    return name\n")
 
     indexed_file = IndexedFile(

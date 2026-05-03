@@ -7,9 +7,9 @@ These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.workflows._agents import (
@@ -68,12 +68,40 @@ __all__ = [
 ]
 
 
+class _InternalToolRegistryInventory(Protocol):
+    name: str
+
+    def list_tools(self) -> list[Mapping[str, Any]]:
+        """Return registered internal tools."""
+        ...
+
+
+class _InternalRegistryInventory(Protocol):
+    def list_servers(self) -> list[Mapping[str, Any]]:
+        """Return internal MCP server summaries."""
+        ...
+
+    def get_all_registries(self) -> list[_InternalToolRegistryInventory]:
+        """Return internal MCP registries."""
+        ...
+
+
+class _ExternalMCPInventory(Protocol):
+    def get_available_servers(self) -> list[str]:
+        """Return external MCP server names."""
+        ...
+
+    async def list_tools(self) -> dict[str, list[dict[str, Any]]]:
+        """Return external MCP tool inventory."""
+        ...
+
+
 def create_workflows_registry(
     loader: WorkflowLoader | None = None,
     session_manager: SessionManager | None = None,
     db: DatabaseProtocol | None = None,
-    internal_manager: Any | None = None,
-    mcp_manager: Any | None = None,
+    internal_manager: _InternalRegistryInventory | None = None,
+    mcp_manager: _ExternalMCPInventory | None = None,
     # Pipeline dependencies (resolved lazily at call time)
     executor_getter: Callable[[], Any | None] | None = None,
     execution_manager_getter: Callable[[], Any | None] | None = None,
@@ -663,9 +691,9 @@ def create_workflows_registry(
 
 
 def _workflow_mcp_inventory(
-    internal_manager: Any | None,
-    mcp_manager: Any | None,
-) -> object | None:
+    internal_manager: _InternalRegistryInventory | None,
+    mcp_manager: _ExternalMCPInventory | None,
+) -> "_WorkflowMCPInventory | None":
     if internal_manager is None and mcp_manager is None:
         return None
     return _WorkflowMCPInventory(internal_manager=internal_manager, mcp_manager=mcp_manager)
@@ -674,7 +702,12 @@ def _workflow_mcp_inventory(
 class _WorkflowMCPInventory:
     """Combined internal/external MCP inventory for workflow semantic checks."""
 
-    def __init__(self, *, internal_manager: Any | None, mcp_manager: Any | None) -> None:
+    def __init__(
+        self,
+        *,
+        internal_manager: _InternalRegistryInventory | None,
+        mcp_manager: _ExternalMCPInventory | None,
+    ) -> None:
         self._internal_manager = internal_manager
         self._mcp_manager = mcp_manager
 

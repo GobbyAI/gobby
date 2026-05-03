@@ -76,4 +76,8 @@ async def _process_delivery(server: HTTPServer, project_id: str, delivery_id: st
     except asyncio.CancelledError:
         raise
     except Exception:
-        logger.warning("GitHub triage delivery processing failed", exc_info=True)
+        logger.warning(
+            "GitHub triage delivery processing failed",
+            extra={"project_id": project_id, "delivery_id": delivery_id},
+            exc_info=True,
+        )

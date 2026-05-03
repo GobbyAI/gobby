@@ -19,19 +19,6 @@ def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOI
     """
 
 
-def _task_state_bucket_sql(task_alias: str = "t") -> str:
-    return (
-        "CASE "
-        f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
-        f"WHEN {task_alias}.escalated_at IS NOT NULL "
-        f"OR COALESCE({task_alias}.is_escalated, 0) = 1 THEN 'escalated' "
-        "WHEN current_stage.state = 'ready' THEN 'ready' "
-        "WHEN current_stage.state IN ('in_progress', 'needs_review', 'review_approved') "
-        "THEN current_stage.state "
-        "ELSE 'ready' END"
-    )
-
-
 def _stage_state_filter_clause(
     current_stage_state: str | list[str] | None,
 ) -> tuple[str | None, list[Any]]:
@@ -128,11 +115,9 @@ def count_by_state(
     Returns:
         Dictionary mapping state bucket to count
     """
-    state_bucket = _task_state_bucket_sql("t")
-    query = f"""
-    SELECT {state_bucket} as state_bucket, COUNT(*) as count
+    query = """
+    SELECT t.state_bucket, COUNT(*) as count
       FROM tasks t
-      {_current_stage_join_sql("t")}
     """
     params: list[Any] = []
 

@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+import sqlite3
 import subprocess  # nosec B404 - used for a fixed git dry-run fallback.
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -89,7 +90,7 @@ def _github_token(db: DatabaseProtocol | None) -> str | None:
             token = store.get(name)
             if token:
                 return token
-    except Exception:
+    except (LookupError, OSError, RuntimeError, sqlite3.Error):
         logger.debug("Failed to resolve GitHub token from SecretStore", exc_info=True)
     return None
 

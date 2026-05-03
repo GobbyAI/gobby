@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Protocol
 
 from gobby.github_triage.service import create_github_triage_handler
 from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron_models import CronJob
+from gobby.storage.database import DatabaseProtocol
 from gobby.storage.github_triage import GitHubTriageStore
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
@@ -16,6 +19,43 @@ logger = logging.getLogger(__name__)
 GITHUB_TRIAGE_CRON_DESCRIPTION = "Webhook recovery scan for GitHub issue triage"
 GITHUB_TRIAGE_CRON_HANDLER_PREFIX = "github_triage.reconcile"
 GITHUB_TRIAGE_CRON_JOB_PREFIX = "gobby:github-triage"
+CronHandler = Callable[[CronJob], Awaitable[str]]
+
+
+class CronRegistrationProtocol(Protocol):
+    def register_handler(self, name: str, handler: CronHandler) -> None:
+        """Register a cron handler by name."""
+        ...
+
+
+class GitHubMCPCallProtocol(Protocol):
+    def call_tool(
+        self,
+        *,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, object],
+    ) -> object:
+        """Call a GitHub MCP tool."""
+        ...
+
+
+class TriageMemoryProtocol(Protocol):
+    @property
+    def vector_store(self) -> object | None:
+        """Return the configured vector store, if any."""
+        ...
+
+    @property
+    def embed_fn(self) -> object | None:
+        """Return the configured embedding function, if any."""
+        ...
+
+
+class SecretResolverProtocol(Protocol):
+    def resolve(self, value: str) -> str:
+        """Resolve a secret reference."""
+        ...
 
 
 def github_triage_handler_name(project_id: str) -> str:
@@ -31,13 +71,13 @@ def github_triage_job_name(project_id: str) -> str:
 def register_github_triage_cron(
     *,
     cron_storage: CronJobStorage,
-    cron_executor: Any,
-    db: Any,
-    mcp_manager: Any | None,
+    cron_executor: CronRegistrationProtocol,
+    db: DatabaseProtocol,
+    mcp_manager: GitHubMCPCallProtocol | None,
     task_manager: LocalTaskManager,
     project_manager: LocalProjectManager | None = None,
-    memory_manager: Any | None = None,
-    secret_store: Any | None = None,
+    memory_manager: TriageMemoryProtocol | None = None,
+    secret_store: SecretResolverProtocol | None = None,
     project_id: str | None = None,
 ) -> int:
     """Register reconciliation handlers and reconcile system cron rows.

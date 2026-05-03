@@ -224,32 +224,49 @@ class GitHubIssueTriageService:
         scanned = triaged = errors = 0
         for repo in config.repositories_with_fallback(project.github_repo):
             owner, repo_name = parse_github_repo(repo)
-            issues = await self._github_call(
-                "list_issues",
-                {"owner": owner, "repo": repo_name, "state": "open", "per_page": 100},
-            )
-            if isinstance(issues, dict):
-                issues = issues.get("issues", [])
-            if not isinstance(issues, list):
-                continue
-            for issue in issues:
-                if issue.get("pull_request"):
-                    continue
-                scanned += 1
-                try:
-                    await self.triage_issue(
-                        project_id,
-                        repo,
-                        int(issue["number"]),
-                        source="reconcile",
-                        issue_data=issue,
-                    )
-                    triaged += 1
-                except Exception:
-                    logger.warning(
-                        "Failed to reconcile GitHub issue %s#%s", repo, issue, exc_info=True
-                    )
-                    errors += 1
+            page = 1
+            while True:
+                issues = await self._github_call(
+                    "list_issues",
+                    {
+                        "owner": owner,
+                        "repo": repo_name,
+                        "state": "open",
+                        "per_page": 100,
+                        "page": page,
+                    },
+                )
+                if isinstance(issues, dict):
+                    issues = issues.get("issues", [])
+                if not isinstance(issues, list) or not issues:
+                    break
+                for issue in issues:
+                    if not isinstance(issue, dict) or issue.get("pull_request"):
+                        continue
+                    scanned += 1
+                    issue_number = issue.get("number")
+                    try:
+                        if issue_number is None:
+                            raise TriageWebhookError("Reconciled issue missing number")
+                        await self.triage_issue(
+                            project_id,
+                            repo,
+                            int(issue_number),
+                            source="reconcile",
+                            issue_data=issue,
+                        )
+                        triaged += 1
+                    except Exception:
+                        logger.warning(
+                            "Failed to reconcile GitHub issue %s#%s",
+                            repo,
+                            issue_number,
+                            exc_info=True,
+                        )
+                        errors += 1
+                if len(issues) < 100:
+                    break
+                page += 1
         return {"scanned": scanned, "triaged": triaged, "errors": errors}
 
     async def triage_issue(

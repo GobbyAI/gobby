@@ -59,6 +59,9 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 BASELINE_VERSION = 239
 _MIN_MIGRATION_VERSION = BASELINE_VERSION
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
+_TASK_STATE_BUCKET_VALUES = (
+    "'ready','in_progress','needs_review','review_approved','closed','escalated'"
+)
 
 _DELIVERY_STATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS task_delivery_campaigns (
@@ -221,6 +224,89 @@ _LEGACY_DELIVERY_ARTIFACT_COLUMNS = frozenset(
 )
 
 
+def _task_state_bucket_case_sql(task_id_expr: str) -> str:
+    return f"""
+    CASE
+        WHEN closed_at IS NOT NULL THEN 'closed'
+        WHEN escalated_at IS NOT NULL OR COALESCE(is_escalated, 0) = 1 THEN 'escalated'
+        ELSE COALESCE(
+            (
+                SELECT CASE
+                    WHEN stage_scan.state IN (
+                        'ready', 'in_progress', 'needs_review', 'review_approved'
+                    )
+                    THEN stage_scan.state
+                    ELSE 'ready'
+                END
+                  FROM task_stage_states stage_scan
+                 WHERE stage_scan.task_id = {task_id_expr}
+                   AND stage_scan.state != 'done'
+                 ORDER BY stage_scan.position
+                 LIMIT 1
+            ),
+            'ready'
+        )
+    END
+    """
+
+
+def _task_state_bucket_trigger_update_sql(task_id_expr: str) -> str:
+    return f"""
+    UPDATE tasks
+       SET state_bucket = {_task_state_bucket_case_sql(task_id_expr)}
+     WHERE id = {task_id_expr};
+    """
+
+
+def _apply_task_state_bucket_schema(db: LocalDatabase) -> None:
+    task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
+    if "state_bucket" not in task_columns:
+        db.execute(
+            "ALTER TABLE tasks ADD COLUMN state_bucket TEXT NOT NULL DEFAULT 'ready' "
+            f"CHECK(state_bucket IN ({_TASK_STATE_BUCKET_VALUES}))"
+        )
+
+    db.execute(f"UPDATE tasks SET state_bucket = {_task_state_bucket_case_sql('tasks.id')}")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_state_bucket ON tasks(state_bucket)")
+    db.connection.executescript(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS tasks_state_bucket_ai
+        AFTER INSERT ON tasks
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.id")}
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS tasks_state_bucket_au
+        AFTER UPDATE OF closed_at, escalated_at, is_escalated ON tasks
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.id")}
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_ai
+        AFTER INSERT ON task_stage_states
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.task_id")}
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_au
+        AFTER UPDATE OF state, position ON task_stage_states
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.task_id")}
+            UPDATE tasks
+               SET state_bucket = {_task_state_bucket_case_sql("OLD.task_id")}
+             WHERE id = OLD.task_id
+               AND OLD.task_id != NEW.task_id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_ad
+        AFTER DELETE ON task_stage_states
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("OLD.task_id")}
+        END;
+        """
+    )
+
+
 def _apply_delivery_state_schema(db: LocalDatabase) -> None:
     for statement in _DELIVERY_STATE_SCHEMA.strip().split(";"):
         statement = statement.strip()
@@ -282,6 +368,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (241, "Add GitHub issue triage tables", _apply_github_triage_schema),
     (242, "Add review anchor default planning stage", _REVIEW_ANCHOR_DEFAULT_STAGE_SCHEMA),
     (243, "Clean stale config store keys", _apply_config_store_cleanup),
+    (244, "Add persisted task state bucket", _apply_task_state_bucket_schema),
 ]
 
 

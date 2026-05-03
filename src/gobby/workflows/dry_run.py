@@ -11,15 +11,24 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
+
+
+class MCPInventoryProtocol(Protocol):
+    def get_available_servers(self) -> list[str]:
+        """Return available MCP server names."""
+        ...
+
+    async def list_tools(self) -> dict[str, list[dict[str, Any]]]:
+        """Return MCP tools grouped by server name."""
+        ...
 
 
 @dataclass
@@ -124,7 +133,7 @@ async def evaluate_workflow(
     name: str,
     workflow_loader: WorkflowLoader,
     project_path: str | None = None,
-    mcp_manager: MCPClientManager | None = None,
+    mcp_manager: MCPInventoryProtocol | None = None,
 ) -> WorkflowEvaluation:
     """
     Evaluate a workflow definition for structural and semantic issues.
@@ -412,7 +421,7 @@ def _has_terminal_path(
 async def _check_semantics(
     definition: WorkflowDefinition,
     result: WorkflowEvaluation,
-    mcp_manager: MCPClientManager | None,
+    mcp_manager: MCPInventoryProtocol | None,
 ) -> None:
     """Run semantic checks that require live MCP connection."""
     if mcp_manager is None:

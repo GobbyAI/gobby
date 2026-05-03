@@ -34,7 +34,6 @@ class CodeIndexTrigger:
         self._debounce_seconds = debounce_seconds
         # Pending files grouped by canonical root path.
         self._pending_by_root: dict[str, set[str]] = {}
-        self._root_paths_by_root: dict[str, str] = {}
         self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
 
     def notify_file_changed(
@@ -61,7 +60,6 @@ class CodeIndexTrigger:
         if root_key not in self._pending_by_root:
             self._pending_by_root[root_key] = set()
         self._pending_by_root[root_key].add(normalized_path)
-        self._root_paths_by_root[root_key] = root_key
 
         # Set new flush timer
         def _schedule_flush(root: str = root_key, pid: str = project_id) -> None:
@@ -94,7 +92,6 @@ class CodeIndexTrigger:
         """Flush pending files for a root via gcode subprocess."""
         files = self._pending_by_root.pop(root_key, set())
         self._flush_timers_by_root.pop(root_key, None)
-        root_path = self._root_paths_by_root.pop(root_key, root_key)
 
         if not files:
             return
@@ -112,14 +109,14 @@ class CodeIndexTrigger:
                 "--files",
                 *files,
                 "--quiet",
-                cwd=root_path,
+                cwd=root_key,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode == 0:
                 logger.debug(
-                    f"gcode indexed {len(files)} files for project {project_id} at {root_path}"
+                    f"gcode indexed {len(files)} files for project {project_id} at {root_key}"
                 )
             else:
                 detail = stderr.decode().strip() if stderr else "(no stderr)"

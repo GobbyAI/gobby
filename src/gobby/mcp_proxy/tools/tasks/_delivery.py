@@ -20,6 +20,7 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="gobby-tasks-delivery",
         description="PR and merge delivery state tools",
     )
+    manager = TaskDeliveryStateManager(ctx.task_manager.db)
 
     def get_delivery_state(task_id: str) -> dict[str, Any]:
         """Read PR and merge delivery state for a task."""
@@ -27,7 +28,7 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
         return {
             "ok": True,
             "task_id": resolved_id,
-            "delivery": TaskDeliveryStateManager(ctx.task_manager.db).get_state(resolved_id),
+            "delivery": manager.get_state(resolved_id),
         }
 
     registry.register(
@@ -62,7 +63,6 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Record PR delivery state without mutating the task stage."""
         resolved_id = _resolve_task(ctx, task_id)
-        manager = TaskDeliveryStateManager(ctx.task_manager.db)
         if campaign_state is not None or merge_strategy is not None:
             manager.record_campaign(
                 resolved_id,
@@ -70,22 +70,26 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 merge_strategy=merge_strategy,
                 last_error=last_error,
             )
-        manager.record_unit(
-            resolved_id,
-            unit_key=unit_key,
-            worktree_id=worktree_id,
-            repo=repo,
-            source_branch=source_branch,
-            target_branch=target_branch,
-            pr_required=pr_required,
-            protection_json=protection,
-            pr_url=pr_url,
-            github_pr_number=github_pr_number,
-            gate_snapshot_json=gate_snapshot,
-            pr_state=pr_state,
-            local_update_attempts=local_update_attempts,
-            last_error=last_error,
-        )
+        unit_fields = {
+            "worktree_id": worktree_id,
+            "repo": repo,
+            "source_branch": source_branch,
+            "target_branch": target_branch,
+            "pr_required": pr_required,
+            "protection_json": protection,
+            "pr_url": pr_url,
+            "github_pr_number": github_pr_number,
+            "gate_snapshot_json": gate_snapshot,
+            "pr_state": pr_state,
+            "local_update_attempts": local_update_attempts,
+            "last_error": last_error,
+        }
+        if any(value is not None for value in unit_fields.values()):
+            manager.record_unit(
+                resolved_id,
+                unit_key=unit_key,
+                **unit_fields,
+            )
         return {
             "ok": True,
             "task_id": resolved_id,

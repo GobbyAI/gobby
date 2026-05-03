@@ -53,7 +53,7 @@ def test_register_github_triage_cron_creates_project_system_job(
     assert job.action_type == "handler"
     assert job.action_config == {"handler": github_triage_handler_name(sample_project["id"])}
     assert job.interval_seconds == 1200
-    assert github_triage_handler_name(sample_project["id"]) in executor._handlers
+    assert executor.has_handler(github_triage_handler_name(sample_project["id"]))
 
 
 def test_register_github_triage_cron_disables_existing_job_when_config_disabled(

@@ -112,7 +112,15 @@ class RuntimeDispatchMutex:
         stage_state: str | None = None,
         stage_updated_at: str | None = None,
     ) -> bool:
-        """True iff the candidate's current-stage row is unchanged from scan time."""
+        """True iff a current-stage row still matches a captured dispatch snapshot.
+
+        The method intentionally supports two call shapes. Bound calls on a
+        RuntimeDispatchMutex compare provided current-stage values against the
+        snapshot stored on the mutex instance. Unbound calls on candidate-like
+        objects compare keyword snapshot values against the candidate's own
+        current-stage fields. The `self: object` annotation preserves both
+        forms without lying to the type checker about candidate object shape.
+        """
         resolved_stage_name = current_stage_name if current_stage_name is not None else stage_name
         resolved_stage_state = (
             current_stage_state if current_stage_state is not None else stage_state
