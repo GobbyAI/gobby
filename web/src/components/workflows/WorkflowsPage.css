@@ -113,8 +113,7 @@
 
 .workflows-search:focus-visible {
   border-color: var(--accent);
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .workflows-toolbar-btn {
