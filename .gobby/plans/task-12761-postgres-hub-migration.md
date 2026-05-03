@@ -1302,10 +1302,15 @@ class Transaction(Protocol):
     def acquire_additional_lock(self, lock: LockTarget) -> None: ...
     """Used by nested transaction_immediate(lock) calls inside an outer
     immediate transaction (e.g. create_web_chat_session wrapping register).
+    Enforces strict sorted-key acquisition: the new lock key must sort
+    STRICTLY ABOVE the highest key already held by this transaction, or
+    LockAcquisitionOrderError is raised and the caller must roll back and
+    retry. This converts AB/BA deadlocks into deterministic fail-fast errors.
     The adapter executes the matching pg_advisory_xact_lock / SELECT FOR
-    UPDATE inside the existing transaction; locks are acquired in stable
-    hash-of-key order so multiple call sites cannot deadlock each other.
-    No-op on SQLite (BEGIN IMMEDIATE already takes a global write-intent lock)."""
+    UPDATE inside the existing transaction once the order check passes.
+    No-op on SQLite beyond the order check (BEGIN IMMEDIATE already takes
+    a global write-intent lock; the contract still tracks held keys for
+    parity tests)."""
 
 class HubDatabase(Protocol):
     dialect: Literal["sqlite", "postgres"]
@@ -1661,7 +1666,15 @@ def _apply_postgres_baseline(self) -> None:
                 "dump-and-restore from a known-good baseline."
             )
         # state in ("fresh", "fresh_with_install_infra"): apply.
-        sql = (Path(__file__).parent / "postgres_baseline_schema.sql").read_text()
+        # postgres_baseline_schema.sql is owned by §4.2 and lives at
+        # src/gobby/storage/postgres_baseline_schema.sql. Use importlib.resources
+        # so the path resolves correctly from source AND installed wheels —
+        # Path(__file__).parent would point at src/gobby/storage/hub/ here.
+        sql = (
+            importlib.resources.files("gobby.storage")
+            .joinpath("postgres_baseline_schema.sql")
+            .read_text()
+        )
         for statement in _split_statements_respecting_dollar_quotes(sql):
             if statement.strip():
                 txn.execute(statement)
@@ -2156,12 +2169,32 @@ def _enter_transaction(
 
     Nested transaction_immediate(lock) inside an existing immediate transaction
     on the same adapter does NOT silently reuse the outer transaction. It
-    acquires the additional lock target inside the existing transaction (in
-    deterministic order by hash of the lock-key string, so two threads
-    requesting locks A and B in opposite source order cannot deadlock). This
-    handles the create_web_chat_session → register flow (outer
-    WebChatSessionBootstrap, inner SessionRegistration / SessionRecoveryByProject)
-    correctly: both lock targets are held before the protected reads/writes."""
+    routes through `Transaction.acquire_additional_lock(lock)`, which enforces
+    a strict sorted-key acquisition contract:
+
+    - Each Transaction tracks the set of advisory-lock keys already held
+      (the outer transaction's key and any subsequently acquired keys).
+    - acquire_additional_lock(lock) computes the new key and compares it to
+      the maximum already-held key. If the new key sorts STRICTLY ABOVE the
+      max, the lock is acquired in-order and added to the held set.
+    - If the new key sorts at or below the max, the contract is violated:
+      the call raises LockAcquisitionOrderError with both keys in the message.
+      The caller MUST roll back the entire outer transaction and retry from
+      scratch with locks acquired in sorted order (typically by reordering
+      source-level transaction_immediate calls or pre-sorting the LockTarget
+      pair before opening the outer block).
+    - This converts AB/BA deadlocks into deterministic fail-fast errors that
+      the test suite can pin and that prod can retry.
+
+    Source-level convention: when a code path knows it will need locks A
+    and B, it opens a single transaction_immediate(LockTargetSet(A, B))
+    (a future helper) or pre-sorts the calls so the outer is the lower-key
+    target and the inner is the higher-key target. The two existing
+    multi-lock paths (WebChatSessionBootstrap + SessionRegistration on
+    register; WebChatSessionBootstrap + SessionRecoveryByProject on
+    register's recovery branch) already follow this convention because the
+    outer key prefix 'web_chat_session:' sorts below 'session_register:'
+    and 'session_recovery:'."""
     current = dict(_AMBIENT.get())
     existing = current.get(id(adapter))
     if existing is not None:
@@ -2222,9 +2255,9 @@ Add two lints in `src/gobby/storage/`:
 
 **Acceptance:**
 
-- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate(lock: LockTarget)` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate(lock)` accepts a typed `LockTarget` (`TaskSeqAllocation`, `DispatchMutexRow`, `SessionRegistration`, `SystemSessionBootstrap`); SqliteHubDatabase issues `BEGIN IMMEDIATE` (target ignored — global write-intent), PostgresHubDatabase opens `BEGIN` and immediately executes the matching `SELECT ... FOR UPDATE` row lock or `pg_advisory_xact_lock(hashtext(...))` advisory lock per target. `Transaction.is_immediate` (added to §3.1's protocol) is `True` for transactions opened via `transaction_immediate`, `False` otherwise; the ambient registry uses it to forbid escalating to immediate inside a non-immediate `transaction()`. Both adapters implement the convenience methods via `_resolve_executor(self)` so calls join an active ambient transaction (per-adapter, keyed by `id(adapter)`) or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`. symbol: `gobby.storage.hub.protocol.LockTarget`.
-- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget` from a fresh `rg "transaction_immediate\(" src/gobby/storage` inventory at implementation time. The known call sites and their targets are: `TaskSeqAllocation(project_id)` for `tasks/_crud.py` (seq allocation), `DispatchMutexRow(task_id)` for `_dispatch_mutex.py`, `SessionRegistration(external_id, machine_id, source, project_id, session_type)` for `sessions/_crud.py::register()` lookup branch, `SessionRecoveryByProject(project_id)` for the any-project recovery branch, `WebChatSessionBootstrap(...)` for `sessions/_crud.py::create_web_chat_session` (register + follow-up update group), `TaskSubtreeCascade(root_task_id)` for `tasks/_crud.py::apply_build_controls_cascade` (recursive subtree update), `SystemSessionBootstrap()` for `sessions/_constants.py`. Any new call site discovered by the implementation-time `rg` inventory must be added to the `LockTarget` enumeration in the same patch — adding a call site without a target is a type error. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
-- 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. **TaskSubtreeCascade ancestor-vs-descendant test**: cascade rooted at task A and cascade rooted at descendant task B serialize at the project level — exactly one observes the other's writes, never an interleave on shared rows. **Nested LockTarget acquisition test**: `with db.transaction_immediate(WebChatSessionBootstrap(...)) as outer: with db.transaction_immediate(SessionRegistration(...)) as inner` acquires both advisory locks inside one transaction (deterministic acquisition order); a peer process cannot acquire either lock until the outer block commits. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`. test: `tests/storage/test_manager_surface_parity.py::test_subtree_cascade_serializes_overlapping_subtrees`. test: `tests/storage/test_manager_surface_parity.py::test_nested_lock_target_acquires_both`.
+- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate(lock: LockTarget)` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate(lock)` accepts a typed `LockTarget` whose enumerated dataclass cases are: `TaskSeqAllocation(project_id)`, `DispatchMutexRow(task_id)`, `SessionRegistration(external_id, machine_id, source, project_id, session_type)`, `SessionRecoveryByProject(project_id)`, `WebChatSessionBootstrap(external_id, machine_id, source, project_id, session_type)`, `TaskSubtreeCascade(project_id)`, and `SystemSessionBootstrap()`. SqliteHubDatabase issues `BEGIN IMMEDIATE` (target ignored — global write-intent), PostgresHubDatabase opens `BEGIN` and immediately executes the matching `SELECT ... FOR UPDATE` row lock or `pg_advisory_xact_lock(hashtext(...))` advisory lock per target. `Transaction.is_immediate` (added to §3.1's protocol) is `True` for transactions opened via `transaction_immediate`, `False` otherwise; the ambient registry uses it to forbid escalating to immediate inside a non-immediate `transaction()`. `Transaction.acquire_additional_lock(lock)` lets nested `transaction_immediate(lock)` calls register additional advisory locks under the existing transaction (deterministic ordering — see acceptance 3.8.4). Both adapters implement the convenience methods via `_resolve_executor(self)` so calls join an active ambient transaction (per-adapter, keyed by `id(adapter)`) or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`. symbol: `gobby.storage.hub.protocol.LockTarget`.
+- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget` from a fresh `rg "transaction_immediate\(" src/gobby/storage` inventory at implementation time. The known call sites and their targets are: `TaskSeqAllocation(project_id)` for `tasks/_crud.py` (seq allocation), `DispatchMutexRow(task_id)` for `_dispatch_mutex.py`, `SessionRegistration(external_id, machine_id, source, project_id, session_type)` for `sessions/_crud.py::register()` lookup branch, `SessionRecoveryByProject(project_id)` for the any-project recovery branch, `WebChatSessionBootstrap(...)` for `sessions/_crud.py::create_web_chat_session` (register + follow-up update group), `TaskSubtreeCascade(project_id)` for `tasks/_crud.py::apply_build_controls_cascade` (recursive subtree update — keyed by **project**, not root task, so ancestor/descendant cascades cannot interleave), `SystemSessionBootstrap()` for `sessions/_constants.py`. The `apply_build_controls_cascade` call site derives `project_id` from the root task before constructing the lock target. Any new call site discovered by the implementation-time `rg` inventory must be added to the `LockTarget` enumeration in the same patch — adding a call site without a target is a type error. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
+- 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. **TaskSubtreeCascade ancestor-vs-descendant test**: cascade rooted at task A and cascade rooted at descendant task B serialize at the project level — exactly one observes the other's writes, never an interleave on shared rows. **Nested LockTarget acquisition test**: `with db.transaction_immediate(WebChatSessionBootstrap(...)) as outer: with db.transaction_immediate(SessionRegistration(...)) as inner` acquires both advisory locks inside one transaction (in-sorted-order — the inner key sorts above the outer); a peer process cannot acquire either lock until the outer block commits. **Out-of-order nested acquisition fails fast**: opening WebChatSessionBootstrap then attempting to acquire a key that sorts below it raises `LockAcquisitionOrderError` with both keys named, and the test asserts the error rather than blocking indefinitely on a deadlock. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`. test: `tests/storage/test_manager_surface_parity.py::test_subtree_cascade_serializes_overlapping_subtrees`. test: `tests/storage/test_manager_surface_parity.py::test_nested_lock_target_acquires_both`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
 `kind: framing`
@@ -2670,7 +2703,10 @@ Runs after bulk copy. All checks must pass for the migration command to exit 0.
 - **FK integrity**: primarily validated by the commit of the deferred-constraint import transaction in step 5.1.7. Validation also runs explicit orphan checks generated from `pg_constraint` metadata so we do not trust transaction success alone.
 - **Content hashes**: for a representative set of tables (`sessions`, `tasks`, `memories`, `config_store`, `code_symbols`, `agents`, `metrics`, workflow audit), compute an order-independent hash of canonical JSON-encoded rows on both sides and compare. Order-independence is achieved by sorting by primary key before hashing; JSON encoding uses sorted keys.
 - **Sequence reseed**: for every identity column, `SELECT last_value, is_called FROM <sequence>` must satisfy the §5.3 convention exactly. The convention is `setval(sequence, MAX(id), true)` — i.e., `last_value = MAX(id)` and `is_called = true` so the next `nextval()` returns `MAX(id) + 1`. Empty source tables (`MAX(id) IS NULL`) reseed to `setval(sequence, 1, false)` so the first `nextval()` returns `1`; the validator accepts that as `last_value = 1, is_called = false` for the empty-table case only.
-- **BM25 index coverage**: for each FTS-replacement table, confirm the BM25 index exists (`pg_class` lookup), was populated (`pg_stat_user_indexes.idx_tup_read > 0` after a smoke query), and returns non-zero hits on a canned query built from a random sampled row's searchable content. This catches silent index-build failures that pg_search can in principle produce on malformed input.
+- **BM25 index coverage**: for each FTS-replacement table, branch on the SQLite source row count for that table:
+  - **Source has rows**: confirm the BM25 index exists (`pg_class` lookup), was populated (`pg_stat_user_indexes.idx_tup_read > 0` after a smoke query), and returns non-zero hits on a canned query built from a random sampled row's searchable content. This catches silent index-build failures that pg_search can in principle produce on malformed input.
+  - **Source is empty** (a normal valid hub state — a user may have no memories, no skills beyond bootstrap, no code-index rows, etc.): assert only that the BM25 index exists in `pg_class` with the expected name and column set. Skip the population/hit assertions; there is no row to sample and zero hits is the correct outcome.
+  The branch reads the SQLite source row count once during validation startup and caches the per-table verdict in the validation report so the operator sees explicitly which tables were skipped due to emptiness vs. validated by smoke query. A regression test seeds the SQLite source with empty `memories`/`code_symbols`/`code_content`/`skills`/`tasks` content and asserts validation exits 0 while still failing on a separately-seeded run where the BM25 index was deliberately dropped.
 - **CHECK constraints**: enumerate CHECK constraints from `pg_constraint`, evaluate `NOT (<check_expression>)` counts per table, and require zero violations. Emit `✓` / `✗` lines and include sampled failing rows on error.
 - **UNIQUE constraints**: enumerate UNIQUE constraints, run `GROUP BY ... HAVING COUNT(*) > 1` checks for each constrained key set, and require zero duplicates. Emit `✓` / `✗` lines and include sampled failing groups on error.
 - **NOT NULL columns**: enumerate NOT NULL columns and count `NULL` rows per column. Require zero. Emit `✓` / `✗` lines and include sampled failing rows on error.
