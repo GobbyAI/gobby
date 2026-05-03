@@ -8,6 +8,11 @@ import remarkGfm from 'remark-gfm'
 import { markdownComponents } from '../shared/MarkdownComponents'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
 import { codeTheme } from '../shared/codeTheme'
+import {
+  FOLDER_ICON_COLOR_VAR,
+  getGitStatusColorVar,
+  getLanguageColorVar,
+} from '../../lib/languageColors'
 
 interface FilesTabProps {
   projectId?: string | null
@@ -70,26 +75,9 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
 
-function getFileIconColor(ext: string): string {
-  const e = ext.toLowerCase()
-  if (['ts', 'tsx'].includes(e)) return 'var(--lang-typescript)'
-  if (['js', 'jsx'].includes(e)) return 'var(--lang-javascript)'
-  if (e === 'py') return 'var(--lang-python)'
-  if (e === 'rs') return 'var(--lang-rust)'
-  if (e === 'go') return 'var(--lang-go)'
-  if (['json', 'yaml', 'yml', 'toml'].includes(e)) return 'var(--lang-config)'
-  if (['md', 'txt', 'rst'].includes(e)) return 'var(--lang-doc)'
-  if (['css', 'scss', 'less'].includes(e)) return 'var(--lang-style)'
-  if (['html', 'htm'].includes(e)) return 'var(--lang-markup)'
-  if (['sh', 'bash', 'zsh'].includes(e)) return 'var(--lang-shell)'
-  if (['sql'].includes(e)) return 'var(--lang-sql)'
-  if (['rb'].includes(e)) return 'var(--lang-ruby)'
-  return 'var(--lang-default)'
-}
-
 function FolderIcon({ open }: { open: boolean }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--lang-folder)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={FOLDER_ICON_COLOR_VAR} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       {open && <line x1="9" y1="14" x2="15" y2="14" />}
     </svg>
@@ -97,7 +85,7 @@ function FolderIcon({ open }: { open: boolean }) {
 }
 
 function FileIconSvg({ extension }: { extension: string }) {
-  const color = getFileIconColor(extension)
+  const color = getLanguageColorVar(extension)
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
@@ -547,18 +535,9 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
   )
 })
 
-const GIT_STATUS_COLORS: Record<string, string> = {
-  M: 'var(--git-status-modified)',
-  A: 'var(--git-status-added)',
-  D: 'var(--git-status-deleted)',
-  R: 'var(--git-status-renamed)',
-  '?': 'var(--git-status-untracked)',
-  '??': 'var(--git-status-untracked)',
-}
-
 function GitStatusBadge({ status }: { status: string }) {
   const label = status === '??' ? '?' : status.charAt(0)
-  const color = GIT_STATUS_COLORS[status] ?? GIT_STATUS_COLORS[label] ?? 'var(--git-status-untracked)'
+  const color = getGitStatusColorVar(label)
   return (
     <span
       className="files-git-badge"
