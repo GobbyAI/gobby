@@ -1,6 +1,8 @@
 mod commands;
 mod config;
 mod db;
+mod freshness;
+mod git;
 mod index;
 mod models;
 mod neo4j;
@@ -33,6 +35,10 @@ struct Cli {
     /// Enable verbose output
     #[arg(long, global = true)]
     verbose: bool,
+
+    /// Skip read-time freshness checks
+    #[arg(long, global = true)]
+    no_freshness: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -198,6 +204,31 @@ enum GraphCommand {
     Rebuild,
 }
 
+fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
+    if !disabled {
+        freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?;
+    }
+    Ok(())
+}
+
+fn ensure_files_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+    files: Vec<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    if !disabled {
+        freshness::ensure_fresh(ctx, freshness::FreshnessScope::Files(files))?;
+    }
+    Ok(())
+}
+
+fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyhow::Result<()> {
+    if !disabled {
+        freshness::ensure_symbol_fresh(ctx, id)?;
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -224,7 +255,10 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
         Command::Index { path, files, full } => commands::index::run(&ctx, path, files, full),
-        Command::Status => commands::status::run(&ctx, cli.format),
+        Command::Status => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::status::run(&ctx, cli.format)
+        }
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
         Command::Graph {
             command: GraphCommand::Clear,
@@ -240,18 +274,21 @@ fn main() -> anyhow::Result<()> {
             kind,
             language,
             path,
-        } => commands::search::search(
-            &ctx,
-            &query,
-            commands::search::SearchOptions {
-                limit,
-                offset,
-                kind: kind.as_deref(),
-                language: language.as_deref(),
-                path: path.as_deref(),
-                format: cli.format,
-            },
-        ),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search(
+                &ctx,
+                &query,
+                commands::search::SearchOptions {
+                    limit,
+                    offset,
+                    kind: kind.as_deref(),
+                    language: language.as_deref(),
+                    path: path.as_deref(),
+                    format: cli.format,
+                },
+            )
+        }
         Command::SearchSymbol {
             query,
             limit,
@@ -259,73 +296,112 @@ fn main() -> anyhow::Result<()> {
             kind,
             language,
             path,
-        } => commands::search::search_symbol(
-            &ctx,
-            &query,
-            commands::search::SearchOptions {
-                limit,
-                offset,
-                kind: kind.as_deref(),
-                language: language.as_deref(),
-                path: path.as_deref(),
-                format: cli.format,
-            },
-        ),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search_symbol(
+                &ctx,
+                &query,
+                commands::search::SearchOptions {
+                    limit,
+                    offset,
+                    kind: kind.as_deref(),
+                    language: language.as_deref(),
+                    path: path.as_deref(),
+                    format: cli.format,
+                },
+            )
+        }
         Command::SearchText {
             query,
             limit,
             offset,
             language,
             path,
-        } => commands::search::search_text(
-            &ctx,
-            &query,
-            limit,
-            offset,
-            language.as_deref(),
-            path.as_deref(),
-            cli.format,
-        ),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search_text(
+                &ctx,
+                &query,
+                limit,
+                offset,
+                language.as_deref(),
+                path.as_deref(),
+                cli.format,
+            )
+        }
         Command::SearchContent {
             query,
             limit,
             offset,
             language,
             path,
-        } => commands::search::search_content(
-            &ctx,
-            &query,
-            limit,
-            offset,
-            language.as_deref(),
-            path.as_deref(),
-            cli.format,
-        ),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search_content(
+                &ctx,
+                &query,
+                limit,
+                offset,
+                language.as_deref(),
+                path.as_deref(),
+                cli.format,
+            )
+        }
 
         Command::Outline { file } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
             commands::symbols::outline(&ctx, &file, cli.format, cli.verbose)
         }
-        Command::Symbol { id } => commands::symbols::symbol(&ctx, &id, cli.format),
-        Command::Symbols { ids } => commands::symbols::symbols(&ctx, &ids, cli.format),
-        Command::Kinds => commands::symbols::kinds(&ctx, cli.format),
-        Command::Tree => commands::symbols::tree(&ctx, cli.format),
+        Command::Symbol { id } => {
+            ensure_symbol_fresh(&ctx, cli.no_freshness, &id)?;
+            commands::symbols::symbol(&ctx, &id, cli.format)
+        }
+        Command::Symbols { ids } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::symbols::symbols(&ctx, &ids, cli.format)
+        }
+        Command::Kinds => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::symbols::kinds(&ctx, cli.format)
+        }
+        Command::Tree => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::symbols::tree(&ctx, cli.format)
+        }
 
         Command::Callers {
             symbol_name,
             limit,
             offset,
-        } => commands::graph::callers(&ctx, &symbol_name, limit, offset, cli.format),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::callers(&ctx, &symbol_name, limit, offset, cli.format)
+        }
         Command::Usages {
             symbol_name,
             limit,
             offset,
-        } => commands::graph::usages(&ctx, &symbol_name, limit, offset, cli.format),
-        Command::Imports { file } => commands::graph::imports(&ctx, &file, cli.format),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::usages(&ctx, &symbol_name, limit, offset, cli.format)
+        }
+        Command::Imports { file } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::imports(&ctx, &file, cli.format)
+        }
         Command::BlastRadius { target, depth } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::graph::blast_radius(&ctx, &target, depth, cli.format)
         }
 
-        Command::RepoOutline => commands::status::repo_outline(&ctx, cli.format),
+        Command::RepoOutline => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::status::repo_outline(&ctx, cli.format)
+        }
     }
 }
 
@@ -464,5 +540,13 @@ mod tests {
             }
             _ => panic!("expected search command"),
         }
+    }
+
+    #[test]
+    fn test_parse_no_freshness_global_flag() {
+        let cli = Cli::try_parse_from(["gcode", "--no-freshness", "tree"]).expect("tree parses");
+
+        assert!(cli.no_freshness);
+        assert!(matches!(cli.command, Command::Tree));
     }
 }

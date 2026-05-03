@@ -116,8 +116,8 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
     let conn = db::open_readwrite(&ctx.db_path)?;
     let sym: Option<Symbol> = conn
         .query_row(
-            "SELECT * FROM code_symbols WHERE id = ?1",
-            rusqlite::params![id],
+            "SELECT * FROM code_symbols WHERE id = ?1 AND project_id = ?2",
+            rusqlite::params![id, &ctx.project_id],
             Symbol::from_row,
         )
         .ok();
@@ -166,7 +166,7 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 }
             }
         }
-        None => anyhow::bail!("Symbol not found: {id}"),
+        None => anyhow::bail!("Symbol not found in current project: {id}"),
     }
 }
 
@@ -174,14 +174,16 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
     let conn = db::open_readwrite(&ctx.db_path)?;
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT * FROM code_symbols WHERE id IN ({})",
+        "SELECT * FROM code_symbols WHERE project_id = ?{} AND id IN ({})",
+        ids.len() + 1,
         placeholders.join(",")
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = ids
+    let mut params: Vec<&dyn rusqlite::types::ToSql> = ids
         .iter()
         .map(|s| s as &dyn rusqlite::types::ToSql)
         .collect();
+    params.push(&ctx.project_id);
     let results: Vec<Symbol> = stmt
         .query_map(&*params, Symbol::from_row)?
         .filter_map(|r| r.ok())

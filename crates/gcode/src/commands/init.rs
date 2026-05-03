@@ -8,14 +8,21 @@ use crate::project;
 use crate::skill;
 
 pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<()> {
-    let (project_id, was_created) = project::ensure_gcode_json(project_root)?;
-
-    let status = if was_created {
-        "initialized"
-    } else if project_root.join(".gobby").join("project.json").exists() {
-        "gobby"
+    let identity =
+        config::resolve_project_identity(project_root, config::MissingIdentity::Generate)?;
+    config::warn_project_identity(&identity, quiet);
+    let (project_id, was_created) = if identity.should_write_gcode_json {
+        project::ensure_gcode_json(project_root)?
     } else {
-        "existing"
+        (identity.project_id.clone(), false)
+    };
+
+    let status = match identity.source {
+        config::ProjectIdentitySource::IsolatedRoot => "isolated",
+        config::ProjectIdentitySource::LinkedWorktree => "linked-worktree",
+        config::ProjectIdentitySource::ProjectJson => "gobby",
+        config::ProjectIdentitySource::Generated if was_created => "initialized",
+        _ => "existing",
     };
 
     // Detect AI CLIs and install skills (skip if gobby manages this project)
@@ -77,6 +84,14 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
                     "gobby" => {
                         eprintln!(
                             "Using gobby project: {} ({})",
+                            project_id,
+                            project_root.display()
+                        );
+                    }
+                    "isolated" | "linked-worktree" => {
+                        eprintln!(
+                            "Using {} code index: {} ({})",
+                            status,
                             project_id,
                             project_root.display()
                         );
