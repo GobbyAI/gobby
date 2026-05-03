@@ -10,6 +10,15 @@
   transition:
     min-width 0.2s,
     width 0.2s;
+  container-type: inline-size;
+  container-name: sessions-sidebar;
+}
+
+@container sessions-sidebar (max-width: 180px) {
+  .session-entry {
+    padding: 0.5rem 0.4rem;
+    gap: 0.25rem;
+  }
 }
 
 .sessions-sidebar.collapsed {

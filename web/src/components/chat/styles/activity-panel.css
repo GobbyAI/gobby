@@ -199,6 +199,14 @@
   border-left: 1px solid var(--border);
   background: var(--bg-primary);
   overflow: hidden;
+  container-type: inline-size;
+  container-name: activity-panel;
+}
+
+@container activity-panel (max-width: 380px) {
+  .activity-panel-tab-label {
+    display: none;
+  }
 }
 
 .activity-panel-tabs {

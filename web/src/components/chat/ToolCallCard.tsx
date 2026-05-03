@@ -447,6 +447,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
 
   return (
     <div className={cn(
+      '@container',
       nested
         ? 'border-b border-border last:border-b-0 overflow-hidden'
         : 'rounded-lg border border-border overflow-hidden my-1.5',
@@ -460,11 +461,11 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         <span className="font-mono text-foreground">{displayName}</span>
         {summary && isFileHeader ? (
           <>
-            <span className="text-muted-foreground text-xs truncate hidden sm:inline">{summary}</span>
-            <span className="text-muted-foreground text-xs truncate sm:hidden">{pathBasename(summary)}</span>
+            <span className="text-muted-foreground text-xs truncate hidden @sm:inline">{summary}</span>
+            <span className="text-muted-foreground text-xs truncate @sm:hidden">{pathBasename(summary)}</span>
           </>
         ) : summary ? (
-          <span className="text-muted-foreground text-xs truncate max-w-[12rem] sm:max-w-[24rem]">{summary}</span>
+          <span className="text-muted-foreground text-xs truncate max-w-[12rem] @sm:max-w-[24rem]">{summary}</span>
         ) : null}
         <div className="flex-1" />
         {artifactButton && (
