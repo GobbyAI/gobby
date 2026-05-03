@@ -3025,7 +3025,7 @@ state.
 
 - 7.0.1 — Bootstrap Postgres credentials moved from disk to OS keyring. file: `src/gobby/config/bootstrap.py`.
 
-### 7.1 Remove `SqliteHubDatabase` from runtime wiring [category: refactor] (depends: P6)
+### 7.1 Remove `SqliteHubDatabase` from runtime wiring [category: refactor] (depends: 7.0)
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/__init__.py`, `src/gobby/runner.py`, `src/gobby/config/bootstrap.py`
