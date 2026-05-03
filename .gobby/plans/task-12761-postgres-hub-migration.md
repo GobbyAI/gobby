@@ -1291,6 +1291,7 @@ class Savepoint(Protocol):
     def rollback(self) -> None: ...
 
 class Transaction(Protocol):
+    is_immediate: bool  # True iff opened via transaction_immediate(lock=...)
     def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> Cursor: ...
     def executemany(self, sql: str, rows: Sequence[Sequence[Any]]) -> None: ...
     def savepoint(self, name: str) -> Savepoint: ...
@@ -1969,11 +1970,58 @@ class HubDatabase(Protocol):
     ) -> Cursor: ...
 ```
 
-**Preserving `transaction_immediate()`.** Today's `DatabaseProtocol.transaction_immediate()` is the SQLite write-intent lock entry point (`BEGIN IMMEDIATE`) and is reachable from runtime call sites including `src/gobby/storage/tasks/_crud.py`, `src/gobby/storage/tasks/_dispatch_mutex.py`, `src/gobby/storage/sessions/_crud.py`, and `src/gobby/storage/sessions/_constants.py`. `HubDatabase` therefore exposes `transaction_immediate()` as a first-class method so the existing call sites stay structurally unchanged after the import rename:
+**Preserving `transaction_immediate()` with a typed lock target.** Today's `DatabaseProtocol.transaction_immediate()` is the SQLite write-intent lock entry point (`BEGIN IMMEDIATE`) and is reachable from runtime call sites including `src/gobby/storage/tasks/_crud.py`, `src/gobby/storage/tasks/_dispatch_mutex.py`, `src/gobby/storage/sessions/_crud.py`, and `src/gobby/storage/sessions/_constants.py`. The current zero-argument shape works on SQLite because `BEGIN IMMEDIATE` takes a global write lock, but it cannot map to Postgres without naming the resource being protected. `HubDatabase` therefore takes a typed `LockTarget` argument so the adapter can acquire the right Postgres lock per call site:
 
-- `SqliteHubDatabase.transaction_immediate()` issues `BEGIN IMMEDIATE` so writers contend at transaction start rather than first-write time, preserving the current dispatch-mutex semantics.
-- `PostgresHubDatabase.transaction_immediate()` opens a normal `BEGIN` and **immediately acquires the dispatch row lock via `SELECT ... FOR UPDATE`** (or, where there is no canonical dispatch row, takes a Postgres advisory lock keyed by the caller-supplied resource ID). Postgres's row-level locking + MVCC handles the concurrent-write scenarios that SQLite needs `BEGIN IMMEDIATE` for; the adapter exposes this contract uniformly so the call sites do not branch on dialect.
-- A lint in `src/gobby/storage/` fails on any `transaction_immediate()` call site that does not also acquire an explicit lock target on the Postgres path; the §3.8 sweep documents the locking target for each existing call site (the dispatch-mutex row for `_dispatch_mutex.py`, the session row for `sessions/_crud.py`, etc.).
+```python
+# src/gobby/storage/hub/protocol.py
+class LockTarget(Protocol):
+    """Names the resource a transaction_immediate() block protects.
+    Adapters dispatch on the concrete subclass — SQLite ignores the target
+    (BEGIN IMMEDIATE is global write-intent), Postgres uses it to acquire
+    the matching SELECT ... FOR UPDATE / pg_advisory_xact_lock."""
+
+@dataclass(frozen=True)
+class TaskSeqAllocation(LockTarget):
+    """tasks/_crud.py: serializes seq_num allocation per project.
+    Postgres: SELECT ... FOR UPDATE on projects(id = project_id), or
+    pg_advisory_xact_lock(hashtext('task_seq:' || project_id)) when the
+    project row is the resource being created in the same txn."""
+    project_id: str
+
+@dataclass(frozen=True)
+class DispatchMutexRow(LockTarget):
+    """tasks/_dispatch_mutex.py: protects the per-task dispatch lease row.
+    Postgres: SELECT 1 FROM task_dispatch_mutex WHERE task_id = $1 FOR UPDATE."""
+    task_id: str
+
+@dataclass(frozen=True)
+class SessionRegistration(LockTarget):
+    """sessions/_crud.py: protects session uniqueness/recovery.
+    Postgres: pg_advisory_xact_lock(hashtext('session:' || session_id))
+    because the session row may not exist yet at lock time."""
+    session_id: str
+
+@dataclass(frozen=True)
+class SystemSessionBootstrap(LockTarget):
+    """sessions/_constants.py: protects the one-time system-session insert.
+    Postgres: pg_advisory_xact_lock(hashtext('system_session_bootstrap'))
+    — global, no row, idempotent across daemon starts."""
+
+class HubDatabase(Protocol):
+    @contextmanager
+    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]: ...
+    # ... other methods unchanged
+```
+
+Adapter behavior:
+
+- `SqliteHubDatabase.transaction_immediate(lock)` issues `BEGIN IMMEDIATE` regardless of `lock` — SQLite serializes writers globally. The `lock` argument is documentary but enforced by the lint below.
+- `PostgresHubDatabase.transaction_immediate(lock)` opens `BEGIN` and **executes the lock acquisition immediately** before yielding the transaction: `TaskSeqAllocation` → `SELECT 1 FROM projects WHERE id = $1 FOR UPDATE`; `DispatchMutexRow` → `SELECT 1 FROM task_dispatch_mutex WHERE task_id = $1 FOR UPDATE`; `SessionRegistration` and `SystemSessionBootstrap` → `SELECT pg_advisory_xact_lock(hashtext($1))` with the documented lock-key string. The lock is bound to the transaction (`pg_advisory_xact_lock`, not the session-scoped variant) so it auto-releases on commit/rollback.
+- `Transaction.is_immediate` is `True` for transactions opened via `transaction_immediate(...)`, `False` otherwise. The ambient registry uses this to forbid `transaction_immediate()` nested inside a non-immediate `transaction()` (you cannot escalate to write-intent locking mid-transaction without potential deadlock).
+
+The §3.8 sweep at each existing `transaction_immediate()` call site converts `with db.transaction_immediate():` → `with db.transaction_immediate(TaskSeqAllocation(project_id=...))` (or the matching target). The lint in `src/gobby/storage/` fails on any `transaction_immediate()` call **without a `LockTarget` argument** so the type system enforces the contract before runtime.
+
+Concurrency tests cover each call-site pattern: two coroutines/threads racing on the same `TaskSeqAllocation(project_id="X")` serialize correctly on both backends; a `DispatchMutexRow` block acquired by session A blocks session B until commit; `SystemSessionBootstrap` is exclusive across daemon starts; mixing `transaction()` and `transaction_immediate(...)` raises the documented contract error.
 
 **Ambient-transaction semantics, adapter-scoped.** The current storage layer has many `with db.transaction(): db.execute(...); db.execute(...)` blocks that group multiple manager calls into one atomic unit. Under a naive auto-commit convenience layer, the inner `db.execute` calls would each open their own transaction nested inside the outer block — broken atomicity on SQLite (savepoint nesting), pool-leak hazards on Postgres. Both adapters therefore use a **per-adapter, contextvar-scoped ambient-transaction registry** so convenience methods detect an active outer transaction *for the same adapter* and reuse it. Crucially, the registry keys by adapter identity so a transaction on a SqliteHubDatabase does not leak into a coexisting PostgresHubDatabase (a real concern during migration/import code and the §2.3 dual-backend test fixture):
 
@@ -2052,8 +2100,8 @@ Add two lints in `src/gobby/storage/`:
 
 **Acceptance:**
 
-- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate()` issues `BEGIN IMMEDIATE` on SQLite and `BEGIN` + explicit row/advisory lock acquisition on Postgres so existing dispatch-mutex / session-locking call sites stay structurally unchanged. Both adapters implement the methods via `_resolve_executor(self)` so calls join an active ambient transaction or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`.
-- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, `db.transaction_immediate()` write-intent locks, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. The §3.8 sweep documents the explicit Postgres lock target for every `transaction_immediate()` call site (the dispatch-mutex row for `_dispatch_mutex.py`, the session row for `sessions/_crud.py`, etc.). file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call site documents its Postgres lock target" enforced by a third lint.
+- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate(lock: LockTarget)` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate(lock)` accepts a typed `LockTarget` (`TaskSeqAllocation`, `DispatchMutexRow`, `SessionRegistration`, `SystemSessionBootstrap`); SqliteHubDatabase issues `BEGIN IMMEDIATE` (target ignored — global write-intent), PostgresHubDatabase opens `BEGIN` and immediately executes the matching `SELECT ... FOR UPDATE` row lock or `pg_advisory_xact_lock(hashtext(...))` advisory lock per target. `Transaction.is_immediate` (added to §3.1's protocol) is `True` for transactions opened via `transaction_immediate`, `False` otherwise; the ambient registry uses it to forbid escalating to immediate inside a non-immediate `transaction()`. Both adapters implement the convenience methods via `_resolve_executor(self)` so calls join an active ambient transaction (per-adapter, keyed by `id(adapter)`) or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`. symbol: `gobby.storage.hub.protocol.LockTarget`.
+- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget` (`TaskSeqAllocation` for `tasks/_crud.py`, `DispatchMutexRow` for `_dispatch_mutex.py`, `SessionRegistration` for `sessions/_crud.py`, `SystemSessionBootstrap` for `sessions/_constants.py`). file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
 - 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
@@ -2483,7 +2531,7 @@ Target: `src/gobby/storage/migration/validation.py` (new)
 Runs after bulk copy. All checks must pass for the migration command to exit 0.
 
 - **Schema parity baseline**: before comparing data, verify the SQLite source schema fingerprint / semantic schema version matches the migration baseline expected by the importer. Fail early if the source schema is older/newer/drifted.
-- **Postgres-only table exclusion list**: a small set of tables exists on the Postgres side without a SQLite counterpart by design and is excluded from every comparison below. Currently: `gobby_install_ownership` (external-mode ownership sentinel, §1.2), `gobby_migration_state` (cutover marker, §4.2), `schema_migrations` (applied versions). Validation iterates Postgres tables minus this list when building the comparison set; iterating SQLite tables and checking that each maps to a Postgres counterpart catches anything dropped in error.
+- **Postgres-only table exclusion list**: a small set of tables exists on the Postgres side without a SQLite counterpart by design and is excluded from every comparison below. The authoritative set is **the union of `_PRE_BASELINE_INFRA_TABLES` from §3.3 with `gobby_migration_state` and `schema_migrations`**: `gobby_install_ownership` (external-mode ownership sentinel, §1.2), `_pgaudit_probe` (Docker-mode pgAudit initdb seed, §6.0), `gobby_migration_state` (cutover marker, §4.2), `schema_migrations` (applied versions). The exclusion list is exposed as a single module-level constant `_POSTGRES_ONLY_TABLES = _PRE_BASELINE_INFRA_TABLES | {"gobby_migration_state", "schema_migrations"}` so §3.3 and §5.2 cannot drift. Validation iterates Postgres tables minus this list when building the comparison set; iterating SQLite tables and checking that each maps to a Postgres counterpart catches anything dropped in error. A regression test seeds `_pgaudit_probe` (and a fake "unexpected Postgres-only table") in the target before import: validation passes for `_pgaudit_probe` and fails loudly for the unexpected table.
 - **Row counts**: `SELECT COUNT(*) FROM <t>` on both sides for every table in the comparison set; must match exactly.
 - **FK integrity**: primarily validated by the commit of the deferred-constraint import transaction in step 5.1.7. Validation also runs explicit orphan checks generated from `pg_constraint` metadata so we do not trust transaction success alone.
 - **Content hashes**: for a representative set of tables (`sessions`, `tasks`, `memories`, `config_store`, `code_symbols`, `agents`, `metrics`, workflow audit), compute an order-independent hash of canonical JSON-encoded rows on both sides and compare. Order-independence is achieved by sorting by primary key before hashing; JSON encoding uses sorted keys.
@@ -2498,6 +2546,7 @@ Output format: one line per check with `✓` / `✗`, plus a summary JSON artifa
 **Acceptance:**
 
 - 5.2.1 — Migration validation checks compare row counts and content invariants between SQLite and PostgreSQL. file: `src/gobby/storage/migration/validation.py`.
+- 5.2.2 — Postgres-only table exclusion list is the union of `_PRE_BASELINE_INFRA_TABLES` (§3.3) with `gobby_migration_state` and `schema_migrations`. Validation passes when the target carries `_pgaudit_probe` from §6.0 Docker-mode initdb; validation fails loudly on any other unexpected Postgres-only table. test: `tests/storage/migration/test_validation_postgres_only_exclusion.py::test_pgaudit_probe_excluded_unknown_table_fails`.
 
 ### 5.3 Implement sequence / identity reseed [category: code] (depends: 5.1)
 `kind: deliverable`
