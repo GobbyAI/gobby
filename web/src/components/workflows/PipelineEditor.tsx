@@ -19,14 +19,12 @@ interface KVPair {
   value: string
 }
 
-// Step-type accent colors stay as raw hex pending the colorize pass —
-// see .impeccable.md "Blue accent → green migration" tracked separately.
 const STEP_TYPES: { value: StepType; label: string; color: string }[] = [
-  { value: 'exec', label: 'Exec', color: '#22d3ee' },
-  { value: 'prompt', label: 'Prompt', color: '#a78bfa' },
-  { value: 'mcp', label: 'MCP', color: '#60a5fa' },
-  { value: 'invoke_pipeline', label: 'Pipeline', color: '#c084fc' },
-  { value: 'activate_workflow', label: 'Workflow', color: '#2dd4bf' },
+  { value: 'exec', label: 'Exec', color: 'var(--step-type-exec)' },
+  { value: 'prompt', label: 'Prompt', color: 'var(--step-type-prompt)' },
+  { value: 'mcp', label: 'MCP', color: 'var(--step-type-mcp)' },
+  { value: 'invoke_pipeline', label: 'Pipeline', color: 'var(--step-type-invoke_pipeline)' },
+  { value: 'activate_workflow', label: 'Workflow', color: 'var(--step-type-activate_workflow)' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -165,7 +163,7 @@ function detectStepType(step: PipelineStep): StepType {
 }
 
 function getTypeColor(type: StepType): string {
-  return STEP_TYPES.find((t) => t.value === type)?.color ?? '#666'
+  return STEP_TYPES.find((t) => t.value === type)?.color ?? 'var(--text-muted)'
 }
 
 function getStepPreview(step: PipelineStep): string {

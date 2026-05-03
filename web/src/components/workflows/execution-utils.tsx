@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { formatDuration, formatJson } from "./executionFormatters";
+import { getExecStatusColorVar } from "../../lib/pipelineColors";
 
 // ── Status Badge ──
 
@@ -150,22 +151,10 @@ export function TraceIcon() {
 }
 
 export function PipelineStatusDot({ status }: { status: string }) {
-  const colorMap: Record<string, string> = {
-    running: "#60a5fa",
-    pending: "#888",
-    completed: "#4ade80",
-    success: "#4ade80",
-    failed: "#f87171",
-    error: "#f87171",
-    timeout: "#fb923c",
-    waiting_approval: "#fbbf24",
-    cancelled: "#888",
-    interrupted: "#c084fc",
-  };
   return (
     <span
       className="pipeline-status-dot"
-      style={{ backgroundColor: colorMap[status] || "#888" }}
+      style={{ backgroundColor: getExecStatusColorVar(status) }}
       title={status}
     />
   );
