@@ -169,6 +169,18 @@ def test_agent_definition_model_preserves_skills_blocks() -> None:
     }
 
 
+def test_triage_agent_uses_current_agent_schema_and_methodology_skill() -> None:
+    from gobby.workflows.definitions import AgentDefinitionBody
+
+    agent = _agent("triage-agent")
+    body = AgentDefinitionBody.model_validate(agent)
+
+    assert "prompt" not in agent
+    assert agent["skills"] == {"methodology": ["triage-judgment"]}
+    assert body.instructions is not None
+    assert "Return structured JSON only" in body.instructions
+
+
 def test_backend_developer_documents_default_fallback_audit_marker() -> None:
     agent = _agent("backend-developer")
     instructions = agent["instructions"]

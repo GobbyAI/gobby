@@ -81,6 +81,20 @@ class TestSyncBundledSkills:
         assert skill.name == "memory"
         assert len(skill.content) > 0
 
+    def test_sync_bundled_skills_includes_triage_judgment(
+        self, db: LocalDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        """GitHub triage methodology skill should parse and sync."""
+        from gobby.skills.sync import sync_bundled_skills
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is True
+        skill = skill_manager.get_by_name("triage-judgment")
+        assert skill is not None
+        assert skill.source == "installed"
+        assert "Return structured JSON only" in skill.content
+
     def test_sync_bundled_skills_is_idempotent(
         self, db: LocalDatabase, skill_manager: LocalSkillManager
     ) -> None:

@@ -1,3 +1,16 @@
+---
+name: triage-judgment
+description: Internal methodology for side-effect-free GitHub issue triage verdicts.
+version: "1.0.0"
+category: methodology
+internal: true
+triggers: github issue triage, triage judgment, duplicate issue detection
+metadata:
+  gobby:
+    audience: agent
+    depth: 0
+---
+
 # GitHub Issue Triage Judgment
 
 Return structured JSON only. Do not create tasks, call GitHub, change labels, close
