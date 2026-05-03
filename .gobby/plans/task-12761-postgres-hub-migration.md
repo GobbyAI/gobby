@@ -697,7 +697,7 @@ Update `init_hub_database` (and `init_storage_and_config` if it duplicates the w
 ### 1.4 Add local-build Dockerfile for the Docker mode [category: config] (depends: 1.1)
 `kind: deliverable`
 
-Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), `src/gobby/data/postgres-pgsearch/version.json` (new — single source of truth for `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256`, consumed by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup), CI smoke-test workflow
+Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), `src/gobby/data/postgres-pgsearch/version.json` (new — single source of truth for `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256`, consumed by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup), `src/gobby/data/postgres-pgsearch/initdb.d/01-pg_search.sql` (new — `CREATE EXTENSION IF NOT EXISTS pg_search;` seed copied into the image's `/docker-entrypoint-initdb.d/` so the extension is installed before the first `apply_migrations()` probe; §6.0 adds a sibling `02-pgaudit.sql` to the same directory), CI smoke-test workflow
 
 Ship a Dockerfile that builds locally on the user's machine via the compose `build:` directive in task 1.1. **No registry push, no Gobby-published image, no GHCR.** The Dockerfile is a build recipe; the resulting image is local to the user and never leaves their machine. This keeps Gobby off the AGPL-distribution hook for pg_search — see "Why local build, not a published image" in the Service packaging section.
 
@@ -710,6 +710,8 @@ FROM postgres:17
 # fallback to a stale pin).
 ARG PG_SEARCH_VERSION
 ARG PG_SEARCH_SHA256
+
+COPY initdb.d/ /docker-entrypoint-initdb.d/
 
 RUN test -n "$PG_SEARCH_VERSION" && test -n "$PG_SEARCH_SHA256" \
     && apt-get update \
@@ -749,6 +751,7 @@ License notice (AGPL-3.0 for pg_search, PostgreSQL license for Postgres) is pres
 
 - 1.4.1 — Local-build Dockerfile for the `postgres-pgsearch` image lands in the data tree, builds against pinned `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256` build args, and passes the four CI smoke tests (`pg_isready`, `CREATE EXTENSION pg_search`, `CREATE EXTENSION pgaudit`, `shared_preload_libraries` includes both). file: `src/gobby/data/postgres-pgsearch/Dockerfile`.
 - 1.4.2 — `version.json` manifest commits the canonical `pg_search_version` and `pg_search_sha256` values used by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup. The schema is `{"pg_search_version": "<semver>", "pg_search_sha256": "<hex>", "postgres_major": "17"}`; build args fail-fast if either field is missing. file: `src/gobby/data/postgres-pgsearch/version.json`.
+- 1.4.3 — `01-pg_search.sql` initdb seed installs `pg_search` via `CREATE EXTENSION IF NOT EXISTS pg_search;`; the Dockerfile copies `initdb.d/` into `/docker-entrypoint-initdb.d/` so the extension is present on first DB initialization, before `PostgresHubDatabase.apply_migrations()` runs its probe. CI smoke asserts a fresh test container reports `SELECT 1 FROM pg_extension WHERE extname='pg_search'` returns 1 row before any `apply_migrations()` call. file: `src/gobby/data/postgres-pgsearch/initdb.d/01-pg_search.sql`.
 
 ### 1.5 Add `gobby postgres activate` and `deactivate` commands [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
@@ -1296,6 +1299,13 @@ class Transaction(Protocol):
     def executemany(self, sql: str, rows: Sequence[Sequence[Any]]) -> None: ...
     def savepoint(self, name: str) -> Savepoint: ...
     def after_commit(self, callback: Callable[[], None]) -> None: ...
+    def acquire_additional_lock(self, lock: LockTarget) -> None: ...
+    """Used by nested transaction_immediate(lock) calls inside an outer
+    immediate transaction (e.g. create_web_chat_session wrapping register).
+    The adapter executes the matching pg_advisory_xact_lock / SELECT FOR
+    UPDATE inside the existing transaction; locks are acquired in stable
+    hash-of-key order so multiple call sites cannot deadlock each other.
+    No-op on SQLite (BEGIN IMMEDIATE already takes a global write-intent lock)."""
 
 class HubDatabase(Protocol):
     dialect: Literal["sqlite", "postgres"]
@@ -1630,7 +1640,37 @@ def apply_migrations(self) -> None:
     runner.apply_pending()  # walks src/gobby/storage/migrations/*.sql
 ```
 
-`_apply_postgres_baseline` uses an advisory-lock guard (`SELECT pg_advisory_lock(...)`) so concurrent daemon starts cannot double-apply, executes `postgres_baseline_schema.sql` inside a transaction, and seeds `schema_migrations` with `(244, NOW())` on commit. `_postgres_baseline_already_applied` returns `True` iff the public-schema-equivalent search-path contains `schema_migrations` and a row at version 244 already exists.
+`_apply_postgres_baseline` runs inside a single transaction whose first statement is a **transaction-scoped** advisory lock (`pg_advisory_xact_lock`, **not** the session-scoped `pg_advisory_lock`) — this matters because `psycopg_pool` returns the connection to the pool on transaction end, and a session-scoped lock would leak across pool checkouts and deadlock subsequent startups. Inside the locked transaction, the implementation **re-runs `_classify_baseline_state` after lock acquisition** (the pre-lock check is just a fast-path; the post-lock check is authoritative): if the state is now `already_baselined`, return early without re-applying; otherwise execute `postgres_baseline_schema.sql`, seed `schema_migrations` with `(244, NOW())`, and commit. The lock auto-releases at commit/rollback regardless of which path runs.
+
+```python
+def _apply_postgres_baseline(self) -> None:
+    # Fast-path: skip the lock entirely if already baselined.
+    with self._pool.connection() as fast_conn:
+        if _classify_baseline_state(fast_conn) == "already_baselined":
+            return
+
+    # Authoritative path: lock, re-classify under the lock, apply if still needed.
+    with self._pool.connection() as conn, conn.transaction() as txn:
+        txn.execute("SELECT pg_advisory_xact_lock(hashtext('postgres_baseline_apply'))")
+        state = _classify_baseline_state(conn)
+        if state == "already_baselined":
+            return  # racing peer applied it between fast-path and lock acquisition
+        if state == "corrupt_partial":
+            raise MigrationUnsupportedError(
+                "Postgres database has application tables but no schema_migrations; "
+                "dump-and-restore from a known-good baseline."
+            )
+        # state in ("fresh", "fresh_with_install_infra"): apply.
+        sql = (Path(__file__).parent / "postgres_baseline_schema.sql").read_text()
+        for statement in _split_statements_respecting_dollar_quotes(sql):
+            if statement.strip():
+                txn.execute(statement)
+        txn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (244, NOW())"
+        )
+```
+
+`_postgres_baseline_already_applied` (a thin wrapper around `_classify_baseline_state(...) == "already_baselined"`) returns `True` iff the search-path contains `schema_migrations` and a row at version 244 already exists.
 
 **Pre-baseline infrastructure allowlist.** Two valid install paths intentionally create tables in the target database **before** `apply_migrations()` ever runs, and those tables must not be classified as a corrupt partial baseline:
 
@@ -1676,7 +1716,8 @@ Required tests in `tests/storage/hub/test_postgres_baseline_application.py`:
 - **already_baselined**: Postgres DB at v244 → `_apply_postgres_baseline` is skipped; runner walks file-based migrations only.
 - **corrupt_partial**: Postgres DB with a real application table (e.g., `tasks`) but no `schema_migrations` → raises `MigrationUnsupportedError` with the dump-and-restore guidance.
 - **corrupt_partial with infra-only false-positive guard**: Postgres DB with `gobby_install_ownership` AND `tasks` (real app table) → still raises `MigrationUnsupportedError` (the allowlist does not whitewash genuine corruption).
-- **concurrent**: `apply_migrations()` calls from two pool connections racing → advisory lock serializes them; baseline is applied exactly once.
+- **concurrent**: `apply_migrations()` calls from two pool connections racing → `pg_advisory_xact_lock` serializes them; the second caller re-classifies under the lock, observes `already_baselined`, and skips. Baseline is applied exactly once. The lock is released at transaction end so a third caller after both finish can probe without blocking.
+- **failure-no-leak**: an `apply_migrations()` call that raises mid-baseline (e.g., DDL syntax error) releases the advisory lock at transaction abort. A subsequent retry from another pool connection acquires the lock immediately and proceeds (or surfaces the same error reproducibly).
 
 **Acceptance:**
 
@@ -2048,13 +2089,16 @@ class WebChatSessionBootstrap(LockTarget):
 class TaskSubtreeCascade(LockTarget):
     """tasks/_crud.py::apply_build_controls_cascade: serializes the recursive
     build-controls subtree update so two concurrent cascades on overlapping
-    subtrees cannot interleave reads and writes. Keyed by the root task_id
-    of the cascade — overlapping subtrees rooted at different ancestors are
-    serialized at the root-id level, accepting the rare false-contention
-    case (two cascades targeting unrelated subtrees that happen to share an
-    ancestor in the path_cache) as cheaper than per-row locking.
-    Postgres: pg_advisory_xact_lock(hashtext('task_subtree:' || root_task_id))."""
-    root_task_id: str
+    subtrees cannot interleave reads and writes. The naive root-task-id key
+    is INSUFFICIENT because cascades rooted at an ancestor and a descendant
+    have different root_task_ids but write the same descendant rows; locking
+    on root alone permits the interleave we want to forbid. Keyed instead by
+    project_id, with all build-control cascades within a project serialized
+    at project-level granularity. False contention between unrelated
+    subtrees within the same project is accepted as the price of correctness;
+    the build-controls cascade is rare relative to other write traffic.
+    Postgres: pg_advisory_xact_lock(hashtext('task_subtree_cascade:' || project_id))."""
+    project_id: str
 
 class HubDatabase(Protocol):
     @contextmanager
@@ -2071,7 +2115,7 @@ Adapter behavior:
   - `SessionRegistration` → `SELECT pg_advisory_xact_lock(hashtext('session_register:' || external_id || '|' || machine_id || '|' || source || '|' || coalesce(project_id, '') || '|' || session_type))`.
   - `SessionRecoveryByProject` → `SELECT pg_advisory_xact_lock(hashtext('session_recovery:' || project_id))`.
   - `WebChatSessionBootstrap` → `SELECT pg_advisory_xact_lock(hashtext('web_chat_session:' || external_id || '|' || machine_id || '|' || source || '|' || coalesce(project_id, '') || '|' || session_type))`.
-  - `TaskSubtreeCascade` → `SELECT pg_advisory_xact_lock(hashtext('task_subtree:' || root_task_id))`.
+  - `TaskSubtreeCascade` → `SELECT pg_advisory_xact_lock(hashtext('task_subtree_cascade:' || project_id))` (project-level, **not** root-level — see dataclass docstring for why).
   - `SystemSessionBootstrap` → `SELECT pg_advisory_xact_lock(hashtext('system_session_bootstrap'))`.
 
   The lock is bound to the transaction (`pg_advisory_xact_lock`, not the session-scoped variant) so it auto-releases on commit/rollback.
@@ -2100,24 +2144,37 @@ _AMBIENT: ContextVar[Mapping[int, Transaction]] = ContextVar("_AMBIENT", default
 
 
 @contextmanager
-def _enter_transaction(adapter: HubDatabase, *, immediate: bool = False) -> Iterator[Transaction]:
-    """Adapter's transaction() / transaction_immediate() pushes the new
+def _enter_transaction(
+    adapter: HubDatabase,
+    *,
+    immediate: bool = False,
+    lock: LockTarget | None = None,
+) -> Iterator[Transaction]:
+    """Adapter's transaction() / transaction_immediate(lock) pushes the new
     Transaction onto the per-adapter ambient registry so convenience-method
-    calls inside the block reuse it — but only for THIS adapter."""
+    calls inside the block reuse it — but only for THIS adapter.
+
+    Nested transaction_immediate(lock) inside an existing immediate transaction
+    on the same adapter does NOT silently reuse the outer transaction. It
+    acquires the additional lock target inside the existing transaction (in
+    deterministic order by hash of the lock-key string, so two threads
+    requesting locks A and B in opposite source order cannot deadlock). This
+    handles the create_web_chat_session → register flow (outer
+    WebChatSessionBootstrap, inner SessionRegistration / SessionRecoveryByProject)
+    correctly: both lock targets are held before the protected reads/writes."""
     current = dict(_AMBIENT.get())
     existing = current.get(id(adapter))
     if existing is not None:
-        # Nested with-block under the same physical transaction on this
-        # adapter: reuse, don't nest. Adapters that genuinely need savepoints
-        # expose them via Transaction.savepoint() instead of nested
-        # transaction() calls. immediate=True inside an outer transaction()
-        # is a contract violation (you cannot escalate to write-intent locking
-        # mid-transaction); the adapter raises explicitly in that case.
         if immediate and not existing.is_immediate:
+            # Cannot escalate to write-intent mid-transaction.
             raise RuntimeError("transaction_immediate() inside a non-immediate transaction()")
+        if immediate and lock is not None:
+            # Acquire additional lock inside the existing immediate transaction
+            # in deterministic order to avoid AB/BA deadlocks.
+            existing.acquire_additional_lock(lock)
         yield existing
         return
-    with _open_native_transaction(adapter, immediate=immediate) as txn:
+    with _open_native_transaction(adapter, immediate=immediate, lock=lock) as txn:
         new_map = {**current, id(adapter): txn}
         token = _AMBIENT.set(new_map)
         try:
@@ -2161,13 +2218,13 @@ Add two lints in `src/gobby/storage/`:
 1. Fail on any new import of the legacy `DatabaseProtocol` for runtime use (test fixtures may keep referencing it during the transition; the lint scopes to non-test files). Phase 7's SQLite removal deletes `DatabaseProtocol` outright.
 2. Fail on `db.connection` / `db.cursor()` references in non-test code outside the typed escape-hatch boundary.
 
-**Tests.** A representative manager (e.g., `LocalTaskManager`) is parametrized over `hub_db` and exercised against both backends covering read, write, multi-statement transaction, `cursor.rowcount` after delete/update, and `safe_update(table, values, where, where_params)` builder usage. Plus a focused ambient-transaction test: `with db.transaction(): db.execute(insert); db.execute(insert); raise` rolls both inserts back atomically on both backends.
+**Tests, scoped to the convenience layer.** The §3.8 dual-backend parity test deliberately uses **a minimal, already-`$N`/`RETURNING`/`ON CONFLICT`-shaped SQL fixture** — a single test table created in the test fixture itself with one INSERT, one UPDATE, one DELETE, one SELECT. This is the API contract test for the convenience layer; the project-wide manager sweep uses legacy `?` SQL on SQLite only until §4.3 lands the placeholder rewrite (which depends on §3.8). The full Postgres-side manager parity (every storage manager runs through `PostgresHubDatabase` with rewritten SQL) is what §4.3 + §3.5 + §3.6 produce; §3.8 just proves the convenience-layer surface and ambient-transaction registry work. Plus a focused ambient-transaction test: `with db.transaction(): db.execute(insert); db.execute(insert); raise` rolls both inserts back atomically on both backends.
 
 **Acceptance:**
 
 - 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate(lock: LockTarget)` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate(lock)` accepts a typed `LockTarget` (`TaskSeqAllocation`, `DispatchMutexRow`, `SessionRegistration`, `SystemSessionBootstrap`); SqliteHubDatabase issues `BEGIN IMMEDIATE` (target ignored — global write-intent), PostgresHubDatabase opens `BEGIN` and immediately executes the matching `SELECT ... FOR UPDATE` row lock or `pg_advisory_xact_lock(hashtext(...))` advisory lock per target. `Transaction.is_immediate` (added to §3.1's protocol) is `True` for transactions opened via `transaction_immediate`, `False` otherwise; the ambient registry uses it to forbid escalating to immediate inside a non-immediate `transaction()`. Both adapters implement the convenience methods via `_resolve_executor(self)` so calls join an active ambient transaction (per-adapter, keyed by `id(adapter)`) or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`. symbol: `gobby.storage.hub.protocol.LockTarget`.
 - 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. Every `db.transaction_immediate()` call site is updated to pass the matching `LockTarget` from a fresh `rg "transaction_immediate\(" src/gobby/storage` inventory at implementation time. The known call sites and their targets are: `TaskSeqAllocation(project_id)` for `tasks/_crud.py` (seq allocation), `DispatchMutexRow(task_id)` for `_dispatch_mutex.py`, `SessionRegistration(external_id, machine_id, source, project_id, session_type)` for `sessions/_crud.py::register()` lookup branch, `SessionRecoveryByProject(project_id)` for the any-project recovery branch, `WebChatSessionBootstrap(...)` for `sessions/_crud.py::create_web_chat_session` (register + follow-up update group), `TaskSubtreeCascade(root_task_id)` for `tasks/_crud.py::apply_build_controls_cascade` (recursive subtree update), `SystemSessionBootstrap()` for `sessions/_constants.py`. Any new call site discovered by the implementation-time `rg` inventory must be added to the `LockTarget` enumeration in the same patch — adding a call site without a target is a type error. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call passes a `LockTarget` argument" enforced by the type checker (the protocol signature requires it).
-- 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`.
+- 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. **TaskSubtreeCascade ancestor-vs-descendant test**: cascade rooted at task A and cascade rooted at descendant task B serialize at the project level — exactly one observes the other's writes, never an interleave on shared rows. **Nested LockTarget acquisition test**: `with db.transaction_immediate(WebChatSessionBootstrap(...)) as outer: with db.transaction_immediate(SessionRegistration(...)) as inner` acquires both advisory locks inside one transaction (deterministic acquisition order); a peer process cannot acquire either lock until the outer block commits. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`. test: `tests/storage/test_manager_surface_parity.py::test_subtree_cascade_serializes_overlapping_subtrees`. test: `tests/storage/test_manager_surface_parity.py::test_nested_lock_target_acquires_both`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
 `kind: framing`
