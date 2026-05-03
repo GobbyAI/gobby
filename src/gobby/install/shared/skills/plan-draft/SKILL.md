@@ -363,19 +363,23 @@ Feature Task
 
 ### What the Plan MUST NOT Contain
 
-Drafts must never contain explicit test tasks — expansion inserts them.
-Scan and remove any of:
+Drafts must never contain filler test tasks that duplicate TDD wrappers —
+expansion inserts those for every `code` and `config` deliverable. Scan and
+remove any of:
 
 - `"Write tests for..."` / `"Add tests for..."`
 - `"Test..."` as a task title prefix
 - `"[TDD]..."`, `"[IMPL]..."`, `"[REF]..."` prefixes
 - `"Ensure tests pass"` / `"Run tests"`
 - `"Add unit tests"` / `"Add integration tests"`
-- Any task whose primary verb is `test`
+- Any task whose only purpose is testing a sibling `code`/`config` deliverable
 
-Allowed (these are not test-writing tasks):
+Allowed standalone `category: test` deliverables have their own acceptance
+criteria and are not substitutes for a sibling TDD wrapper:
 
 - `"Add TestClient fixture"` — test infrastructure, category `test`.
+- `"Add cross-backend parity regression suite"` — behavior-pinning suite,
+  category `test`.
 - `"Configure pytest settings"` — configuration, category `config`.
 
 ---
@@ -390,7 +394,7 @@ Canonical category list (enum-backed — `src/gobby/storage/tasks/_models.py::VA
 | `config` | yes | Configuration file changes |
 | `docs` | no | Documentation |
 | `refactor` | no | Code restructuring with no behavior change (includes updating existing tests) |
-| `test` | no | Test infrastructure (fixtures, helpers — **not** writing test cases) |
+| `test` | no | Standalone test infrastructure, parity, characterization, or regression suites with their own acceptance criteria |
 | `research` | no | Investigation, no code output expected |
 | `planning` | no | Design, architecture |
 | `manual` | no | Manual verification (observe output) |
@@ -495,8 +499,11 @@ workflows or when debugging the expansion CLI path itself.
 
 ### 1. No Explicit Test Tasks
 
-Scan headings and bullets for forbidden patterns from the TDD Compatibility
-section above. Remove any that appear. Report any that were found and removed.
+Scan headings and bullets for forbidden duplicate TDD-wrapper patterns from the
+TDD Compatibility section above. Remove filler "write tests for X" tasks that
+belong inside the generated wrapper. Keep standalone `category: test`
+deliverables when they have their own target, acceptance criteria, and
+behavior-pinning or test-infrastructure purpose.
 
 ### 2. Dependency Tree Valid
 

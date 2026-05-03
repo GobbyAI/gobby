@@ -106,6 +106,8 @@ The ninth rejection is a conservative semantic-lint check. Any `deliverable`
 section whose body uses a markdown table to enumerate work items MUST emit one
 acceptance item per table data row with stable IDs. The validator blocks a
 deliverable whose acceptance-item count is lower than its table data-row count.
+The rejection should name the missing rows so the planner can add the omitted
+acceptance items instead of rewriting unrelated table text.
 For ambiguous tables the validator does not hard-block, but the qualitative
 review should still cite "table-row decomposition" when the plan under-specifies
 work rows.
@@ -189,10 +191,13 @@ Cross-reference the plan against its parent task.
 
 These are contract-level and fail-fast. Flag any of them as `blocking`:
 
-- **No explicit test tasks** — drafts must not contain `[TDD]` / `[IMPL]` /
-  `[REF]` prefixes, "Write tests for…", "Ensure tests pass", etc. Expansion
-  auto-inserts TDD wrappers. Explicit test tasks break the sandwich and
-  duplicate work.
+- **No duplicate/filler TDD-wrapper test tasks** — drafts must not contain
+  `[TDD]` / `[IMPL]` / `[REF]` prefixes, "Write tests for...", "Ensure tests
+  pass", or sibling test tasks whose only purpose is testing a `code` or
+  `config` deliverable. Expansion auto-inserts those wrappers. Standalone
+  `category: test` deliverables are valid when they carry their own target,
+  acceptance criteria, and test-infrastructure, parity, characterization, or
+  regression purpose.
 - **Concrete target file paths** — every `code` / `config` task must specify a
   file path (`Target: src/foo/bar.py` or inline). Vague tasks like
   "update the backend" are un-actionable.

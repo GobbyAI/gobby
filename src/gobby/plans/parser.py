@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 import yaml
 
+from gobby.storage.tasks._models import TDD_ELIGIBLE_CATEGORIES
+
 ParseMode = Literal["draft", "expansion", "strict"]
 
 PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
@@ -743,6 +745,19 @@ def _build_manifest_entry(
         errors.append((source_line, f"manifest entry {index} field 'tdd' must be a bool"))
         return None
 
+    category = str(raw["category"])
+    tdd = bool(raw["tdd"])
+    if tdd and category not in TDD_ELIGIBLE_CATEGORIES:
+        eligible = ", ".join(sorted(TDD_ELIGIBLE_CATEGORIES))
+        errors.append(
+            (
+                source_line,
+                f"manifest entry {index} has tdd: true for category {category!r}; "
+                f"TDD is only allowed for: {eligible}",
+            )
+        )
+        return None
+
     depends_on_raw = raw.get("depends_on", [])
     if not isinstance(depends_on_raw, list) or not all(
         isinstance(item, str) for item in depends_on_raw
@@ -761,13 +776,13 @@ def _build_manifest_entry(
 
     return ManifestEntry(
         title=str(raw["title"]),
-        category=str(raw["category"]),
+        category=category,
         task_type=str(raw["task_type"]),
         depends_on=tuple(depends_on_raw),
         validation_criteria=str(raw["validation_criteria"]),
         labels=tuple(labels_raw),
         assigned_agent=str(raw["assigned_agent"]),
-        tdd=bool(raw["tdd"]),
+        tdd=tdd,
         source_section=str(raw["source_section"]),
         source_line=source_line,
     )

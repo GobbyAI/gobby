@@ -108,6 +108,16 @@ def test_rejects_table_row_decomposition_violation() -> None:
     assert "table data-row count" in body
 
 
+def test_accepts_standalone_category_test_deliverables() -> None:
+    body = _plan_review_body()
+
+    assert "duplicate/filler TDD-wrapper test tasks" in body
+    assert "Standalone" in body
+    assert "`category: test`" in body
+    assert "parity" in body
+    assert "acceptance criteria" in body
+
+
 def test_plan_adversary_prompt_wires_parser_callable() -> None:
     prompt = _adversary_prompt()
     assert "gobby.plans.parser.parse_plan" in prompt

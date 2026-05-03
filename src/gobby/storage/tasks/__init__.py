@@ -46,6 +46,7 @@ from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     TASK_TYPE_CHOICES,
+    TDD_ELIGIBLE_CATEGORIES,
     UNSET,
     VALID_CATEGORIES,
     VALID_TASK_TYPES,
@@ -130,6 +131,7 @@ __all__ = [
     # Constants
     "PRIORITY_MAP",
     "TASK_TYPE_CHOICES",
+    "TDD_ELIGIBLE_CATEGORIES",
     "VALID_CATEGORIES",
     "VALID_TASK_TYPES",
     "MaybeUnset",

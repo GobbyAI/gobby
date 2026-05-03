@@ -152,14 +152,32 @@ Entry schema (one entry per `kind: deliverable` section):
 | `validation_criteria` | str | One-line pass/fail |
 | `labels` | list[str] | Exactly one `covers:<plan-id>:<section-id>:<item-id>` label per acceptance item in the source section |
 | `assigned_agent` | str | Routes the leaf to a specific agent |
-| `tdd` | bool | True implies the deterministic compiler emits a TEST/IMPL/REF triple |
+| `tdd` | bool | True implies the deterministic compiler emits a TEST/IMPL/REF wrapper for eligible categories |
 | `source_section` | str | Must reference a `kind: deliverable` section ID |
+
+### Category/TDD Policy
+
+The single category policy is:
+
+- `code` and `config` are TDD-eligible. Manifest entries for these categories
+  may set `tdd: true`, which makes expansion emit the deterministic
+  TEST/IMPL/REF wrapper.
+- `test`, `refactor`, `docs`, `research`, `planning`, and `manual` are not
+  TDD-eligible. Manifest entries for these categories must use `tdd: false`.
+- `category: test` is valid for standalone test infrastructure,
+  characterization, parity, or regression suites that are deliverables in
+  their own right. These entries expand as single tasks and must carry their
+  own acceptance criteria.
+- Filler tasks such as "write tests for X" are rejected when they duplicate
+  the TDD wrapper that expansion already emits for a `code` or `config`
+  deliverable.
 
 ### Parser-Enforced Invariants
 
 When the manifest is present, these invariants are checked regardless of mode:
 
 - Schema-check every entry against the table above.
+- Reject `tdd: true` unless the entry category is `code` or `config`.
 - Every `kind: deliverable` section has exactly one manifest entry referencing
   it via `source_section` (1:1 invariant).
 - Every `covers:` label resolves to a real acceptance item under the entry's

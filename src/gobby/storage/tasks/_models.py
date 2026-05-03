@@ -32,6 +32,9 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
+# Categories whose manifest entries may opt into deterministic TDD wrapping.
+TDD_ELIGIBLE_CATEGORIES: frozenset[str] = frozenset({"code", "config"})
+
 # Valid task types exposed across storage, CLI, HTTP, and MCP creation surfaces.
 TASK_TYPE_CHOICES: tuple[str, ...] = (
     "task",

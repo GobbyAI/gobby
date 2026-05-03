@@ -176,6 +176,55 @@ def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
     assert entry.labels == ("covers:test-plan:A1:A1.1",)
 
 
+def test_test_category_with_tdd_true_fails(tmp_path: Path) -> None:
+    manifest_yaml = _MINIMAL_MANIFEST.replace("category: code", "category: test")
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=manifest_yaml,
+    )
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan)
+
+    message = str(excinfo.value)
+    assert "tdd: true" in message
+    assert "category 'test'" in message
+
+
+def test_test_category_with_tdd_false_passes(tmp_path: Path) -> None:
+    manifest_yaml = _MINIMAL_MANIFEST.replace("category: code", "category: test").replace(
+        "tdd: true",
+        "tdd: false",
+    )
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=manifest_yaml,
+    )
+
+    document = parse_plan(plan)
+
+    entry = document.manifest_entries[0]
+    assert entry.category == "test"
+    assert entry.tdd is False
+
+
+def test_code_category_with_tdd_false_passes(tmp_path: Path) -> None:
+    manifest_yaml = _MINIMAL_MANIFEST.replace("tdd: true", "tdd: false")
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=manifest_yaml,
+    )
+
+    document = parse_plan(plan)
+
+    entry = document.manifest_entries[0]
+    assert entry.category == "code"
+    assert entry.tdd is False
+
+
 def test_manifest_section_kind_recognized(tmp_path: Path) -> None:
     plan = _plan_with_manifest(
         tmp_path,

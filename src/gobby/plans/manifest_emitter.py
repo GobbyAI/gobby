@@ -24,6 +24,7 @@ from gobby.plans.parser import (
     parse_plan,
     resolve_plan_id,
 )
+from gobby.storage.tasks import TDD_ELIGIBLE_CATEGORIES
 
 EmitOutcome = Literal[
     "fresh",
@@ -39,7 +40,6 @@ _KIND_DIRECTIVE_RE = re.compile(r"^`?kind:\s*(?P<value>[a-z_]+)`?\s*$")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<value>[a-z_]+)\]")
 _TITLE_BRACKET_RE = re.compile(r"\s*(?:\[category:[^\]]+\]|\(depends:[^)]+\))")
 _FENCE_OPEN_RE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})")
-_TDD_CATEGORIES: frozenset[str] = frozenset({"code", "test", "refactor"})
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "backend-developer",
@@ -188,7 +188,7 @@ def _synthesize_entry(plan_id: str, section: PlanSection) -> dict[str, object]:
         "validation_criteria": validation,
         "labels": labels,
         "assigned_agent": _agent_for(category),
-        "tdd": category in _TDD_CATEGORIES,
+        "tdd": category in TDD_ELIGIBLE_CATEGORIES,
         "source_section": section.section_id,
     }
 
