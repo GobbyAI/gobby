@@ -31,7 +31,7 @@ type Isolation = 'none' | 'worktree' | 'clone'
 
 const BACKDROP_CLS = 'fixed inset-0 z-[300] bg-[var(--surface-scrim)]'
 const MODAL_CLS =
-  'fixed left-1/2 top-1/2 z-[310] flex max-h-[85vh] w-[480px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-xl)]'
+  'fixed left-1/2 top-1/2 z-[310] flex max-h-[85vh] w-[480px] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-xl)]'
 const MODAL_BATCH_CLS = 'w-[540px]'
 const HEADER_CLS =
   'flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-3.5'
