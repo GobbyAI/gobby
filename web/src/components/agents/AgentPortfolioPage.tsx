@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { CanonicalTaskState, TaskCompatProjection } from '../../lib/taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
+import { getCategoryColorVar } from './categoryColors'
 
 // =============================================================================
 // Types
@@ -126,7 +127,7 @@ function SuccessBar({ rate }: { rate: number }) {
       ? 'var(--color-success-foreground)'
       : pct >= 50
         ? 'var(--color-warning-foreground)'
-        : 'var(--color-error)'
+        : 'var(--color-destructive-foreground)'
   return (
     <div className="agent-success-bar">
       <div className="agent-success-bar-fill" style={{ width: `${pct}%`, background: color }} />
@@ -140,19 +141,6 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
   const total = entries.reduce((sum, [, n]) => sum + n, 0)
   if (total === 0) return <span className="agent-muted">No tasks</span>
 
-  const KNOWN_CATEGORIES = new Set([
-    'code',
-    'test',
-    'docs',
-    'config',
-    'refactor',
-    'research',
-    'planning',
-    'manual',
-  ])
-  const categoryColor = (cat: string) =>
-    KNOWN_CATEGORIES.has(cat) ? `var(--category-${cat})` : 'var(--category-default)'
-
   return (
     <div className="agent-category-chart">
       <div className="agent-category-bar">
@@ -162,7 +150,7 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
             className="agent-category-segment"
             style={{
               width: `${(count / total) * 100}%`,
-              background: categoryColor(cat),
+              background: getCategoryColorVar(cat),
             }}
             title={`${cat}: ${count}`}
           />
@@ -171,7 +159,7 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
       <div className="agent-category-legend">
         {entries.slice(0, 4).map(([cat, count]) => (
           <span key={cat} className="agent-category-label">
-            <span className="agent-category-dot" style={{ background: categoryColor(cat) }} />
+            <span className="agent-category-dot" style={{ background: getCategoryColorVar(cat) }} />
             {cat} ({count})
           </span>
         ))}
