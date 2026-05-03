@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import * as yaml from 'js-yaml'
+import './RulesTab.css'
 import { useRules } from '../../hooks/useRules'
 import type { RuleSummary, RuleDetail } from '../../hooks/useRules'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
