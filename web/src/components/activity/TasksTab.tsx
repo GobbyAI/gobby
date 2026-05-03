@@ -721,7 +721,7 @@ export const TasksTab = memo(function TasksTab({
         <div
           className="px-2.5 py-1.5 border-b border-border text-xs"
           role="alert"
-          style={{ color: "var(--status-escalated, #ef4444)" }}
+          style={{ color: "var(--color-error)" }}
         >
           {claimError}
         </div>

@@ -72,12 +72,12 @@
   padding: 0.5rem 0.75rem;
   text-align: left;
   font-weight: 600;
-  border-bottom: 2px solid var(--border-color);
+  border-bottom: 2px solid var(--border);
   white-space: nowrap;
 }
 .message-content td {
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border);
 }
 .message-content tbody tr:hover {
   background: var(--bg-tertiary);
@@ -85,7 +85,7 @@
 
 .message-content hr {
   border: none;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--border);
   margin: 1.5rem 0;
 }
 
