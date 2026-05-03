@@ -455,10 +455,13 @@ def install_postgres(
 def _install_docker(*, gobby_home, port):
     compose_file = _ensure_unified_compose(...)
     # _sync_postgres_pgsearch_assets copies the full build context tree from
-    # importlib.resources("gobby.data.postgres-pgsearch") into
+    # importlib.resources.files("gobby").joinpath("data/postgres-pgsearch") into
     # ~/.gobby/services/postgres-pgsearch/ — Dockerfile, version.json, the
     # initdb.d/ directory (01-pg_search.sql, 02-pgaudit.sql), and the
-    # scripts/ directory (pg_audit_export.sh). The compose file's
+    # scripts/ directory (pg_audit_export.sh). The package path is "gobby"
+    # (the importable package) plus joinpath; "gobby.data.postgres-pgsearch"
+    # is invalid because data/ has no __init__.py and "postgres-pgsearch"
+    # contains a hyphen. The compose file's
     # `build.context: ./postgres-pgsearch` is repo-root-relative for
     # development AND user-install layouts because both place the
     # postgres-pgsearch/ tree alongside the compose file.
@@ -697,7 +700,19 @@ Update `init_hub_database` (and `init_storage_and_config` if it duplicates the w
 ### 1.4 Add local-build Dockerfile for the Docker mode [category: config] (depends: 1.1)
 `kind: deliverable`
 
-Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), `src/gobby/data/postgres-pgsearch/version.json` (new — single source of truth for `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256`, consumed by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup), `src/gobby/data/postgres-pgsearch/initdb.d/01-pg_search.sql` (new — `CREATE EXTENSION IF NOT EXISTS pg_search;` seed copied into the image's `/docker-entrypoint-initdb.d/` so the extension is installed before the first `apply_migrations()` probe; §6.0 adds a sibling `02-pgaudit.sql` to the same directory), CI smoke-test workflow
+Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), `src/gobby/data/postgres-pgsearch/version.json` (new — single source of truth for `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256`, consumed by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup), `src/gobby/data/postgres-pgsearch/initdb.d/01-pg_search.sql` (new — `CREATE EXTENSION IF NOT EXISTS pg_search;` seed copied into the image's `/docker-entrypoint-initdb.d/` so the extension is installed before the first `apply_migrations()` probe; §6.0 adds a sibling `02-pgaudit.sql` to the same directory), `pyproject.toml` (package-data update to ship the nested asset tree in installed wheels), CI smoke-test workflow
+
+**Packaging.** The Docker mode runtime path (§1.2's `_sync_postgres_pgsearch_assets`, §6.0's runbook tooling) reads the bundled asset tree from the installed Gobby wheel, not from a source checkout. The current `pyproject.toml` package data must be extended so `src/gobby/data/postgres-pgsearch/**/*` (Dockerfile, `version.json`, `initdb.d/*.sql`, `scripts/pg_audit_export.sh`) ships intact:
+
+```toml
+# pyproject.toml — [tool.setuptools.package-data] (or hatchling equivalent)
+[tool.setuptools.package-data]
+gobby = [
+    "data/**/*",
+]
+```
+
+Asset lookup at runtime uses `importlib.resources.files("gobby").joinpath("data/postgres-pgsearch")` — the package path is `gobby` (the importable package), not `gobby.data.postgres-pgsearch` (which is invalid: `data` has no `__init__.py`, and `postgres-pgsearch` contains a hyphen). All §1.2 / §6.0 pseudocode that names the resource must use the `gobby` package + `joinpath(...)` form.
 
 Ship a Dockerfile that builds locally on the user's machine via the compose `build:` directive in task 1.1. **No registry push, no Gobby-published image, no GHCR.** The Dockerfile is a build recipe; the resulting image is local to the user and never leaves their machine. This keeps Gobby off the AGPL-distribution hook for pg_search — see "Why local build, not a published image" in the Service packaging section.
 
@@ -752,6 +767,7 @@ License notice (AGPL-3.0 for pg_search, PostgreSQL license for Postgres) is pres
 - 1.4.1 — Local-build Dockerfile for the `postgres-pgsearch` image lands in the data tree, builds against pinned `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256` build args, and passes the four CI smoke tests (`pg_isready`, `CREATE EXTENSION pg_search`, `CREATE EXTENSION pgaudit`, `shared_preload_libraries` includes both). file: `src/gobby/data/postgres-pgsearch/Dockerfile`.
 - 1.4.2 — `version.json` manifest commits the canonical `pg_search_version` and `pg_search_sha256` values used by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup. The schema is `{"pg_search_version": "<semver>", "pg_search_sha256": "<hex>", "postgres_major": "17"}`; build args fail-fast if either field is missing. file: `src/gobby/data/postgres-pgsearch/version.json`.
 - 1.4.3 — `01-pg_search.sql` initdb seed installs `pg_search` via `CREATE EXTENSION IF NOT EXISTS pg_search;`; the Dockerfile copies `initdb.d/` into `/docker-entrypoint-initdb.d/` so the extension is present on first DB initialization, before `PostgresHubDatabase.apply_migrations()` runs its probe. CI smoke asserts a fresh test container reports `SELECT 1 FROM pg_extension WHERE extname='pg_search'` returns 1 row before any `apply_migrations()` call. file: `src/gobby/data/postgres-pgsearch/initdb.d/01-pg_search.sql`.
+- 1.4.4 — `pyproject.toml` ships the entire `src/gobby/data/postgres-pgsearch/` asset tree (Dockerfile, `version.json`, `initdb.d/*.sql`, `scripts/pg_audit_export.sh`) in installed wheels via recursive package data, and runtime lookups use `importlib.resources.files("gobby").joinpath("data/postgres-pgsearch")`. A packaging smoke test builds an editable+wheel install in an isolated venv, asserts all four nested asset classes resolve via the resource API, and asserts `_sync_postgres_pgsearch_assets` (§1.2) copies the complete tree into `~/.gobby/services/postgres-pgsearch/` on a fresh install. file: `pyproject.toml`. test: `tests/install/test_postgres_pgsearch_packaging.py::test_installed_wheel_ships_complete_asset_tree`.
 
 ### 1.5 Add `gobby postgres activate` and `deactivate` commands [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
