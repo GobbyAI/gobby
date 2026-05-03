@@ -2089,15 +2089,17 @@ WITH (key_field='id');
 
 The `tags_is_array` constraint keeps the helper function honest if `memories.tags` drifts later. `RETURNS NULL ON NULL INPUT` plus the `COALESCE(..., '')` inside the function body keep `tags_text` non-NULL and TEXT-compatible for empty tag arrays while still producing NULL when `tags` itself is NULL — which is what the BM25 index wants. The function is `IMMUTABLE PARALLEL SAFE` so query planners can inline and parallelize it; both flags are required for the generated column to be eligible for parallel scans during BM25 index builds.
 
-Queries use the `@@@` operator with pg_search's DSL:
+Queries use the `@@@` operator with pg_search's DSL. The pinned `pg_search` version (see §1.4 `version.json` `pg_search_version`) ships the **legacy** scoring surface, where the score expression is `pdb.score(<key_field>)`, not the removed `paradedb.rank_bm25(...)` function:
 
 ```sql
-SELECT id, title, paradedb.rank_bm25(id) AS score
+SELECT id, title, pdb.score(id) AS score
 FROM tasks
 WHERE title @@@ $1 OR description @@@ $1
 ORDER BY score DESC
 LIMIT $2;
 ```
+
+If the `pg_search_version` pin is later bumped to a v2-syntax release, this query and §4.5's `BM25SearchBackend` must be rewritten to the v2 scoring surface in lockstep — the API change is breaking and there is no shim. The §1.4 PR template for `pg_search` bumps must include a checklist item asserting the scoring expressions in §4.4 and §4.5 still compile against the new pinned version.
 
 pg_search keeps its index in sync automatically on `INSERT` / `UPDATE` / `DELETE` via Postgres's index access method hooks — **no application-side refresh, no `BEFORE UPDATE` trigger needed**. This is a material simplification over tsvector + trigger-maintained columns.
 
@@ -2108,6 +2110,7 @@ For the `memories` tag-stripping case, the `tags_text` generated column (backed 
 **Acceptance:**
 
 - 4.4.1 — `pg_search` BM25 indexes replace FTS5 on the PostgreSQL path. file: `src/gobby/storage/postgres_baseline_schema.sql`.
+- 4.4.2 — Minimal `pdb.score(id)` smoke test compiles and orders correctly against the pinned `pg_search` version: seed three rows in `tasks` (titles "alpha alpha", "alpha beta", "gamma"), query `SELECT id, pdb.score(id) AS score FROM tasks WHERE title @@@ 'alpha' ORDER BY score DESC`, assert two rows returned (the "gamma" row excluded), the higher-frequency match ranks first, and no SQL compile error is raised. test: `tests/storage/hub/test_pg_search_score_api.py::test_pdb_score_compiles_and_orders`.
 
 ### 4.5 Port search backends [category: code] (depends: 4.4)
 `kind: deliverable`
@@ -2151,7 +2154,7 @@ def pick_search_backend(
     return BM25SearchBackend(hub, table)
 ```
 
-The Postgres keyword backend (`BM25SearchBackend`) uses `@@@` with pg_search's query DSL and `paradedb.rank_bm25(id)` for scoring. Ranking behavior is **BM25 on both backends** (FTS5 `bm25()` on SQLite, pg_search BM25 on Postgres); exact scores differ because scoring parameters (k1, b) are implementation-specific, but representative-query top-N ordering must remain stable across backends.
+The Postgres keyword backend (`BM25SearchBackend`) uses `@@@` with pg_search's query DSL and `pdb.score(id)` for scoring (legacy pg_search API; see §4.4 for the version-pin contract). Ranking behavior is **BM25 on both backends** (FTS5 `bm25()` on SQLite, pg_search BM25 on Postgres); exact scores differ because scoring parameters (k1, b) are implementation-specific, but representative-query top-N ordering must remain stable across backends.
 
 The `mode` parameter holds the seam for a future Qdrant-backed `SemanticSearchBackend`. This plan does not implement it; the companion semantic-search workstream plugs in here without touching callers.
 
