@@ -128,7 +128,7 @@
 }
 
 .session-source-dot.codex {
-  background: var(--color-agent);
+  background: var(--accent);
 }
 
 .session-source-dot.droid {

@@ -4,7 +4,7 @@ export const SOURCE_BADGE_CLS =
 export const SOURCE_BADGE_BG: Record<string, string> = {
   filesystem:
     'bg-[color-mix(in_srgb,var(--color-success-foreground)_15%,transparent)] text-[var(--color-success-foreground)]',
-  github: 'bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] text-[var(--color-agent)]',
+  github: 'bg-[color-mix(in_srgb,var(--color-info)_15%,transparent)] text-[var(--color-info)]',
   hub: 'bg-[color-mix(in_srgb,var(--color-info)_15%,transparent)] text-[var(--color-info)]',
   zip: 'bg-[color-mix(in_srgb,var(--color-warning-foreground)_15%,transparent)] text-[var(--color-warning-foreground)]',
   local: 'bg-[color-mix(in_srgb,var(--text-muted)_15%,transparent)] text-[var(--text-muted)]',

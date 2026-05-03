@@ -54,7 +54,7 @@ const TRANSPORT_BADGE_BG: Record<string, string> = {
   internal: 'bg-[var(--color-success-soft)] text-[var(--color-success-foreground)]',
   http: 'bg-[var(--color-info-soft)] text-[var(--color-info)]',
   stdio: 'bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]',
-  websocket: 'bg-[var(--color-agent-soft)] text-[var(--color-agent)]',
+  websocket: 'bg-[var(--color-review-soft)] text-[var(--color-review)]',
   sse: 'bg-[var(--color-error-soft)] text-[var(--color-error)]',
   unknown: 'bg-[color-mix(in_srgb,var(--text-muted)_12%,transparent)] text-[var(--text-muted)]',
 }

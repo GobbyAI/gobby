@@ -338,8 +338,8 @@
 }
 
 .workflows-card-type--pipeline {
-  background: var(--color-agent-soft);
-  color: var(--color-agent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .workflows-card-type--rule {
@@ -348,8 +348,8 @@
 }
 
 .workflows-card-type--agent {
-  background: var(--color-agent-soft);
-  color: var(--color-agent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .workflows-card-type--skill {

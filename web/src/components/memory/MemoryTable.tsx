@@ -34,7 +34,7 @@ const EMPTY_WRAP_CLS = 'flex h-full flex-col items-center justify-center gap-2 p
 function typeColor(type: string): string {
   switch (type) {
     case 'fact': return 'var(--accent)'
-    case 'preference': return 'var(--color-agent)'
+    case 'preference': return 'var(--color-info)'
     case 'pattern': return 'var(--color-review)'
     case 'context': return 'var(--color-warning-foreground)'
     default: return 'var(--text-muted)'

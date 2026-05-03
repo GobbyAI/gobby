@@ -16,7 +16,7 @@ interface MemoryFiltersProps {
 
 const MEMORY_TYPES = [
   { key: 'fact', label: 'Fact', color: 'var(--accent)' },
-  { key: 'preference', label: 'Preference', color: 'var(--color-agent)' },
+  { key: 'preference', label: 'Preference', color: 'var(--color-info)' },
   { key: 'pattern', label: 'Pattern', color: 'var(--color-review)' },
   { key: 'context', label: 'Context', color: 'var(--color-warning-foreground)' },
 ] as const

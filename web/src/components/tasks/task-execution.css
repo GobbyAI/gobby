@@ -103,8 +103,8 @@
 }
 
 .chip--type-epic {
-  background: color-mix(in srgb, var(--color-agent) 14%, transparent);
-  color: var(--color-agent);
+  background: color-mix(in srgb, var(--color-review) 14%, transparent);
+  color: var(--color-review);
 }
 
 .chip--type-chore,

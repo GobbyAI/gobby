@@ -162,7 +162,7 @@ export function MetricsChartsCard({ hours }: Props) {
                     <Tooltip
                       contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
-                    <Area type="monotone" dataKey="mcpCalls" name="Calls" stroke="var(--color-agent)" fill="color-mix(in srgb, var(--color-agent) 15%, transparent)" />
+                    <Area type="monotone" dataKey="mcpCalls" name="Calls" stroke="var(--color-info)" fill="color-mix(in srgb, var(--color-info) 15%, transparent)" />
                     <Area type="monotone" dataKey="mcpErrors" name="Errors" stroke="var(--color-error)" fill="color-mix(in srgb, var(--color-error) 15%, transparent)" />
                     <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                   </AreaChart>

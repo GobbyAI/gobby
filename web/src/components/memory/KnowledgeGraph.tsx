@@ -58,12 +58,12 @@ interface GraphLink {
 const ENTITY_TYPE_COLOR_VARS: Record<string, string> = {
   function: '--color-info',
   file: '--color-success-foreground',
-  class: '--color-agent',
+  class: '--text-muted',
   concept: '--color-warning-foreground',
   hook: '--color-error',
   module: '--color-review',
   config: '--color-warning-foreground',
-  test: '--color-agent',
+  test: '--text-muted',
   route: '--color-info',
   component: '--accent',
 }

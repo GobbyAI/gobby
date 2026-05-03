@@ -48,7 +48,7 @@ const NAME_CLS =
   'w-[240px] cursor-text rounded-md border border-transparent bg-transparent px-2.5 py-1 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)] outline-none transition-colors duration-150 hover:bg-[var(--bg-tertiary)] focus:border-[var(--accent)] focus:bg-[var(--bg-primary)]'
 
 const BADGE_CLS =
-  'inline-block rounded-[10px] bg-[var(--color-agent-soft)] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium uppercase tracking-[0.5px] text-[var(--color-agent)]'
+  'inline-block rounded-[10px] bg-[var(--accent-soft)] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium uppercase tracking-[0.5px] text-[var(--accent)]'
 
 const BTN_CLS =
   'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-11'

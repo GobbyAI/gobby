@@ -78,21 +78,21 @@ interface CodeGraphExplorerProps {
 
 const NODE_COLOR_VARS: Record<string, string> = {
   file: '--color-info',
-  folder: '--color-agent',
+  folder: '--text-muted',
   class: '--color-warning-foreground',
   function: '--color-success-foreground',
   method: '--color-review',
   interface: '--color-error',
-  module: '--color-agent',
+  module: '--text-muted',
   constant: '--color-warning-foreground',
   variable: '--text-muted',
-  type: '--color-agent',
+  type: '--text-muted',
   unresolved: '--color-error',
   external: '--color-error',
 }
 
 const EDGE_COLOR_VARS: Record<string, string> = {
-  CALLS: '--color-agent',
+  CALLS: '--text-muted',
   IMPORTS: '--color-info',
   DEFINES: '--color-review',
 }

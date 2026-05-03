@@ -54,7 +54,7 @@ const ACTION_BADGE_BG: Record<string, string> = {
   shell:
     'bg-[color-mix(in_srgb,var(--color-warning-foreground)_15%,transparent)] text-[var(--color-warning-foreground)]',
   agent_spawn: 'bg-[color-mix(in_srgb,var(--color-info)_15%,transparent)] text-[var(--color-info)]',
-  pipeline: 'bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] text-[var(--color-agent)]',
+  pipeline: 'bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--accent)]',
 }
 
 const EMPTY_CLS =
