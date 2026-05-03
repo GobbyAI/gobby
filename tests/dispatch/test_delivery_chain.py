@@ -8,7 +8,10 @@ import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.dispatch import rules
 from gobby.dispatch.actions import AdvanceStageAction, SpawnAgentAction, StartStageAction
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._crud import update_task
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from tests.storage.tasks._stage_test_helpers import (
+    initialize_manifest,
     make_task_with_manifest,
     set_stage_state,
     spec,
@@ -176,3 +179,101 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
     assert row["closed_at"]
     assert row["closed_reason"] == "manifest_exhausted"
     assert row["closed_commit_sha"] == "merge-final123"
+
+
+async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+
+    sync_bundled_agents(temp_db)
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Parent delivery epic",
+        task_type="epic",
+        category="planning",
+    )
+    child = manager.create_task(
+        project_id=sample_project["id"],
+        title="Closed child leaf",
+        parent_task_id=parent.id,
+        task_type="task",
+        category="code",
+    )
+    manager.close_task(child.id, force=True)
+    update_task(temp_db, parent.id, allow_automation=True, isolation="none")
+    initialize_manifest(
+        temp_db,
+        parent.id,
+        [spec("holistic_qa", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.agent_slug) or f"run-{len(spawned)}",
+    )
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "in_progress"
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert spawned[-1] == "holistic-reviewer"
+    TaskDispatchMutexManager(temp_db).force_release(parent.id)
+    manager.stage_states.submit_for_review(
+        parent.id,
+        "holistic_qa",
+        by_session_id="holistic-reviewer",
+    )
+    manager.stage_states.approve_review(
+        parent.id,
+        "holistic_qa",
+        by_session_id="holistic-reviewer",
+    )
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "done"
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert stage_row(temp_db, parent.id, "pr")["state"] == "in_progress"
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert spawned[-1] == "merge-orchestrator"
+    TaskDispatchMutexManager(temp_db).force_release(parent.id)
+    manager.stage_states.submit_for_review(
+        parent.id,
+        "pr",
+        by_session_id="merge-orchestrator",
+    )
+    _record_pr_verdict(temp_db)(
+        task_id=parent.id,
+        verdict="approve",
+        findings="approved",
+        report_ref="pr-review.md",
+    )
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert stage_row(temp_db, parent.id, "pr")["state"] == "done"
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert stage_row(temp_db, parent.id, "merge")["state"] == "in_progress"
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert spawned[-1] == "merge-orchestrator"
+    TaskDispatchMutexManager(temp_db).force_release(parent.id)
+    _record_merge_result(temp_db)(
+        task_id=parent.id,
+        merge_sha="merge-parent123",
+        report_ref="merge-report.md",
+    )
+
+    parent_row = task_row(temp_db, parent.id)
+    child_row = task_row(temp_db, child.id)
+    assert parent_row["closed_at"] is not None
+    assert parent_row["closed_reason"] == "manifest_exhausted"
+    assert parent_row["closed_commit_sha"] == "merge-parent123"
+    assert child_row["closed_at"] is not None

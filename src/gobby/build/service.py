@@ -271,6 +271,7 @@ async def _build_epic(
         skip_stages=skip_stages,
         allow_automation=True,
     )
+    _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
     return BuildResult(
@@ -499,6 +500,34 @@ def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArti
         raise ValueError(f"task already has worktree artifact: {artifacts.worktree_path}")
     if isolation == "worktree" and artifacts.clone_path:
         raise ValueError(f"task already has clone artifact: {artifacts.clone_path}")
+
+
+def _cascade_target_branch_to_subtree(
+    task_manager: LocalTaskManager,
+    epic_id: str,
+    target_branch: str | None,
+) -> None:
+    if not target_branch:
+        return
+    rows = task_manager.db.fetchall(
+        """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT id
+            FROM tasks
+            WHERE parent_task_id = ?
+            UNION ALL
+            SELECT child.id
+            FROM tasks child
+            JOIN subtree parent ON child.parent_task_id = parent.id
+        )
+        SELECT id
+        FROM tasks
+        WHERE id IN (SELECT id FROM subtree)
+        """,
+        (epic_id,),
+    )
+    for row in rows:
+        task_manager.artifacts.set_artifacts_atomic(row["id"], target_branch=target_branch)
 
 
 def _current_stage_name(

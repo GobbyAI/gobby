@@ -10,11 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from gobby.dispatch.mutex import RuntimeDispatchMutex, RuntimeStageSnapshotState
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
+from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex, RuntimeStageSnapshotState
 from gobby.storage.tasks._stage_registry import (
     ReviewPolicy,
     StageRegistryEntry,

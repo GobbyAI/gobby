@@ -40,6 +40,27 @@ def test_task_state_in_projects_closed_and_escalated(temp_db, sample_project) ->
     assert task_state_in(manager, escalated.id, "escalated") is True
 
 
+def test_task_state_in_uses_real_stage_native_task_fields(temp_db, sample_project) -> None:
+    manager = _manager(temp_db)
+    task = _task(manager, sample_project)
+
+    assert not hasattr(task, "status")
+    assert task.closed_at is None
+    assert task.is_escalated is False
+    assert task_state_in(manager, task.id, "ready") is True
+
+    manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+    in_progress = manager.get_task(task.id)
+    assert not hasattr(in_progress, "status")
+    assert task_state_in(manager, task.id, "in_progress") is True
+
+    manager.escalate_task(task.id, reason="blocked")
+    escalated = manager.get_task(task.id)
+    assert not hasattr(escalated, "status")
+    assert escalated.is_escalated is True
+    assert task_state_in(manager, task.id, "escalated") is True
+
+
 def test_task_state_in_defaults_to_ready_without_current_stage(temp_db, sample_project) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)

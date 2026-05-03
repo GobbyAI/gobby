@@ -387,6 +387,37 @@ class TestSemanticValidation:
         unknown_items = [i for i in result.warnings if i.code == "UNKNOWN_MCP_ACTION_TARGET"]
         assert len(unknown_items) == 1
 
+    @pytest.mark.asyncio
+    async def test_unknown_mcp_handler_target(self, mock_loader: MagicMock) -> None:
+        """UNKNOWN_MCP_HANDLER_TARGET warning for on_mcp_success handlers."""
+        steps = [
+            _make_step(
+                "start",
+                on_mcp_success=[
+                    {
+                        "server": "gobby-merge",
+                        "tool": "missing_tool",
+                        "action": "set_variable",
+                    },
+                ],
+            ),
+        ]
+        definition = _make_definition(steps=steps)
+        mock_loader.load_workflow.return_value = definition
+
+        mcp_manager = MagicMock()
+        mcp_manager.get_available_servers.return_value = ["gobby-merge"]
+        mcp_manager.list_tools = AsyncMock(
+            return_value={
+                "gobby-merge": [{"name": "verify_in_worktree"}],
+            }
+        )
+
+        result = await evaluate_workflow("test", mock_loader, mcp_manager=mcp_manager)
+
+        unknown_items = [i for i in result.warnings if i.code == "UNKNOWN_MCP_HANDLER_TARGET"]
+        assert len(unknown_items) == 1
+
 
 class TestStepTrace:
     @pytest.mark.asyncio

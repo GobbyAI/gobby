@@ -72,6 +72,8 @@ def create_workflows_registry(
     loader: WorkflowLoader | None = None,
     session_manager: SessionManager | None = None,
     db: DatabaseProtocol | None = None,
+    internal_manager: Any | None = None,
+    mcp_manager: Any | None = None,
     # Pipeline dependencies (resolved lazily at call time)
     executor_getter: Callable[[], Any | None] | None = None,
     execution_manager_getter: Callable[[], Any | None] | None = None,
@@ -87,6 +89,8 @@ def create_workflows_registry(
         loader: WorkflowLoader instance
         session_manager: SessionManager instance (created from db if not provided)
         db: Database instance for creating default managers
+        internal_manager: Internal registry inventory for semantic MCP checks
+        mcp_manager: External MCP manager for semantic MCP checks
         executor_getter: Callable returning PipelineExecutor (or None) at call time
         execution_manager_getter: Callable returning LocalPipelineExecutionManager
         completion_registry: CompletionEventRegistry for pipeline auto-subscriptions
@@ -175,8 +179,7 @@ def create_workflows_registry(
         """
         from gobby.workflows.dry_run import evaluate_workflow
 
-        # Try to get MCP manager for semantic checks
-        mcp_mgr = None
+        mcp_inventory = _workflow_mcp_inventory(internal_manager, mcp_manager)
 
         resolved_path: str | None = project_path
         if not resolved_path:
@@ -187,7 +190,7 @@ def create_workflows_registry(
             name,
             _loader,
             resolved_path,
-            mcp_mgr,
+            mcp_inventory,
         )
         return eval_result.to_dict()
 
@@ -657,3 +660,50 @@ def create_workflows_registry(
     )
 
     return registry
+
+
+def _workflow_mcp_inventory(
+    internal_manager: Any | None,
+    mcp_manager: Any | None,
+) -> object | None:
+    if internal_manager is None and mcp_manager is None:
+        return None
+    return _WorkflowMCPInventory(internal_manager=internal_manager, mcp_manager=mcp_manager)
+
+
+class _WorkflowMCPInventory:
+    """Combined internal/external MCP inventory for workflow semantic checks."""
+
+    def __init__(self, *, internal_manager: Any | None, mcp_manager: Any | None) -> None:
+        self._internal_manager = internal_manager
+        self._mcp_manager = mcp_manager
+
+    def get_available_servers(self) -> list[str]:
+        servers = set(self._internal_server_names())
+        if self._mcp_manager is not None:
+            servers.update(self._mcp_manager.get_available_servers())
+        return sorted(servers)
+
+    async def list_tools(self) -> dict[str, list[dict[str, Any]]]:
+        tools: dict[str, list[dict[str, Any]]] = {}
+        if self._mcp_manager is not None:
+            tools.update(await self._mcp_manager.list_tools())
+        tools.update(self._internal_tools())
+        return tools
+
+    def _internal_server_names(self) -> list[str]:
+        if self._internal_manager is None:
+            return []
+        return [
+            str(server["name"])
+            for server in self._internal_manager.list_servers()
+            if isinstance(server, dict) and server.get("name")
+        ]
+
+    def _internal_tools(self) -> dict[str, list[dict[str, Any]]]:
+        if self._internal_manager is None:
+            return {}
+        return {
+            registry.name: [dict(tool) for tool in registry.list_tools()]
+            for registry in self._internal_manager.get_all_registries()
+        }

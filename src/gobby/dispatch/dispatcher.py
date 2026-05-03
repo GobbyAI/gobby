@@ -40,8 +40,11 @@ from gobby.storage.tasks._crud import get_task, list_automation_candidates, upda
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
 from gobby.storage.tasks._stage_states import StageState, StageStatesManager
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.workflows.definitions import AgentDefinitionBody
 
 MAX_ACTIVE_AGENTS = 10
 DISPATCH_HOLDER = "dispatcher"
@@ -292,18 +295,85 @@ def build_context(
     artifacts = TaskArtifactManager(db).get_artifacts(task.id)
     children = _children(db, task.id)
     build_config = getattr(services, "config", None) if services is not None else None
+    stage_registry = _stage_registry(db)
+    agent_definitions = _agent_definitions(db, project_id=task.project_id)
     return SimpleNamespace(
+        agent_definitions=agent_definitions,
+        agents=agent_definitions,
         artifacts=artifacts,
         children=children,
         build_config=build_config,
+        current_stage=dispatch_rules.current_stage(task),
         db=db,
         services=services,
+        stage_registry=stage_registry,
     )
 
 
 def _children(db: DatabaseProtocol, task_id: str) -> list[Task]:
     rows = db.fetchall("SELECT * FROM tasks WHERE parent_task_id = ?", (task_id,))
     return [Task.from_row(row) for row in rows]
+
+
+def _stage_registry(db: DatabaseProtocol) -> dict[str, StageRegistryEntry]:
+    return {entry.name: entry for entry in StageRegistryManager(db).list_all()}
+
+
+def _agent_definitions(
+    db: DatabaseProtocol,
+    *,
+    project_id: str | None,
+) -> dict[str, SimpleNamespace]:
+    manager = LocalWorkflowDefinitionManager(db)
+    if project_id is None:
+        rows = [
+            row
+            for row in manager.list_all(workflow_type="agent", include_deleted=False)
+            if row.project_id is None
+        ]
+    else:
+        rows = manager.list_all(
+            project_id=project_id,
+            workflow_type="agent",
+            include_deleted=False,
+        )
+    definitions: dict[str, SimpleNamespace] = {}
+    for row in sorted(rows, key=_agent_definition_precedence):
+        definitions[row.name] = _agent_definition_view(row)
+    return definitions
+
+
+def _agent_definition_precedence(row: WorkflowDefinitionRow) -> tuple[int, str]:
+    return (0 if row.project_id is None else 1, row.name)
+
+
+def _agent_definition_view(row: WorkflowDefinitionRow) -> SimpleNamespace:
+    try:
+        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+    except ValueError as exc:
+        return SimpleNamespace(
+            name=row.name,
+            enabled=False,
+            row_enabled=row.enabled,
+            parse_error=str(exc),
+            source=row.source,
+            project_id=row.project_id,
+        )
+
+    spawn_capable = "spawn" in body.surfaces
+    enabled = bool(row.enabled and body.enabled and spawn_capable and not body.deprecated)
+    return SimpleNamespace(
+        name=row.name,
+        enabled=enabled,
+        row_enabled=row.enabled,
+        body_enabled=body.enabled,
+        deprecated=body.deprecated,
+        surfaces=tuple(body.surfaces),
+        spawn_capable=spawn_capable,
+        source=row.source,
+        project_id=row.project_id,
+        definition=body,
+    )
 
 
 async def _execute_action(

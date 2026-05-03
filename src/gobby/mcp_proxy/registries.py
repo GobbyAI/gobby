@@ -198,6 +198,8 @@ def setup_internal_registries(
         loader=workflow_loader,
         session_manager=session_manager,
         db=getattr(session_manager, "db", None) if session_manager else None,
+        internal_manager=manager,
+        mcp_manager=mcp_manager,
         executor_getter=lambda: pipeline_executor,
         execution_manager_getter=lambda: pipeline_execution_manager,
         completion_registry=completion_registry,

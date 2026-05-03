@@ -236,6 +236,7 @@ steps:
       - "gobby-merge:merge_status"
       - "gobby-merge:merge_resolve"
       - "gobby-merge:merge_apply"
+      - "gobby-merge:verify_in_worktree"
       - "github:create_pull_request"
       - "github:create_pull_request_review"
       - "github:get_pull_request"
@@ -273,7 +274,7 @@ steps:
       - "gobby-tasks-ops:record_merge_result"
       - "gobby-tasks-ops:close_linked_github_issue"
       - "gobby-tasks:escalate_task"
-      - "gobby-tasks:append_description_section"
+      - "gobby-tasks-ops:append_description_section"
     on_mcp_success:
       - server: gobby-tasks-ops
         tool: record_merge_result

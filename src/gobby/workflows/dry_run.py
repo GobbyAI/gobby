@@ -496,6 +496,9 @@ async def _check_semantics(
                         )
                     )
 
+        for handler in [*step.on_mcp_success, *step.on_mcp_error]:
+            _check_mcp_handler_ref(step.name, handler, available_servers, server_tools, result)
+
 
 def _check_mcp_tool_refs(
     step_name: str,
@@ -536,6 +539,45 @@ def _check_mcp_tool_refs(
                     detail={"step": step_name, "server": server, "tool": tool, "ref": ref},
                 )
             )
+
+
+def _check_mcp_handler_ref(
+    step_name: str,
+    handler: object,
+    available_servers: set[str],
+    server_tools: dict[str, set[str]],
+    result: WorkflowEvaluation,
+) -> None:
+    """Check MCP tool references in success/error handlers."""
+    if not isinstance(handler, dict):
+        return
+    server = handler.get("server")
+    tool = handler.get("tool")
+    if not isinstance(server, str) or not server:
+        return
+    if not isinstance(tool, str) or not tool:
+        return
+    ref = f"{server}:{tool}"
+    if server not in available_servers:
+        result.items.append(
+            EvaluationItem(
+                layer="semantics",
+                level="warning",
+                code="UNKNOWN_MCP_HANDLER_TARGET",
+                message=f"Step '{step_name}' handler references unknown server '{server}'",
+                detail={"step": step_name, "server": server, "ref": ref},
+            )
+        )
+    elif tool != "*" and tool not in server_tools.get(server, set()):
+        result.items.append(
+            EvaluationItem(
+                layer="semantics",
+                level="warning",
+                code="UNKNOWN_MCP_HANDLER_TARGET",
+                message=f"Step '{step_name}' handler references unknown tool '{ref}'",
+                detail={"step": step_name, "server": server, "tool": tool, "ref": ref},
+            )
+        )
 
 
 def _build_step_trace(definition: WorkflowDefinition, result: WorkflowEvaluation) -> None:

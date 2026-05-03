@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -299,6 +302,126 @@ def test_dispatcher_imports_mcp_expansion_impl_directly() -> None:
     from gobby.mcp_proxy.tools.tasks import _expansion
 
     assert dispatcher.start_expansion_run_impl is _expansion.start_expansion_run_impl
+
+
+def test_dispatcher_run_heartbeat_cold_imports() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from gobby.dispatch.dispatcher import run_heartbeat; print(run_heartbeat.__name__)",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "run_heartbeat"
+
+
+def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_project) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+
+    sync_bundled_agents(temp_db)
+    task = _task(temp_db, sample_project, stage_name="pr", stage_state="in_progress")
+
+    context = dispatcher.build_context(temp_db, task)
+
+    assert context.stage_registry["pr"].default_agent == "merge-orchestrator"
+    assert context.agents["merge-orchestrator"].enabled is True
+    assert context.agent_definitions["merge-orchestrator"].spawn_capable is True
+
+
+def test_build_context_project_disabled_agent_override_wins(temp_db, sample_project) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.workflows.definitions import AgentDefinitionBody
+
+    sync_bundled_agents(temp_db)
+    LocalWorkflowDefinitionManager(temp_db).create(
+        name="merge-orchestrator",
+        workflow_type="agent",
+        project_id=sample_project["id"],
+        source="project",
+        enabled=False,
+        definition_json=AgentDefinitionBody(
+            name="merge-orchestrator",
+            description="Project override",
+            surfaces=["spawn"],
+        ).model_dump_json(),
+    )
+    task = _task(temp_db, sample_project, stage_name="pr", stage_state="in_progress")
+
+    context = dispatcher.build_context(temp_db, task)
+
+    assert context.agents["merge-orchestrator"].enabled is False
+    assert context.agents["merge-orchestrator"].project_id == sample_project["id"]
+
+
+async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_no_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+
+    sync_bundled_agents(temp_db)
+    task = _task(temp_db, sample_project, stage_name="pr", stage_state="in_progress")
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.agent_slug) or "run-pr",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 1
+    assert spawned == ["merge-orchestrator"]
+    assert get_task(temp_db, task.id).is_escalated is False
+
+
+async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+
+    sync_bundled_agents(temp_db)
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Merge ready",
+        task_type="feature",
+        category="code",
+    )
+    update_task(temp_db, task.id, allow_automation=True, isolation="none")
+    initialize_manifest(temp_db, task.id, [spec("pr", 0), spec("merge", 1)])
+    set_stage_state(temp_db, task.id, "pr", "done")
+    set_stage_state(temp_db, task.id, "merge", "ready")
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.agent_slug) or "run-merge",
+    )
+
+    first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    second = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert first.executed == 1
+    assert second.executed == 1
+    assert manager.stage_states.get(task.id, "merge").state == "in_progress"
+    assert spawned == ["merge-orchestrator"]
 
 
 async def test_dispatcher_starts_expansion_with_injected_services(

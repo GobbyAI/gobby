@@ -466,6 +466,52 @@ class TestRegistryIntegration:
 
         assert "create_pipeline" in tool_names
 
+    @pytest.mark.asyncio
+    async def test_evaluate_workflow_uses_internal_mcp_inventory(self) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+        from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
+
+        class FakeInternalRegistry:
+            name = "gobby-tasks"
+
+            @staticmethod
+            def list_tools() -> list[dict[str, str]]:
+                return [{"name": "get_task"}]
+
+        class FakeInternalManager:
+            @staticmethod
+            def list_servers() -> list[dict[str, object]]:
+                return [{"name": "gobby-tasks"}]
+
+            @staticmethod
+            def get_all_registries() -> list[FakeInternalRegistry]:
+                return [FakeInternalRegistry()]
+
+        class FakeLoader:
+            @staticmethod
+            async def load_workflow(name: str, project_path: str | None = None):
+                return WorkflowDefinition(
+                    name=name,
+                    type="step",
+                    steps=[
+                        WorkflowStep(
+                            name="start",
+                            allowed_mcp_tools=["gobby-tasks:missing_tool"],
+                        )
+                    ],
+                )
+
+        registry = create_workflows_registry(
+            loader=FakeLoader(),
+            internal_manager=FakeInternalManager(),
+        )
+
+        result = await registry.call("evaluate_workflow", {"name": "inventory-test"})
+
+        codes = {item["code"] for item in result["items"]}
+        assert "SEMANTIC_CHECKS_SKIPPED" not in codes
+        assert "UNKNOWN_MCP_TOOL" in codes
+
 
 # =============================================================================
 # No-database error paths
