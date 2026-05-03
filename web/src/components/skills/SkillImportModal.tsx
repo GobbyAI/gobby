@@ -59,9 +59,9 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
 
   return (
     <div className={OVERLAY_CLS} onClick={onClose}>
-      <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
+      <div className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-import-title" onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
-          <h2 className={HEADER_TITLE_CLS}>Import Skill</h2>
+          <h2 id="skill-import-title" className={HEADER_TITLE_CLS}>Import Skill</h2>
           <button
             type="button"
             className={CLOSE_CLS}

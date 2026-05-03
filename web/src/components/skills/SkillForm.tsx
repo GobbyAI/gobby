@@ -92,9 +92,9 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
 
   return (
     <div className={OVERLAY_CLS} onClick={onCancel}>
-      <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
+      <div className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-form-title" onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
-          <h2 className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h2>
+          <h2 id="skill-form-title" className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h2>
           <button
             type="button"
             className={CLOSE_CLS}

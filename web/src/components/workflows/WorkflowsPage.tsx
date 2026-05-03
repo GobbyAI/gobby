@@ -607,10 +607,13 @@ export function YamlEditorModal({
       {ConfirmDialogElement}
       <div
         className="workflows-yaml-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="workflows-yaml-title"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="workflows-yaml-header">
-          <h2>Edit YAML — {workflowName}</h2>
+          <h2 id="workflows-yaml-title">Edit YAML — {workflowName}</h2>
           <div className="workflows-yaml-header-actions">
             {error && <span className="workflows-yaml-error">{error}</span>}
             <button

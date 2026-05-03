@@ -63,9 +63,9 @@ export function SkillDetail({ skill, onClose, onEdit, onExport, onScan }: SkillD
     || null
 
   return (
-    <div className={DETAIL_CLS}>
+    <aside className={DETAIL_CLS} aria-labelledby="skill-detail-title">
       <div className={HEADER_CLS}>
-        <h2 className={TITLE_CLS}>{skill.name}</h2>
+        <h2 id="skill-detail-title" className={TITLE_CLS}>{skill.name}</h2>
         <button
           type="button"
           className={CLOSE_CLS}
@@ -154,6 +154,6 @@ export function SkillDetail({ skill, onClose, onEdit, onExport, onScan }: SkillD
       <div className={CONTENT_CLS}>
         <MemoizedMarkdown content={skill.content} id={`skill-detail-${skill.id}`} />
       </div>
-    </div>
+    </aside>
   )
 }

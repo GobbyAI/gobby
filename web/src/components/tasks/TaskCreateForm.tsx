@@ -138,9 +138,9 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   return (
     <>
       <div className={BACKDROP_CLS} onClick={handleClose} />
-      <div className={MODAL_CLS}>
+      <div className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="task-create-form-title">
         <div className={TASK_MODAL_HEADER_CLS}>
-          <h2 className={TITLE_CLS}>{defaults?.title ? 'Clone Task' : 'New Task'}</h2>
+          <h2 id="task-create-form-title" className={TITLE_CLS}>{defaults?.title ? 'Clone Task' : 'New Task'}</h2>
           <button className={TASK_MODAL_CLOSE_BTN_CLS} onClick={handleClose} title="Close">
             <CloseIcon />
           </button>

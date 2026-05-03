@@ -447,7 +447,8 @@ export function ActivityPanel({
   if (useOverlay) {
     return (
       <div className="activity-panel-mobile-overlay">
-        <div className="activity-panel">
+        <aside className="activity-panel" aria-labelledby="activity-panel-title">
+          <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
           <div className="activity-panel-tabs">
             <ActivityDropdown
               tabs={TABS}
@@ -469,7 +470,7 @@ export function ActivityPanel({
 
           {/* Tab content */}
           <div className="activity-panel-content">{tabContent()}</div>
-        </div>
+        </aside>
       </div>
     );
   }
@@ -482,8 +483,9 @@ export function ActivityPanel({
         minWidth={PANEL_MIN_WIDTH}
         maxWidth={PANEL_MAX_WIDTH}
       />
-      <div
+      <aside
         className="activity-panel"
+        aria-labelledby="activity-panel-title"
         style={{
           width: panelWidth,
           minWidth: PANEL_MIN_WIDTH,
@@ -491,6 +493,7 @@ export function ActivityPanel({
           flexShrink: 1,
         }}
       >
+        <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
         <div className="activity-panel-tabs">
           <ActivityDropdown
             tabs={TABS}
@@ -515,7 +518,7 @@ export function ActivityPanel({
 
         {/* Tab content */}
         <div className="activity-panel-content">{tabContent()}</div>
-      </div>
+      </aside>
     </>
   );
 }
