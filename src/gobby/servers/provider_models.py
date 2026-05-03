@@ -26,7 +26,7 @@ _PROVIDERS = ("claude", "gemini", "qwen", "codex", "droid")
 _CACHE_VERSION = 3
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _CLAUDE_ALIASES = (("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"))
-_CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "max")
+_CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 _KNOWN_PROVIDER_PREFIXES = (
     "anthropic/",
@@ -48,6 +48,7 @@ _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "claude-sonnet-4-6": 200_000,
     "claude-sonnet-4-5": 200_000,
     "claude-haiku-4-5": 200_000,
+    "gpt-5.5": 200_000,
     "gpt-5.4": 200_000,
     "gpt-5.4-fast": 200_000,
     "gpt-5.4-mini": 200_000,

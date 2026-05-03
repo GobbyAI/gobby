@@ -40,6 +40,15 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("gemini", model="gemini-1.5-pro", prompt="hello")
         assert cmd == ["gemini", "--model", "gemini-1.5-pro", "hello"]
 
+    def test_gemini_reasoning_uses_model_settings_without_extra_flag(self):
+        cmd, _env = build_cli_command(
+            "gemini",
+            model="gemini-3.1-pro-preview",
+            reasoning_effort="high",
+            prompt="hello",
+        )
+        assert cmd == ["gemini", "--model", "gemini-3.1-pro-preview", "hello"]
+
     def test_codex_basic(self):
         cmd, _env = build_cli_command("codex", prompt="hello")
         assert cmd == ["codex", "hello"]

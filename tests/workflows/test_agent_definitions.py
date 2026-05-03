@@ -43,6 +43,24 @@ def _blocked_mcp_tools(step: dict[str, Any]) -> set[str]:
     return set(value)
 
 
+def test_build_smoke_agent_runtime_mappings() -> None:
+    expected = {
+        "backend-developer": ("codex", "gpt-5.5", "xhigh"),
+        "qa-reviewer": ("claude", "opus", "xhigh"),
+        "holistic-reviewer": ("codex", "gpt-5.5", "xhigh"),
+        "merge-orchestrator": ("claude", "opus", "xhigh"),
+        "merge-worker": ("gemini", "gemini-3.1-pro-preview", "high"),
+    }
+
+    for agent_name, (provider, model, reasoning_effort) in expected.items():
+        agent = _agent(agent_name)
+
+        assert agent["enabled"] is True
+        assert agent["provider"] == provider
+        assert agent["model"] == model
+        assert agent["reasoning_effort"] == reasoning_effort
+
+
 def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
     skill_text = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
 

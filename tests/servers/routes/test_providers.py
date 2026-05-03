@@ -124,7 +124,7 @@ class TestProviderModelsRoute:
         claude_values = [m["value"] for m in providers["claude"]["models"]]
         assert claude_values == ["opus", "sonnet", "haiku"]
         assert providers["claude"]["models"][0]["reasoning"] == {
-            "supported_efforts": ["low", "medium", "high", "max"]
+            "supported_efforts": ["low", "medium", "high", "xhigh", "max"]
         }
         assert providers["claude"]["models"][0]["context_length"] == 1_000_000
 
@@ -136,6 +136,7 @@ class TestProviderModelsRoute:
         ]
         assert [m["label"] for m in gemini] == ["pro-3.1", "flash-3"]
         assert [m["context_length"] for m in gemini] == [1_000_000, 1_000_000]
+        assert gemini[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high"]}
 
         # Qwen intentionally owns its provider slot even before a static model catalog exists
         qwen = providers["qwen"]["models"]
@@ -144,6 +145,7 @@ class TestProviderModelsRoute:
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
         codex = providers["codex"]["models"]
         assert [m["value"] for m in codex] == [
+            "gpt-5.5",
             "gpt-5.4",
             "gpt-5.4-mini",
             "gpt-5.3-codex",
@@ -151,6 +153,7 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
         assert [m["label"] for m in codex] == [
+            "gpt-5.5",
             "codex-5.4",
             "mini-5.4",
             "codex-5.3",
@@ -159,6 +162,7 @@ class TestProviderModelsRoute:
         ]
         assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
         assert [m["context_length"] for m in codex] == [
+            200_000,
             200_000,
             200_000,
             200_000,
@@ -297,6 +301,7 @@ class TestProviderModelsRoute:
         assert [m["value"] for m in providers["codex"]["models"]] == [
             "gpt-5.4",
             "gpt-5.3-codex",
+            "gpt-5.5",
             "gpt-5.4-mini",
             "gpt-5.3-codex-spark",
             "gpt-5.2",
@@ -304,6 +309,7 @@ class TestProviderModelsRoute:
         assert [m["label"] for m in providers["codex"]["models"]] == [
             "codex-5.4",
             "codex-5.3",
+            "gpt-5.5",
             "mini-5.4",
             "spark-5.3",
             "gpt-5.2",
@@ -357,6 +363,7 @@ class TestProviderModelsRoute:
             "gpt-5",
             "gpt-5-mini",
             "o3",
+            "gpt-5.5",
             "gpt-5.4",
             "gpt-5.4-mini",
             "gpt-5.3-codex",

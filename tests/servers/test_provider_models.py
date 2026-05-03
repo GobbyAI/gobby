@@ -46,7 +46,7 @@ class TestProviderModelCatalog:
             "label": "Sonnet",
             "canonical_id": "claude-sonnet-4-6-20260410",
             "context_length": 200_000,
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
         }
 
     @pytest.mark.asyncio

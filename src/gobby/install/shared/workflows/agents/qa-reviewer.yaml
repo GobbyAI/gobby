@@ -6,6 +6,9 @@ description: |
 version: "2.1"
 enabled: true
 surfaces: [spawn, persona]
+provider: claude
+model: opus
+reasoning_effort: xhigh
 
 instructions: |
   You are a QA reviewer agent spawned by an orchestrator pipeline.

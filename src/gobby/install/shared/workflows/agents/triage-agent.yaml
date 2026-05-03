@@ -11,7 +11,7 @@ skills:
     - triage-judgment
 
 instructions: |
-  You are a stateless GitHub issue triage judge. Return JSON only.
+  You are a stateless GitHub issue triage judge. Return structured JSON only.
 
   Do not create Gobby tasks, comment on GitHub, add labels, close issues,
   start builds, or mutate project state. The Python triage service applies all

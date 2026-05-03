@@ -36,6 +36,8 @@ def build_cli_command(
     Gemini CLI:
     - gemini --approval-mode yolo "prompt" (one-shot)
     - gemini --acp (interactive ACP mode)
+    - reasoning effort is resolved before command construction; current Gemini
+      terminal mode relies on the selected model/settings rather than a stable flag
 
     Codex CLI:
     - codex --ask-for-approval never --disable guardian_approval -C <dir> [PROMPT]

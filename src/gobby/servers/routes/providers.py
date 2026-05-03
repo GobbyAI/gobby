@@ -22,31 +22,44 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             {
                 "value": "opus",
                 "label": "Opus",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
             },
             {
                 "value": "sonnet",
                 "label": "Sonnet",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
             },
             {
                 "value": "haiku",
                 "label": "Haiku",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
             },
         ],
     ),
     "gemini": with_context_lengths(
         "gemini",
         [
-            {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},
-            {"value": "gemini-3-flash-preview", "label": "flash-3"},
+            {
+                "value": "gemini-3.1-pro-preview",
+                "label": "pro-3.1",
+                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
+            },
+            {
+                "value": "gemini-3-flash-preview",
+                "label": "flash-3",
+                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
+            },
         ],
     ),
     "qwen": [],
     "codex": with_context_lengths(
         "codex",
         [
+            {
+                "value": "gpt-5.5",
+                "label": "gpt-5.5",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
             {
                 "value": "gpt-5.4",
                 "label": "codex-5.4",

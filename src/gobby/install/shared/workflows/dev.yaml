@@ -24,6 +24,10 @@ inputs:
     type: string
     default: ""
     description: "Model override (empty = provider default)"
+  agent:
+    type: string
+    default: "backend-developer"
+    description: "Enabled developer agent slug to dispatch"
   worktree_id:
     type: string
     default: ""
@@ -35,7 +39,7 @@ steps:
       server: gobby-agents
       tool: spawn_agent
       arguments:
-        agent: developer
+        agent: "${{ inputs.agent }}"
         task_id: "${{ inputs.task_id }}"
         assigned_task_id: "${{ inputs.task_id }}"
         provider: "${{ inputs.provider }}"

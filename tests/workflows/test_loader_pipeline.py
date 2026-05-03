@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -81,6 +82,29 @@ class TestLoadPipeline:
         assert result.name == "test-pipeline"
         assert result.type == "pipeline"
         assert len(result.steps) == 2
+
+    @pytest.mark.parametrize(
+        ("path", "step_id"),
+        [
+            (
+                Path("src/gobby/install/shared/workflows/pipelines/spawn-developer.yaml"),
+                "spawn",
+            ),
+            (Path("src/gobby/install/shared/workflows/dev.yaml"), "spawn_developer"),
+        ],
+    )
+    def test_legacy_developer_dispatch_defaults_to_enabled_backend_agent(
+        self,
+        path: Path,
+        step_id: str,
+    ) -> None:
+        payload = json.loads(json.dumps(yaml.safe_load(path.read_text())))
+        pipeline = PipelineDefinition.model_validate(payload)
+        step = next(item for item in pipeline.steps if item.id == step_id)
+
+        assert pipeline.inputs["agent"]["default"] == "backend-developer"
+        assert step.mcp is not None
+        assert step.mcp.arguments["agent"] == "${{ inputs.agent }}"
 
     @pytest.mark.asyncio
     async def test_load_pipeline_not_found(self, loader) -> None:
