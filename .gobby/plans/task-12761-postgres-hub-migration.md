@@ -1917,17 +1917,29 @@ Required tests in `tests/storage/test_migration_runner.py`:
 - 3.7.1 — Migration runner uses dollar-quote-aware statement splitting and works against both backends. symbol: `gobby.storage.migrations.MigrationRunner`.
 - 3.7.2 — `_migrate_bookkeeping_table` renames `schema_version` to `schema_migrations` exactly once on existing SQLite databases, preserves all version rows, is idempotent under repeat runs, drops a duplicate identical-rows `schema_version` if both tables exist, and raises `MigrationUnsupportedError` on divergent state. symbol: `gobby.storage.migrations._migrate_bookkeeping_table`. test: `tests/storage/test_migration_runner.py::test_bookkeeping_table_rename_paths`.
 
-### 3.8 Port storage managers off `DatabaseProtocol` onto `HubDatabase` [category: refactor] (depends: 3.7)
+### 3.8 Port storage managers off `DatabaseProtocol` onto `HubDatabase` [category: refactor] (depends: 3.3, 3.7)
 `kind: deliverable`
 
 Target: every module under `src/gobby/storage/` that imports `DatabaseProtocol` or calls `db.execute` / `db.executemany` / `db.fetchone` / `db.fetchall` / `db.safe_update` / `db.connection` directly (roughly the same ~20-module footprint as §3.4).
 
 **Why this exists.** `HubDatabase` (defined in §3.1) is a transaction-only protocol — `transaction()`, `apply_migrations()`, `close()`. The current managers reach the database via `DatabaseProtocol`, which exposes manager-facing convenience methods (`execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, `connection`). Without this task, swapping `runner_init.py` to construct a `HubDatabase` (§1.3 runtime wiring) would leave every manager calling methods absent from `PostgresHubDatabase` / `SqliteHubDatabase` — runtime AttributeError on the first manager call.
 
-**Approach.** Extend `HubDatabase` (and both adapters) with a manager-facing convenience layer that wraps `transaction()` + `Transaction.execute()` for the simple read/write cases, while leaving `transaction()` available for callers that need explicit boundaries. Specifically:
+**Approach.** Extend `HubDatabase` (and both adapters) with a manager-facing convenience layer that **preserves the existing `DatabaseProtocol` signatures verbatim** so the storage-manager call-site sweep is purely an import rename, not a contract break. The two preservation points are signature shape (return types) and ambient-transaction semantics (auto-vs-bound).
 
 ```python
 # src/gobby/storage/hub/protocol.py — extension to §3.1
+class Cursor(Protocol):
+    """Manager-facing cursor surface. Matches the subset of sqlite3.Cursor
+    today's managers actually use: rowcount, fetchone, fetchall, lastrowid
+    (SQLite-only path; the Phase 3.5 RETURNING-id refactor is what removes
+    lastrowid usage). Adapters may return a real driver cursor or a thin
+    shim that exposes only this surface."""
+    rowcount: int
+    lastrowid: int | None
+    def fetchone(self) -> Mapping[str, Any] | None: ...
+    def fetchall(self) -> list[Mapping[str, Any]]: ...
+
+
 class HubDatabase(Protocol):
     dialect: ClassVar[str]
 
@@ -1936,29 +1948,92 @@ class HubDatabase(Protocol):
     def apply_migrations(self) -> None: ...
     def close(self) -> None: ...
 
-    # Manager-facing convenience layer (auto-commit per call; thin wrapper
-    # around transaction()+Transaction.execute()). Both adapters implement
-    # these by acquiring a short-lived transaction internally.
-    def execute(self, sql: str, params: Sequence[Any] = ()) -> None: ...
-    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> None: ...
+    # Manager-facing convenience layer. Each method PRESERVES the existing
+    # DatabaseProtocol signature so the consumer sweep is an import rename.
+    # rowcount-based delete/update paths keep working unchanged.
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> Cursor: ...
+    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor: ...
     def fetchone(self, sql: str, params: Sequence[Any] = ()) -> Mapping[str, Any] | None: ...
     def fetchall(self, sql: str, params: Sequence[Any] = ()) -> list[Mapping[str, Any]]: ...
-    def safe_update(self, sql: str, params: Sequence[Any] = ()) -> int: ...  # returns rowcount
+    # safe_update keeps the builder shape: table name + values dict + WHERE +
+    # WHERE-params; the adapter constructs the parametrized UPDATE under the
+    # hood and returns the cursor (existing managers read .rowcount from it).
+    def safe_update(
+        self,
+        table: str,
+        values: Mapping[str, Any],
+        where: str,
+        where_params: Sequence[Any] = (),
+    ) -> Cursor: ...
 ```
 
-`SqliteHubDatabase` and `PostgresHubDatabase` implement each method by entering `self.transaction()`, calling the matching `Transaction` method, and returning the result. The Postgres side routes every call through `_remap_placeholders_to_psycopg` (already specified in §3.3); the SQLite side routes through `_remap_placeholders` (§3.2). `connection` (raw connection access) is **deliberately not preserved** — it leaked SQLite-specific semantics; managers that need explicit transaction boundaries migrate to `with db.transaction() as txn:` instead.
+**Ambient-transaction semantics.** The current storage layer has many `with db.transaction(): db.execute(...); db.execute(...)` blocks that group multiple manager calls into one atomic unit. Under a naive auto-commit convenience layer, the inner `db.execute` calls would each open their own transaction nested inside the outer block — broken atomicity on SQLite (savepoint nesting), pool-leak hazards on Postgres. Both adapters therefore use a **thread-local ambient-transaction registry** so convenience methods detect an active outer transaction and reuse it:
 
-**Scope of the consumer migration.** Sweep `src/gobby/storage/` for every `DatabaseProtocol` import and every `db.connection` / `db.cursor()` reference. Replace `DatabaseProtocol` imports with `HubDatabase`. Replace each `db.connection` / `db.cursor()` block with the equivalent `with db.transaction() as txn: txn.execute(...)` form. Leave `db.execute` / `db.fetchone` / `db.fetchall` / `db.safe_update` calls structurally unchanged — the new convenience layer keeps them working.
+```python
+# src/gobby/storage/hub/_ambient.py
+_AMBIENT: ContextVar[Transaction | None] = ContextVar("_AMBIENT", default=None)
 
-Add a lint in `src/gobby/storage/` that fails on any new import of the legacy `DatabaseProtocol` for runtime use (test fixtures may keep referencing it during the transition; the lint scopes to non-test files). Phase 7's SQLite removal deletes `DatabaseProtocol` outright.
 
-**Tests.** A representative manager (e.g., `LocalTaskManager`) is parametrized over `hub_db` and exercised against both backends covering read, write, multi-statement transaction, and a `safe_update` rowcount assertion. The §2.3 dual-backend `hub_db` fixture is the natural test surface.
+@contextmanager
+def _enter_transaction(adapter: HubDatabase) -> Iterator[Transaction]:
+    """Adapter's transaction() implementation pushes the new Transaction onto
+    the ambient registry so convenience-method calls inside the block reuse it."""
+    existing = _AMBIENT.get()
+    if existing is not None:
+        # Nested with-block under the same physical transaction: reuse, don't
+        # nest. Adapters that genuinely need savepoints expose them via
+        # Transaction.savepoint() instead of nested transaction() calls.
+        yield existing
+        return
+    with _open_native_transaction(adapter) as txn:
+        token = _AMBIENT.set(txn)
+        try:
+            yield txn
+        finally:
+            _AMBIENT.reset(token)
+
+
+def _resolve_executor(adapter: HubDatabase) -> Transaction:
+    """Convenience methods call this to get the executor:
+       - if an ambient transaction exists, reuse it (caller owns commit)
+       - otherwise open a short-lived transaction per call"""
+    ambient = _AMBIENT.get()
+    if ambient is not None:
+        return ambient
+    return _SingleCallTransaction(adapter)  # __enter__/__exit__ on each method
+```
+
+This makes both forms work without sweep:
+
+```python
+# auto-commit path (no outer transaction)
+db.execute("UPDATE tasks SET status = $1 WHERE id = $2", ("open", task_id))
+# rowcount available on returned Cursor
+
+# bound-to-outer-transaction path (atomic group)
+with db.transaction():
+    db.execute("INSERT INTO tasks(...) VALUES (...)", (...))
+    db.execute("INSERT INTO task_dependencies(...) VALUES (...)", (...))
+    # both inserts run inside the same physical transaction — committed
+    # together at block exit, rolled back together on exception
+```
+
+`SqliteHubDatabase` and `PostgresHubDatabase` implement the convenience methods by calling `_resolve_executor(self).execute(...)` (or `executemany`/`fetchone`/`fetchall`/`safe_update` equivalents) and returning the cursor. The Postgres side routes every parametrized call through `_remap_placeholders_to_psycopg` (§3.3); the SQLite side routes through `_remap_placeholders` (§3.2). `connection` (raw connection access) is **deliberately not preserved** — it leaked SQLite-specific semantics; managers that genuinely need raw connection escape hatches migrate to `with db.transaction() as txn: txn.connection_for_advanced_use_only()` (a typed escape hatch, separate from the convenience layer).
+
+**Scope of the consumer migration.** Sweep `src/gobby/storage/` for every `DatabaseProtocol` import and every `db.connection` / `db.cursor()` reference. Replace `DatabaseProtocol` imports with `HubDatabase`. Replace each `db.connection` / `db.cursor()` block with the equivalent `with db.transaction() as txn:` form (using the typed escape hatch only when raw-connection semantics are unavoidable). **Existing `db.execute` / `db.executemany` / `db.fetchone` / `db.fetchall` / `db.safe_update` calls and their `cursor.rowcount` reads stay structurally unchanged** because the convenience-layer signatures preserve the legacy contract. **`with db.transaction(): db.execute(...)` blocks also stay structurally unchanged** because the ambient-transaction registry routes the inner calls through the outer transaction.
+
+Add two lints in `src/gobby/storage/`:
+
+1. Fail on any new import of the legacy `DatabaseProtocol` for runtime use (test fixtures may keep referencing it during the transition; the lint scopes to non-test files). Phase 7's SQLite removal deletes `DatabaseProtocol` outright.
+2. Fail on `db.connection` / `db.cursor()` references in non-test code outside the typed escape-hatch boundary.
+
+**Tests.** A representative manager (e.g., `LocalTaskManager`) is parametrized over `hub_db` and exercised against both backends covering read, write, multi-statement transaction, `cursor.rowcount` after delete/update, and `safe_update(table, values, where, where_params)` builder usage. Plus a focused ambient-transaction test: `with db.transaction(): db.execute(insert); db.execute(insert); raise` rolls both inserts back atomically on both backends.
 
 **Acceptance:**
 
-- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update` manager-facing convenience methods; both adapters implement them by routing through `transaction()` + `Transaction.execute()`. symbol: `gobby.storage.hub.protocol.HubDatabase`.
-- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()`. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint.
-- 3.8.3 — A representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering read / write / multi-statement transaction / `safe_update` rowcount. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`.
+- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update` manager-facing convenience methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. Both adapters implement the methods via `_resolve_executor(self)` so calls join an active ambient transaction or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`.
+- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and ambient-transaction registry preserve the legacy contract. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint.
+- 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, and `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
 `kind: framing`
