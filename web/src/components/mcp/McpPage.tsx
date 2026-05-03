@@ -10,7 +10,7 @@ const TRANSPORTS = ['internal', 'http', 'stdio', 'websocket', 'sse'] as const
 
 const PAGE_CLS = 'flex flex-1 flex-col overflow-hidden px-3 md:px-5'
 const ERROR_TOAST_CLS =
-  'fixed left-1/2 top-[60px] z-[1000] -translate-x-1/2 cursor-pointer rounded-lg bg-[var(--color-error)] px-5 py-2.5 text-[length:var(--text-sm)] text-[var(--accent-foreground)] shadow-md'
+  'fixed left-1/2 top-[60px] z-[1000] -translate-x-1/2 cursor-pointer appearance-none rounded-lg border-0 bg-[var(--color-error)] px-5 py-2.5 text-left text-[length:var(--text-sm)] text-[var(--accent-foreground)] shadow-md'
 
 const TOOLBAR_CLS = 'flex flex-wrap items-center justify-between gap-4 gap-y-2 pb-3 pt-4'
 const TOOLBAR_LEFT_CLS = 'flex min-w-0 items-center gap-3'
@@ -195,9 +195,14 @@ export function McpPage() {
     <main className={PAGE_CLS}>
       {ConfirmDialogElement}
       {errorMessage && (
-        <div className={ERROR_TOAST_CLS} onClick={() => setErrorMessage(null)}>
+        <button
+          type="button"
+          className={ERROR_TOAST_CLS}
+          onClick={() => setErrorMessage(null)}
+          aria-label={`Dismiss error: ${errorMessage}`}
+        >
           {errorMessage}
-        </div>
+        </button>
       )}
 
       {/* Toolbar */}

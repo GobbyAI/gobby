@@ -909,9 +909,14 @@ export default function App() {
       />
 
       {toastMessage && (
-        <div className="app-toast" onClick={() => setToastMessage(null)}>
+        <button
+          type="button"
+          className="app-toast"
+          onClick={() => setToastMessage(null)}
+          aria-label={`Dismiss notification: ${toastMessage}`}
+        >
           {toastMessage}
-        </div>
+        </button>
       )}
     </div>
   );

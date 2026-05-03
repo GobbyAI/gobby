@@ -378,8 +378,11 @@ body {
   background: var(--bg-secondary);
   color: var(--text-primary);
   padding: 0.5rem 1rem;
+  border: none;
   border-radius: 6px;
+  font: inherit;
   font-size: calc(var(--font-size-base) * 0.85);
+  text-align: left;
   cursor: pointer;
   animation: fadeIn 0.2s ease;
 }

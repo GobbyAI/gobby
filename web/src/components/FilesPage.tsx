@@ -24,7 +24,7 @@ const EMPTY_TREE_CLS = 'px-4 py-6 text-center text-[length:var(--text-md)] text-
 
 const PROJECT_NODE_CLS = 'mb-0.5'
 const PROJECT_HEADER_CLS =
-  'flex cursor-pointer select-none items-center gap-1.5 px-2 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+  'flex w-full cursor-pointer select-none appearance-none items-center gap-1.5 border-0 bg-transparent px-2 py-1.5 text-left text-[length:var(--text-md)] font-medium text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
 const PROJECT_NAME_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
 
 const TREE_ARROW_CLS = 'w-2.5 shrink-0 text-center text-[length:var(--text-2xs)] text-[var(--text-muted)]'
@@ -410,14 +410,20 @@ function ProjectNode({ project, isExpanded, expandedDirs, loadingDirs, gitStatus
 
   return (
     <div className={PROJECT_NODE_CLS}>
-      <div className={PROJECT_HEADER_CLS} onClick={onToggle}>
+      <button
+        type="button"
+        className={PROJECT_HEADER_CLS}
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${project.name}`}
+      >
         <span className={TREE_ARROW_CLS}>{isExpanded ? '▾' : '▸'}</span>
         <ProjectIcon />
         <span className={PROJECT_NAME_CLS}>{project.name}</span>
         {gitStatus?.branch && (
           <span className={BRANCH_BADGE_CLS}>{gitStatus.branch}</span>
         )}
-      </div>
+      </button>
       {isExpanded && (
         <div>
           {isLoading ? (

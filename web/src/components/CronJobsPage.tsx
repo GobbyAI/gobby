@@ -666,9 +666,14 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
   return (
     <div className={PAGE_CLS}>
       {toastMessage && (
-        <div className="app-toast" role="status" onClick={dismissToast}>
+        <button
+          type="button"
+          className="app-toast"
+          onClick={dismissToast}
+          aria-label={`Dismiss notification: ${toastMessage}`}
+        >
           {toastMessage}
-        </div>
+        </button>
       )}
 
       <div className={TOOLBAR_CLS}>

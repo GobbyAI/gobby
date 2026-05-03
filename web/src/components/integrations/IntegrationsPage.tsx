@@ -24,7 +24,7 @@ const CHANNEL_TYPES: ChannelType[] = ['slack', 'telegram', 'discord', 'teams', '
 
 const PAGE_CLS = 'flex flex-1 flex-col overflow-hidden px-3 md:px-5'
 const ERROR_TOAST_CLS =
-  'fixed left-1/2 top-[60px] z-[1000] -translate-x-1/2 cursor-pointer rounded-lg bg-[var(--color-error)] px-5 py-2.5 text-[length:var(--text-sm)] text-[var(--text-on-error)] [box-shadow:var(--shadow-md)]'
+  'fixed left-1/2 top-[60px] z-[1000] -translate-x-1/2 cursor-pointer appearance-none rounded-lg border-0 bg-[var(--color-error)] px-5 py-2.5 text-left text-[length:var(--text-sm)] text-[var(--text-on-error)] [box-shadow:var(--shadow-md)]'
 
 const TOOLBAR_CLS = 'flex items-center justify-between gap-4 pb-3 pt-4 max-md:flex-col max-md:items-stretch'
 const TOOLBAR_LEFT_CLS = 'flex items-center gap-3'
@@ -118,9 +118,14 @@ export function IntegrationsPage() {
   return (
     <div className={PAGE_CLS}>
       {errorMessage && (
-        <div className={ERROR_TOAST_CLS} onClick={() => setErrorMessage(null)}>
+        <button
+          type="button"
+          className={ERROR_TOAST_CLS}
+          onClick={() => setErrorMessage(null)}
+          aria-label={`Dismiss error: ${errorMessage}`}
+        >
           {errorMessage}
-        </div>
+        </button>
       )}
 
       {/* Toolbar */}
