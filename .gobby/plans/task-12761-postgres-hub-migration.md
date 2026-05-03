@@ -1265,7 +1265,7 @@ These tests catch silent semantic drift during Phase 3–4 work.
 
 **Goal**: storage call sites depend on a backend-neutral `HubDatabase` protocol, and the migration runner works on both backends.
 
-### 3.1 Define the `HubDatabase` protocol [category: code] (depends: P1)
+### 3.1 Define the `HubDatabase` protocol [category: code] (depends: P0)
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/protocol.py` (new)
@@ -1945,6 +1945,8 @@ class HubDatabase(Protocol):
 
     @contextmanager
     def transaction(self) -> Iterator[Transaction]: ...
+    @contextmanager
+    def transaction_immediate(self) -> Iterator[Transaction]: ...
     def apply_migrations(self) -> None: ...
     def close(self) -> None: ...
 
@@ -1967,26 +1969,44 @@ class HubDatabase(Protocol):
     ) -> Cursor: ...
 ```
 
-**Ambient-transaction semantics.** The current storage layer has many `with db.transaction(): db.execute(...); db.execute(...)` blocks that group multiple manager calls into one atomic unit. Under a naive auto-commit convenience layer, the inner `db.execute` calls would each open their own transaction nested inside the outer block — broken atomicity on SQLite (savepoint nesting), pool-leak hazards on Postgres. Both adapters therefore use a **thread-local ambient-transaction registry** so convenience methods detect an active outer transaction and reuse it:
+**Preserving `transaction_immediate()`.** Today's `DatabaseProtocol.transaction_immediate()` is the SQLite write-intent lock entry point (`BEGIN IMMEDIATE`) and is reachable from runtime call sites including `src/gobby/storage/tasks/_crud.py`, `src/gobby/storage/tasks/_dispatch_mutex.py`, `src/gobby/storage/sessions/_crud.py`, and `src/gobby/storage/sessions/_constants.py`. `HubDatabase` therefore exposes `transaction_immediate()` as a first-class method so the existing call sites stay structurally unchanged after the import rename:
+
+- `SqliteHubDatabase.transaction_immediate()` issues `BEGIN IMMEDIATE` so writers contend at transaction start rather than first-write time, preserving the current dispatch-mutex semantics.
+- `PostgresHubDatabase.transaction_immediate()` opens a normal `BEGIN` and **immediately acquires the dispatch row lock via `SELECT ... FOR UPDATE`** (or, where there is no canonical dispatch row, takes a Postgres advisory lock keyed by the caller-supplied resource ID). Postgres's row-level locking + MVCC handles the concurrent-write scenarios that SQLite needs `BEGIN IMMEDIATE` for; the adapter exposes this contract uniformly so the call sites do not branch on dialect.
+- A lint in `src/gobby/storage/` fails on any `transaction_immediate()` call site that does not also acquire an explicit lock target on the Postgres path; the §3.8 sweep documents the locking target for each existing call site (the dispatch-mutex row for `_dispatch_mutex.py`, the session row for `sessions/_crud.py`, etc.).
+
+**Ambient-transaction semantics, adapter-scoped.** The current storage layer has many `with db.transaction(): db.execute(...); db.execute(...)` blocks that group multiple manager calls into one atomic unit. Under a naive auto-commit convenience layer, the inner `db.execute` calls would each open their own transaction nested inside the outer block — broken atomicity on SQLite (savepoint nesting), pool-leak hazards on Postgres. Both adapters therefore use a **per-adapter, contextvar-scoped ambient-transaction registry** so convenience methods detect an active outer transaction *for the same adapter* and reuse it. Crucially, the registry keys by adapter identity so a transaction on a SqliteHubDatabase does not leak into a coexisting PostgresHubDatabase (a real concern during migration/import code and the §2.3 dual-backend test fixture):
 
 ```python
 # src/gobby/storage/hub/_ambient.py
-_AMBIENT: ContextVar[Transaction | None] = ContextVar("_AMBIENT", default=None)
+# Maps adapter identity -> active Transaction. Keyed by id(adapter) so
+# transactions on different HubDatabase instances stay isolated even when
+# they coexist in the same execution context (e.g. SqliteHubDatabase and
+# PostgresHubDatabase both alive during §5.1 migration; or hub_db parametrize).
+_AMBIENT: ContextVar[Mapping[int, Transaction]] = ContextVar("_AMBIENT", default={})
 
 
 @contextmanager
-def _enter_transaction(adapter: HubDatabase) -> Iterator[Transaction]:
-    """Adapter's transaction() implementation pushes the new Transaction onto
-    the ambient registry so convenience-method calls inside the block reuse it."""
-    existing = _AMBIENT.get()
+def _enter_transaction(adapter: HubDatabase, *, immediate: bool = False) -> Iterator[Transaction]:
+    """Adapter's transaction() / transaction_immediate() pushes the new
+    Transaction onto the per-adapter ambient registry so convenience-method
+    calls inside the block reuse it — but only for THIS adapter."""
+    current = dict(_AMBIENT.get())
+    existing = current.get(id(adapter))
     if existing is not None:
-        # Nested with-block under the same physical transaction: reuse, don't
-        # nest. Adapters that genuinely need savepoints expose them via
-        # Transaction.savepoint() instead of nested transaction() calls.
+        # Nested with-block under the same physical transaction on this
+        # adapter: reuse, don't nest. Adapters that genuinely need savepoints
+        # expose them via Transaction.savepoint() instead of nested
+        # transaction() calls. immediate=True inside an outer transaction()
+        # is a contract violation (you cannot escalate to write-intent locking
+        # mid-transaction); the adapter raises explicitly in that case.
+        if immediate and not existing.is_immediate:
+            raise RuntimeError("transaction_immediate() inside a non-immediate transaction()")
         yield existing
         return
-    with _open_native_transaction(adapter) as txn:
-        token = _AMBIENT.set(txn)
+    with _open_native_transaction(adapter, immediate=immediate) as txn:
+        new_map = {**current, id(adapter): txn}
+        token = _AMBIENT.set(new_map)
         try:
             yield txn
         finally:
@@ -1994,10 +2014,11 @@ def _enter_transaction(adapter: HubDatabase) -> Iterator[Transaction]:
 
 
 def _resolve_executor(adapter: HubDatabase) -> Transaction:
-    """Convenience methods call this to get the executor:
-       - if an ambient transaction exists, reuse it (caller owns commit)
-       - otherwise open a short-lived transaction per call"""
-    ambient = _AMBIENT.get()
+    """Convenience methods call this to get the executor for THIS adapter:
+       - if an ambient transaction exists for this adapter, reuse it (caller owns commit)
+       - otherwise open a short-lived transaction per call against this adapter only.
+    Other adapters' active transactions are invisible to this lookup."""
+    ambient = _AMBIENT.get().get(id(adapter))
     if ambient is not None:
         return ambient
     return _SingleCallTransaction(adapter)  # __enter__/__exit__ on each method
@@ -2031,9 +2052,9 @@ Add two lints in `src/gobby/storage/`:
 
 **Acceptance:**
 
-- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update` manager-facing convenience methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. Both adapters implement the methods via `_resolve_executor(self)` so calls join an active ambient transaction or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`.
-- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and ambient-transaction registry preserve the legacy contract. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint.
-- 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, and `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`.
+- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, and `transaction_immediate` manager-facing methods. `execute`/`executemany` return a `Cursor` protocol exposing `rowcount` / `lastrowid` / `fetchone` / `fetchall`. `safe_update(table, values, where, where_params)` keeps the legacy builder signature. `transaction_immediate()` issues `BEGIN IMMEDIATE` on SQLite and `BEGIN` + explicit row/advisory lock acquisition on Postgres so existing dispatch-mutex / session-locking call sites stay structurally unchanged. Both adapters implement the methods via `_resolve_executor(self)` so calls join an active ambient transaction or open a short-lived one. symbol: `gobby.storage.hub.protocol.HubDatabase`. symbol: `gobby.storage.hub.protocol.Cursor`.
+- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()` outside the typed escape hatch. Existing `cursor.rowcount` reads, `db.safe_update(table, values, where, where_params)` calls, `db.transaction_immediate()` write-intent locks, and `with db.transaction(): db.execute(...)` blocks remain structurally unchanged — the convenience layer and per-adapter ambient-transaction registry preserve the legacy contract. The §3.8 sweep documents the explicit Postgres lock target for every `transaction_immediate()` call site (the dispatch-mutex row for `_dispatch_mutex.py`, the session row for `sessions/_crud.py`, etc.). file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint; "no `db.connection` / `db.cursor()` outside escape hatch" enforced by second lint; "every `transaction_immediate()` call site documents its Postgres lock target" enforced by a third lint.
+- 3.8.3 — Representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering: read, write, multi-statement transaction (atomicity verified by intentional rollback), `cursor.rowcount` after `db.execute("UPDATE ... WHERE ...")`, `db.safe_update("sessions", values, "id = $1", (session_id,))` builder usage, and `db.transaction_immediate()` write-intent locking against the dispatch-mutex row. Includes a dedicated ambient-transaction test: `with db.transaction(): db.execute(...); db.execute(...); raise` rolls both inserts back atomically on both backends. **Adapter-isolation regression test**: with one SqliteHubDatabase and one PostgresHubDatabase coexisting in the same context, an outer `with sqlite_db.transaction(): pg_db.execute(insert); raise` rolls back the SQLite block while the Postgres insert commits — cross-adapter ambient lookup must not leak. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_groups_convenience_calls`. test: `tests/storage/test_manager_surface_parity.py::test_ambient_transaction_isolated_per_adapter`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
 `kind: framing`
