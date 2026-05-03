@@ -1676,6 +1676,7 @@ INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") V
 INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('research_spike', 'ideation', 0);
 INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('research_spike', 'research', 1);
 INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('research_spike', 'prd', 2);
+INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('review_anchor', 'planning', 0);
 INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('simple_fix', 'development', 0);
 INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('simple_fix', 'pr', 1);
 INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('simple_fix', 'merge', 2);

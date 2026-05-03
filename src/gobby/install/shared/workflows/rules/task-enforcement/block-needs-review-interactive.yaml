@@ -6,7 +6,15 @@ rules:
     event: before_tool
     enabled: true
     priority: 32
-    when: "not variables.get('is_spawned_agent')"
+    when: >
+      not variables.get('is_spawned_agent')
+      and not (
+        (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks-ops'
+        and (tool_input.get('tool_name') or tool_input.get('tool')) == 'submit_for_review'
+        and tool_input.get('stage_name') == 'planning'
+        and tool_input.get('task_id') == variables.get('active_anchor_id')
+        and variables.get('plan_review_mode') in ('adversarial', 'delegated')
+      )
     effects:
       - type: block
         mcp_tools:

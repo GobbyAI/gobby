@@ -61,6 +61,7 @@ TASK_ENFORCEMENT_RULES = {
     "require-clean-tree-before-status",
     "strip-skip-validation-with-commit",
     "block-ask-during-stop-compliance",
+    "block-needs-review-interactive",
     "track-task-claim",
     "reset-subagent-flag",
 }
@@ -604,6 +605,91 @@ class TestStripSkipValidationWithCommit:
 
         assert body.when is not None
         assert "skip_validation" in body.when
+
+
+class TestBlockNeedsReviewInteractive:
+    """Verify interactive review tools stay blocked except active plan anchors."""
+
+    @staticmethod
+    def _review_event(
+        tool_name: str,
+        *,
+        task_id: str = "anchor-1",
+        stage_name: str = "planning",
+    ) -> HookEvent:
+        arguments = {"task_id": task_id, "stage_name": stage_name}
+        return HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "mcp_server": "gobby-tasks-ops",
+                "mcp_tool": tool_name,
+                "tool_input": {
+                    "server_name": "gobby-tasks-ops",
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                },
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_for_review_blocks_for_non_anchor(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            "loaded_skills": ["task-transitions"],
+            "plan_review_mode": "delegated",
+            "active_anchor_id": "anchor-1",
+        }
+
+        response = await engine.evaluate(
+            self._review_event("submit_for_review", task_id="other-task"),
+            session_id="test-session",
+            variables=variables,
+        )
+
+        assert response.decision == "block"
+        assert "block-needs-review-interactive" in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_submit_for_review_allows_active_plan_anchor(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            "loaded_skills": ["task-transitions"],
+            "plan_review_mode": "delegated",
+            "active_anchor_id": "anchor-1",
+        }
+
+        response = await engine.evaluate(
+            self._review_event("submit_for_review"),
+            session_id="test-session",
+            variables=variables,
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_approve_review_stays_blocked_for_active_plan_anchor(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            "loaded_skills": ["task-transitions"],
+            "plan_review_mode": "delegated",
+            "active_anchor_id": "anchor-1",
+        }
+
+        response = await engine.evaluate(
+            self._review_event("approve_review"),
+            session_id="test-session",
+            variables=variables,
+        )
+
+        assert response.decision == "block"
+        assert "block-needs-review-interactive" in (response.reason or "")
 
 
 class TestBlockAskDuringStopCompliance:

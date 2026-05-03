@@ -172,6 +172,11 @@ CREATE INDEX IF NOT EXISTS idx_gh_issues_triaged_task
     ON gh_issues_triaged(task_id);
 """
 
+_REVIEW_ANCHOR_DEFAULT_STAGE_SCHEMA = """
+INSERT OR IGNORE INTO task_type_default_stages (task_type, stage_name, position)
+VALUES ('review_anchor', 'planning', 0);
+"""
+
 _LEGACY_DELIVERY_ARTIFACT_COLUMNS = frozenset(
     {
         "pr_url",
@@ -204,6 +209,7 @@ def _apply_github_triage_schema(db: LocalDatabase) -> None:
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (240, "Add task delivery state tables", _apply_delivery_state_schema),
     (241, "Add GitHub issue triage tables", _apply_github_triage_schema),
+    (242, "Add review anchor default planning stage", _REVIEW_ANCHOR_DEFAULT_STAGE_SCHEMA),
 ]
 
 

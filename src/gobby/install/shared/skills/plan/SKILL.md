@@ -396,7 +396,7 @@ Then proceed to Step 7.
 
 The parent session **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (see `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so plan-mode + plan-file editing alone do not require a claim. The parent's role from Step 7 onward is pure orchestration.
 
-Each adversary round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `approve_review(stage_name="planning")` (clean) / `reject_review(stage_name="planning")` (with findings) / `escalate_task` on the anchor.
+Each adversary round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: review_anchor`, `category: planning`). The anchor exists **only for verdict capture**: the coordinator starts the anchor's `planning` stage, submits that stage for review, and the spawned adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `approve_review(stage_name="planning")` (clean) / `reject_review(stage_name="planning")` (with findings) / `escalate_task` on the anchor.
 
 **Coordinator owns plan revision between rounds.** The coordinator (this chat session) acts as the planner for all revision rounds in both interactive and delegated modes — there is no separate `planner` agent spawn. The compact-self call after each adversary spawn (Step 7.4) summarizes the coordinator's context so the next round's revision starts fresh, replacing the prior fresh-context guarantee that a planner-agent spawn provided.
 
@@ -539,11 +539,14 @@ Create a fresh anchor task scoped to this round, then spawn against it:
 ```text
 anchor = create_task(
     parent_task_id=planning_task_id,
-    task_type="task",
+    task_type="review_anchor",
     category="planning",
     title=f"Plan-adversary review — round {current_round + 1}",
 )
 set_variable(name="active_anchor_id", value=anchor.id, session_id="#<self>")
+
+start_stage(task_id=anchor.id, stage_name="planning")
+submit_for_review(task_id=anchor.id, stage_name="planning")
 
 run = spawn_agent(
     agent="plan-adversary",

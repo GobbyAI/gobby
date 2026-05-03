@@ -47,6 +47,7 @@ TASK_TYPE_CHOICES: tuple[str, ...] = (
     "research_spike",
     "architecture_doc",
     "prd_doc",
+    "review_anchor",
 )
 VALID_TASK_TYPES: frozenset[str] = frozenset(TASK_TYPE_CHOICES)
 TASK_TYPE_ALIASES: dict[str, str] = {
@@ -182,7 +183,7 @@ class Task:
     title: str
     priority: int
     # task, bug, feature, epic, chore, refactor, simple_fix, research_spike,
-    # architecture_doc, prd_doc
+    # architecture_doc, prd_doc, review_anchor
     task_type: str
     created_at: str
     updated_at: str

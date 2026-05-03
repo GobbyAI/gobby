@@ -38,16 +38,16 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 241
-    assert [version for version, _description, _action in MIGRATIONS] == [240, 241]
+    assert latest_known_version() == 242
+    assert [version for version, _description, _action in MIGRATIONS] == [240, 241, 242]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 3
-    assert get_current_version(db) == 241
+    assert applied == 4
+    assert get_current_version(db) == 242
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241]
+    assert versions == [239, 240, 241, 242]
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -58,9 +58,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 241
+    assert get_current_version(db) == 242
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241]
+    assert versions == [239, 240, 241, 242]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -111,7 +111,8 @@ def test_delivery_migration_drops_legacy_artifact_columns(tmp_path) -> None:
         """
     )
 
-    _run_migration_list(db, current_version=239, migrations=MIGRATIONS)
+    delivery_migrations = [migration for migration in MIGRATIONS if migration[0] == 240]
+    _run_migration_list(db, current_version=239, migrations=delivery_migrations)
 
     assert _table_exists(db, "task_delivery_campaigns")
     assert _table_exists(db, "task_delivery_units")
@@ -122,6 +123,35 @@ def test_delivery_migration_drops_legacy_artifact_columns(tmp_path) -> None:
         "structured_pr_verdict",
         "merge_campaign_report",
     }.isdisjoint(_column_names(db, "task_artifacts"))
+
+
+def test_review_anchor_migration_adds_default_planning_stage(tmp_path) -> None:
+    db_path = tmp_path / "review_anchor_migration.db"
+    db = LocalDatabase(db_path)
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute("CREATE TABLE task_stages_registry (name TEXT PRIMARY KEY)")
+    db.execute(
+        """
+        CREATE TABLE task_type_default_stages (
+            task_type TEXT NOT NULL,
+            stage_name TEXT NOT NULL REFERENCES task_stages_registry(name) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (task_type, stage_name)
+        )
+        """
+    )
+    db.execute("INSERT INTO task_stages_registry (name) VALUES ('planning')")
+
+    _run_migration_list(db, current_version=241, migrations=MIGRATIONS)
+
+    row = db.fetchone(
+        """
+        SELECT stage_name, position
+          FROM task_type_default_stages
+         WHERE task_type = 'review_anchor'
+        """
+    )
+    assert dict(row) == {"stage_name": "planning", "position": 0}
 
 
 def test_migrations_recreate_missing_system_session(tmp_path) -> None:
@@ -380,6 +410,7 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
     assert by_type["research_spike"] == [("ideation", 0), ("research", 1), ("prd", 2)]
     assert by_type["prd_doc"] == [("ideation", 0), ("prd", 1)]
     assert by_type["architecture_doc"] == [("research", 0), ("architecture", 1)]
+    assert by_type["review_anchor"] == [("planning", 0)]
     for rows in by_type.values():
         assert [position for _stage_name, position in rows] == list(range(len(rows)))
 

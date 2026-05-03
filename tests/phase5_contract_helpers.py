@@ -11,7 +11,13 @@ from gobby.storage.database import LocalDatabase
 
 ROOT = Path(__file__).resolve().parents[1]
 
-NEW_TASK_TYPES = ("simple_fix", "research_spike", "prd_doc", "architecture_doc")
+NEW_TASK_TYPES = (
+    "simple_fix",
+    "research_spike",
+    "prd_doc",
+    "architecture_doc",
+    "review_anchor",
+)
 
 LEGACY_TASK_COLUMNS = ("lifecycle", "lifecycle_stage", "status")
 LEGACY_CAP_COLUMNS = (

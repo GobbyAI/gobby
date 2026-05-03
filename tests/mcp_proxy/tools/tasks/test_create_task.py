@@ -12,3 +12,4 @@ def test_simple_fix_type(task_registry) -> None:
     task_type_schema = schema["inputSchema"]["properties"]["task_type"]
 
     assert "simple_fix" in task_type_schema.get("enum", [])
+    assert "review_anchor" in task_type_schema.get("enum", [])

@@ -11,9 +11,9 @@ from gobby.storage.tasks._stage_states import (
     StageStatesManager,
 )
 from gobby.storage.tasks._transitions import (
-    submit_for_review,
     approve_review,
     reject_review,
+    submit_for_review,
 )
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
@@ -175,6 +175,24 @@ def test_fresh_feature_task_planning_review_path_uses_registry_policy(
 
     _assert_open_task(updated)
     assert stage_row(temp_db, task.id, "planning")["state"] == "needs_review"
+
+
+def test_fresh_review_anchor_task_has_planning_review_stage(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Plan review round anchor",
+        task_type="review_anchor",
+        category="planning",
+    )
+
+    rows = stage_rows(temp_db, task.id)
+
+    assert [(row["stage_name"], row["position"]) for row in rows] == [("planning", 0)]
+    planning = rows[0]
+    assert planning["state"] == "ready"
+    assert planning["review_policy"] == "required"
+    assert planning["reviewer_agent"] == "plan-adversary"
 
 
 def test_needs_review_calls_submit_for_review_no_legacy_writes(
