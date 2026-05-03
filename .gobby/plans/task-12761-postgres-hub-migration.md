@@ -2828,7 +2828,15 @@ Requirements (Docker mode):
     4. Live-capture probe: `psql -c 'UPDATE _pgaudit_probe SET last_probed_at = NOW() WHERE id = 1 RETURNING last_probed_at;'` followed by reading the newest `pgaudit-*.log` file and matching the last line against the regex `LOG:  AUDIT: SESSION,.*UPDATE`. The probe runs against the dedicated `_pgaudit_probe` row seeded by `02-pgaudit.sql` during `initdb`, so it works from container first boot — independent of `gobby_install_ownership` or any other application table that doesn't exist until §5.1's import runs.
 - Runbook commands shipped in `docs/runbooks/postgres-cutover.md`:
   - `docker exec gobby-postgres ls -lh /var/log/pgaudit/` — confirm log files exist and are growing.
-  - Validation-window export: a small `pg_audit_export.sh` helper script ships in `src/gobby/data/postgres-pgsearch/scripts/`, takes `--start <iso8601>` and `--end <iso8601>` arguments, and emits all `AUDIT:` lines in the window to stdout for archival before deactivation. The runbook calls it as `docker exec gobby-postgres /usr/local/bin/pg_audit_export.sh --start <activated_at> --end <deadline_at>`. The `<activated_at>` and `<deadline_at>` values come from the `cutover-<timestamp>.json` ticket.
+  - Validation-window export: a small `pg_audit_export.sh` helper script ships in `src/gobby/data/postgres-pgsearch/scripts/`, takes `--start <iso8601>` and `--end <iso8601>` arguments, and emits all `AUDIT:` lines in the window to stdout for archival before deactivation. **The Dockerfile installs the script into the image at `/usr/local/bin/pg_audit_export.sh` with executable permissions** so `docker exec gobby-postgres /usr/local/bin/pg_audit_export.sh ...` resolves at runtime:
+
+    ```dockerfile
+    # Append to the §1.4 Dockerfile.
+    COPY scripts/pg_audit_export.sh /usr/local/bin/pg_audit_export.sh
+    RUN chmod 0755 /usr/local/bin/pg_audit_export.sh
+    ```
+
+    The runbook calls it as `docker exec gobby-postgres /usr/local/bin/pg_audit_export.sh --start <activated_at> --end <deadline_at>`. The `<activated_at>` and `<deadline_at>` values come from the `cutover-<timestamp>.json` ticket. CI smoke (image build): `docker run --rm gobby-postgres-local:17-pgsearch /usr/local/bin/pg_audit_export.sh --help` exits 0; this catches missing-file or non-executable regressions before they hit a rollback path.
   - Live tail: a single-line recipe shipped in the runbook tails the newest `pgaudit-*.log` file under `/var/log/pgaudit` to confirm capture is live before `gobby postgres activate`.
 
 Install-mode dispatch:
@@ -2879,6 +2887,7 @@ that rollback safety is reduced.
 **Acceptance:**
 
 - 6.0.1 — Validation-window audit log captures cutover-period writes for retroactive reconciliation (Docker mode v1). file: `src/gobby/data/postgres-pgsearch/Dockerfile`.
+- 6.0.2 — `pg_audit_export.sh` is installed into the image at `/usr/local/bin/pg_audit_export.sh` with executable permissions and passes a CI image-smoke check (`docker run --rm <image> /usr/local/bin/pg_audit_export.sh --help` exits 0) so §6.2's rollback runbook resolves the command at runtime. file: `src/gobby/data/postgres-pgsearch/scripts/pg_audit_export.sh`.
 
 ### 6.1 Cutover runbook [category: docs] (depends: 6.0)
 `kind: deliverable`
