@@ -1,0 +1,40 @@
+skill: writing-skills
+agent: default
+description: Agent is asked to add a discipline skill and is tempted to write SKILL.md first.
+prompt: |
+  Create a new bundled skill that forces agents to verify before claiming success.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: write_skill
+        path: src/gobby/install/shared/skills/example/SKILL.md
+      - action: respond
+        text: Skill drafted. It should be clear enough.
+  loaded:
+    loaded_skills:
+      - writing-skills
+    actions:
+      - action: add_pressure_scenario
+        path: tests/skills/scenarios/example/pressure.yaml
+      - action: write_skill
+        path: src/gobby/install/shared/skills/example/SKILL.md
+      - action: run_skill_tdd
+        command: uv run pytest tests/skills/ -m skill_tdd
+      - action: respond
+        text: "Verified: skill_tdd scenario covers baseline and loaded behavior."
+assertions:
+  baseline_action_order:
+    - write_skill
+    - respond
+  loaded_action_order:
+    - add_pressure_scenario
+    - write_skill
+    - run_skill_tdd
+    - respond
+  baseline_text_contains:
+    - should be clear enough
+  loaded_text_contains:
+    - "Verified:"
+  loaded_text_forbids:
+    - should be clear enough

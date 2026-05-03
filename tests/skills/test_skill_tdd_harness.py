@@ -21,3 +21,11 @@ def test_verification_before_completion_changes_completion_behavior() -> None:
     assert result.baseline.action_names == ("respond",)
     assert result.loaded.action_names == ("run_verification", "respond")
     assert result.has_behavioral_delta
+
+
+def test_writing_skills_requires_scenario_before_skill_body() -> None:
+    result = run_recorded_skill_scenario(SCENARIOS / "writing-skills/create-discipline-skill.yaml")
+
+    assert result.baseline.action_names == ("write_skill", "respond")
+    assert result.loaded.action_names[0] == "add_pressure_scenario"
+    assert result.has_behavioral_delta
