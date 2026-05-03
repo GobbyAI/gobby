@@ -34,17 +34,18 @@ import {
   type SessionsFilters,
 } from "./sessionsFilters";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
-
-interface RunningAgent {
-  run_id: string;
-  provider: string;
-  model?: string | null;
-  is_local?: boolean | number | string | null;
-  pid?: number;
-  mode?: string;
-  started_at?: string;
-  session_id?: string;
-}
+import {
+  type RunningAgent,
+  type WatchingSessionEntry,
+  type SessionContextMenu,
+  WATCHING_SESSION_ID_KEY,
+  HIDDEN_SOURCES,
+  getBaseUrl,
+  resolveLocalFlag,
+  renderBadges,
+  matchesSearch,
+  entryTimestamp,
+} from "./SessionsTab.helpers";
 
 interface SessionsTabProps {
   sessions?: GobbySession[];
@@ -91,152 +92,7 @@ function FilterEmptyState({
   );
 }
 
-interface WatchingSessionEntry {
-  id: string;
-  type: "agent" | "session";
-  label: string;
-  provider: string;
-  status: string;
-  sessionType?: string;
-  externalId?: string;
-  agentRunId?: string | null;
-  runId?: string;
-  startedAt?: string;
-  updatedAt?: string;
-  seqNum?: number | null;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  hasTmux: boolean;
-  sandboxEnabled: boolean;
-  isLocal: boolean;
-}
-
-interface SessionContextMenu {
-  x: number;
-  y: number;
-  entry: WatchingSessionEntry;
-}
-
 type WatchingContentMode = "transcript" | "summary";
-
-const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
-const HIDDEN_SOURCES = new Set(["pipeline", "cron", "system"]);
-const LOCAL_LEGACY_PROVIDERS = new Set(["lmstudio", "ollama", "llamacpp", "local"]);
-
-interface Badge {
-  label: string;
-  className: string;
-}
-
-function getBaseUrl(): string {
-  return import.meta.env.VITE_API_BASE_URL || "";
-}
-
-function normalizeLocalText(value: unknown): string {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function readExplicitLocalFlag(value: unknown): boolean | null {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-  if (typeof value === "string") {
-    const normalized = normalizeLocalText(value);
-    if (["1", "true", "yes"].includes(normalized)) {
-      return true;
-    }
-    if (["0", "false", "no"].includes(normalized)) {
-      return false;
-    }
-  }
-  return null;
-}
-
-function isLocalLegacyFallback(provider: unknown, model: unknown): boolean {
-  const normalizedProvider = normalizeLocalText(provider);
-  const normalizedModel = normalizeLocalText(model);
-  return (
-    LOCAL_LEGACY_PROVIDERS.has(normalizedProvider) ||
-    /^gpt-oss(?:\b|[-_:./]|$)/.test(normalizedModel)
-  );
-}
-
-function resolveLocalFlag(
-  flag: unknown,
-  provider: unknown,
-  model: unknown,
-): boolean {
-  return readExplicitLocalFlag(flag) ?? isLocalLegacyFallback(provider, model);
-}
-
-function getSessionTypeBadge(sessionType: string | undefined): Badge {
-  if (sessionType === "web_chat") {
-    return { label: "web", className: "chip chip--web" };
-  }
-  return { label: "tmux", className: "chip chip--tmux" };
-}
-
-function getAgentBadge(agentRunId: string | null | undefined): Badge | null {
-  if (!agentRunId) return null;
-  return { label: "auto", className: "chip chip--auto" };
-}
-
-function getSandboxBadge(sandboxEnabled: boolean): Badge | null {
-  if (!sandboxEnabled) return null;
-  return { label: "SB", className: "chip chip--sandbox" };
-}
-
-function getLocalBadge(entry: WatchingSessionEntry): Badge | null {
-  if (!entry.isLocal) return null;
-  return { label: "LOCAL", className: "chip chip--local" };
-}
-
-function renderBadges(entry: WatchingSessionEntry) {
-  const badges = [
-    getSessionTypeBadge(entry.sessionType),
-    getLocalBadge(entry),
-    getSandboxBadge(entry.sandboxEnabled),
-    getAgentBadge(entry.agentRunId),
-  ]
-    .filter((badge): badge is Badge => Boolean(badge))
-    .sort((left, right) =>
-      left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
-    );
-
-  return (
-    <>
-      {badges.map((badge) => (
-        <span
-          key={`${badge.className}:${badge.label}`}
-          className={badge.className}
-        >
-          {badge.label}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function matchesSearch(session: GobbySession, search: string): boolean {
-  if (!search.trim()) {
-    return true;
-  }
-  const query = search.trim().toLowerCase();
-  return (
-    (session.title && session.title.toLowerCase().includes(query)) ||
-    session.ref.toLowerCase().includes(query) ||
-    session.external_id.toLowerCase().includes(query)
-  );
-}
-
-function entryTimestamp(entry: WatchingSessionEntry): number {
-  const raw = entry.updatedAt ?? entry.startedAt ?? null;
-  return raw ? new Date(raw).getTime() : 0;
-}
 
 export const SessionsTab = memo(function SessionsTab({
   sessions = [],
