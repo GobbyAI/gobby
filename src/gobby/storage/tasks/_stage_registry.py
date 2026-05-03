@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from gobby.storage.database import DatabaseProtocol
 
@@ -131,7 +132,7 @@ class StageRegistryManager:
                 [(task_type, stage_name, position) for stage_name, position in stages],
             )
 
-    def _entry_from_row(self, row) -> StageRegistryEntry:
+    def _entry_from_row(self, row: sqlite3.Row) -> StageRegistryEntry:
         review_policy = self._row_value(row, "review_policy")
         if review_policy not in {"none", "required", "optional"}:
             review_policy = "none"
@@ -177,7 +178,7 @@ class StageRegistryManager:
         return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
 
     @staticmethod
-    def _row_value(row, column: str):
+    def _row_value(row: sqlite3.Row, column: str) -> Any:
         try:
             return row[column]
         except (IndexError, KeyError):

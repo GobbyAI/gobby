@@ -250,6 +250,7 @@ dev = [
     "aiosmtplib>=2.0",
     "aioimaplib>=1.0",
     "pytest-timeout>=2.4.0",
+    "types-aiofiles>=25.1.0.20260409",
 ]
 
 [tool.coverage.run]
