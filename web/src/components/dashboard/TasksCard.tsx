@@ -91,7 +91,7 @@ export function TasksCard({ hours, projectId }: Props) {
         ))}
         {tasks.closed > 0 && (
           <div className={cn(dashboardStatusRowClass, dashboardStatusRowDimmedClass)}>
-            <span className={dashboardDotClass} style={{ background: '#737373' }} />
+            <span className={dashboardDotClass} style={{ background: 'var(--text-muted)' }} />
             <span className={dashboardStatusRowLabelClass}>Closed</span>
             <span className={dashboardStatusRowValueClass}>{tasks.closed}</span>
           </div>
