@@ -17,7 +17,7 @@ const TASK_BAR_CLS = 'mb-3 flex h-2 gap-0.5 overflow-hidden rounded'
 const TASK_SEGMENT_CLS = 'rounded-sm'
 const TASK_LEGEND_CLS = 'flex flex-wrap gap-x-5 gap-y-3'
 const TASK_LEGEND_ITEM_CLS = 'flex items-center gap-1.5 text-[length:var(--text-sm)]'
-const TASK_DOT_CLS = 'h-2 w-2 shrink-0 rounded-full'
+const TASK_GLYPH_CLS = 'inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center'
 const TASK_LEGEND_LABEL_CLS = 'text-[var(--text-secondary)]'
 const TASK_LEGEND_COUNT_CLS = 'font-mono font-semibold text-[var(--text-primary)]'
 
@@ -43,11 +43,11 @@ interface TaskStats {
 
 const STATUS_COLORS: Record<string, string> = {
   open: 'var(--accent)',
-  in_progress: '#f59e0b',
-  needs_review: '#8b5cf6',
-  escalated: '#ef4444',
-  closed: '#22c55e',
-  review_approved: '#06b6d4',
+  in_progress: 'var(--color-info)',
+  needs_review: 'var(--color-warning-foreground)',
+  escalated: 'var(--color-error)',
+  review_approved: 'var(--color-success-foreground)',
+  closed: 'var(--text-muted)',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -57,6 +57,61 @@ const STATUS_LABELS: Record<string, string> = {
   escalated: 'Escalated',
   closed: 'Closed',
   review_approved: 'Approved',
+}
+
+function StatusGlyph({ status }: { status: string }) {
+  const common = {
+    width: 10,
+    height: 10,
+    viewBox: '0 0 12 12',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.75,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  }
+  switch (status) {
+    case 'open':
+      return <svg {...common}><circle cx="6" cy="6" r="4.25" /></svg>
+    case 'in_progress':
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="4.25" />
+          <path d="M6 1.75 A4.25 4.25 0 0 1 6 10.25 Z" fill="currentColor" stroke="none" />
+        </svg>
+      )
+    case 'needs_review':
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="4.25" />
+          <circle cx="6" cy="6" r="1.5" fill="currentColor" stroke="none" />
+        </svg>
+      )
+    case 'escalated':
+      return (
+        <svg {...common}>
+          <polygon points="6,1.5 10.75,10.25 1.25,10.25" />
+          <line x1="6" y1="5" x2="6" y2="7.5" />
+          <circle cx="6" cy="9" r="0.5" fill="currentColor" stroke="none" />
+        </svg>
+      )
+    case 'review_approved':
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="4.25" fill="currentColor" stroke="none" />
+          <path d="M3.75 6.25 L5.25 7.75 L8.25 4.25" stroke="var(--bg-primary)" strokeWidth="1.5" />
+        </svg>
+      )
+    case 'closed':
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="4.25" />
+          <path d="M3.75 6.25 L5.25 7.75 L8.25 4.25" />
+        </svg>
+      )
+    default:
+      return <svg {...common}><circle cx="6" cy="6" r="4.25" fill="currentColor" stroke="none" /></svg>
+  }
 }
 
 export function ProjectSummary({ project }: ProjectSummaryProps) {
@@ -126,7 +181,9 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
             <div className={TASK_LEGEND_CLS}>
               {activeStatuses.map(status => (
                 <div key={status} className={TASK_LEGEND_ITEM_CLS}>
-                  <span className={TASK_DOT_CLS} style={{ backgroundColor: STATUS_COLORS[status] }} />
+                  <span className={TASK_GLYPH_CLS} style={{ color: STATUS_COLORS[status] }}>
+                    <StatusGlyph status={status} />
+                  </span>
                   <span className={TASK_LEGEND_LABEL_CLS}>{STATUS_LABELS[status]}</span>
                   <span className={TASK_LEGEND_COUNT_CLS}>{taskStats[status] || 0}</span>
                 </div>
