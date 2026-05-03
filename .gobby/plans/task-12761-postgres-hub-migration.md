@@ -3236,3 +3236,489 @@ Type changes:
 - The Python codebase will be ported to Rust in a later effort. This plan biases toward choices that survive the port unchanged.
 - Phase 0 ships and reaches users before Phase 1 starts. Users on databases at any version in the `[239, 244)` band reach v244 by chained migration through the v240/v241/v242 callables and the v244 no-op marker that Phase 0 leaves in `MIGRATIONS`; users below v239 hit `MigrationUnsupportedError` and must reset or recover from backup. Anyone already at v244 (fresh installs from the post-Phase-0 build) is no-op.
 
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Fold migrations 240\u2013242 DDL/seed into the SQLite baseline; drop v243;\
+    \ add v244 no-op marker"
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: Satisfy acceptance items 0.1.1, 0.1.2, 0.1.3, 0.1.4.
+  labels:
+  - covers:unknown:0.1:0.1.1
+  - covers:unknown:0.1:0.1.2
+  - covers:unknown:0.1:0.1.3
+  - covers:unknown:0.1:0.1.4
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '0.1'
+- title: Add `psycopg` runtime driver dependency to `pyproject.toml`
+  category: config
+  task_type: feature
+  depends_on:
+  - P0
+  validation_criteria: Satisfy acceptance items 1.0.1.
+  labels:
+  - covers:unknown:1.0:1.0.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.0'
+- title: Add `postgres` service to compose template
+  category: config
+  task_type: feature
+  depends_on:
+  - P0
+  validation_criteria: Satisfy acceptance items 1.1.1.
+  labels:
+  - covers:unknown:1.1:1.1.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.1'
+- title: Add PostgreSQL installer, uninstaller, and status CLI
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.0'
+  - '1.1'
+  - '1.4'
+  validation_criteria: Satisfy acceptance items 1.2.1, 1.2.2, 1.2.3, 1.2.4, 1.2.5,
+    1.2.6.
+  labels:
+  - covers:unknown:1.2:1.2.1
+  - covers:unknown:1.2:1.2.2
+  - covers:unknown:1.2:1.2.3
+  - covers:unknown:1.2:1.2.4
+  - covers:unknown:1.2:1.2.5
+  - covers:unknown:1.2:1.2.6
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.2'
+- title: Extend bootstrap config with `hub_backend`, `database_url`, and `postgres_install_mode`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '3.3'
+  - '3.8'
+  validation_criteria: Satisfy acceptance items 1.3.1.
+  labels:
+  - covers:unknown:1.3:1.3.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.3'
+- title: Add local-build Dockerfile for the Docker mode
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: Satisfy acceptance items 1.4.1, 1.4.2, 1.4.3, 1.4.4.
+  labels:
+  - covers:unknown:1.4:1.4.1
+  - covers:unknown:1.4:1.4.2
+  - covers:unknown:1.4:1.4.3
+  - covers:unknown:1.4:1.4.4
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.4'
+- title: Add `gobby postgres activate` and `deactivate` commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '1.4'
+  validation_criteria: Satisfy acceptance items 1.5.1.
+  labels:
+  - covers:unknown:1.5:1.5.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.5'
+- title: Add PostgreSQL to the test compose stack and CI
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.4'
+  validation_criteria: Satisfy acceptance items 2.1.1.
+  labels:
+  - covers:unknown:2.1:2.1.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '2.1'
+- title: Add a schema-per-worker pytest fixture
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '3.3'
+  validation_criteria: Satisfy acceptance items 2.2.1, 2.2.2, 2.2.3.
+  labels:
+  - covers:unknown:2.2:2.2.1
+  - covers:unknown:2.2:2.2.2
+  - covers:unknown:2.2:2.2.3
+  assigned_agent: test-architect
+  tdd: false
+  source_section: '2.2'
+- title: Parametrize storage fixtures over both backends
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  validation_criteria: Satisfy acceptance items 2.3.1.
+  labels:
+  - covers:unknown:2.3:2.3.1
+  assigned_agent: test-architect
+  tdd: false
+  source_section: '2.3'
+- title: Add dialect parity regression tests
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: Satisfy acceptance items 2.4.1.
+  labels:
+  - covers:unknown:2.4:2.4.1
+  assigned_agent: test-architect
+  tdd: false
+  source_section: '2.4'
+- title: Define the `HubDatabase` protocol
+  category: code
+  task_type: feature
+  depends_on:
+  - P0
+  validation_criteria: Satisfy acceptance items 3.1.1.
+  labels:
+  - covers:unknown:3.1:3.1.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '3.1'
+- title: Implement `SqliteHubDatabase` shim
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: Satisfy acceptance items 3.2.1, 3.2.2, 3.2.3.
+  labels:
+  - covers:unknown:3.2:3.2.1
+  - covers:unknown:3.2:3.2.2
+  - covers:unknown:3.2:3.2.3
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '3.2'
+- title: Implement `PostgresHubDatabase`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.0'
+  - '3.1'
+  - '3.7'
+  - '4.2'
+  validation_criteria: Satisfy acceptance items 3.3.1, 3.3.2, 3.3.3.
+  labels:
+  - covers:unknown:3.3:3.3.1
+  - covers:unknown:3.3:3.3.2
+  - covers:unknown:3.3:3.3.3
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '3.3'
+- title: Port row consumers off `sqlite3.Row`
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.2'
+  - '3.3'
+  validation_criteria: Satisfy acceptance items 3.4.1.
+  labels:
+  - covers:unknown:3.4:3.4.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '3.4'
+- title: Replace `lastrowid` with `RETURNING id`
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: Satisfy acceptance items 3.5.1.
+  labels:
+  - covers:unknown:3.5:3.5.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '3.5'
+- title: Replace `INSERT OR IGNORE` / `INSERT OR REPLACE` with `ON CONFLICT`
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: Satisfy acceptance items 3.6.1.
+  labels:
+  - covers:unknown:3.6:3.6.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '3.6'
+- title: Rewrite the migration runner with dollar-quote-aware splitting for both backends
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  validation_criteria: Satisfy acceptance items 3.7.1, 3.7.2.
+  labels:
+  - covers:unknown:3.7:3.7.1
+  - covers:unknown:3.7:3.7.2
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '3.7'
+- title: Port storage managers off `DatabaseProtocol` onto `HubDatabase`
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.3'
+  - '3.7'
+  validation_criteria: Satisfy acceptance items 3.8.1, 3.8.2, 3.8.3.
+  labels:
+  - covers:unknown:3.8:3.8.1
+  - covers:unknown:3.8:3.8.2
+  - covers:unknown:3.8:3.8.3
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '3.8'
+- title: Verify no Python migration callables survive into Postgres paths
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.7'
+  validation_criteria: Satisfy acceptance items 4.1.1.
+  labels:
+  - covers:unknown:4.1:4.1.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '4.1'
+- title: Add `postgres_baseline_schema.sql`
+  category: code
+  task_type: feature
+  depends_on:
+  - P0
+  validation_criteria: Satisfy acceptance items 4.2.1, 4.2.2, 4.2.3, 4.2.4, 4.2.5,
+    4.2.6, 4.2.7, 4.2.8, 4.2.9, 4.2.10.
+  labels:
+  - covers:unknown:4.2:4.2.1
+  - covers:unknown:4.2:4.2.2
+  - covers:unknown:4.2:4.2.3
+  - covers:unknown:4.2:4.2.4
+  - covers:unknown:4.2:4.2.5
+  - covers:unknown:4.2:4.2.6
+  - covers:unknown:4.2:4.2.7
+  - covers:unknown:4.2:4.2.8
+  - covers:unknown:4.2:4.2.9
+  - covers:unknown:4.2:4.2.10
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '4.2'
+- title: Standardize parameter style on `$1`
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.2'
+  - '3.3'
+  - '3.8'
+  validation_criteria: Satisfy acceptance items 4.3.1.
+  labels:
+  - covers:unknown:4.3:4.3.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '4.3'
+- title: Replace FTS5 with `pg_search` BM25 indexes
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  - '4.2'
+  validation_criteria: Satisfy acceptance items 4.4.1, 4.4.2.
+  labels:
+  - covers:unknown:4.4:4.4.1
+  - covers:unknown:4.4:4.4.2
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '4.4'
+- title: Port search backends
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  validation_criteria: Satisfy acceptance items 4.5.1, 4.5.2, 4.5.3, 4.5.4, 4.5.5.
+  labels:
+  - covers:unknown:4.5:4.5.1
+  - covers:unknown:4.5:4.5.2
+  - covers:unknown:4.5:4.5.3
+  - covers:unknown:4.5:4.5.4
+  - covers:unknown:4.5:4.5.5
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '4.5'
+- title: Port remaining SQL (`json_extract`, `datetime`, `strftime`, `julianday`)
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.2'
+  - '4.3'
+  - '3.8'
+  validation_criteria: Satisfy acceptance items 4.6.1.
+  labels:
+  - covers:unknown:4.6:4.6.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '4.6'
+- title: Audit PostgreSQL concurrency semantics under MVCC
+  category: research
+  task_type: feature
+  depends_on:
+  - '3.4'
+  - '3.5'
+  - '3.6'
+  - '3.7'
+  - '4.1'
+  - '4.3'
+  - '4.4'
+  - '4.5'
+  - '4.6'
+  validation_criteria: Satisfy acceptance items 4.7.1.
+  labels:
+  - covers:unknown:4.7:4.7.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '4.7'
+- title: Implement `gobby postgres migrate-from-sqlite`
+  category: code
+  task_type: feature
+  depends_on:
+  - P4
+  - '5.2'
+  - '5.3'
+  validation_criteria: Satisfy acceptance items 5.1.1.
+  labels:
+  - covers:unknown:5.1:5.1.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '5.1'
+- title: Implement validation checks
+  category: code
+  task_type: feature
+  depends_on:
+  - P4
+  - '5.3'
+  validation_criteria: Satisfy acceptance items 5.2.1, 5.2.2.
+  labels:
+  - covers:unknown:5.2:5.2.1
+  - covers:unknown:5.2:5.2.2
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '5.2'
+- title: Implement sequence / identity reseed
+  category: code
+  task_type: feature
+  depends_on:
+  - P4
+  validation_criteria: Satisfy acceptance items 5.3.1.
+  labels:
+  - covers:unknown:5.3:5.3.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '5.3'
+- title: Implement validation-window audit log (Docker mode only, v1)
+  category: code
+  task_type: feature
+  depends_on:
+  - P5
+  validation_criteria: Satisfy acceptance items 6.0.1, 6.0.2.
+  labels:
+  - covers:unknown:6.0:6.0.1
+  - covers:unknown:6.0:6.0.2
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '6.0'
+- title: Post-Phase-5 concurrency re-audit
+  category: research
+  task_type: feature
+  depends_on:
+  - P5
+  - '4.7'
+  validation_criteria: Satisfy acceptance items 6.0a.1, 6.0a.2.
+  labels:
+  - covers:unknown:6.0a:6.0a.1
+  - covers:unknown:6.0a:6.0a.2
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: 6.0a
+- title: Cutover runbook
+  category: docs
+  task_type: feature
+  depends_on:
+  - '6.0'
+  - 6.0a
+  validation_criteria: Satisfy acceptance items 6.1.1, 6.1.2.
+  labels:
+  - covers:unknown:6.1:6.1.1
+  - covers:unknown:6.1:6.1.2
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '6.1'
+- title: Rollback runbook
+  category: docs
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: Satisfy acceptance items 6.2.1.
+  labels:
+  - covers:unknown:6.2:6.2.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '6.2'
+- title: Move bootstrap Postgres credentials into OS keyring
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: Satisfy acceptance items 7.0.1.
+  labels:
+  - covers:unknown:7.0:7.0.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '7.0'
+- title: Remove `SqliteHubDatabase` from runtime wiring
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '7.0'
+  validation_criteria: Satisfy acceptance items 7.1.1.
+  labels:
+  - covers:unknown:7.1:7.1.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '7.1'
+- title: Remove FTS5 runtime code and SQLite-specific migrations
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: Satisfy acceptance items 7.2.1.
+  labels:
+  - covers:unknown:7.2:7.2.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '7.2'
+- title: Update docs, comments, and user-facing text
+  category: docs
+  task_type: feature
+  depends_on:
+  - '7.2'
+  validation_criteria: Satisfy acceptance items 7.3.1.
+  labels:
+  - covers:unknown:7.3:7.3.1
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: '7.3'
+```
