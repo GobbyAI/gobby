@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Channel, ChannelType, ChannelStatus } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
-import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
+import { CHANNEL_DISPLAY_NAMES, getChannelColorVar } from './channelMetadata'
 import {
   TYPE_BADGE_CLS,
   STATUS_DOT_CLS,
@@ -108,7 +108,7 @@ export function ChannelDetail({
 
   if (!channel) return null
 
-  const color = PLATFORM_COLORS[channel.channel_type] || 'var(--border)'
+  const color = getChannelColorVar(channel.channel_type)
   const webhookUrl = WEBHOOK_TYPES.includes(channel.channel_type)
     ? `${window.location.origin}/api/comms/webhooks/${channel.name}`
     : null

@@ -1,6 +1,6 @@
 import type { Channel } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
-import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
+import { CHANNEL_DISPLAY_NAMES, getChannelColorVar } from './channelMetadata'
 import {
   STATUS_DOT_ACTIVE_COLOR,
   STATUS_DOT_CLS,
@@ -31,7 +31,7 @@ interface ChannelCardProps {
 }
 
 export function ChannelCard({ channel, onSelect, onEdit, onToggleEnabled, onRemove }: ChannelCardProps) {
-  const color = PLATFORM_COLORS[channel.channel_type] || 'var(--border)'
+  const color = getChannelColorVar(channel.channel_type)
   const disabled = !channel.enabled
 
   return (

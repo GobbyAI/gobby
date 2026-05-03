@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import type { Channel, ChannelType } from '../../hooks/useIntegrations'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { PlatformIcon } from './IntegrationsPage'
-import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
+import { CHANNEL_DISPLAY_NAMES, getChannelColorVar } from './channelMetadata'
 import {
   MODAL_OVERLAY_CLS,
   MODAL_CLS,
@@ -199,7 +199,7 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
                   key={type}
                   className={EMPTY_CARD_CLS}
                   onClick={() => setSelectedType(type)}
-                  style={{ borderLeftWidth: 3, borderLeftColor: PLATFORM_COLORS[type] }}
+                  style={{ borderLeftWidth: 3, borderLeftColor: getChannelColorVar(type) }}
                 >
                   <PlatformIcon type={type} />
                   {CHANNEL_DISPLAY_NAMES[type]}

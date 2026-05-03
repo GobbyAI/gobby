@@ -140,6 +140,15 @@
   --provider-copilot: oklch(72% 0.18 50);
   --provider-unknown: oklch(60% 0.005 125);
 
+  /* Integration-channel palette — see components/integrations/channelMetadata.ts. */
+  --channel-slack: oklch(72% 0.16 320);
+  --channel-telegram: oklch(72% 0.13 235);
+  --channel-discord: oklch(72% 0.16 270);
+  --channel-teams: oklch(70% 0.12 285);
+  --channel-email: oklch(70% 0.16 25);
+  --channel-sms: oklch(74% 0.15 145);
+  --channel-gobby_chat: oklch(70% 0.005 125);
+
   --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
   /* stylelint-disable value-keyword-case */
   --font-sans:
@@ -269,6 +278,15 @@
   --provider-windsurf: oklch(42% 0.14 190);
   --provider-copilot: oklch(48% 0.20 50);
   --provider-unknown: oklch(40% 0.005 125);
+
+  /* Integration-channel palette — light theme variants. */
+  --channel-slack: oklch(38% 0.16 320);
+  --channel-telegram: oklch(45% 0.16 235);
+  --channel-discord: oklch(45% 0.20 270);
+  --channel-teams: oklch(42% 0.14 285);
+  --channel-email: oklch(45% 0.20 25);
+  --channel-sms: oklch(45% 0.16 145);
+  --channel-gobby_chat: oklch(45% 0.005 125);
 }
 
 /* Light theme overrides: shared status badges */
