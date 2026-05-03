@@ -134,19 +134,22 @@
 
 /* ---------- Modifiers ---------- */
 
-/* Icon — square aspect; pair with btn-ghost or btn-secondary for chrome. */
+/* Icon — square aspect; pair with btn-ghost or btn-secondary for chrome.
+   Compact icon variants (xs/sm) floor at 32px to clear WCAG 2.2 AA target
+   sizing for fine pointers; coarse pointers (touch) bump to 44px so the
+   target meets the Apple HIG / Material touch-target floor. */
 .btn-icon {
-  width: 1.875rem;
-  min-height: 1.875rem;
+  width: 2rem;
+  min-height: 2rem;
   padding: 0;
 }
 .btn-icon.btn-xs {
-  width: 1.5rem;
-  min-height: 1.5rem;
+  width: 2rem;
+  min-height: 2rem;
 }
 .btn-icon.btn-sm {
-  width: 1.75rem;
-  min-height: 1.75rem;
+  width: 2rem;
+  min-height: 2rem;
 }
 .btn-icon.btn-md {
   width: 2rem;
@@ -155,6 +158,20 @@
 .btn-icon.btn-lg {
   width: 2.5rem;
   min-height: 2.5rem;
+}
+
+@media (pointer: coarse) {
+  .btn-icon,
+  .btn-icon.btn-xs,
+  .btn-icon.btn-sm,
+  .btn-icon.btn-md {
+    width: 2.75rem;
+    min-height: 2.75rem;
+  }
+  .btn-icon.btn-lg {
+    width: 2.75rem;
+    min-height: 2.75rem;
+  }
 }
 
 /* Block — full-width. */
