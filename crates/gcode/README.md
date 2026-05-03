@@ -141,6 +141,7 @@ gcode search --project /path/to/app "q"   # By path
 # Global flags
 --format text|json                        # Output format (default: json)
 --quiet                                   # Suppress warnings and progress
+--no-freshness                            # Skip read-time index/source freshness checks
 ```
 
 ## Standalone vs Gobby
