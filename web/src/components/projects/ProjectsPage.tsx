@@ -92,6 +92,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
 
   return (
     <main className={PAGE_CLS}>
+      <h1 className="sr-only">{activeProject ? `Project: ${activeProject.display_name}` : "Projects"}</h1>
       <div className={PAGE_HEADER_CLS}>
         <TabBar
           tabs={TABS}

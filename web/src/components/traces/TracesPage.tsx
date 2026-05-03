@@ -50,7 +50,7 @@ export function TracesPage({ projectId, initialTraceId }: TracesPageProps) {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)]">
       <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] px-4 py-3">
-        <h2 className="m-0 min-w-0 flex-1 text-[length:var(--text-lg)] font-semibold">Traces</h2>
+        <h1 className="m-0 min-w-0 flex-1 text-[length:var(--text-lg)] font-semibold">Traces</h1>
         <select
           className="min-h-9 rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] pointer-coarse:min-h-11"
           value={filters.status || ''}

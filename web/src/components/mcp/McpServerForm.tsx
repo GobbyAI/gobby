@@ -80,7 +80,7 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
   return (
     <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
       <form className={MODAL_CLS} onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h3 className={MODAL_TITLE_CLS}>Add MCP Server</h3>
+        <h2 className={MODAL_TITLE_CLS}>Add MCP Server</h2>
 
         {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
@@ -204,7 +204,7 @@ export function McpImportModal({ onImport, onClose }: McpImportModalProps) {
   return (
     <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
       <form className={MODAL_CLS} onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h3 className={MODAL_TITLE_CLS}>Import MCP Server</h3>
+        <h2 className={MODAL_TITLE_CLS}>Import MCP Server</h2>
 
         <div className={IMPORT_TABS_CLS}>
           <button

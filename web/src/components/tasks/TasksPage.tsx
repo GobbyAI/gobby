@@ -421,7 +421,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     <main className={PAGE_CLS}>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h2 className={TITLE_CLS}>Tasks</h2>
+          <h1 className={TITLE_CLS}>Tasks</h1>
           <div className={GROUP_TABS_CLS}>
             <button className={cn(GROUP_TAB_CLS, groupBy === 'all' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('all')}>All Tasks</button>
             <button className={cn(GROUP_TAB_CLS, groupBy === 'agent' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('agent')}>By Agent</button>

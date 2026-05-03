@@ -61,7 +61,7 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
     <div className={OVERLAY_CLS} onClick={onClose}>
       <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
-          <h3 className={HEADER_TITLE_CLS}>Import Skill</h3>
+          <h2 className={HEADER_TITLE_CLS}>Import Skill</h2>
           <button
             type="button"
             className={CLOSE_CLS}

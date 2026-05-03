@@ -708,7 +708,7 @@ export function ReportsPage({
     <main className={PAGE_CLS}>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h2 className={TITLE_CLS}>Reports</h2>
+          <h1 className={TITLE_CLS}>Reports</h1>
           <SegmentedControl<SubTab>
             value={subTab}
             onChange={setSubTab}

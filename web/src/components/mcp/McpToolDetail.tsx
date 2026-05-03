@@ -95,7 +95,7 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
         {isOpen && (
           <div className={DETAIL_CLS}>
             <div className={DETAIL_HEADER_CLS}>
-              <h3 className={DETAIL_HEADER_TITLE_CLS}>{toolName}</h3>
+              <h2 className={DETAIL_HEADER_TITLE_CLS}>{toolName}</h2>
               <button className={DETAIL_CLOSE_CLS} onClick={onClose}>
                 &times;
               </button>
@@ -117,14 +117,14 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
                 </div>
 
                 <div className={DETAIL_SECTION_CLS}>
-                  <h4 className={DETAIL_SECTION_TITLE_CLS}>Input Schema</h4>
+                  <h3 className={DETAIL_SECTION_TITLE_CLS}>Input Schema</h3>
                   <pre className={DETAIL_SCHEMA_CLS}>
                     <code>{JSON.stringify(schema.inputSchema, null, 2)}</code>
                   </pre>
                 </div>
 
                 <div className={DETAIL_SECTION_CLS}>
-                  <h4 className={DETAIL_SECTION_TITLE_CLS}>Execute</h4>
+                  <h3 className={DETAIL_SECTION_TITLE_CLS}>Execute</h3>
                   <textarea
                     className={EXECUTE_AREA_CLS}
                     value={argsText}

@@ -65,7 +65,7 @@ export function SkillDetail({ skill, onClose, onEdit, onExport, onScan }: SkillD
   return (
     <div className={DETAIL_CLS}>
       <div className={HEADER_CLS}>
-        <h3 className={TITLE_CLS}>{skill.name}</h3>
+        <h2 className={TITLE_CLS}>{skill.name}</h2>
         <button
           type="button"
           className={CLOSE_CLS}

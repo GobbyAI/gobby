@@ -672,7 +672,7 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
       )}
 
       <div className={TOOLBAR_CLS}>
-        <h2 className={TOOLBAR_TITLE_CLS}>Cron Jobs</h2>
+        <h1 className={TOOLBAR_TITLE_CLS}>Cron Jobs</h1>
         <input
           className={TOOLBAR_SEARCH_CLS}
           type="text"

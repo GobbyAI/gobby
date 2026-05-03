@@ -273,7 +273,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
       )}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="m-0 text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)]">Memory</h2>
+          <h1 className="m-0 text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)]">Memory</h1>
         </div>
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
           <div className="flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">

@@ -79,9 +79,9 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h3 id="memory-form-title" className="m-0 text-[length:var(--text-xl)] text-[var(--text-primary)]">
+          <h2 id="memory-form-title" className="m-0 text-[length:var(--text-xl)] text-[var(--text-primary)]">
             {isEdit ? 'Edit Memory' : 'Create Memory'}
-          </h3>
+          </h2>
           <button
             type="button"
             className="flex h-8 w-8 cursor-pointer items-center justify-center border-0 bg-transparent p-1 text-[length:var(--text-2xl)] leading-none text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11"

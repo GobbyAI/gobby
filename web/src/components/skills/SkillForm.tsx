@@ -94,7 +94,7 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
     <div className={OVERLAY_CLS} onClick={onCancel}>
       <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
-          <h3 className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h3>
+          <h2 className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h2>
           <button
             type="button"
             className={CLOSE_CLS}

@@ -504,7 +504,7 @@ export function AgentPortfolioPage() {
       {/* Toolbar */}
       <div className="agent-toolbar">
         <div className="agent-toolbar-left">
-          <h2 className="agent-page-title">Agent Portfolio</h2>
+          <h1 className="agent-page-title">Agent Portfolio</h1>
           <span className="agent-page-count">{agents.length} agents</span>
         </div>
         <div className="agent-toolbar-right">

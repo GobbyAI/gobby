@@ -702,6 +702,7 @@ export function ChatPage({
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
+      <h1 className="sr-only">Chat</h1>
       {ConfirmDialogElement}
       {/* Main chat column */}
       <div className="flex flex-col flex-1 min-w-[320px]">

@@ -126,7 +126,7 @@ export function IntegrationsPage() {
       {/* Toolbar */}
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h2 className={TOOLBAR_TITLE_CLS}>Integrations</h2>
+          <h1 className={TOOLBAR_TITLE_CLS}>Integrations</h1>
         </div>
         <div className={TOOLBAR_RIGHT_CLS}>
           <input

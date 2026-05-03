@@ -220,7 +220,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
                   ← Parent task
                 </button>
               )}
-              <h3 className={TITLE_CLS}>{task.title}</h3>
+              <h2 className={TITLE_CLS}>{task.title}</h2>
               <div className={BADGES_CLS}>
                 <TaskStateBadges task={task} />
                 <PriorityBadge priority={task.priority} />
@@ -267,7 +267,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             </div>
 
             <div className={SECTION_CLS}>
-              <h4 className={SECTION_TITLE_CLS}>Timeline</h4>
+              <h3 className={SECTION_TITLE_CLS}>Timeline</h3>
               <ReasoningTimeline
                 task={task}
                 onIntervene={(_phaseKey, action) => {
@@ -295,28 +295,28 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Actions</h4>
+                <h3 className={SECTION_TITLE_CLS}>Actions</h3>
                 <ActionFeed sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Session</h4>
+                <h3 className={SECTION_TITLE_CLS}>Session</h3>
                 <SessionViewer sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Capabilities</h4>
+                <h3 className={SECTION_TITLE_CLS}>Capabilities</h3>
                 <CapabilityScope sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {blockerIds.length > 0 && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Blocked By</h4>
+                <h3 className={SECTION_TITLE_CLS}>Blocked By</h3>
                 <div className={DEP_LIST_CLS}>
                   {blockerIds.map(id => (
                     <button key={id} className={DEP_ITEM_CLS} onClick={() => onSelectTask(id)}>
@@ -329,7 +329,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {blockingIds.length > 0 && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Blocks</h4>
+                <h3 className={SECTION_TITLE_CLS}>Blocks</h3>
                 <div className={DEP_LIST_CLS}>
                   {blockingIds.map(id => (
                     <button key={id} className={DEP_ITEM_CLS} onClick={() => onSelectTask(id)}>
@@ -342,9 +342,9 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {subtasks.length > 0 && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>
+                <h3 className={SECTION_TITLE_CLS}>
                   Subtasks ({closedCount}/{subtasks.length})
-                </h4>
+                </h3>
                 <div className={PROGRESS_CLS}>
                   <div className={PROGRESS_BAR_CLS}>
                     <div className={PROGRESS_FILL_CLS} style={{ width: `${progressPct}%` }} />
@@ -365,13 +365,13 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {task.description && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Description</h4>
+                <h3 className={SECTION_TITLE_CLS}>Description</h3>
                 <div className={DESCRIPTION_CLS}>{task.description}</div>
               </div>
             )}
 
             <div className={SECTION_CLS}>
-              <h4 className={SECTION_TITLE_CLS}>Comments</h4>
+              <h3 className={SECTION_TITLE_CLS}>Comments</h3>
               <TaskComments taskId={task.id} />
             </div>
 
@@ -380,20 +380,20 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             )}
 
             <div className={SECTION_CLS}>
-              <h4 className={SECTION_TITLE_CLS}>Results</h4>
+              <h3 className={SECTION_TITLE_CLS}>Results</h3>
               <TaskResults task={task} />
             </div>
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Usage</h4>
+                <h3 className={SECTION_TITLE_CLS}>Usage</h3>
                 <TokenTracker sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h4 className={SECTION_TITLE_CLS}>Memories</h4>
+                <h3 className={SECTION_TITLE_CLS}>Memories</h3>
                 <TaskMemories sessionId={task.created_in_session_id} />
               </div>
             )}
@@ -426,7 +426,7 @@ function ValidationSection({ task }: { task: GobbyTaskDetail }) {
 
   return (
     <div className={SECTION_CLS}>
-      <h4 className={SECTION_TITLE_CLS}>Validation</h4>
+      <h3 className={SECTION_TITLE_CLS}>Validation</h3>
 
       <div className={VALIDATION_STATUS_CLS}>
         <span

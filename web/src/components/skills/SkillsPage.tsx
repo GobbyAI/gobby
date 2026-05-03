@@ -248,7 +248,7 @@ export function SkillsPage() {
 
       <div className="workflows-toolbar">
         <div className="workflows-toolbar-left">
-          <h2 className="workflows-toolbar-title">Skills</h2>
+          <h1 className="workflows-toolbar-title">Skills</h1>
           <span className="workflows-toolbar-count">{stats?.total ?? 0}</span>
         </div>
         <div className="workflows-toolbar-right">

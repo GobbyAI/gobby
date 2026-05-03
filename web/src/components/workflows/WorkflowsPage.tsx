@@ -155,7 +155,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
       {/* Title row */}
       <div className="workflows-toolbar">
         <div className="workflows-toolbar-left">
-          <h2 className="workflows-toolbar-title">Workflows</h2>
+          <h1 className="workflows-toolbar-title">Workflows</h1>
         </div>
       </div>
 
@@ -610,7 +610,7 @@ export function YamlEditorModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="workflows-yaml-header">
-          <h3>Edit YAML — {workflowName}</h3>
+          <h2>Edit YAML — {workflowName}</h2>
           <div className="workflows-yaml-header-actions">
             {error && <span className="workflows-yaml-error">{error}</span>}
             <button

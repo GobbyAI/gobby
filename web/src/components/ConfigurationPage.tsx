@@ -1316,6 +1316,7 @@ export function ConfigurationPage() {
 
   return (
     <div className={PAGE_CLS}>
+      <h1 className="sr-only">Configuration</h1>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
           <div ref={tabsRef} className={TABS_CLS} style={{ boxShadow: tabsBoxShadow }}>
