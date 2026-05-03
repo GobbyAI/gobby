@@ -98,7 +98,7 @@ const STEP_BODY_CLS = 'border-t border-[var(--border)] px-3 pb-3'
 const STEP_ACTIONS_CLS = 'flex gap-1.5 py-2'
 
 const STEP_ACTION_CLS =
-  'cursor-pointer rounded border border-[var(--border)] bg-transparent px-2.5 py-1 text-[length:var(--text-xs)] text-[var(--text-secondary)] transition-all duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11'
+  'cursor-pointer rounded border border-[var(--border)] bg-transparent px-2.5 py-1 text-[length:var(--text-xs)] text-[var(--text-secondary)] transition-[background-color,color,border-color,opacity] duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11'
 
 const STEP_ACTION_DANGER_CLS =
   'hover:border-[var(--color-destructive)] hover:bg-[var(--color-destructive)] hover:text-[var(--color-destructive-foreground)]'
@@ -136,7 +136,7 @@ const KV_ADD_CLS =
 const ADD_CLS = 'relative mt-2'
 
 const ADD_BTN_CLS =
-  'w-full cursor-pointer rounded-lg border border-dashed border-[var(--border)] bg-transparent p-2.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+  'w-full cursor-pointer rounded-lg border border-dashed border-[var(--border)] bg-transparent p-2.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--accent)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 
 const ADD_DROPDOWN_CLS =
   'absolute bottom-full left-0 z-10 mb-1 min-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]'

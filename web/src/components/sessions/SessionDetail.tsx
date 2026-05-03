@@ -44,7 +44,7 @@ const METADATA_CONTENT_CLS = 'py-2'
 const GENERATE_BTN_CLS =
   'ml-auto flex cursor-pointer items-center gap-1.5 rounded border-0 bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-sm)] text-white transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
 const REGENERATE_BTN_CLS =
-  'ml-auto flex cursor-pointer items-center rounded border border-[var(--border)] bg-transparent p-1 text-[var(--text-muted)] transition-all duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+  'ml-auto flex cursor-pointer items-center rounded border border-[var(--border)] bg-transparent p-1 text-[var(--text-muted)] transition-[color,border-color] duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 
 const GENERATING_CLS =
   'flex items-center gap-2 py-3 text-[length:var(--text-base)] text-[var(--text-secondary)]'

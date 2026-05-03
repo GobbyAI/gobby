@@ -51,7 +51,7 @@ const TEXTAREA_CLS =
   'min-h-20 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[0.6rem] py-2 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
 const RADIO_GROUP_CLS = 'flex gap-1'
 const RADIO_CLS =
-  'pointer-coarse:min-h-11 flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] [&_input]:hidden'
+  'pointer-coarse:min-h-11 flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] [&_input]:hidden'
 const RADIO_ACTIVE_CLS =
   'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] font-medium text-[var(--accent)]'
 const PROMPT_TOGGLE_CLS =
@@ -65,7 +65,7 @@ const ERROR_CLS = 'py-1 text-[length:calc(var(--font-size-base)*0.8)] text-[var(
 const FOOTER_CLS =
   'flex shrink-0 justify-end gap-2 border-t border-[var(--border)] px-5 py-3'
 const BTN_CLS =
-  'pointer-coarse:min-h-11 cursor-pointer rounded-md border border-[var(--border)] px-4 py-2 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50'
+  'pointer-coarse:min-h-11 cursor-pointer rounded-md border border-[var(--border)] px-4 py-2 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] font-medium transition-[background-color,color,border-color,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50'
 const BTN_PRIMARY_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)] disabled:hover:bg-[var(--accent)]'
 const BTN_DEFAULT_CLS =

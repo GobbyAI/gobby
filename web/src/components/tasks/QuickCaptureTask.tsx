@@ -17,7 +17,7 @@ const INPUT_CLS =
 const ROW_CLS = 'flex items-center justify-between gap-[10px]'
 const TYPES_CLS = 'flex gap-1'
 const TYPE_BTN_CLS =
-  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[10px] py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)]'
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[10px] py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)]'
 const TYPE_BTN_ACTIVE_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent)] hover:text-[var(--accent-foreground)]'
 const SUBMIT_CLS =

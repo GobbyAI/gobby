@@ -27,7 +27,7 @@ const NEW_BTN_CLS =
 const FILTER_BAR_CLS = 'pb-3'
 const FILTER_CHIPS_CLS = 'flex flex-wrap gap-1.5'
 const FILTER_CHIP_CLS =
-  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] font-medium uppercase text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--text-secondary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] font-medium uppercase text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-secondary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
 const FILTER_CHIP_ACTIVE_CLS =
   'border-[var(--accent)] bg-[rgba(255,255,255,0.03)] text-[var(--accent)]'
 
@@ -71,7 +71,7 @@ const STATE_BADGE_BASE_CLS = 'rounded-[10px] px-2 py-0.5 text-[length:var(--text
 
 const SERVER_TOOL_COUNT_CLS = 'ml-auto whitespace-nowrap text-[length:var(--text-sm)] text-[var(--text-secondary)]'
 const REMOVE_BTN_CLS =
-  'cursor-pointer rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[length:var(--text-base)] text-[var(--text-secondary)] opacity-0 transition-all duration-150 hover:border-[var(--color-error)] hover:text-[var(--color-error)] group-hover:opacity-100 pointer-coarse:opacity-100 pointer-coarse:h-11 pointer-coarse:w-11'
+  'cursor-pointer rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[length:var(--text-base)] text-[var(--text-secondary)] opacity-0 transition-[color,border-color,opacity] duration-150 hover:border-[var(--color-error)] hover:text-[var(--color-error)] group-hover:opacity-100 pointer-coarse:opacity-100 pointer-coarse:h-11 pointer-coarse:w-11'
 const SERVER_CHEVRON_CLS = 'shrink-0 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-transform duration-200'
 const SERVER_CHEVRON_EXPANDED_CLS = 'rotate-90'
 

@@ -8,11 +8,11 @@ export const TOOLBAR_RIGHT_CLS = 'flex shrink-0 items-center gap-2'
 export const TABS_CLS =
   'flex min-w-0 gap-0.5 overflow-x-auto rounded-md bg-[var(--bg-tertiary)] p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
 export const TAB_CLS =
-  'cursor-pointer whitespace-nowrap rounded border-0 bg-transparent px-3.5 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--text-secondary)] transition-all duration-150 hover:bg-[rgba(255,255,255,0.05)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+  'cursor-pointer whitespace-nowrap rounded border-0 bg-transparent px-3.5 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--text-secondary)] transition-[background-color,color] duration-150 hover:bg-[rgba(255,255,255,0.05)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 export const TAB_ACTIVE_CLS = 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
 
 export const TOOLBAR_BTN_CLS =
-  'flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--border-active)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+  'flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--border-active)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 export const TOOLBAR_BTN_PRIMARY_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] hover:opacity-90'
 export const TOOLBAR_BTN_DANGER_CLS =
@@ -88,7 +88,7 @@ export const PROMPTS_SIDEBAR_CLS =
 export const PROMPTS_SIDEBAR_TITLE_CLS =
   'border-b border-[var(--border)] px-3.5 py-2.5 text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.5px] text-[var(--text-tertiary)] max-sm:hidden'
 export const PROMPT_CATEGORY_CLS =
-  'flex cursor-pointer items-center justify-between px-3.5 py-2 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-all duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] max-sm:whitespace-nowrap max-sm:px-3 pointer-coarse:min-h-11'
+  'flex cursor-pointer items-center justify-between px-3.5 py-2 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-[background-color,color] duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] max-sm:whitespace-nowrap max-sm:px-3 pointer-coarse:min-h-11'
 export const PROMPT_CATEGORY_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] font-medium text-[var(--text-primary)]'
 export const PROMPT_CATEGORY_COUNT_CLS =
   'rounded-[10px] bg-[var(--bg-primary)] px-1.5 py-px text-[length:var(--text-xs)] text-[var(--text-tertiary)]'
@@ -96,7 +96,7 @@ export const PROMPT_CATEGORY_COUNT_CLS =
 export const PROMPTS_MAIN_CLS = 'flex flex-1 flex-col overflow-hidden'
 export const PROMPTS_LIST_CLS = 'flex flex-1 flex-col gap-1.5 overflow-y-auto p-3'
 export const PROMPT_CARD_CLS =
-  'flex cursor-pointer items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 transition-all duration-100 hover:border-[var(--border-active)] hover:bg-[var(--bg-secondary)]'
+  'flex cursor-pointer items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 transition-[background-color,border-color] duration-100 hover:border-[var(--border-active)] hover:bg-[var(--bg-secondary)]'
 export const PROMPT_CARD_NAME_CLS = 'text-[length:var(--text-md)] font-medium text-[var(--text-primary)]'
 export const PROMPT_CARD_DESC_CLS = 'mt-0.5 text-[length:var(--text-xs)] text-[var(--text-tertiary)]'
 

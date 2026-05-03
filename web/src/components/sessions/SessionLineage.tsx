@@ -12,7 +12,7 @@ const HEADING_CLS =
 const TREE_CLS = 'text-[length:var(--text-base)]'
 
 const NODE_CLS =
-  'mb-0.5 cursor-pointer rounded border border-transparent px-2 py-1.5 transition-all duration-150 hover:border-[var(--border)] hover:bg-[var(--bg-tertiary)]'
+  'mb-0.5 cursor-pointer rounded border border-transparent px-2 py-1.5 transition-[background-color,border-color] duration-150 hover:border-[var(--border)] hover:bg-[var(--bg-tertiary)]'
 const NODE_CURRENT_CLS = 'border-[var(--accent)] bg-[var(--bg-tertiary)]'
 
 const NODE_HEADER_CLS = 'flex items-center gap-1.5'

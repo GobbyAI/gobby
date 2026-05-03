@@ -13,7 +13,7 @@ const GITHUB_LINK_CLS = 'text-[var(--text-muted)] opacity-70 transition-opacity 
 
 const TABS_CLS = 'flex shrink-0 border-b border-[var(--border)]'
 const TAB_CLS =
-  'flex cursor-pointer items-center gap-1.5 border-0 border-b-2 border-b-transparent bg-transparent px-4 py-2 text-[length:var(--text-sm)] text-[var(--text-muted)] transition-all duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+  'flex cursor-pointer items-center gap-1.5 border-0 border-b-2 border-b-transparent bg-transparent px-4 py-2 text-[length:var(--text-sm)] text-[var(--text-muted)] transition-[color,border-color] duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 const TAB_ACTIVE_CLS = 'border-b-[var(--accent)] text-[var(--accent)]'
 
 const CONTENT_CLS = 'flex-1 overflow-y-auto pt-4'

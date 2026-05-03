@@ -21,7 +21,7 @@ const EMPTY_CLS = 'flex h-full items-center justify-center text-[length:var(--te
 
 const CONTROLS_CLS = 'absolute right-3 top-3 z-10 flex gap-1.5'
 const BTN_CLS =
-  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 font-mono text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--accent)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
 const BTN_ACTIVE_CLS =
   'border-[var(--destructive,var(--color-error))] bg-[color-mix(in_srgb,var(--destructive,var(--color-error))_15%,transparent)] text-[var(--destructive,var(--color-error))]'
 

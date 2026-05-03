@@ -284,7 +284,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
                   key={mode}
                   type="button"
                   className={cn(
-                    'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0 text-[var(--text-muted)] transition-all duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11',
+                    'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0 text-[var(--text-muted)] transition-[background-color,color] duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11',
                     isActive && 'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]',
                   )}
                   onClick={() => setViewMode(mode)}
@@ -304,7 +304,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
           />
           <button
             type="button"
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0 text-[length:var(--text-base)] text-[var(--text-secondary)] transition-all duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0 text-[length:var(--text-base)] text-[var(--text-secondary)] transition-[background-color,color,opacity] duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11"
             onClick={refreshMemories}
             title="Refresh"
             disabled={isLoading}

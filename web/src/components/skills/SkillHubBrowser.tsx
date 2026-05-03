@@ -7,7 +7,7 @@ const CONTROLS_CLS = 'flex flex-col gap-2.5'
 
 const TABS_CLS = 'flex flex-wrap gap-1'
 const TAB_CLS =
-  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--text-muted)] pointer-coarse:min-h-11'
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] pointer-coarse:min-h-11'
 const TAB_ACTIVE_CLS = 'border-[var(--accent)] bg-[var(--accent)] text-[var(--bg-primary)]'
 
 const SEARCH_CLS = 'flex gap-1.5'
@@ -25,7 +25,7 @@ const EMPTY_CLS =
 
 const GRID_CLS = 'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]'
 const CARD_CLS =
-  'flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4 transition-all duration-150 hover:-translate-y-px hover:border-[var(--text-muted)]'
+  'flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4 transition-[border-color,transform] duration-150 hover:-translate-y-px hover:border-[var(--text-muted)]'
 const CARD_HEADER_CLS = 'flex items-center justify-between gap-2'
 const CARD_NAME_CLS = 'text-[length:var(--text-base)] font-medium text-[var(--text-primary)]'
 const CARD_HUB_CLS =
