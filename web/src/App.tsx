@@ -56,21 +56,10 @@ import {
 import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
 import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
 import { useAppKeyboardShortcuts } from "./components/app/useAppKeyboardShortcuts";
+import { useReasoningPreferences } from "./components/app/useReasoningPreferences";
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
 import { HamburgerIcon } from "./components/icons";
 import { FilesProvider } from "./contexts/FilesContext";
-import {
-  buildReasoningPreferenceKey,
-  fetchProviderModelCatalog,
-  getPreferredModelForProvider,
-  getPreferredReasoningEffort,
-  resolveModelValueForProvider,
-  type ProviderModelEntry,
-} from "./lib/providerModels";
-import {
-  loadReasoningPreferences,
-  REASONING_PREFERENCES_STORAGE_KEY,
-} from "./lib/sessionPersistence";
 import { cn } from "./lib/utils";
 
 const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
@@ -157,12 +146,6 @@ export default function App() {
     updateVoiceInputMode,
     resetSettings,
   } = useSettings();
-  const [providerModelCatalog, setProviderModelCatalog] = useState<
-    ProviderModelEntry[]
-  >([]);
-  const [reasoningPreferences, setReasoningPreferences] = useState<
-    Record<string, string>
-  >(() => loadReasoningPreferences());
   const voice = useVoice(
     wsRef,
     conversationId,
@@ -298,104 +281,17 @@ export default function App() {
     surfaceFilter: "persona",
   });
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchProviderModelCatalog()
-      .then((catalog) => {
-        if (!cancelled) {
-          setProviderModelCatalog(catalog);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProviderModelCatalog([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        REASONING_PREFERENCES_STORAGE_KEY,
-        JSON.stringify(reasoningPreferences),
-      );
-    } catch {
-      // Best-effort local preference cache
-    }
-  }, [reasoningPreferences]);
-
-  useEffect(() => {
-    const activeProvider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
-    const selectedModelForProvider = resolveModelValueForProvider(
-      providerModelCatalog,
-      activeProvider,
-      settings.model,
-    );
-    const persistedModelForProvider = resolveModelValueForProvider(
-      providerModelCatalog,
-      activeProvider,
-      mainSessionMeta?.model ?? null,
-    );
-
-    const nextModel =
-      selectedModelForProvider ??
-      persistedModelForProvider ??
-      getPreferredModelForProvider(providerModelCatalog, activeProvider, null);
-
-    if (nextModel && nextModel !== settings.model) {
-      updateModel(nextModel);
-    }
-  }, [
-    mainSessionMeta?.model,
-    mainSessionMeta?.source,
-    providerModelCatalog,
-    selectedProvider,
-    settings.model,
-    updateModel,
-  ]);
-
-  const updateReasoningPreference = useCallback(
-    (
-      provider: string | null | undefined,
-      model: string | null | undefined,
-      reasoningEffort: string | null | undefined,
-    ) => {
-      const key = buildReasoningPreferenceKey(provider, model);
-      if (!key || !reasoningEffort) {
-        return;
-      }
-      setReasoningPreferences((prev) => {
-        if (prev[key] === reasoningEffort) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [key]: reasoningEffort,
-        };
-      });
-    },
-    [],
-  );
-
-  const currentMainReasoning = useMemo(() => {
-    const provider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
-    const preferenceKey = buildReasoningPreferenceKey(provider, settings.model);
-    return getPreferredReasoningEffort(
-      providerModelCatalog,
-      provider,
-      settings.model,
-      preferenceKey ? reasoningPreferences[preferenceKey] : null,
-    );
-  }, [
-    mainSessionMeta?.source,
-    providerModelCatalog,
+  const {
     reasoningPreferences,
+    updateReasoningPreference,
+    currentMainReasoning,
+  } = useReasoningPreferences({
+    mainSessionSource: mainSessionMeta?.source,
     selectedProvider,
-    settings.model,
-  ]);
+    currentModel: settings.model,
+    persistedSessionModel: mainSessionMeta?.model,
+    updateModel,
+  });
 
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {
