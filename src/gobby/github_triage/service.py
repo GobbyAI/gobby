@@ -6,6 +6,7 @@ import hmac
 import inspect
 import json
 import logging
+import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
@@ -150,7 +151,9 @@ class GitHubIssueTriageService:
         repo = _payload_repo(payload)
         issue_number = _payload_issue_number(payload)
         allowed_repos = config.repositories_with_fallback(project.github_repo)
-        if repo and allowed_repos and repo not in allowed_repos:
+        if not allowed_repos:
+            raise TriageWebhookError("No repositories are enabled for GitHub issue triage")
+        if repo and repo not in allowed_repos:
             raise TriageWebhookError(f"Repository {repo!r} is not enabled for triage")
 
         status = _initial_delivery_status(event, action)
@@ -180,8 +183,14 @@ class GitHubIssueTriageService:
             raise TriageWebhookError(f"Unknown GitHub delivery: {delivery_id}")
         if delivery.status in {"processed", "ignored", "duplicate"}:
             return {"status": delivery.status}
+        if delivery.status != "pending":
+            return {"status": delivery.status}
 
-        self.store.update_delivery_status(project_id, delivery_id, "processing")
+        claimed_delivery = self.store.claim_delivery_for_processing(project_id, delivery_id)
+        if claimed_delivery is None:
+            current = self.store.get_delivery(project_id, delivery_id)
+            return {"status": current.status if current else "missing"}
+        delivery = claimed_delivery
         try:
             payload = json.loads(delivery.raw_body)
             repo = _payload_repo(payload)
@@ -300,6 +309,21 @@ class GitHubIssueTriageService:
         indexer = self._indexer()
         duplicates = await indexer.find_duplicates(issue)
         outcome = await self._judge(issue, duplicates)
+        if (
+            existing is not None
+            and existing.content_hash == current_hash
+            and existing.verdict == outcome.verdict
+        ):
+            return {
+                "project_id": project_id,
+                "repo": issue.repo,
+                "issue_number": issue.issue_number,
+                "source": source,
+                "verdict": existing.verdict,
+                "task_id": existing.task_id,
+                "content_hash": current_hash,
+                "vector_point_id": existing.vector_point_id,
+            }
         result = await self.apply_triage_outcome(project_id, issue, outcome, source)
         task_id = (
             result.get("task_id") if isinstance(result.get("task_id"), str) else existing_task_id
@@ -405,33 +429,51 @@ class GitHubIssueTriageService:
         return True
 
     def _create_or_update_task(self, project_id: str, issue: IssueSnapshot) -> Task:
-        existing = self.db.fetchone(
-            "SELECT id FROM tasks WHERE project_id = ? AND github_repo = ? "
-            "AND github_issue_number = ? LIMIT 1",
-            (project_id, issue.repo, issue.issue_number),
-        )
         description = _task_description(issue)
         labels = sorted(set(issue.labels) | {"github"})
-        if existing:
+        try:
+            with self.db.transaction_immediate() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM tasks WHERE project_id = ? AND github_repo = ? "
+                    "AND github_issue_number = ? LIMIT 1",
+                    (project_id, issue.repo, issue.issue_number),
+                ).fetchone()
+                if existing:
+                    return self.task_manager.update_task(
+                        existing["id"],
+                        title=issue.title,
+                        description=description,
+                        labels=labels,
+                    )
+                return self.task_manager.create_task(
+                    project_id=project_id,
+                    title=issue.title,
+                    description=description,
+                    labels=labels,
+                    category="code",
+                    task_type="feature",
+                    validation_criteria=(
+                        f"GitHub issue {issue.repo}#{issue.issue_number} is implemented and linked."
+                    ),
+                    github_issue_number=issue.issue_number,
+                    github_repo=issue.repo,
+                )
+        except sqlite3.IntegrityError as exc:
+            if "github_issue" not in str(exc) and "idx_tasks_github_issue_link" not in str(exc):
+                raise
+            existing = self.db.fetchone(
+                "SELECT id FROM tasks WHERE project_id = ? AND github_repo = ? "
+                "AND github_issue_number = ? LIMIT 1",
+                (project_id, issue.repo, issue.issue_number),
+            )
+            if existing is None:
+                raise
             return self.task_manager.update_task(
                 existing["id"],
                 title=issue.title,
                 description=description,
                 labels=labels,
             )
-        return self.task_manager.create_task(
-            project_id=project_id,
-            title=issue.title,
-            description=description,
-            labels=labels,
-            category="code",
-            task_type="feature",
-            validation_criteria=(
-                f"GitHub issue {issue.repo}#{issue.issue_number} is implemented and linked."
-            ),
-            github_issue_number=issue.issue_number,
-            github_repo=issue.repo,
-        )
 
     async def _fetch_issue(self, repo: str, issue_number: int) -> dict[str, Any]:
         owner, repo_name = parse_github_repo(repo)
@@ -571,7 +613,11 @@ class GitHubIssueTriageService:
 
     def _indexer(self) -> GitHubIssueIndexer:
         vector_store = getattr(self.memory_manager, "vector_store", None)
-        if not callable(getattr(vector_store, "ensure_collection", None)):
+        if (
+            not callable(getattr(vector_store, "ensure_collection", None))
+            or not callable(getattr(vector_store, "upsert", None))
+            or not callable(getattr(vector_store, "search_with_payload", None))
+        ):
             vector_store = None
 
         embed_fn = getattr(self.memory_manager, "embed_fn", None)

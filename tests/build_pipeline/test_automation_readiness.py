@@ -82,7 +82,10 @@ async def test_build_readiness_cascades_manifests_and_current_stage_projection(
         assert "test_arch" not in {row.stage_name for row in rows}
         current = task_manager.stage_states.current_stage(task.id)
         assert current is not None
-        assert current.position == min(row.position for row in rows if row.state != "done")
+        assert current.position == min(
+            (row.position for row in rows if row.state != "done"),
+            default=current.position,
+        )
 
     candidate_ids = {
         task.id for task in list_automation_candidates(temp_db, project_id=sample_project["id"])

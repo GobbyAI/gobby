@@ -1,5 +1,8 @@
 import { useState } from "react";
-import type { PipelineExecutionRecord } from "../../hooks/usePipelineExecutions";
+import type {
+  PipelineExecutionRecord,
+  PipelineStepExecution,
+} from "../../hooks/usePipelineExecutions";
 import {
   AlertIcon,
   ChevronIcon,
@@ -9,7 +12,7 @@ import {
 import { formatJson } from "./executionFormatters";
 import { cn } from "../../lib/utils";
 import { normalizeStatus } from "./ReportsPage.helpers";
-import { CloseIcon, CronIcon } from "./ReportsPage.icons";
+import { CloseIcon, CronIcon, TraceIcon } from "./ReportsPage.icons";
 import {
   APPROVAL_ACTIONS_CLS,
   APPROVAL_CLS,
@@ -43,6 +46,52 @@ interface PipelineDetailProps {
   onReject: (token: string) => Promise<void>;
   onNavigateToTrace?: (traceId: string) => void;
   onClose: () => void;
+}
+
+interface ApprovalPanelProps {
+  execution: PipelineExecutionRecord;
+  actionLoading: string | null;
+  onApprove: (token: string) => Promise<void>;
+  onReject: (token: string) => Promise<void>;
+}
+
+function ApprovalPanel({
+  execution,
+  actionLoading,
+  onApprove,
+  onReject,
+}: ApprovalPanelProps) {
+  const waitingStep: PipelineStepExecution | undefined = execution.steps.find(
+    (s) => s.status === "waiting_approval" && s.approval_token,
+  );
+  if (!waitingStep?.approval_token) return null;
+
+  return (
+    <div className={APPROVAL_CLS}>
+      <div className={APPROVAL_MESSAGE_CLS}>
+        <AlertIcon />
+        <span>Step &ldquo;{waitingStep.step_id}&rdquo; requires approval</span>
+      </div>
+      <div className={APPROVAL_ACTIONS_CLS}>
+        <button
+          type="button"
+          className={cn(BTN_BASE_CLS, BTN_APPROVE_CLS)}
+          onClick={() => onApprove(waitingStep.approval_token!)}
+          disabled={actionLoading === waitingStep.approval_token}
+        >
+          {actionLoading === waitingStep.approval_token ? "Approving..." : "Approve"}
+        </button>
+        <button
+          type="button"
+          className={cn(BTN_BASE_CLS, BTN_REJECT_CLS)}
+          onClick={() => onReject(waitingStep.approval_token!)}
+          disabled={actionLoading === waitingStep.approval_token}
+        >
+          {actionLoading === waitingStep.approval_token ? "Rejecting..." : "Reject"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function PipelineDetail({
@@ -88,62 +137,20 @@ export function PipelineDetail({
               onClick={() => onNavigateToTrace(execution.trace_id!)}
               title="View telemetry trace for this execution"
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ marginRight: "6px", verticalAlign: "middle" }}
-              >
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-              </svg>
+              <TraceIcon />
               View Trace
             </button>
           </div>
         )}
 
-        {execution.status === "waiting_approval" &&
-          (() => {
-            const waitingStep = execution.steps.find(
-              (s) => s.status === "waiting_approval" && s.approval_token,
-            );
-            return waitingStep?.approval_token ? (
-              <div className={APPROVAL_CLS}>
-                <div className={APPROVAL_MESSAGE_CLS}>
-                  <AlertIcon />
-                  <span>
-                    Step &ldquo;{waitingStep.step_id}&rdquo; requires approval
-                  </span>
-                </div>
-                <div className={APPROVAL_ACTIONS_CLS}>
-                  <button
-                    type="button"
-                    className={cn(BTN_BASE_CLS, BTN_APPROVE_CLS)}
-                    onClick={() => onApprove(waitingStep.approval_token!)}
-                    disabled={actionLoading === waitingStep.approval_token}
-                  >
-                    {actionLoading === waitingStep.approval_token
-                      ? "Approving..."
-                      : "Approve"}
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(BTN_BASE_CLS, BTN_REJECT_CLS)}
-                    onClick={() => onReject(waitingStep.approval_token!)}
-                    disabled={actionLoading === waitingStep.approval_token}
-                  >
-                    {actionLoading === waitingStep.approval_token
-                      ? "Rejecting..."
-                      : "Reject"}
-                  </button>
-                </div>
-              </div>
-            ) : null;
-          })()}
+        {execution.status === "waiting_approval" && (
+          <ApprovalPanel
+            execution={execution}
+            actionLoading={actionLoading}
+            onApprove={onApprove}
+            onReject={onReject}
+          />
+        )}
 
         {execution.steps.length > 0 && (
           <div className={DETAIL_SECTION_CLS}>

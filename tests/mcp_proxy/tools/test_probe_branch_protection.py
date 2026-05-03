@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import httpx
@@ -8,15 +7,9 @@ import pytest
 
 import gobby.mcp_proxy.tools.merge as merge_tools
 from gobby.mcp_proxy.tools.merge import create_merge_registry
+from tests.mcp_proxy.tools.git_helpers import GitResult
 
 pytestmark = pytest.mark.unit
-
-
-@dataclass
-class GitResult:
-    returncode: int
-    stdout: str = ""
-    stderr: str = ""
 
 
 def _registry(git_manager: MagicMock):

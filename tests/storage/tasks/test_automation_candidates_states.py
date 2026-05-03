@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.tasks._crud import list_automation_candidates, update_task
+from gobby.storage.tasks._crud import list_automation_candidates
+from gobby.storage.tasks._models import Isolation
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,
@@ -20,11 +21,13 @@ def _task_at_stage(temp_db, sample_project, stage_state: str):
         title=f"Candidate {stage_state}",
         category="test",
         task_type="task",
-        allow_automation=True,
     )
-    update_task(temp_db, task.id, allow_automation=True)
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
+    temp_db.execute(
+        "UPDATE tasks SET allow_automation = 1, isolation = ? WHERE id = ?",
+        (Isolation.none.value, task.id),
+    )
     return task
 
 
@@ -55,7 +58,10 @@ def test_list_automation_candidates_excludes_done_and_null_current_stage(
         title="No manifest",
         category="test",
         task_type="task",
-        allow_automation=True,
+    )
+    temp_db.execute(
+        "UPDATE tasks SET allow_automation = 1, isolation = ? WHERE id = ?",
+        (Isolation.none.value, no_manifest.id),
     )
     temp_db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (no_manifest.id,))
 

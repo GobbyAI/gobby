@@ -41,19 +41,19 @@ def test_snapshot_match_api() -> None:
     assert "expected_lifecycle" not in field_names
     assert "expected_status" not in field_names
 
-    assert RuntimeDispatchMutex.candidate_stage_snapshot_matches(
+    assert RuntimeDispatchMutex.candidate_snapshot_matches(
         _candidate(),
         stage_name="development",
         stage_state="in_progress",
         stage_updated_at="2026-05-02T00:00:00+00:00",
     )
-    assert not RuntimeDispatchMutex.candidate_stage_snapshot_matches(
+    assert not RuntimeDispatchMutex.candidate_snapshot_matches(
         _candidate("ready"),
         stage_name="development",
         stage_state="in_progress",
         stage_updated_at="2026-05-02T00:00:00+00:00",
     )
-    assert not RuntimeDispatchMutex.candidate_stage_snapshot_matches(
+    assert not RuntimeDispatchMutex.candidate_snapshot_matches(
         _candidate("done"),
         stage_name="development",
         stage_state="done",

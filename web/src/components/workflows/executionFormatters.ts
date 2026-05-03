@@ -10,7 +10,7 @@ export function formatTime(iso: string): string {
 
 export function formatDateTime(iso: string): string {
   const d = new Date(iso)
-  if (isNaN(d.getTime())) return ''
+  if (isNaN(d.getTime())) return iso
   return (
     d.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
     ', ' +

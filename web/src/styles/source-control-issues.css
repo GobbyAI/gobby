@@ -22,24 +22,24 @@
 .sc-issues__labels {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0.25rem;
   flex-wrap: wrap;
 }
 
 .sc-issues__label {
   display: inline-block;
-  padding: 1px 6px;
-  border-radius: 12px;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 0.75rem;
   font-size: var(--text-2xs);
   font-weight: 500;
-  border: 1px solid;
+  border: 0.0625rem solid;
   white-space: nowrap;
 }
 
 .sc-issues__detail {
-  border-top: 1px solid var(--border);
+  border-top: 0.0625rem solid var(--border);
   padding-top: 1rem;
-  max-height: 300px;
+  max-height: 18.75rem;
   overflow-y: auto;
 }
 
@@ -59,10 +59,10 @@
 
 .sc-issues__detail-close {
   background: none;
-  border: 1px solid var(--border);
+  border: 0.0625rem solid var(--border);
   color: var(--text-secondary);
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
   font-size: var(--text-sm);
   cursor: pointer;
 }

@@ -79,7 +79,7 @@ function isLocalLegacyFallback(provider: unknown, model: unknown): boolean {
   const normalizedModel = normalizeLocalText(model);
   return (
     LOCAL_LEGACY_PROVIDERS.has(normalizedProvider) ||
-    /^gpt-oss(?:\b|[-_:./]|$)/.test(normalizedModel)
+    /^gpt-oss(?:[-_:./]|$)/.test(normalizedModel)
   );
 }
 
@@ -153,5 +153,7 @@ export function matchesSearch(session: GobbySession, search: string): boolean {
 
 export function entryTimestamp(entry: WatchingSessionEntry): number {
   const raw = entry.updatedAt ?? entry.startedAt ?? null;
-  return raw ? new Date(raw).getTime() : 0;
+  if (!raw) return 0;
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
 }

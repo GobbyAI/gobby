@@ -59,6 +59,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
     if (projectId) return allProjects.find((p) => p.id === projectId) ?? null;
     return null;
   }, [selectedProject, projectId, allProjects]);
+  const headingText = activeProject ? `Project: ${activeProject.display_name}` : "Projects";
 
   const handleSave = useCallback(
     async (fields: Record<string, string | string[] | null>) => {
@@ -92,7 +93,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
 
   return (
     <main className={PAGE_CLS}>
-      <h1 className="sr-only">{activeProject ? `Project: ${activeProject.display_name}` : "Projects"}</h1>
+      <h1 className="sr-only">{headingText}</h1>
       <div className={PAGE_HEADER_CLS}>
         <TabBar
           tabs={TABS}

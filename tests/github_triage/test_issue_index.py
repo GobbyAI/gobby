@@ -103,3 +103,16 @@ async def test_find_duplicates_is_project_scoped_and_skips_self() -> None:
     assert kwargs["collection_name"] == GITHUB_ISSUE_COLLECTION
     assert [duplicate.issue_key for duplicate in duplicates] == ["owner/other#5"]
     assert duplicates[0].task_id == "task-5"
+
+
+@pytest.mark.asyncio
+async def test_find_duplicates_warns_and_degrades_when_vector_search_fails(caplog) -> None:
+    vector_store = AsyncMock()
+    vector_store.search_with_payload.side_effect = RuntimeError("qdrant unavailable")
+    embed_fn = AsyncMock(return_value=[0.1, 0.2])
+    indexer = GitHubIssueIndexer(vector_store=vector_store, embed_fn=embed_fn)
+
+    duplicates = await indexer.find_duplicates(_issue())
+
+    assert duplicates == []
+    assert "vector duplicate search failed" in caplog.text

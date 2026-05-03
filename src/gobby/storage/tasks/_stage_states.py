@@ -727,13 +727,16 @@ class StageStatesManager:
             if verb == "reject_review" and updated.review_round_count >= self._effective_cap(
                 updated, "review"
             ):
-                self._escalate(task_id, f"{stage_name}_review_failed:max")
+                self.escalate_stage_failure(task_id, f"{stage_name}_review_failed:max")
             if verb == "fail_stage" and updated.work_attempt_count >= self._effective_cap(
                 updated, "work"
             ):
-                self._escalate(task_id, f"{stage_name}_work_failed:max")
+                self.escalate_stage_failure(task_id, f"{stage_name}_work_failed:max")
             if verb == "fail_stage" and needs_human:
-                self._escalate(task_id, f"{stage_name}_failed:{reason or 'needs_human'}")
+                self.escalate_stage_failure(
+                    task_id,
+                    f"{stage_name}_failed:{reason or 'needs_human'}",
+                )
             return updated
 
     def _transition_target(
@@ -1154,7 +1157,8 @@ class StageStatesManager:
         ).fetchone()
         return int(row["count"]) == 0
 
-    def _escalate(self, task_id: str, reason: str) -> None:
+    def escalate_stage_failure(self, task_id: str, reason: str) -> None:
+        """Escalate a task for a stage failure, treating duplicate reasons as idempotent."""
         from gobby.storage.tasks._transitions import escalate_task  # noqa: PLC0415
 
         try:
@@ -1171,3 +1175,6 @@ class StageStatesManager:
         except Exception:
             logger.exception("failed to escalate task %s after stage failure", task_id)
             raise
+
+    def _escalate(self, task_id: str, reason: str) -> None:
+        self.escalate_stage_failure(task_id, reason)

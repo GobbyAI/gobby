@@ -18,6 +18,8 @@ interface TemplateTabProps {
   onSave: (content: string) => Promise<{ ok: boolean; errors?: string[] }>
 }
 
+const RESTART_TIMEOUT_MS = 10000
+
 export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
   const [localContent, setLocalContent] = useState(content)
   const [errors, setErrors] = useState<string[]>([])
@@ -47,9 +49,13 @@ export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
 
   const handleRestart = async () => {
     setErrors([])
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), RESTART_TIMEOUT_MS)
     try {
       const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, {
         method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
       })
       if (!res.ok) {
         throw new Error(`Restart failed: ${res.status}`)
@@ -58,6 +64,8 @@ export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
     } catch (err) {
       console.error('Failed to restart daemon:', err)
       setErrors(['Failed to restart daemon'])
+    } finally {
+      window.clearTimeout(timeout)
     }
   }
 

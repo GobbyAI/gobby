@@ -245,8 +245,8 @@ def test_duplicate_stage_escalation_with_same_reason_is_noop(temp_db, sample_pro
         category="planning",
     )
 
-    manager.stage_states._escalate(task.id, "planning_review_failed:max")
-    manager.stage_states._escalate(task.id, "planning_review_failed:max")
+    manager.stage_states.escalate_stage_failure(task.id, "planning_review_failed:max")
+    manager.stage_states.escalate_stage_failure(task.id, "planning_review_failed:max")
 
     updated = manager.get_task(task.id)
     assert updated.is_escalated

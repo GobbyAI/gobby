@@ -79,6 +79,21 @@ import { SecretsTab } from './ConfigurationPage.SecretsTab'
 import { TemplateTab } from './ConfigurationPage.TemplateTab'
 
 type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
+const RESTART_TIMEOUT_MS = 10000
+
+async function requestDaemonRestart(): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), RESTART_TIMEOUT_MS)
+  try {
+    return await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, {
+      method: 'POST',
+      credentials: 'include',
+      signal: controller.signal,
+    })
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
 
 interface ConfigFormTabProps {
   schema: Record<string, unknown> | null
@@ -135,6 +150,18 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
     if (ok) setShowRestart(true)
   }
 
+  const handleRestart = async () => {
+    setErrors([])
+    try {
+      const res = await requestDaemonRestart()
+      if (!res.ok) throw new Error(`Restart failed: ${res.status}`)
+      setShowRestart(false)
+    } catch (err) {
+      console.error('Failed to restart daemon:', err)
+      setErrors(['Failed to restart daemon'])
+    }
+  }
+
   if (!schema) return <div className={LOADING_CLS}>Loading schema...</div>
 
   const properties = getSchemaProperties(schema)
@@ -165,7 +192,7 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
       {showRestart && (
         <div className={RESTART_BANNER_CLS}>
           <span>Configuration saved. Restart the daemon to apply changes.</span>
-          <button type="button" className={RESTART_BTN_CLS} onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
+          <button type="button" className={RESTART_BTN_CLS} onClick={handleRestart}>
             Restart Now
           </button>
         </div>

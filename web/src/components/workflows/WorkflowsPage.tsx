@@ -604,7 +604,7 @@ export function YamlEditorModal({
     onClose();
   };
 
-  useDialogFocus({ ref: dialogRef, isOpen: true, onClose: () => { void handleClose(); } });
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose: handleClose });
 
   return (
     <div className="workflows-modal-overlay" onClick={handleClose}>

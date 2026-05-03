@@ -98,8 +98,13 @@ export function SchemaField({ name, fieldSchema, value, onChange, path, secretKe
           max={max}
           step={type === 'number' ? 0.1 : 1}
           onChange={e => {
-            const v = e.target.value
-            onChange(fullPath, v === '' ? null : type === 'integer' ? parseInt(v, 10) : parseFloat(v))
+            const v = e.target.value.trim()
+            if (v === '') {
+              onChange(fullPath, null)
+              return
+            }
+            const parsed = type === 'integer' ? parseInt(v, 10) : parseFloat(v)
+            onChange(fullPath, Number.isFinite(parsed) ? parsed : null)
           }}
         />
       </div>

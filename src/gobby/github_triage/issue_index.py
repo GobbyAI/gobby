@@ -4,12 +4,56 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 GITHUB_ISSUE_COLLECTION = "gobby_github_issues"
 _POINT_NAMESPACE = uuid.UUID("75c10517-1a5d-4d31-a102-0e8694f09cc0")
+logger = logging.getLogger(__name__)
+
+Embedding = Sequence[float]
+SearchResult = tuple[str, float, dict[str, Any]]
+
+
+class VectorStoreProtocol(Protocol):
+    """Vector store methods used by GitHub issue indexing."""
+
+    async def ensure_collection(self, collection_name: str) -> None:
+        """Ensure the target vector collection exists."""
+        ...
+
+    async def upsert(
+        self,
+        point_id: str,
+        embedding: Embedding,
+        payload: dict[str, Any],
+        *,
+        collection_name: str,
+    ) -> None:
+        """Upsert an embedding payload."""
+        ...
+
+    async def search_with_payload(
+        self,
+        embedding: Embedding,
+        *,
+        limit: int,
+        filters: dict[str, Any],
+        collection_name: str,
+    ) -> list[SearchResult]:
+        """Search embeddings and return point ids, scores, and payloads."""
+        ...
+
+
+class EmbedFnProtocol(Protocol):
+    """Async embedding function used by GitHub issue indexing."""
+
+    async def __call__(self, text: str) -> Embedding:
+        """Embed text into a vector."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -113,8 +157,8 @@ class GitHubIssueIndexer:
     def __init__(
         self,
         *,
-        vector_store: Any | None,
-        embed_fn: Any | None,
+        vector_store: VectorStoreProtocol | None,
+        embed_fn: EmbedFnProtocol | None,
         similarity_threshold: float = 0.90,
     ) -> None:
         self.vector_store = vector_store
@@ -157,26 +201,38 @@ class GitHubIssueIndexer:
         if self.vector_store is None or self.embed_fn is None:
             return []
 
-        await self.vector_store.ensure_collection(GITHUB_ISSUE_COLLECTION)
-        embedding = await self.embed_fn(build_issue_content(issue))
-        results = await self.vector_store.search_with_payload(
-            embedding,
-            limit=limit + 1,
-            filters={"project_id": issue.project_id},
-            collection_name=GITHUB_ISSUE_COLLECTION,
-        )
+        try:
+            await self.vector_store.ensure_collection(GITHUB_ISSUE_COLLECTION)
+            embedding = await self.embed_fn(build_issue_content(issue))
+            results = await self.vector_store.search_with_payload(
+                embedding,
+                limit=limit + 1,
+                filters={"project_id": issue.project_id},
+                collection_name=GITHUB_ISSUE_COLLECTION,
+            )
+        except Exception:
+            logger.warning(
+                "GitHub issue vector duplicate search failed; continuing without candidates",
+                exc_info=True,
+            )
+            return []
+
         duplicates: list[IssueDuplicate] = []
         for _point_id, score, payload in results:
             repo = str(payload.get("repo") or "")
             issue_number = payload.get("issue_number")
-            if repo == issue.repo and int(issue_number or -1) == issue.issue_number:
-                continue
             if score < self.similarity_threshold or not repo or issue_number is None:
+                continue
+            try:
+                parsed_issue_number = int(issue_number)
+            except (TypeError, ValueError):
+                continue
+            if repo == issue.repo and parsed_issue_number == issue.issue_number:
                 continue
             duplicates.append(
                 IssueDuplicate(
                     repo=repo,
-                    issue_number=int(issue_number),
+                    issue_number=parsed_issue_number,
                     issue_url=payload.get("issue_url"),
                     score=float(score),
                     task_id=payload.get("task_id"),

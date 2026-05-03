@@ -12,6 +12,7 @@ import {
   PipelineStatusDot as StatusDot,
 } from "./execution-utils";
 import { formatTime, formatDuration, formatJson } from "./executionFormatters";
+import { CronIcon } from "./ReportsPage.icons";
 import "./PipelinesPage.css";
 import "./pipelines-reporting.css";
 
@@ -65,23 +66,6 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "completed", label: "Completed" },
   { value: "failed", label: "Failed" },
 ];
-
-function CronIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
-    </svg>
-  );
-}
 
 export function ReportingTab({
   searchText,
@@ -607,7 +591,7 @@ function AgentDrillDown({
           </div>
           <div className="reporting-stat">
             <span className="reporting-stat-label">Tool Calls</span>
-            <span className="reporting-stat-value">{run.tool_calls_count}</span>
+            <span className="reporting-stat-value">{run.tool_calls_count ?? 0}</span>
           </div>
           {run.started_at && run.completed_at && (
             <div className="reporting-stat">
@@ -723,11 +707,6 @@ function AgentDrillDown({
                 <span className="reporting-command-time">
                   {formatTime(cmd.created_at)}
                 </span>
-                {cmd.command_text && (
-                  <span className="reporting-command-payload">
-                    {cmd.command_text.slice(0, 80)}
-                  </span>
-                )}
               </div>
             ))}
           </div>

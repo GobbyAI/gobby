@@ -64,23 +64,41 @@ def _load_run(name: str, data: dict[str, Any]) -> ScenarioRun:
 
 
 def _assert_contract(result: SkillScenarioResult, assertions: dict[str, Any]) -> None:
-    assert result.skill not in result.baseline.loaded_skills
-    assert result.skill in result.loaded.loaded_skills
-    assert result.has_behavioral_delta
+    assert result.skill not in result.baseline.loaded_skills, (
+        f"{result.skill}: baseline unexpectedly loaded {result.baseline.loaded_skills}"
+    )
+    assert result.skill in result.loaded.loaded_skills, (
+        f"{result.skill}: loaded skills {result.loaded.loaded_skills} missing expected skill"
+    )
+    assert result.has_behavioral_delta, (
+        f"{result.skill}: expected behavioral delta between excluded and loaded runs"
+    )
 
     loaded_order = tuple(assertions.get("loaded_action_order", ()))
     if loaded_order:
-        assert result.loaded.action_names == loaded_order
+        assert result.loaded.action_names == loaded_order, (
+            f"{result.skill}: loaded action order {result.loaded.action_names} "
+            f"!= expected {loaded_order}"
+        )
 
     baseline_order = tuple(assertions.get("baseline_action_order", ()))
     if baseline_order:
-        assert result.baseline.action_names == baseline_order
+        assert result.baseline.action_names == baseline_order, (
+            f"{result.skill}: baseline action order {result.baseline.action_names} "
+            f"!= expected {baseline_order}"
+        )
 
     for text in assertions.get("baseline_text_contains", ()):
-        assert str(text) in result.baseline.combined_text
+        assert str(text) in result.baseline.combined_text, (
+            f"{result.skill}: baseline text missing expected fragment {text!r}"
+        )
 
     for text in assertions.get("loaded_text_contains", ()):
-        assert str(text) in result.loaded.combined_text
+        assert str(text) in result.loaded.combined_text, (
+            f"{result.skill}: loaded text missing expected fragment {text!r}"
+        )
 
     for text in assertions.get("loaded_text_forbids", ()):
-        assert str(text) not in result.loaded.combined_text
+        assert str(text) not in result.loaded.combined_text, (
+            f"{result.skill}: loaded text included forbidden fragment {text!r}"
+        )

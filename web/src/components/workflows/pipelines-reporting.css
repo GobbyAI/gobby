@@ -277,7 +277,7 @@
 }
 
 .reporting-code-block pre {
-  font-family: inherit;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace);
   font-size: calc(var(--font-size-base) * 0.75);
   background: color-mix(in srgb, var(--bg-tertiary) 60%, black);
   border: 1px solid var(--border);

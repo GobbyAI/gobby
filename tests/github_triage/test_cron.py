@@ -69,7 +69,9 @@ def test_register_github_triage_cron_disables_existing_job_when_config_disabled(
         )
     )
     storage, _executor, _count = _register(temp_db, sample_project)
-    assert storage.get_job_by_name(github_triage_job_name(sample_project["id"])).enabled is True
+    job = storage.get_job_by_name(github_triage_job_name(sample_project["id"]))
+    assert job is not None
+    assert job.enabled is True
 
     store.upsert_config(
         GitHubTriageConfig(

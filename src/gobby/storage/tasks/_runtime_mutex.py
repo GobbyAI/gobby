@@ -27,9 +27,13 @@ class DispatchCandidateChangedError(RuntimeDispatchMutexError):
     """Raised when a task changes state after the lease is acquired."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class RuntimeDispatchMutex:
-    """Context manager for a dispatcher-owned task lease."""
+    """Context manager for a dispatcher-owned task lease.
+
+    The public configuration is fixed by construction, while internal lease
+    fields (_acquired, _released, _run_id) mutate as the lease is used.
+    """
 
     storage: TaskDispatchMutexManager
     task_id: str
@@ -58,7 +62,7 @@ class RuntimeDispatchMutex:
             msg = f"dispatch mutex for task {self.task_id!r} is held by another dispatcher"
             raise DispatchMutexUnavailableError(msg)
 
-        object.__setattr__(self, "_acquired", True)
+        self._acquired = True
         if not self._candidate_stage_snapshot_still_matches():
             self.release()
             msg = f"task {self.task_id!r} changed current-stage snapshot after dispatch lease"
@@ -85,14 +89,14 @@ class RuntimeDispatchMutex:
         if not self.storage.attach_run_id(self.task_id, run_id):
             msg = f"dispatch mutex for task {self.task_id!r} disappeared before attach"
             raise RuntimeDispatchMutexError(msg)
-        object.__setattr__(self, "_run_id", run_id)
+        self._run_id = run_id
 
     def release(self) -> bool:
         """Release this context's lease if it is still held by this holder."""
         if not self._acquired or self._released:
             return False
         released = self.storage.release_mutex(self.task_id, self.holder)
-        object.__setattr__(self, "_released", True)
+        self._released = True
         return released
 
     def _candidate_stage_snapshot_still_matches(self) -> bool:
@@ -103,51 +107,40 @@ class RuntimeDispatchMutex:
         return self.candidate_stage_snapshot_matches(stage_name, stage_state, stage_updated_at)
 
     def candidate_stage_snapshot_matches(
-        self: object,
+        self,
         current_stage_name: str | None = None,
         current_stage_state: str | None = None,
         current_stage_updated_at: str | None = None,
-        *,
-        stage_name: str | None = None,
-        stage_state: str | None = None,
-        stage_updated_at: str | None = None,
     ) -> bool:
-        """True iff a current-stage row still matches a captured dispatch snapshot.
-
-        The method intentionally supports two call shapes. Bound calls on a
-        RuntimeDispatchMutex compare provided current-stage values against the
-        snapshot stored on the mutex instance. Unbound calls on candidate-like
-        objects compare keyword snapshot values against the candidate's own
-        current-stage fields. The `self: object` annotation preserves both
-        forms without lying to the type checker about candidate object shape.
-        """
-        resolved_stage_name = current_stage_name if current_stage_name is not None else stage_name
-        resolved_stage_state = (
-            current_stage_state if current_stage_state is not None else stage_state
+        """True iff current-stage values still match this mutex's snapshot."""
+        return _stage_snapshot_matches(
+            expected_stage_name=self.expected_stage_name,
+            expected_stage_state=self.expected_stage_state,
+            expected_stage_updated_at=self.expected_stage_updated_at,
+            current_stage_name=current_stage_name,
+            current_stage_state=current_stage_state,
+            current_stage_updated_at=current_stage_updated_at,
         )
-        resolved_stage_updated_at = (
-            current_stage_updated_at if current_stage_updated_at is not None else stage_updated_at
-        )
-        if isinstance(self, RuntimeDispatchMutex):
-            return _stage_snapshot_matches(
-                expected_stage_name=self.expected_stage_name,
-                expected_stage_state=self.expected_stage_state,
-                expected_stage_updated_at=self.expected_stage_updated_at,
-                current_stage_name=resolved_stage_name,
-                current_stage_state=resolved_stage_state,
-                current_stage_updated_at=resolved_stage_updated_at,
-            )
 
-        candidate_stage_name, candidate_stage_state, candidate_stage_updated_at = (
-            _read_candidate_stage_snapshot(self)
+    @staticmethod
+    def candidate_snapshot_matches(
+        candidate: object | None,
+        *,
+        stage_name: str | None,
+        stage_state: str | None,
+        stage_updated_at: str | None,
+    ) -> bool:
+        """True iff a candidate object still matches a captured stage snapshot."""
+        current_stage_name, current_stage_state, current_stage_updated_at = (
+            _read_candidate_stage_snapshot(candidate)
         )
         return _stage_snapshot_matches(
-            expected_stage_name=resolved_stage_name,
-            expected_stage_state=_coerce_actionable_stage_state(resolved_stage_state),
-            expected_stage_updated_at=resolved_stage_updated_at,
-            current_stage_name=candidate_stage_name,
-            current_stage_state=candidate_stage_state,
-            current_stage_updated_at=candidate_stage_updated_at,
+            expected_stage_name=stage_name,
+            expected_stage_state=_coerce_actionable_stage_state(stage_state),
+            expected_stage_updated_at=stage_updated_at,
+            current_stage_name=current_stage_name,
+            current_stage_state=current_stage_state,
+            current_stage_updated_at=current_stage_updated_at,
         )
 
     @staticmethod
@@ -225,14 +218,14 @@ def _read_stage_updated_at(stage: object | None) -> str | None:
 
 def _read_stage_position(stage: object) -> int:
     value = _read_field(stage, "position", 0)
-    try:
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str):
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
             return int(value)
-        return 0
-    except (TypeError, ValueError):
-        return 0
+        except ValueError:
+            return 0
+    return 0
 
 
 def _read_field(

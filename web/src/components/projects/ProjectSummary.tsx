@@ -41,7 +41,18 @@ interface TaskStats {
   review_approved: number
 }
 
-const STATUS_COLORS: Record<string, string> = {
+type TaskStatus = keyof TaskStats
+
+const STATUS_ORDER: TaskStatus[] = [
+  'open',
+  'in_progress',
+  'needs_review',
+  'escalated',
+  'closed',
+  'review_approved',
+]
+
+const STATUS_COLORS: Record<TaskStatus, string> = {
   open: 'var(--accent)',
   in_progress: 'var(--color-info)',
   needs_review: 'var(--color-warning-foreground)',
@@ -50,7 +61,7 @@ const STATUS_COLORS: Record<string, string> = {
   closed: 'var(--text-muted)',
 }
 
-const STATUS_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<TaskStatus, string> = {
   open: 'Open',
   in_progress: 'In Progress',
   needs_review: 'Needs Review',
@@ -59,8 +70,9 @@ const STATUS_LABELS: Record<string, string> = {
   review_approved: 'Approved',
 }
 
-function StatusGlyph({ status }: { status: string }) {
+function StatusGlyph({ status }: { status: TaskStatus }) {
   const common = {
+    'aria-hidden': true,
     width: 10,
     height: 10,
     viewBox: '0 0 12 12',
@@ -132,7 +144,7 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
   }, [project.id])
 
   const activeStatuses = taskStats
-    ? (['open', 'in_progress', 'needs_review', 'escalated', 'closed', 'review_approved'] as const).filter(s => (taskStats[s] || 0) > 0)
+    ? STATUS_ORDER.filter(s => (taskStats[s] || 0) > 0)
     : []
 
   return (

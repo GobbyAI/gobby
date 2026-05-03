@@ -741,12 +741,14 @@ def init_orchestration(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.warning(f"Failed to disable retired conductor cron job: {e}")
 
+        from gobby.storage.projects import LocalProjectManager
+
+        pm = LocalProjectManager(runner.database)
+
         # Register Linear sync handler (for projects with Linear integration)
         try:
-            from gobby.storage.projects import LocalProjectManager
             from gobby.sync.linear import create_linear_sync_handler
 
-            pm = LocalProjectManager(runner.database)
             for project in pm.list():
                 if project.linear_team_id:
                     handler = create_linear_sync_handler(

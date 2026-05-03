@@ -164,6 +164,7 @@ async def _push_dry_run_probe(
             git_manager.run_git_command,
             command,
             cwd=repo_path,
+            # Keep protection probing bounded; GitHub auth/network stalls should degrade.
             timeout=30,
         )
         returncode = result.returncode
@@ -175,6 +176,7 @@ async def _push_dry_run_probe(
             cwd=repo_path,
             capture_output=True,
             text=True,
+            # Match the WorktreeGitManager probe timeout for direct subprocess fallback.
             timeout=30,
             check=False,
         )

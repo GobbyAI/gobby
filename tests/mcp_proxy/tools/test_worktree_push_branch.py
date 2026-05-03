@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+from tests.mcp_proxy.tools.git_helpers import GitResult
 
 pytestmark = pytest.mark.unit
-
-
-@dataclass
-class GitResult:
-    returncode: int
-    stdout: str = ""
-    stderr: str = ""
 
 
 @pytest.mark.asyncio

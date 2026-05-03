@@ -545,7 +545,7 @@ def _cascade_target_branch_to_subtree(
             INSERT INTO task_artifacts (task_id, target_branch, updated_at)
             SELECT id, ?, datetime('now')
             FROM subtree
-            WHERE 1
+            WHERE id IS NOT NULL
             ON CONFLICT(task_id) DO UPDATE SET
                 target_branch = excluded.target_branch,
                 updated_at = datetime('now')

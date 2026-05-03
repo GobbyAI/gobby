@@ -1,5 +1,6 @@
 """Content-level tests for the bundled /gobby router skill."""
 
+import importlib.resources
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,9 @@ from gobby.skills.parser import parse_skill_file
 
 pytestmark = pytest.mark.unit
 
-SKILL_PATH = Path("src/gobby/install/shared/skills/gobby/SKILL.md")
+SKILL_PATH = Path(
+    str(importlib.resources.files("gobby").joinpath("install/shared/skills/gobby/SKILL.md"))
+)
 
 
 class TestGobbyRouterSkill:

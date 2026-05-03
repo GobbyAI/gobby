@@ -191,37 +191,38 @@ class GitHubTriageStore:
 
     def upsert_config(self, config: GitHubTriageConfig) -> GitHubTriageConfig:
         now = _now()
-        existing = self.db.fetchone(
-            "SELECT created_at FROM project_github_triage_configs WHERE project_id = ?",
-            (config.project_id,),
-        )
-        created_at = existing["created_at"] if existing else now
-        self.db.execute(
-            """
-            INSERT INTO project_github_triage_configs (
-                project_id, enabled, webhook_enabled, repositories_json,
-                reconcile_interval_seconds, webhook_secret_ref, created_at, updated_at
+        with self.db.transaction() as conn:
+            existing = conn.execute(
+                "SELECT created_at FROM project_github_triage_configs WHERE project_id = ?",
+                (config.project_id,),
+            ).fetchone()
+            created_at = existing["created_at"] if existing else now
+            conn.execute(
+                """
+                INSERT INTO project_github_triage_configs (
+                    project_id, enabled, webhook_enabled, repositories_json,
+                    reconcile_interval_seconds, webhook_secret_ref, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    enabled = excluded.enabled,
+                    webhook_enabled = excluded.webhook_enabled,
+                    repositories_json = excluded.repositories_json,
+                    reconcile_interval_seconds = excluded.reconcile_interval_seconds,
+                    webhook_secret_ref = excluded.webhook_secret_ref,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    config.project_id,
+                    int(config.enabled),
+                    int(config.webhook_enabled),
+                    _json_dumps(list(config.repositories)),
+                    config.reconcile_interval_seconds,
+                    config.webhook_secret_ref,
+                    created_at,
+                    now,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(project_id) DO UPDATE SET
-                enabled = excluded.enabled,
-                webhook_enabled = excluded.webhook_enabled,
-                repositories_json = excluded.repositories_json,
-                reconcile_interval_seconds = excluded.reconcile_interval_seconds,
-                webhook_secret_ref = excluded.webhook_secret_ref,
-                updated_at = excluded.updated_at
-            """,
-            (
-                config.project_id,
-                int(config.enabled),
-                int(config.webhook_enabled),
-                _json_dumps(list(config.repositories)),
-                config.reconcile_interval_seconds,
-                config.webhook_secret_ref,
-                created_at,
-                now,
-            ),
-        )
         return self.get_config(config.project_id)
 
     def record_delivery(
@@ -282,6 +283,34 @@ class GitHubTriageStore:
         )
         return GitHubTriageDelivery.from_row(row) if row else None
 
+    def claim_delivery_for_processing(
+        self,
+        project_id: str,
+        delivery_id: str,
+    ) -> GitHubTriageDelivery | None:
+        """Atomically claim a pending delivery for one processor."""
+        now = _now()
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE gh_triage_deliveries
+                   SET status = 'processing',
+                       error = NULL,
+                       updated_at = ?
+                 WHERE project_id = ?
+                   AND delivery_id = ?
+                   AND status = 'pending'
+                """,
+                (now, project_id, delivery_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM gh_triage_deliveries WHERE project_id = ? AND delivery_id = ?",
+                (project_id, delivery_id),
+            ).fetchone()
+        return GitHubTriageDelivery.from_row(row) if row else None
+
     def update_delivery_status(
         self,
         project_id: str,
@@ -327,60 +356,69 @@ class GitHubTriageStore:
     ) -> GitHubIssueTriageRecord:
         row_id = hashlib.sha256(f"{project_id}:{repo}:{issue_number}".encode()).hexdigest()
         now = _now()
-        existing = self.db.fetchone(
-            "SELECT created_at FROM gh_issues_triaged WHERE project_id = ? AND repo = ? "
-            "AND issue_number = ?",
-            (project_id, repo, issue_number),
-        )
-        created_at = existing["created_at"] if existing else now
-        self.db.execute(
-            """
-            INSERT INTO gh_issues_triaged (
-                id, project_id, repo, issue_number, issue_url, issue_state,
-                labels_json, issue_updated_at, content_hash, verdict, decision_json,
-                task_id, vector_point_id, dedup_issue_key, source, last_triaged_at,
-                created_at, updated_at
+        with self.db.transaction() as conn:
+            existing = conn.execute(
+                "SELECT created_at FROM gh_issues_triaged WHERE project_id = ? AND repo = ? "
+                "AND issue_number = ?",
+                (project_id, repo, issue_number),
+            ).fetchone()
+            created_at = existing["created_at"] if existing else now
+            conn.execute(
+                """
+                INSERT INTO gh_issues_triaged (
+                    id, project_id, repo, issue_number, issue_url, issue_state,
+                    labels_json, issue_updated_at, content_hash, verdict, decision_json,
+                    task_id, vector_point_id, dedup_issue_key, source, last_triaged_at,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, repo, issue_number) DO UPDATE SET
+                    issue_url = excluded.issue_url,
+                    issue_state = excluded.issue_state,
+                    labels_json = excluded.labels_json,
+                    issue_updated_at = excluded.issue_updated_at,
+                    content_hash = excluded.content_hash,
+                    verdict = excluded.verdict,
+                    decision_json = excluded.decision_json,
+                    task_id = COALESCE(excluded.task_id, gh_issues_triaged.task_id),
+                    vector_point_id = COALESCE(
+                        excluded.vector_point_id,
+                        gh_issues_triaged.vector_point_id
+                    ),
+                    dedup_issue_key = excluded.dedup_issue_key,
+                    source = excluded.source,
+                    last_triaged_at = excluded.last_triaged_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    row_id,
+                    project_id,
+                    repo,
+                    issue_number,
+                    issue_url,
+                    issue_state,
+                    _json_dumps(labels),
+                    issue_updated_at,
+                    content_hash,
+                    verdict,
+                    _json_dumps(decision),
+                    task_id,
+                    vector_point_id,
+                    dedup_issue_key,
+                    source,
+                    now,
+                    created_at,
+                    now,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(project_id, repo, issue_number) DO UPDATE SET
-                issue_url = excluded.issue_url,
-                issue_state = excluded.issue_state,
-                labels_json = excluded.labels_json,
-                issue_updated_at = excluded.issue_updated_at,
-                content_hash = excluded.content_hash,
-                verdict = excluded.verdict,
-                decision_json = excluded.decision_json,
-                vector_point_id = excluded.vector_point_id,
-                dedup_issue_key = excluded.dedup_issue_key,
-                source = excluded.source,
-                last_triaged_at = excluded.last_triaged_at,
-                updated_at = excluded.updated_at
-            """,
-            (
-                row_id,
-                project_id,
-                repo,
-                issue_number,
-                issue_url,
-                issue_state,
-                _json_dumps(labels),
-                issue_updated_at,
-                content_hash,
-                verdict,
-                _json_dumps(decision),
-                task_id,
-                vector_point_id,
-                dedup_issue_key,
-                source,
-                now,
-                created_at,
-                now,
-            ),
-        )
-        record = self.get_issue_record(project_id, repo, issue_number)
-        if record is None:
+            row = conn.execute(
+                "SELECT * FROM gh_issues_triaged WHERE project_id = ? AND repo = ? "
+                "AND issue_number = ?",
+                (project_id, repo, issue_number),
+            ).fetchone()
+        if row is None:
             raise RuntimeError(f"Failed to upsert GitHub issue triage row {repo}#{issue_number}")
-        return record
+        return GitHubIssueTriageRecord.from_row(row)
 
     def get_issue_record(
         self, project_id: str, repo: str, issue_number: int

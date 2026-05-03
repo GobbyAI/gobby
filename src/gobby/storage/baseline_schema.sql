@@ -359,6 +359,11 @@ CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id);
 
 CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
 
+CREATE UNIQUE INDEX idx_tasks_github_issue_link
+    ON tasks(project_id, github_repo, github_issue_number)
+    WHERE github_repo IS NOT NULL
+      AND github_issue_number IS NOT NULL;
+
 CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
 
 CREATE TABLE plans (
@@ -1631,6 +1636,7 @@ CREATE INDEX idx_tasks_dispatch_scan
 CREATE INDEX idx_tasks_state_bucket
                 ON tasks(state_bucket);
 
+-- State bucket precedence is canonical: closed -> escalated -> first non-done stage -> ready.
 CREATE TRIGGER tasks_state_bucket_ai
         AFTER INSERT ON tasks
         BEGIN

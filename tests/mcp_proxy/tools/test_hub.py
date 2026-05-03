@@ -202,6 +202,7 @@ class TestListCrossProjectTasks:
 
         assert result["success"] is True
         assert result["count"] == 1
+        assert result["tasks"]
         assert result["tasks"][0]["state"]["current_stage"]["state"] == "ready"
 
     def test_list_cross_project_tasks_with_limit(self, populated_hub_db: Path) -> None:

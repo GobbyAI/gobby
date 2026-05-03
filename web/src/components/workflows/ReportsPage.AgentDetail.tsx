@@ -18,7 +18,6 @@ import {
   DETAIL_CLOSE_CLS,
   DETAIL_CODE_CLS,
   DETAIL_COMMAND_CLS,
-  DETAIL_COMMAND_PAYLOAD_CLS,
   DETAIL_COMMAND_TIME_CLS,
   DETAIL_COMMAND_TYPE_CLS,
   DETAIL_COMMANDS_CLS,
@@ -142,11 +141,6 @@ export function AgentDetail({
                   <span className={DETAIL_COMMAND_TIME_CLS}>
                     {formatTime(cmd.created_at)}
                   </span>
-                  {cmd.command_text && (
-                    <span className={DETAIL_COMMAND_PAYLOAD_CLS}>
-                      {cmd.command_text.slice(0, 80)}
-                    </span>
-                  )}
                 </div>
               ))}
             </div>
@@ -180,7 +174,7 @@ export function AgentDetail({
               <div className={DETAIL_STAT_CLS}>
                 <span className={DETAIL_STAT_LABEL_CLS}>Tools</span>
                 <span className={DETAIL_STAT_VALUE_CLS}>
-                  {run.tool_calls_count}
+                  {run.tool_calls_count ?? 0}
                 </span>
               </div>
             </div>

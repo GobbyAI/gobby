@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,7 +12,7 @@ from tests.storage.tasks._stage_test_helpers import create_task
 pytestmark = pytest.mark.unit
 
 
-def _registry(temp_db):
+def _registry(temp_db: Any):
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
         sync_manager=MagicMock(),

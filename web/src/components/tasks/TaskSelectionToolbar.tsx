@@ -44,8 +44,12 @@ const TOOLBAR_CLS =
 const COUNT_CLS =
   'text-[length:calc(var(--font-size-base)*0.85)] font-medium whitespace-nowrap text-[var(--text-primary)]'
 
-const BTN_BASE_CLS =
-  'flex cursor-pointer items-center gap-[0.3rem] min-h-11 rounded-md border border-[var(--border)] px-3 py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium transition-[background-color,color,border-color] duration-150'
+const BTN_BASE_CLS = [
+  'flex cursor-pointer items-center gap-[0.3rem] min-h-11 rounded-md',
+  'border border-[var(--border)] px-3 py-[0.4rem] font-[inherit]',
+  'text-[length:calc(var(--font-size-base)*0.8)] font-medium',
+  'transition-[background-color,color,border-color] duration-150',
+].join(' ')
 
 const BTN_PRIMARY_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]'

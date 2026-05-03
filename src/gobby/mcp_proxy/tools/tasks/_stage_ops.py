@@ -286,8 +286,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 resolved_id,
                 reason=f"needs_human:pr_delivery:{findings_body}",
             )
-            stage_get = getattr(ctx.task_manager.stage_states, "get", None)
-            current_stage = stage_get(resolved_id, "pr") if callable(stage_get) else None
+            current_stage = ctx.task_manager.stage_states.get(resolved_id, "pr")
             return {
                 "ok": True,
                 "task_id": resolved_id,

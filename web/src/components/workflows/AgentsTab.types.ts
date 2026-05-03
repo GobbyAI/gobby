@@ -63,9 +63,24 @@ export const ISOLATION_COLORS: Record<string, string> = {
 }
 
 export const DEFAULT_FORM: AgentFormData = {
-  name: '', description: '', surfaces: ['spawn'], role: '', goal: '', personality: '', instructions: '',
-  provider: 'inherit', model: '', reasoning_effort: AUTO_REASONING_EFFORT, reasoning_required: false, fallback_agent: '', mode: 'inherit', isolation: 'inherit',
-  base_branch: 'inherit', timeout: 0, max_turns: 0, pipeline: '',
+  name: '',
+  description: '',
+  surfaces: ['spawn'],
+  role: '',
+  goal: '',
+  personality: '',
+  instructions: '',
+  provider: 'inherit',
+  model: '',
+  reasoning_effort: AUTO_REASONING_EFFORT,
+  reasoning_required: false,
+  fallback_agent: '',
+  mode: 'inherit',
+  isolation: 'inherit',
+  base_branch: 'inherit',
+  timeout: 0,
+  max_turns: 0,
+  pipeline: '',
 }
 
 export function agentDefToYaml(d: AgentDefInfo['definition']): string {
@@ -97,8 +112,10 @@ export function agentDefToYaml(d: AgentDefInfo['definition']): string {
   if (d.default_variables && Object.keys(d.default_variables).length > 0) {
     obj.default_variables = d.default_variables
   }
-  if (d.sandbox) obj.sandbox = d.sandbox
-  if (d.skill_profile) obj.skill_profile = d.skill_profile
+  if (d.sandbox && Object.keys(d.sandbox).length > 0) obj.sandbox = d.sandbox
+  if (d.skill_profile && Object.keys(d.skill_profile).length > 0) {
+    obj.skill_profile = d.skill_profile
+  }
   if (d.steps && d.steps.length > 0) obj.steps = d.steps
   if (d.step_variables && Object.keys(d.step_variables).length > 0) {
     obj.step_variables = d.step_variables

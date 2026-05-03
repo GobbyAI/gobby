@@ -33,11 +33,27 @@ export function getSchemaProperties(schema: Record<string, unknown>): Record<str
 }
 
 export function getSchemaType(fieldSchema: Record<string, unknown>): string {
-  if (fieldSchema.anyOf) {
-    const types = (fieldSchema.anyOf as Record<string, unknown>[])
-      .map(t => t.type as string)
-      .filter(t => t !== 'null')
-    return types[0] || 'string'
+  const types: string[] = []
+  const addType = (value: unknown) => {
+    const values = Array.isArray(value) ? value : [value]
+    for (const item of values) {
+      if (typeof item === 'string' && item !== 'null' && !types.includes(item)) {
+        types.push(item)
+      }
+    }
   }
-  return (fieldSchema.type as string) || 'string'
+  const addSchemaTypes = (schema: unknown) => {
+    if (!schema || typeof schema !== 'object') return
+    const record = schema as Record<string, unknown>
+    addType(record.type)
+    for (const key of ['anyOf', 'oneOf', 'allOf']) {
+      const variants = record[key]
+      if (Array.isArray(variants)) {
+        variants.forEach(addSchemaTypes)
+      }
+    }
+  }
+
+  addSchemaTypes(fieldSchema)
+  return types[0] || 'string'
 }

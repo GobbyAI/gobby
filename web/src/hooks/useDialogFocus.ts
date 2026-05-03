@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -16,10 +16,23 @@ interface UseDialogFocusOptions {
   trap?: boolean
 }
 
+function isFocusableVisible(el: HTMLElement): boolean {
+  if (el.closest('[aria-hidden="true"]')) return false
+  if (el.getClientRects().length === 0) return false
+  const style = window.getComputedStyle(el)
+  return style.display !== 'none' && style.visibility !== 'hidden'
+}
+
 export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogFocusOptions): void {
+  const dialogRef = useRef(ref)
+
+  useEffect(() => {
+    dialogRef.current = ref
+  }, [ref])
+
   useEffect(() => {
     if (!isOpen) return
-    const node = ref.current
+    const node = dialogRef.current.current
     if (!node) return
 
     const previouslyFocused = document.activeElement as HTMLElement | null
@@ -31,7 +44,7 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
 
     const focusables = () =>
       Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-        .filter(el => !el.hasAttribute('aria-hidden') && el.offsetParent !== null)
+        .filter(isFocusableVisible)
 
     const initial = node.querySelector<HTMLElement>('[autofocus]') ?? focusables()[0] ?? node
     requestAnimationFrame(() => {
@@ -75,5 +88,5 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
         previouslyFocused.focus()
       }
     }
-  }, [isOpen, onClose, ref, trap])
+  }, [isOpen, onClose, trap])
 }

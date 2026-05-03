@@ -11,7 +11,16 @@ from gobby.skills.loader import SkillLoader
 
 pytestmark = pytest.mark.unit
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+
+def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").exists() or (candidate / ".git").exists():
+            return candidate
+    msg = f"Could not find repository root from {start}"
+    raise RuntimeError(msg)
+
+
+REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 SKILL_DIR = REPO_ROOT / "src/gobby/install/shared/skills/verification-before-completion"
 SKILLS_ROOT = REPO_ROOT / "src/gobby/install/shared/skills"
 

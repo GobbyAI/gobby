@@ -112,6 +112,7 @@ export function SecretsTab({ secrets, categories, onSave, onDelete, onRefresh }:
           <div className={SECRET_FORM_ROW_CLS}>
             <input
               className={INPUT_CLS}
+              aria-label="Secret name"
               placeholder="Secret name (e.g. anthropic_key)"
               value={formName}
               onChange={e => setFormName(e.target.value)}
@@ -130,6 +131,7 @@ export function SecretsTab({ secrets, categories, onSave, onDelete, onRefresh }:
           <input
             className={INPUT_CLS}
             type="password"
+            aria-label="Secret value"
             placeholder={editingName ? 'Enter new value' : 'Secret value'}
             value={formValue}
             onChange={e => setFormValue(e.target.value)}

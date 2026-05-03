@@ -71,6 +71,27 @@ def test_record_delivery_is_idempotent_by_project_and_delivery(temp_db, sample_p
     assert first.payload_hash == second.payload_hash
 
 
+def test_claim_delivery_for_processing_is_single_winner(temp_db, sample_project) -> None:
+    store = GitHubTriageStore(temp_db)
+    store.record_delivery(
+        project_id=sample_project["id"],
+        delivery_id="delivery-claim",
+        event="issues",
+        action="opened",
+        repository="owner/repo",
+        issue_number=42,
+        headers={"x-github-event": "issues"},
+        raw_body=b'{"action":"opened"}',
+    )
+
+    claimed = store.claim_delivery_for_processing(sample_project["id"], "delivery-claim")
+    second_claim = store.claim_delivery_for_processing(sample_project["id"], "delivery-claim")
+
+    assert claimed is not None
+    assert claimed.status == "processing"
+    assert second_claim is None
+
+
 def test_issue_record_upsert_preserves_task_link_and_latest_decision(
     temp_db,
     sample_project,

@@ -79,3 +79,28 @@ def test_delivery_unit_upsert_preserves_one_unit_per_key(temp_db, sample_project
     assert len(state["units"]) == 1
     assert state["units"][0]["pr_required"] is False
     assert state["units"][0]["pr_state"] == "direct_merge"
+
+
+def test_delivery_campaign_upsert_preserves_null_updates(temp_db, sample_project) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    manager = TaskDeliveryStateManager(temp_db)
+
+    manager.record_campaign(task.id, last_error="blocked")
+    updated = manager.record_campaign(task.id, last_error=None)
+
+    assert updated["last_error"] is None
+    assert manager.get_state(task.id)["campaign"]["last_error"] is None
+
+
+def test_delivery_json_decode_returns_none_for_malformed_json(temp_db, sample_project) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    manager = TaskDeliveryStateManager(temp_db)
+    manager.record_campaign(task.id, structured_pr_verdict={"verdict": "approve"})
+    temp_db.execute(
+        "UPDATE task_delivery_campaigns SET structured_pr_verdict = ? WHERE task_id = ?",
+        ("{malformed", task.id),
+    )
+
+    state = manager.get_state(task.id)
+
+    assert state["campaign"]["structured_pr_verdict"] is None

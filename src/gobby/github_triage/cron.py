@@ -128,10 +128,11 @@ def register_github_triage_cron(
             continue
 
         if not existing.is_system:
-            cron_storage.db.execute(
-                "UPDATE cron_jobs SET is_system = 1 WHERE id = ?",
-                (existing.id,),
-            )
+            with cron_storage.db.transaction() as conn:
+                conn.execute(
+                    "UPDATE cron_jobs SET is_system = 1 WHERE id = ?",
+                    (existing.id,),
+                )
 
         repaired = cron_storage.reconcile_system_job_definition(
             existing.id,

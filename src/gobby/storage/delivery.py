@@ -7,11 +7,14 @@ keeps delivery state out of the task row and the generic task_artifacts table.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from gobby.storage.database import DatabaseProtocol
+
+logger = logging.getLogger(__name__)
 
 CAMPAIGN_COLUMNS = frozenset(
     {
@@ -61,8 +64,10 @@ def _decode_json(value: Any) -> Any:
         return value
     try:
         return json.loads(value)
-    except json.JSONDecodeError:
-        return value
+    except json.JSONDecodeError as exc:
+        preview = value[:80].replace("\n", "\\n")
+        logger.warning("Malformed delivery JSON ignored: %s; preview=%r", exc, preview)
+        return None
 
 
 def _as_bool(value: Any) -> bool | None:
@@ -99,7 +104,19 @@ class TaskDeliveryStateManager:
                 """,  # nosec B608 - columns are filtered against static allowlists.
                 tuple(values[column] for column in columns),
             )
-        return self._campaign_view({"task_id": task_id, **cleaned})
+            row = conn.execute(
+                """
+                SELECT task_id, state, merge_strategy, structured_pr_verdict,
+                       pr_report_ref, merge_sha, merge_report_ref, last_error,
+                       created_at, updated_at
+                  FROM task_delivery_campaigns
+                 WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError(f"Failed to record delivery campaign for task {task_id}")
+        return self._campaign_view(dict(row))
 
     def record_unit(
         self,
@@ -170,9 +187,13 @@ class TaskDeliveryStateManager:
     def _clean_campaign_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         cleaned: dict[str, Any] = {}
         for column, value in fields.items():
-            if column not in CAMPAIGN_COLUMNS or value is None:
+            if column not in CAMPAIGN_COLUMNS:
                 continue
-            cleaned[column] = _encode_json(value) if column in CAMPAIGN_JSON_COLUMNS else value
+            cleaned[column] = (
+                _encode_json(value)
+                if column in CAMPAIGN_JSON_COLUMNS and value is not None
+                else value
+            )
         return cleaned
 
     def _clean_unit_fields(self, fields: dict[str, Any]) -> dict[str, Any]:

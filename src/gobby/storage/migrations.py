@@ -16,6 +16,7 @@ To add a new migration:
 """
 
 import logging
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -175,6 +176,13 @@ CREATE INDEX IF NOT EXISTS idx_gh_issues_triaged_task
     ON gh_issues_triaged(task_id);
 """
 
+_GITHUB_ISSUE_TASK_LINK_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_github_issue_link
+    ON tasks(project_id, github_repo, github_issue_number)
+    WHERE github_repo IS NOT NULL
+      AND github_issue_number IS NOT NULL;
+"""
+
 _REVIEW_ANCHOR_DEFAULT_STAGE_SCHEMA = """
 INSERT OR IGNORE INTO task_type_default_stages (task_type, stage_name, position)
 VALUES ('review_anchor', 'planning', 0);
@@ -224,6 +232,7 @@ _LEGACY_DELIVERY_ARTIFACT_COLUMNS = frozenset(
 )
 
 
+# State bucket precedence is canonical: closed -> escalated -> first non-done stage -> ready.
 def _task_state_bucket_case_sql(task_id_expr: str) -> str:
     return f"""
     CASE
@@ -258,6 +267,50 @@ def _task_state_bucket_trigger_update_sql(task_id_expr: str) -> str:
     """
 
 
+def _task_state_bucket_trigger_sql() -> tuple[str, ...]:
+    return (
+        f"""
+        CREATE TRIGGER IF NOT EXISTS tasks_state_bucket_ai
+        AFTER INSERT ON tasks
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.id")}
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS tasks_state_bucket_au
+        AFTER UPDATE OF closed_at, escalated_at, is_escalated ON tasks
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.id")}
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_ai
+        AFTER INSERT ON task_stage_states
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.task_id")}
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_au
+        AFTER UPDATE OF state, position ON task_stage_states
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("NEW.task_id")}
+            UPDATE tasks
+               SET state_bucket = {_task_state_bucket_case_sql("OLD.task_id")}
+             WHERE id = OLD.task_id
+               AND OLD.task_id != NEW.task_id;
+        END
+        """,
+        f"""
+        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_ad
+        AFTER DELETE ON task_stage_states
+        BEGIN
+            {_task_state_bucket_trigger_update_sql("OLD.task_id")}
+        END
+        """,
+    )
+
+
 def _apply_task_state_bucket_schema(db: LocalDatabase) -> None:
     task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
     if "state_bucket" not in task_columns:
@@ -268,42 +321,17 @@ def _apply_task_state_bucket_schema(db: LocalDatabase) -> None:
 
     db.execute(f"UPDATE tasks SET state_bucket = {_task_state_bucket_case_sql('tasks.id')}")
     db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_state_bucket ON tasks(state_bucket)")
-    db.connection.executescript(
-        f"""
-        CREATE TRIGGER IF NOT EXISTS tasks_state_bucket_ai
-        AFTER INSERT ON tasks
-        BEGIN
-            {_task_state_bucket_trigger_update_sql("NEW.id")}
-        END;
+    for statement in _task_state_bucket_trigger_sql():
+        db.execute(statement)
 
-        CREATE TRIGGER IF NOT EXISTS tasks_state_bucket_au
-        AFTER UPDATE OF closed_at, escalated_at, is_escalated ON tasks
-        BEGIN
-            {_task_state_bucket_trigger_update_sql("NEW.id")}
-        END;
 
-        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_ai
-        AFTER INSERT ON task_stage_states
-        BEGIN
-            {_task_state_bucket_trigger_update_sql("NEW.task_id")}
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_au
-        AFTER UPDATE OF state, position ON task_stage_states
-        BEGIN
-            {_task_state_bucket_trigger_update_sql("NEW.task_id")}
-            UPDATE tasks
-               SET state_bucket = {_task_state_bucket_case_sql("OLD.task_id")}
-             WHERE id = OLD.task_id
-               AND OLD.task_id != NEW.task_id;
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS task_stage_states_state_bucket_ad
-        AFTER DELETE ON task_stage_states
-        BEGIN
-            {_task_state_bucket_trigger_update_sql("OLD.task_id")}
-        END;
-        """
+def _require_sqlite_drop_column_support() -> None:
+    if sqlite3.sqlite_version_info >= (3, 35, 0):
+        return
+    raise MigrationUnsupportedError(
+        "Task delivery state migration requires SQLite 3.35.0 or newer for "
+        "ALTER TABLE DROP COLUMN support. Upgrade SQLite or recreate the local "
+        "Gobby database from the flattened baseline before deploying this build."
     )
 
 
@@ -314,7 +342,10 @@ def _apply_delivery_state_schema(db: LocalDatabase) -> None:
             db.execute(statement)
 
     artifact_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_artifacts)")}
-    for column in sorted(_LEGACY_DELIVERY_ARTIFACT_COLUMNS & artifact_columns):
+    legacy_columns = _LEGACY_DELIVERY_ARTIFACT_COLUMNS & artifact_columns
+    if legacy_columns:
+        _require_sqlite_drop_column_support()
+    for column in sorted(legacy_columns):
         db.execute(f"ALTER TABLE task_artifacts DROP COLUMN {column}")  # nosec B608
 
 
@@ -323,6 +354,10 @@ def _apply_github_triage_schema(db: LocalDatabase) -> None:
         statement = statement.strip()
         if statement:
             db.execute(statement)
+
+
+def _apply_github_issue_task_link_index(db: LocalDatabase) -> None:
+    db.execute(_GITHUB_ISSUE_TASK_LINK_INDEX)
 
 
 def _apply_config_store_cleanup(db: LocalDatabase) -> None:
@@ -364,11 +399,16 @@ def _apply_config_store_cleanup(db: LocalDatabase) -> None:
 
 
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
-    (240, "Add task delivery state tables", _apply_delivery_state_schema),
+    (
+        240,
+        "Add task delivery state tables (requires SQLite >= 3.35 for legacy column drops)",
+        _apply_delivery_state_schema,
+    ),
     (241, "Add GitHub issue triage tables", _apply_github_triage_schema),
     (242, "Add review anchor default planning stage", _REVIEW_ANCHOR_DEFAULT_STAGE_SCHEMA),
     (243, "Clean stale config store keys", _apply_config_store_cleanup),
     (244, "Add persisted task state bucket", _apply_task_state_bucket_schema),
+    (245, "Add unique linked GitHub issue task index", _apply_github_issue_task_link_index),
 ]
 
 

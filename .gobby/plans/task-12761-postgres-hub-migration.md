@@ -1307,6 +1307,8 @@ def postgres_db(
 
 The `Any` import comes from `typing`; add `from typing import Any` at the top of `tests/fixtures/postgres.py` alongside the existing `from collections.abc import Iterator`.
 
+`tests/fixtures/postgres.py` does not exist yet in the current codebase. When the fixture/importer work lands, keep the bookkeeping and seed-bearing table sets in shared storage code under `src/gobby/storage/...` and import them from the fixture, importer, and validator instead of duplicating local constants in the test fixture.
+
 The reset-based approach is intentional: a single outer savepoint is not sufficient once the runtime uses pooled connections, because work can commit on a different connection and bypass that savepoint entirely. Resetting the worker schema gives real isolation without constraining production code to a single test-only connection model.
 
 **Acceptance:**
@@ -1767,8 +1769,8 @@ def _apply_postgres_baseline(self) -> None:
             return
 
     # Authoritative path: lock, re-classify under the lock, apply if still needed.
-    with self._pool.connection() as conn, conn.transaction() as txn:
-        txn.execute("SELECT pg_advisory_xact_lock(hashtext('postgres_baseline_apply'))")
+    with self._pool.connection() as conn, conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext('postgres_baseline_apply'))")
         state = _classify_baseline_state(conn)
         if state == "already_baselined":
             return  # racing peer applied it between fast-path and lock acquisition
@@ -1789,8 +1791,8 @@ def _apply_postgres_baseline(self) -> None:
         )
         for statement in _split_statements_respecting_dollar_quotes(sql):
             if statement.strip():
-                txn.execute(statement)
-        txn.execute(
+                conn.execute(statement)
+        conn.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (244, NOW())"
         )
 ```
@@ -1979,20 +1981,20 @@ class MigrationRunner:
         for migration in self._discover_migrations():
             if migration.version in applied:
                 continue
-            with self._hub.transaction() as txn:
-                self._run_migration(txn, migration)
-                txn.execute(
+            with self._hub.transaction() as conn:
+                self._run_migration(conn, migration)
+                conn.execute(
                     "INSERT INTO schema_migrations(version, applied_at) "
                     "VALUES ($1, NOW())",
                     (migration.version,),
                 )
 
-    def _run_migration(self, txn: Transaction, migration: Migration) -> None:
+    def _run_migration(self, conn: Transaction, migration: Migration) -> None:
         path = migration.path_for_dialect(self._hub.dialect)
         sql = path.read_text()
         for statement in _split_statements_respecting_dollar_quotes(sql):
             if statement.strip():
-                txn.execute(statement)
+                conn.execute(statement)
 ```
 
 `_split_statements_respecting_dollar_quotes` must treat semicolons outside any active quote/comment boundary as the only split points. It needs unit tests for:

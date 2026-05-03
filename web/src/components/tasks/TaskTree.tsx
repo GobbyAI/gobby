@@ -72,103 +72,106 @@ function HighlightText({ text, search }: { text: string; search: string }) {
   )
 }
 
-function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => void) {
-  return function TaskNode({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
-    const task = node.data.task
-    const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
-    const menuRef = useRef<HTMLDivElement | null>(null)
+interface TaskNodeProps extends NodeRendererProps<TreeNode> {
+  searchTerm: string
+  onSubtreeKanban?: (taskId: string) => void
+}
 
-    const handleContextMenu = (e: React.MouseEvent) => {
-      if (!onSubtreeKanban || !node.isInternal) return
+function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: TaskNodeProps) {
+  const task = node.data.task
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (!onSubtreeKanban || !node.isInternal) return
+    e.preventDefault()
+    e.stopPropagation()
+    setCtxMenu({ x: e.clientX, y: e.clientY })
+  }, [node.isInternal, onSubtreeKanban, setCtxMenu])
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    })
+  }, [ctxMenu])
+
+  const handleMenuKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
       e.preventDefault()
-      e.stopPropagation()
-      setCtxMenu({ x: e.clientX, y: e.clientY })
+      setCtxMenu(null)
+      return
     }
-
-    useEffect(() => {
-      if (!ctxMenu) return
-      requestAnimationFrame(() => {
-        menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-      })
-    }, [ctxMenu])
-
-    const handleMenuKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setCtxMenu(null)
-        return
-      }
-      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
-      const items = Array.from(
-        menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []
-      )
-      if (items.length === 0) return
-      e.preventDefault()
-      const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement)
-      const nextIndex =
-        e.key === 'Home' ? 0 :
-        e.key === 'End' ? items.length - 1 :
-        e.key === 'ArrowUp' ? (activeIndex <= 0 ? items.length - 1 : activeIndex - 1) :
-        (activeIndex + 1) % items.length
-      items[nextIndex]?.focus()
-    }, [])
-
-    return (
-      <div
-        ref={dragHandle}
-        style={style}
-        className={node.isSelected ? `${NODE_CLS} ${NODE_SELECTED_CLS}` : NODE_CLS}
-        onClick={() => node.activate()}
-        onContextMenu={handleContextMenu}
-      >
-        {node.isInternal ? (
-          <button
-            className={TOGGLE_CLS}
-            onClick={e => { e.stopPropagation(); node.toggle() }}
-          >
-            {node.isOpen ? '▾' : '▸'}
-          </button>
-        ) : (
-          <span className={`${TOGGLE_CLS} ${TOGGLE_LEAF_CLS}`} />
-        )}
-        <StatusDot task={task} />
-        <span className={REF_CLS}>{task.ref}</span>
-        <span className={TITLE_CLS}>
-          <HighlightText text={task.title} search={searchTerm} />
-        </span>
-        <TypeBadge type={task.task_type} />
-        <PriorityBadge priority={task.priority} />
-        <TaskStatusStrip task={task} compact />
-
-        {ctxMenu && (
-          <>
-            <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenu(null)} />
-            <div
-              ref={menuRef}
-              className={CTX_MENU_CLS}
-              role="menu"
-              aria-label="Task actions"
-              style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
-              onKeyDown={handleMenuKeyDown}
-            >
-              <button
-                type="button"
-                className={CTX_ITEM_CLS}
-                role="menuitem"
-                onClick={e => {
-                  e.stopPropagation()
-                  setCtxMenu(null)
-                  onSubtreeKanban!(task.id)
-                }}
-              >
-                {'▦'} View subtree in Kanban
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []
     )
-  }
+    if (items.length === 0) return
+    e.preventDefault()
+    const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+    const nextIndex =
+      e.key === 'Home' ? 0 :
+      e.key === 'End' ? items.length - 1 :
+      e.key === 'ArrowUp' ? (activeIndex <= 0 ? items.length - 1 : activeIndex - 1) :
+      (activeIndex + 1) % items.length
+    items[nextIndex]?.focus()
+  }, [])
+
+  return (
+    <div
+      ref={dragHandle}
+      style={style}
+      className={node.isSelected ? `${NODE_CLS} ${NODE_SELECTED_CLS}` : NODE_CLS}
+      onClick={() => node.activate()}
+      onContextMenu={handleContextMenu}
+    >
+      {node.isInternal ? (
+        <button
+          className={TOGGLE_CLS}
+          onClick={e => { e.stopPropagation(); node.toggle() }}
+        >
+          {node.isOpen ? '▾' : '▸'}
+        </button>
+      ) : (
+        <span className={`${TOGGLE_CLS} ${TOGGLE_LEAF_CLS}`} />
+      )}
+      <StatusDot task={task} />
+      <span className={REF_CLS}>{task.ref}</span>
+      <span className={TITLE_CLS}>
+        <HighlightText text={task.title} search={searchTerm} />
+      </span>
+      <TypeBadge type={task.task_type} />
+      <PriorityBadge priority={task.priority} />
+      <TaskStatusStrip task={task} compact />
+
+      {ctxMenu && (
+        <>
+          <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenu(null)} />
+          <div
+            ref={menuRef}
+            className={CTX_MENU_CLS}
+            role="menu"
+            aria-label="Task actions"
+            style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
+            onKeyDown={handleMenuKeyDown}
+          >
+            <button
+              type="button"
+              className={CTX_ITEM_CLS}
+              role="menuitem"
+              onClick={e => {
+                e.stopPropagation()
+                setCtxMenu(null)
+                onSubtreeKanban!(task.id)
+              }}
+            >
+              {'▦'} View subtree in Kanban
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 function searchMatch(node: { data: TreeNode }, term: string): boolean {
@@ -203,7 +206,12 @@ export function TaskTree({ tasks, onSelectTask, onReparent, onSubtreeKanban }: T
   const [hideClosed, setHideClosed] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const treeData = useMemo(() => buildTree(tasks, hideClosed), [tasks, hideClosed])
-  const NodeRenderer = useMemo(() => makeTaskNode(searchTerm, onSubtreeKanban), [searchTerm, onSubtreeKanban])
+  const NodeRenderer = useCallback(
+    (props: NodeRendererProps<TreeNode>) => (
+      <TaskNode {...props} searchTerm={searchTerm} onSubtreeKanban={onSubtreeKanban} />
+    ),
+    [searchTerm, onSubtreeKanban]
+  )
 
   useEffect(() => {
     const container = containerRef.current

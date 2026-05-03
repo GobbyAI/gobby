@@ -11,6 +11,7 @@ import pytest
 
 from gobby.github_triage.service import GitHubIssueTriageService, TriageWebhookError
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -124,6 +125,24 @@ def test_webhook_rejects_bad_signature(temp_db, sample_project) -> None:
         service.accept_webhook_delivery(sample_project["id"], headers, raw_body)
 
 
+def test_webhook_rejects_empty_repository_allowlist(temp_db) -> None:
+    project = LocalProjectManager(temp_db).create(name="no-repo", repo_path="/tmp/no-repo")
+    raw_body = _payload()
+    GitHubTriageStore(temp_db).upsert_config(
+        GitHubTriageConfig(
+            project_id=project.id,
+            enabled=True,
+            webhook_enabled=True,
+            repositories=(),
+            webhook_secret_ref="webhook-secret",
+        )
+    )
+    service = GitHubIssueTriageService(db=temp_db)
+
+    with pytest.raises(TriageWebhookError, match="No repositories are enabled"):
+        service.accept_webhook_delivery(project.id, _headers(raw_body), raw_body)
+
+
 @pytest.mark.asyncio
 async def test_triage_issue_implement_creates_task_comments_labels_and_audit(
     temp_db,
@@ -158,6 +177,44 @@ async def test_triage_issue_implement_creates_task_comments_labels_and_audit(
     assert record is not None
     assert record.task_id == task.id
     assert record.verdict == "implement"
+
+
+@pytest.mark.asyncio
+async def test_triage_issue_skips_side_effects_when_hash_and_verdict_repeat(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    github = FakeGitHubMCP()
+    build_func = AsyncMock()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        build_func=build_func,
+    )
+    issue_data = json.loads(_payload().decode())["issue"]
+
+    first = await service.triage_issue(
+        sample_project["id"],
+        "owner/repo",
+        42,
+        "webhook",
+        issue_data=issue_data,
+    )
+    github.calls.clear()
+    build_func.reset_mock()
+    second = await service.triage_issue(
+        sample_project["id"],
+        "owner/repo",
+        42,
+        "webhook",
+        issue_data=issue_data,
+    )
+
+    assert second["verdict"] == "implement"
+    assert second["task_id"] == first["task_id"]
+    assert github.calls == []
+    build_func.assert_not_awaited()
 
 
 @pytest.mark.asyncio

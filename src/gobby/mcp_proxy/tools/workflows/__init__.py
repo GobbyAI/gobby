@@ -7,6 +7,7 @@ These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -66,6 +67,8 @@ __all__ = [
     "create_workflows_registry",
     "get_workflow_project_path",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class _InternalToolRegistryInventory(Protocol):
@@ -721,7 +724,14 @@ class _WorkflowMCPInventory:
         tools: dict[str, list[dict[str, Any]]] = {}
         if self._mcp_manager is not None:
             tools.update(await self._mcp_manager.list_tools())
-        tools.update(self._internal_tools())
+        internal_tools = self._internal_tools()
+        collisions = sorted(set(tools) & set(internal_tools))
+        if collisions:
+            logger.warning(
+                "Internal workflow MCP tools override external server keys: %s",
+                ", ".join(collisions),
+            )
+        tools.update(internal_tools)
         return tools
 
     def _internal_server_names(self) -> list[str]:

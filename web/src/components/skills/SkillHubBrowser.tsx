@@ -35,8 +35,12 @@ const CARD_DESC_CLS =
 const CARD_FOOTER_CLS = 'mt-auto flex items-center justify-between'
 const CARD_VERSION_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
 
-const INSTALL_BTN_CLS =
-  'cursor-pointer rounded border-0 bg-[var(--accent)] px-3 py-1 text-[length:var(--text-sm)] font-medium text-[var(--bg-primary)] transition-opacity duration-150 hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+const SKILL_BUTTON_CLASSES = [
+  'cursor-pointer rounded border-0 bg-[var(--accent)] px-3 py-1',
+  'text-[length:var(--text-sm)] font-medium text-[var(--bg-primary)]',
+  'transition-opacity duration-150 hover:opacity-85',
+  'disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11',
+].join(' ')
 
 interface SkillHubBrowserProps {
   hubs: HubInfo[]
@@ -128,7 +132,7 @@ export function SkillHubBrowser({ hubs, hubResults, hubErrors, onFetchHubs, onSe
               <div className={CARD_FOOTER_CLS}>
                 {result.version && <span className={CARD_VERSION_CLS}>v{result.version}</span>}
                 <button
-                  className={INSTALL_BTN_CLS}
+                  className={SKILL_BUTTON_CLASSES}
                   onClick={() => onInstall(result.hub_name, result.slug)}
                   disabled={installing === `${result.hub_name}/${result.slug}`}
                 >

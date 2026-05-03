@@ -175,6 +175,7 @@ async def _send_compact_self_continuation(
 def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
     try:
         running_loop = asyncio.get_running_loop()
+        # Fire-and-forget: the coroutine logs its own failures and must not block startup.
         running_loop.create_task(coro)
         return True
     except RuntimeError:
@@ -192,6 +193,7 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
                 return True
             except Exception:
                 logger.debug("Failed to schedule compact_self continuation on loop", exc_info=True)
+                # Scheduling failed before ownership transferred to an event loop.
                 coro.close()
                 return False
 
@@ -201,7 +203,13 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
         name="gobby-compact-continuation",
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        logger.debug("Failed to start compact_self continuation thread", exc_info=True)
+        # The fallback thread never took ownership, so close the coroutine explicitly.
+        coro.close()
+        return False
     return True
 
 
@@ -278,7 +286,10 @@ def _load_variables(raw: Any) -> dict[str, Any]:
         raw = raw.decode()
     if not isinstance(raw, str) or not raw:
         return {}
-    parsed = json.loads(raw)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
     return parsed if isinstance(parsed, dict) else {}
 
 
