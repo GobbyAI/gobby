@@ -281,7 +281,7 @@ Explicitly out of scope for this plan (tracked as follow-ups for Gobby Pro):
 ## P0 Phase 0: Re-flatten SQLite baseline
 `kind: framing`
 
-**Goal**: collapse migrations 240, 241, 242, and 243 (and any further post-baseline entries that land before this work begins) into the SQLite baseline so the Postgres work starts from a clean prerequisite state — exactly one inline-SQL v-marker entry in `MIGRATIONS`, single source-of-truth DDL, no callable post-baseline entries to special-case in Phase 3.7 or Phase 4.1.
+**Goal**: fold the DDL and seed effects of migrations 240/241/242 into the SQLite baseline, drop the v243 config-store cleanup callable, keep the v240/v241/v242 callables in `MIGRATIONS` as the v239→v244 upgrade band so existing user databases are not stranded, add a callable v244 no-op flatten marker so the runner records the version row without double-inserting, bump `BASELINE_VERSION = 244`, and hold `_MIN_MIGRATION_VERSION = 239` until Phase 3.7's file-based runner can safely advance the floor. The Postgres work starts from a clean single-source-of-truth `baseline_schema.sql` while the in-Python `MIGRATIONS` retains the four-entry compatibility band described in §0.1; Phase 3.7 supersedes that list with `src/gobby/storage/migrations/NNN_name.sql` files and re-empties `MIGRATIONS`. If additional post-baseline migrations land before Phase 0 implementation, Phase 0 folds DDL/seed into baseline AND keeps their callables in the band; data-cleanup-only callables (like v243) are dropped without baseline equivalent.
 
 This phase is a hard prerequisite gate. Phase 1 cannot start until Phase 0 lands and ships in a release; the post-Phase-0 baseline is what Phase 4.2's translator reads.
 
@@ -403,13 +403,15 @@ volumes:
   gobby_pgaudit_log:
 ```
 
-`PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` defaults are read from the checked-in manifest at `src/gobby/data/postgres-pgsearch/version.json` (single source of truth shared with §1.2 native installer, §1.4 Dockerfile, §2.1 test compose/CI, and §6.0 pgAudit setup). Compose loads them via a `.env` shim that the installer regenerates from `version.json`, so users running raw `docker compose up` without the installer still get a deterministic build. The Dockerfile body is task 1.4. Verification: `docker compose --profile postgres up -d postgres` builds the image on first run, `pg_isready` exits 0 within 30s; `psql -c "CREATE EXTENSION pg_search"` inside the container succeeds.
+`PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` defaults are read from the checked-in pg_search version manifest under `src/gobby/data/postgres-pgsearch/` (single source of truth shared with §1.2 native installer, §1.4 Dockerfile, §2.1 test compose/CI, and §6.0 pgAudit setup). The manifest itself is owned and shipped by §1.4 — see §1.4 acceptance for path and schema. Compose loads the values via a `.env` shim that the installer regenerates from the manifest, so users running raw `docker compose up` without the installer still get a deterministic build. The Dockerfile body and version-manifest schema/values are task 1.4 — §1.1 consumes them but does not author them.
+
+Verification (this section): static template checks only — YAML parses; `postgres` service block validates against the compose schema; image tag is exactly `gobby-postgres-local:17-pgsearch`; the `build:` directive points at `./postgres-pgsearch` with `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` build args; profiles list contains `postgres` and `all`; healthcheck and named volume are present; the `command:` line preloads both `pg_search` and `pgaudit`. **Build/runtime smoke** (`docker compose --profile postgres up -d postgres`, `pg_isready`, `CREATE EXTENSION`) is deferred to §1.4's CI smoke job, which is what builds the actual image — it cannot be exercised here because the Dockerfile and the version manifest do not exist until §1.4 lands.
 
 **Acceptance:**
 
-- 1.1.1 — `postgres` service block added to the compose template alongside qdrant/neo4j. file: `src/gobby/data/docker-compose.services.yml`.
+- 1.1.1 — `postgres` service block added to the compose template alongside qdrant/neo4j; static schema/template assertions pass; build/runtime smoke deferred to §1.4 CI. file: `src/gobby/data/docker-compose.services.yml`.
 
-### 1.2 Add PostgreSQL installer, uninstaller, and status CLI [category: code] (depends: 1.1)
+### 1.2 Add PostgreSQL installer, uninstaller, and status CLI [category: code] (depends: 1.1, 1.4)
 `kind: deliverable`
 
 Target: `src/gobby/cli/installers/postgres.py` (new), `src/gobby/cli/postgres.py` (new Click group), `src/gobby/cli/__init__.py`, `~/.gobby/bootstrap.yaml`, `~/.gobby/services/docker-compose.yml`, `~/.gobby/services/postgres-pgsearch/` (asset tree synced from `src/gobby/data/postgres-pgsearch/`), `~/.gobby/services/.env`, `docs/runbooks/postgres-native-macos.md` (new), `docs/runbooks/postgres-native-source.md` (new)
@@ -695,7 +697,7 @@ Update `init_hub_database` (and `init_storage_and_config` if it duplicates the w
 ### 1.4 Add local-build Dockerfile for the Docker mode [category: config] (depends: 1.1)
 `kind: deliverable`
 
-Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), CI smoke-test workflow
+Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), `src/gobby/data/postgres-pgsearch/version.json` (new — single source of truth for `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256`, consumed by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup), CI smoke-test workflow
 
 Ship a Dockerfile that builds locally on the user's machine via the compose `build:` directive in task 1.1. **No registry push, no Gobby-published image, no GHCR.** The Dockerfile is a build recipe; the resulting image is local to the user and never leaves their machine. This keeps Gobby off the AGPL-distribution hook for pg_search — see "Why local build, not a published image" in the Service packaging section.
 
@@ -745,7 +747,8 @@ License notice (AGPL-3.0 for pg_search, PostgreSQL license for Postgres) is pres
 
 **Acceptance:**
 
-- 1.4.1 — Local-build Dockerfile for the `postgres-pgsearch` image lands in the data tree. file: `src/gobby/data/postgres-pgsearch/Dockerfile`.
+- 1.4.1 — Local-build Dockerfile for the `postgres-pgsearch` image lands in the data tree, builds against pinned `PG_SEARCH_VERSION` + `PG_SEARCH_SHA256` build args, and passes the four CI smoke tests (`pg_isready`, `CREATE EXTENSION pg_search`, `CREATE EXTENSION pgaudit`, `shared_preload_libraries` includes both). file: `src/gobby/data/postgres-pgsearch/Dockerfile`.
+- 1.4.2 — `version.json` manifest commits the canonical `pg_search_version` and `pg_search_sha256` values used by §1.1 compose, §1.2 installer, §2.1 test compose/CI, and §6.0 pgAudit setup. The schema is `{"pg_search_version": "<semver>", "pg_search_sha256": "<hex>", "postgres_major": "17"}`; build args fail-fast if either field is missing. file: `src/gobby/data/postgres-pgsearch/version.json`.
 
 ### 1.5 Add `gobby postgres activate` and `deactivate` commands [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
@@ -1630,11 +1633,65 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 For Postgres, `NOW()` returns `TIMESTAMPTZ`. For SQLite during overlap, `NOW()` is not a builtin; the shared migration table creation uses `CURRENT_TIMESTAMP` which both backends accept — and the runner's insert uses `NOW()` on Postgres and `CURRENT_TIMESTAMP` on SQLite via a dialect-check in `_run_migration`'s bookkeeping step.
 
-**Table rename**: the SQLite baseline today uses `schema_version`. This task renames it to `schema_migrations` on both backends — pre-launch, a one-off `ALTER TABLE schema_version RENAME TO schema_migrations` against `~/.gobby/gobby-hub.db` suffices; no formal migration file is required. The name aligns with the `sqlx` convention that the later Rust port will consume.
+**Table rename, with a self-contained one-shot migration**: the SQLite baseline today (and the Phase 0 baseline at v244) uses `schema_version (version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))`. This task renames it to `schema_migrations` on both backends to align with the `sqlx` convention that the later Rust port will consume. Existing post-Phase-0 v244 SQLite databases carry `schema_version` only and must reach `schema_migrations` exactly once, atomically, without losing any version rows. The runner ships a startup bookkeeping-migration step that runs before any file-based migration and is safe under all input states:
+
+```python
+def _migrate_bookkeeping_table(conn: HubConnection) -> None:
+    """Idempotently rename schema_version -> schema_migrations on SQLite startup.
+
+    Pre-3.7 databases carry schema_version only.
+    Post-3.7 databases carry schema_migrations only.
+    A divergent state (both tables present with mismatched rows) is a
+    corruption marker and aborts startup with a precise error message
+    pointing at backup recovery.
+    """
+    has_old = _table_exists(conn, "schema_version")
+    has_new = _table_exists(conn, "schema_migrations")
+
+    if has_new and not has_old:
+        return  # already migrated; idempotent no-op
+
+    if has_old and not has_new:
+        with conn.transaction():
+            conn.execute("ALTER TABLE schema_version RENAME TO schema_migrations")
+            # Backfill applied_at if the column type/default needs alignment;
+            # for SQLite the prior TEXT DEFAULT (datetime('now')) is preserved
+            # by RENAME and remains valid under the new name.
+        return
+
+    if has_old and has_new:
+        old_rows = conn.execute("SELECT version FROM schema_version").fetchall()
+        new_rows = conn.execute("SELECT version FROM schema_migrations").fetchall()
+        if {r[0] for r in old_rows} == {r[0] for r in new_rows}:
+            with conn.transaction():
+                conn.execute("DROP TABLE schema_version")
+            return
+        raise MigrationUnsupportedError(
+            "Both schema_version and schema_migrations exist with divergent rows. "
+            "This indicates a corrupted bookkeeping state; restore ~/.gobby/gobby-hub.db "
+            "from a backup before continuing."
+        )
+
+    # Neither table exists: brand-new database. The Phase 3.7 runner creates
+    # schema_migrations on first use; nothing to migrate.
+```
+
+`MigrationRunner.apply_pending` calls `_migrate_bookkeeping_table` first, then `_ensure_schema_migrations_table` (idempotent CREATE TABLE IF NOT EXISTS), then proceeds with file-based migrations. Postgres has no pre-existing `schema_version` table (Postgres ships with `schema_migrations` from the v244-era baseline translation in §4.2), so the bookkeeping-migration step is a no-op on Postgres but still runs for symmetry.
+
+Required tests in `tests/storage/test_migration_runner.py`:
+
+- v244 SQLite fixture with only `schema_version` (containing rows {244, 240, 241, 242, 244} matching the v244 post-Phase-0 history): runner renames to `schema_migrations`, all rows preserved, `schema_version` no longer exists, and a re-run is a no-op.
+- Brand-new SQLite database (neither table): runner creates `schema_migrations` lazily, no spurious rename.
+- Both-tables-exist with identical row sets: runner drops the legacy `schema_version`, retains `schema_migrations`, idempotent.
+- Both-tables-exist with divergent row sets: runner raises `MigrationUnsupportedError` with the recovery message.
+- Postgres fixture with only `schema_migrations`: bookkeeping step is a no-op, runner proceeds.
+
+§5.1's source-schema gate (the SQLite reader feeding `gobby postgres migrate-from-sqlite`) reads `schema_migrations` post-3.7; pre-3.7 sources still expose `schema_version` only and must continue to be probed against the post-Phase-0 baseline floor. Update §5.1 to reference `schema_migrations` for post-3.7 sources and document fallback to `schema_version` for the pre-3.7 source-DB band.
 
 **Acceptance:**
 
 - 3.7.1 — Migration runner uses dollar-quote-aware statement splitting and works against both backends. symbol: `gobby.storage.migrations.MigrationRunner`.
+- 3.7.2 — `_migrate_bookkeeping_table` renames `schema_version` to `schema_migrations` exactly once on existing SQLite databases, preserves all version rows, is idempotent under repeat runs, drops a duplicate identical-rows `schema_version` if both tables exist, and raises `MigrationUnsupportedError` on divergent state. symbol: `gobby.storage.migrations._migrate_bookkeeping_table`. test: `tests/storage/test_migration_runner.py::test_bookkeeping_table_rename_paths`.
 
 ## P4 Phase 4: PostgreSQL schema and query parity
 `kind: framing`
