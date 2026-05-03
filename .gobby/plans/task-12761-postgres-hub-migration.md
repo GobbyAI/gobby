@@ -1178,7 +1178,6 @@ def _reset_schema(
                     )
 
 
-@pytest.fixture
 @pytest.fixture(scope="session")
 def postgres_canonical_seed(postgres_schema: str) -> dict[str, list[tuple[Any, ...]]]:
     """One-time per-worker capture of fresh-baseline seed rows.
