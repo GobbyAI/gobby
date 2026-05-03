@@ -89,7 +89,7 @@ describe('stageActions shared helper contract', () => {
     const source = readStageActionsSource()
 
     expect(source).toMatch(
-      /export\s+type\s+StageAdvanceAction\s*=\s*['"]start['"]\s*\|\s*['"]submit_for_review['"]\s*\|\s*['"]approve_review['"]\s*\|\s*['"]complete['"]/,
+      /export\s+type\s+StageAdvanceAction\s*=[\s\S]*['"]start['"][\s\S]*['"]submit_for_review['"][\s\S]*['"]approve_review['"][\s\S]*['"]reject_review['"][\s\S]*['"]complete['"]/,
     )
   })
 

@@ -353,7 +353,7 @@ class LocalTaskManager:
         transition methods so claim/session state stays coherent.
         """
         legacy_stage_key = "lifecycle_" + "stage"
-        legacy_kwargs = sorted({"status", "lifecycle", legacy_stage_key} & set(kwargs))
+        legacy_state_fields = sorted({"status", "lifecycle", legacy_stage_key} & set(kwargs))
         blocked_fields = [
             field_name
             for field_name, value in (
@@ -368,9 +368,9 @@ class LocalTaskManager:
             )
             if value is not UNSET
         ]
-        if legacy_kwargs or blocked_fields:
-            blocked_display = ", ".join([*legacy_kwargs, *blocked_fields])
-            if legacy_kwargs and not blocked_fields:
+        if legacy_state_fields or blocked_fields:
+            blocked_display = ", ".join([*legacy_state_fields, *blocked_fields])
+            if legacy_state_fields and not blocked_fields:
                 field_class = "legacy state fields"
                 transition_hint = (
                     "Use start_stage, submit_for_review, approve_review, reject_review, "
@@ -646,17 +646,8 @@ class LocalTaskManager:
         round_number: int | None = None,
         *,
         by_session_id: str | None = None,
-        **legacy_kwargs: Any,
     ) -> Task:
         """Reject review on a stage and return it to ready."""
-        legacy_round = legacy_kwargs.pop("round", None)
-        if legacy_kwargs:
-            unexpected = ", ".join(sorted(legacy_kwargs))
-            raise TypeError(f"reject_review() got unexpected keyword arguments: {unexpected}")
-        if round_number is not None and legacy_round is not None:
-            raise TypeError("reject_review() received both round and round_number")
-        if round_number is None:
-            round_number = legacy_round
         task = _reject_review(
             self.db,
             task_id=task_id,

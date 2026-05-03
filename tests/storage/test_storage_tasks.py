@@ -949,7 +949,7 @@ class TestLocalTaskManager:
         rejected = task_manager.reject_review(
             task.id,
             rejection_notes="Needs another planning round",
-            round=1,
+            round_number=1,
         )
 
         _assert_stage_state(rejected, "ready")
@@ -979,7 +979,7 @@ class TestLocalTaskManager:
             task_manager.reject_review(
                 task.id,
                 rejection_notes="Needs another planning round",
-                round=1,
+                round_number=1,
             )
 
         unchanged = task_manager.get_task(task.id)
@@ -1006,7 +1006,7 @@ class TestLocalTaskManager:
 
         # First rejection at round 7.
         first = task_manager.reject_review(
-            task.id, rejection_notes="initial findings", round=7
+            task.id, rejection_notes="initial findings", round_number=7
         )
         assert (first.description or "").count("## Adversary Findings — Round 7") == 1
         assert "initial findings" in (first.description or "")
@@ -1016,7 +1016,7 @@ class TestLocalTaskManager:
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.submit_for_review(task.id, review_notes="Ready again")
         second = task_manager.reject_review(
-            task.id, rejection_notes="updated findings", round=7
+            task.id, rejection_notes="updated findings", round_number=7
         )
 
         # Exactly one Round 7 section, with the NEW body, and the old body gone.
@@ -1038,20 +1038,18 @@ class TestLocalTaskManager:
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.submit_for_review(task.id, review_notes="r6 ready")
-        task_manager.reject_review(task.id, rejection_notes="round six body", round=6)
+        task_manager.reject_review(task.id, rejection_notes="round six body", round_number=6)
 
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.submit_for_review(task.id, review_notes="r7 ready")
-        task_manager.reject_review(
-            task.id, rejection_notes="round seven first", round=7
-        )
+        task_manager.reject_review(task.id, rejection_notes="round seven first", round_number=7)
 
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
         task_manager.submit_for_review(task.id, review_notes="r7 retry")
         result = task_manager.reject_review(
-            task.id, rejection_notes="round seven second", round=7
+            task.id, rejection_notes="round seven second", round_number=7
         )
 
         desc = result.description or ""

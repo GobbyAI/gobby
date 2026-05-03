@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createMockFetch, type MockFetchInstance } from '../../test/mocks/fetch'
+import type { StageAdvanceAction } from '../../lib/stageActions'
 
 vi.mock('../useWebSocketEvent', () => ({
   useWebSocketEvent: vi.fn(),
@@ -15,13 +16,12 @@ let mockFetch: MockFetchInstance
 const mockUseWebSocketEvent = vi.mocked(useWebSocketEvent)
 const useTasksSourcePath = join(process.cwd(), 'src/hooks/useTasks.ts')
 
-type StageAdvanceAction = 'start' | 'submit_for_review' | 'approve_review' | 'complete'
-
 type Phase6TasksApi = ReturnType<typeof useTasks> & {
   advanceStage: (
     taskId: string,
     stageName: string,
     action: StageAdvanceAction,
+    notes?: string,
   ) => Promise<unknown>
   failStage: (taskId: string, stageName: string, reason: string) => Promise<unknown>
   startStage: (taskId: string, stageName: string) => Promise<unknown>
@@ -583,6 +583,37 @@ describe('useTasks', () => {
       /import\s+type\s*{[^}]*StageAdvanceAction[^}]*}\s+from\s+['"]\.\.\/lib\/stageActions['"]/,
     )
     expect(source).not.toMatch(/type\s+StageAdvanceAction\s*=/)
+  })
+
+  it('test_reject_review_stage_action_sends_reason_payload', async () => {
+    const stageRequests: Array<{ url: string; init?: RequestInit }> = []
+    installFetchSpy(async (input, init) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) return jsonResponse(TASK_LIST_RESPONSE)
+      if (url.includes('/api/tasks/task-1/stages/build')) {
+        stageRequests.push({ url, init })
+        return jsonResponse(SAMPLE_TASKS[0])
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await act(async () => {
+      await (result.current as Phase6TasksApi).advanceStage(
+        'task-1',
+        'build',
+        'reject_review',
+        'needs tests',
+      )
+    })
+
+    expect(JSON.parse(String(stageRequests[0]?.init?.body))).toEqual({
+      action: 'reject_review',
+      reason: 'needs tests',
+      notes: 'needs tests',
+    })
   })
 
   it('test_advance_stage_422_propagates_typed_error', async () => {

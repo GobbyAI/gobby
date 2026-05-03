@@ -22,14 +22,16 @@ LEGACY_CAP_COLUMNS = (
     "max_review_rounds",
 )
 
+# Intentionally literal: these removed tool names are a regression guard
+# for contract tests that keep them out of the public MCP registry.
 LEGACY_REVIEW_TOOLS = (
     "mark_task_pr_opened",
     "mark_task_merged",
     "mark_task_merge_failed",
     "advance_lifecycle",
-    "mark_task_" + "needs_review",
-    "mark_task_review_" + "approved",
-    "mark_task_review_" + "rejected",
+    "mark_task_needs_review",
+    "mark_task_review_approved",
+    "mark_task_review_rejected",
 )
 
 

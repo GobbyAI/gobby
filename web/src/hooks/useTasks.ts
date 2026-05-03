@@ -439,7 +439,16 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       action: StageAdvanceAction,
       notes?: string,
     ): Promise<void> => {
-      await patchStage(taskId, stageName, notes ? { action, notes } : { action })
+      if (action === 'reject_review' && !notes) {
+        throw new Error('reject_review requires a reason')
+      }
+      let body: Record<string, unknown> = { action }
+      if (action === 'reject_review') {
+        body = { action, reason: notes, notes }
+      } else if (notes) {
+        body = { action, notes }
+      }
+      await patchStage(taskId, stageName, body)
     },
     [patchStage]
   )

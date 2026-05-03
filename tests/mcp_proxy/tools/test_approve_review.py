@@ -183,9 +183,7 @@ class TestMarkTaskReviewApproved:
     ) -> None:
         """Open legacy status is delegated to stage-state validation."""
         mock_task_manager.get_task.return_value = sample_task_open
-        mock_task_manager.approve_review.side_effect = ValueError(
-            "Illegal stage transition"
-        )
+        mock_task_manager.approve_review.side_effect = ValueError("Illegal stage transition")
 
         tool_func = stage_ops_registry._tools["approve_review"].func
         result = tool_func(
@@ -201,9 +199,7 @@ class TestMarkTaskReviewApproved:
         """Closed legacy status is delegated to stage-state validation."""
         closed_task = _task(status="closed")
         mock_task_manager.get_task.return_value = closed_task
-        mock_task_manager.approve_review.side_effect = ValueError(
-            "No current stage"
-        )
+        mock_task_manager.approve_review.side_effect = ValueError("No current stage")
 
         tool_func = stage_ops_registry._tools["approve_review"].func
         result = tool_func(

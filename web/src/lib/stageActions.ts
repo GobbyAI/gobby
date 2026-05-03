@@ -4,7 +4,12 @@ export type StageRowState = StageState5
 
 export type ReviewPolicy = 'none' | 'required' | 'optional'
 
-export type StageAdvanceAction = 'start' | 'submit_for_review' | 'approve_review' | 'complete'
+export type StageAdvanceAction =
+  | 'start'
+  | 'submit_for_review'
+  | 'approve_review'
+  | 'reject_review'
+  | 'complete'
 
 export interface StageStateView {
   name: string
