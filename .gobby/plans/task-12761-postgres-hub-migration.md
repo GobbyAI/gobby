@@ -660,7 +660,7 @@ Register the group in `src/gobby/cli/__init__.py`. The `_active_install_mode()` 
 - 1.2.5 — `get_postgres_status()` returns the structured status payload with stable field names for §6.1 step 6's pre-cutover gate and §6.2's rollback runbook. symbol: `gobby.cli.installers.postgres.get_postgres_status`.
 - 1.2.6 — Docker-mode install copies the full `src/gobby/data/postgres-pgsearch/` asset tree (Dockerfile, `version.json`, `initdb.d/`, `scripts/`) into `~/.gobby/services/postgres-pgsearch/` and emits a `.env` shim at `~/.gobby/services/.env` with `GOBBY_PG_SEARCH_VERSION` and `GOBBY_PG_SEARCH_SHA256` resolved from `version.json`, so a bare `docker compose -f ~/.gobby/services/docker-compose.yml --profile postgres up -d` from the user's install resolves the build context, image args, and initdb scripts without falling back to repo-relative paths. symbol: `gobby.cli.installers.postgres._sync_postgres_pgsearch_assets`.
 
-### 1.3 Extend bootstrap config with `hub_backend`, `database_url`, and `postgres_install_mode` [category: code] (depends: 1.2)
+### 1.3 Extend bootstrap config with `hub_backend`, `database_url`, and `postgres_install_mode` [category: code] (depends: 1.2, 3.3, 3.8)
 `kind: deliverable`
 
 Target: `src/gobby/config/bootstrap.py`, `~/.gobby/bootstrap.yaml` schema, `src/gobby/runner_init.py` (functions `init_hub_database` and `init_storage_and_config`)
@@ -1917,6 +1917,49 @@ Required tests in `tests/storage/test_migration_runner.py`:
 - 3.7.1 — Migration runner uses dollar-quote-aware statement splitting and works against both backends. symbol: `gobby.storage.migrations.MigrationRunner`.
 - 3.7.2 — `_migrate_bookkeeping_table` renames `schema_version` to `schema_migrations` exactly once on existing SQLite databases, preserves all version rows, is idempotent under repeat runs, drops a duplicate identical-rows `schema_version` if both tables exist, and raises `MigrationUnsupportedError` on divergent state. symbol: `gobby.storage.migrations._migrate_bookkeeping_table`. test: `tests/storage/test_migration_runner.py::test_bookkeeping_table_rename_paths`.
 
+### 3.8 Port storage managers off `DatabaseProtocol` onto `HubDatabase` [category: refactor] (depends: 3.7)
+`kind: deliverable`
+
+Target: every module under `src/gobby/storage/` that imports `DatabaseProtocol` or calls `db.execute` / `db.executemany` / `db.fetchone` / `db.fetchall` / `db.safe_update` / `db.connection` directly (roughly the same ~20-module footprint as §3.4).
+
+**Why this exists.** `HubDatabase` (defined in §3.1) is a transaction-only protocol — `transaction()`, `apply_migrations()`, `close()`. The current managers reach the database via `DatabaseProtocol`, which exposes manager-facing convenience methods (`execute`, `executemany`, `fetchone`, `fetchall`, `safe_update`, `connection`). Without this task, swapping `runner_init.py` to construct a `HubDatabase` (§1.3 runtime wiring) would leave every manager calling methods absent from `PostgresHubDatabase` / `SqliteHubDatabase` — runtime AttributeError on the first manager call.
+
+**Approach.** Extend `HubDatabase` (and both adapters) with a manager-facing convenience layer that wraps `transaction()` + `Transaction.execute()` for the simple read/write cases, while leaving `transaction()` available for callers that need explicit boundaries. Specifically:
+
+```python
+# src/gobby/storage/hub/protocol.py — extension to §3.1
+class HubDatabase(Protocol):
+    dialect: ClassVar[str]
+
+    @contextmanager
+    def transaction(self) -> Iterator[Transaction]: ...
+    def apply_migrations(self) -> None: ...
+    def close(self) -> None: ...
+
+    # Manager-facing convenience layer (auto-commit per call; thin wrapper
+    # around transaction()+Transaction.execute()). Both adapters implement
+    # these by acquiring a short-lived transaction internally.
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> None: ...
+    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> None: ...
+    def fetchone(self, sql: str, params: Sequence[Any] = ()) -> Mapping[str, Any] | None: ...
+    def fetchall(self, sql: str, params: Sequence[Any] = ()) -> list[Mapping[str, Any]]: ...
+    def safe_update(self, sql: str, params: Sequence[Any] = ()) -> int: ...  # returns rowcount
+```
+
+`SqliteHubDatabase` and `PostgresHubDatabase` implement each method by entering `self.transaction()`, calling the matching `Transaction` method, and returning the result. The Postgres side routes every call through `_remap_placeholders_to_psycopg` (already specified in §3.3); the SQLite side routes through `_remap_placeholders` (§3.2). `connection` (raw connection access) is **deliberately not preserved** — it leaked SQLite-specific semantics; managers that need explicit transaction boundaries migrate to `with db.transaction() as txn:` instead.
+
+**Scope of the consumer migration.** Sweep `src/gobby/storage/` for every `DatabaseProtocol` import and every `db.connection` / `db.cursor()` reference. Replace `DatabaseProtocol` imports with `HubDatabase`. Replace each `db.connection` / `db.cursor()` block with the equivalent `with db.transaction() as txn: txn.execute(...)` form. Leave `db.execute` / `db.fetchone` / `db.fetchall` / `db.safe_update` calls structurally unchanged — the new convenience layer keeps them working.
+
+Add a lint in `src/gobby/storage/` that fails on any new import of the legacy `DatabaseProtocol` for runtime use (test fixtures may keep referencing it during the transition; the lint scopes to non-test files). Phase 7's SQLite removal deletes `DatabaseProtocol` outright.
+
+**Tests.** A representative manager (e.g., `LocalTaskManager`) is parametrized over `hub_db` and exercised against both backends covering read, write, multi-statement transaction, and a `safe_update` rowcount assertion. The §2.3 dual-backend `hub_db` fixture is the natural test surface.
+
+**Acceptance:**
+
+- 3.8.1 — `HubDatabase` protocol extended with `execute`, `executemany`, `fetchone`, `fetchall`, `safe_update` manager-facing convenience methods; both adapters implement them by routing through `transaction()` + `Transaction.execute()`. symbol: `gobby.storage.hub.protocol.HubDatabase`.
+- 3.8.2 — Every manager under `src/gobby/storage/` that previously imported `DatabaseProtocol` now imports `HubDatabase`; no runtime call site references `db.connection` or `db.cursor()`. file: `src/gobby/storage/`. behavior: "no runtime imports of legacy DatabaseProtocol" enforced by lint.
+- 3.8.3 — A representative manager parametrized through `hub_db` passes against both SQLite and Postgres adapters, covering read / write / multi-statement transaction / `safe_update` rowcount. test: `tests/storage/test_manager_surface_parity.py::test_local_task_manager_dual_backend`.
+
 ## P4 Phase 4: PostgreSQL schema and query parity
 `kind: framing`
 
@@ -1988,7 +2031,7 @@ Foreign keys in the Postgres baseline are declared `DEFERRABLE INITIALLY IMMEDIA
 - 4.2.9 — `schema_migrations` (renamed in §3.7) and `gobby_migration_state` cutover-marker tables ship in the baseline. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 - 4.2.10 — Foreign keys declared `DEFERRABLE INITIALLY IMMEDIATE` so the §5.1 importer can use `SET CONSTRAINTS ALL DEFERRED` for cyclical references like `sessions` ↔ `agent_runs`. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 
-### 4.3 Standardize parameter style on `$1` [category: refactor] (depends: 3.2)
+### 4.3 Standardize parameter style on `$1` [category: refactor] (depends: 3.2, 3.3, 3.8)
 `kind: deliverable`
 
 Target: every `.execute()` / `.executemany()` call site that currently uses `?`
@@ -2179,7 +2222,7 @@ Concrete rewrites in `manager.py`:
 - 4.5.2 — `MemoryManager._fts_search` rewires to consume `KeywordSearchBackend.search` while `_rrf_merge`, `_rrf_scores`, the Qdrant fan-out, and the Neo4j graph-augmented branch (gated by `enable_graph_augmented_search`) keep their current contracts. `rrf_k` and `neo4j_rrf_k` reach `_rrf_scores` unchanged. symbol: `gobby.memory.manager.MemoryManager._fts_search`.
 - 4.5.3 — Cross-backend fused-search parity tests cover keyword-only, vector-only, graph-only, and combined-signal representative queries; top-N ID ordering matches between SQLite and PostgreSQL for each case. file: `tests/storage/test_dialect_parity.py`.
 
-### 4.6 Port remaining SQL (`json_extract`, `datetime`, `strftime`, `julianday`) [category: refactor] (depends: 4.2)
+### 4.6 Port remaining SQL (`json_extract`, `datetime`, `strftime`, `julianday`) [category: refactor] (depends: 4.2, 4.3, 3.8)
 `kind: deliverable`
 
 Target: any manager using these functions; ~17 `json_extract` sites plus sporadic `strftime` / `julianday`
