@@ -273,6 +273,7 @@ def _synthesized_dependencies(
                 raise ManifestSynthesisError(
                     f"empty dependency reference in section {section.section_id!r}"
                 )
+            candidates: tuple[str, ...]
             if raw_ref in deliverable_ids:
                 candidates = (raw_ref,)
             elif _PHASE_REF_RE.match(raw_ref):

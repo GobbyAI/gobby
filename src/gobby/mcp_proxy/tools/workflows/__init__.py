@@ -7,7 +7,7 @@ These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -71,17 +71,17 @@ __all__ = [
 class _InternalToolRegistryInventory(Protocol):
     name: str
 
-    def list_tools(self) -> list[Mapping[str, Any]]:
+    def list_tools(self) -> Sequence[Mapping[str, Any]]:
         """Return registered internal tools."""
         ...
 
 
 class _InternalRegistryInventory(Protocol):
-    def list_servers(self) -> list[Mapping[str, Any]]:
+    def list_servers(self) -> Sequence[Mapping[str, Any]]:
         """Return internal MCP server summaries."""
         ...
 
-    def get_all_registries(self) -> list[_InternalToolRegistryInventory]:
+    def get_all_registries(self) -> Sequence[_InternalToolRegistryInventory]:
         """Return internal MCP registries."""
         ...
 

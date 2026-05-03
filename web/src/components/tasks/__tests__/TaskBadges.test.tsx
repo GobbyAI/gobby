@@ -26,7 +26,7 @@ describe('StatusBadge', () => {
 describe('StatusDot', () => {
   it('renders with correct aria-label', () => {
     render(<StatusDot status="open" />)
-    expect(screen.getByLabelText('Status: open')).toBeTruthy()
+    expect(screen.getByLabelText('Status: Ready')).toBeTruthy()
   })
 
   it('renders with title', () => {

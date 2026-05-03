@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.expansion_runs import ExpansionRun
@@ -42,7 +42,7 @@ def find_existing_expansion_output(
 
     for run in self.run_manager.list_for_task(parent.id, limit=50):
         if _target_task_ids(self, parent, run):
-            return run
+            return cast(ExpansionRun, run)
     return None
 
 
@@ -102,7 +102,7 @@ def _resolve_reset_run(
             raise ValueError(f"Expansion run {run_id} not found")
         if run.parent_task_id != parent.id:
             raise ValueError(f"Expansion run {run_id} does not belong to task {parent.id}")
-        return run
+        return cast(ExpansionRun, run)
     return find_existing_expansion_output(self, parent.id)
 
 

@@ -170,7 +170,9 @@ def _stage_manifest_specs(
 ) -> list[StageManifestSpec]:
     cap_by_stage = _stage_cap_overrides(stage_caps)
     if stages_override is not None:
-        default_stages = [(stage_name, position) for position, stage_name in enumerate(stages_override)]
+        default_stages = [
+            (stage_name, position) for position, stage_name in enumerate(stages_override)
+        ]
     specs: list[StageManifestSpec] = []
     seen_names: set[str] = set()
     for stage_name, position in default_stages:
@@ -309,7 +311,9 @@ class LocalTaskManager:
             for stage_name in stages_override:
                 if self.stages_registry.get(stage_name) is None:
                     raise ValueError(f"Unknown stage '{stage_name}'")
-            default_stages = [(stage_name, position) for position, stage_name in enumerate(stages_override)]
+            default_stages = [
+                (stage_name, position) for position, stage_name in enumerate(stages_override)
+            ]
         else:
             default_stages = self.stages_registry.list_default_stages(task_type)
         specs = _stage_manifest_specs(default_stages, stage_caps)
