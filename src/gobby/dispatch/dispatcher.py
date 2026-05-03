@@ -400,9 +400,31 @@ def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> S
 
 
 def count_active_agents(*args: object, **kwargs: object) -> int:
-    """Return active dispatcher-controlled agents; integration wiring lands with cron."""
-    _ = args, kwargs
-    return 0
+    """Return pending/running agent runs, optionally scoped by parent-session project."""
+    db = args[0] if args else kwargs.get("db")
+    if db is None:
+        return 0
+    project_id = kwargs.get("project_id")
+    if project_id:
+        row = cast(DatabaseProtocol, db).fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM agent_runs ar
+            JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
+            WHERE ar.status IN ('pending', 'running')
+              AND parent_s.project_id = ?
+            """,
+            (project_id,),
+        )
+    else:
+        row = cast(DatabaseProtocol, db).fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM agent_runs
+            WHERE status IN ('pending', 'running')
+            """
+        )
+    return int(row["count"]) if row else 0
 
 
 def spawn_agent(

@@ -72,7 +72,7 @@ def _register_stage_tool(
     description: str,
     properties: dict[str, Any],
     required: list[str],
-    func: Callable[..., dict[str, Any]],
+    func: Callable[..., Any],
 ) -> None:
     registry.register(
         name=name,
@@ -294,9 +294,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "escalated": True,
                 "task": {"id": getattr(task, "id", resolved_id)},
                 "stage": (
-                    stage_state_operation_view(current_stage)
-                    if current_stage is not None
-                    else None
+                    stage_state_operation_view(current_stage) if current_stage is not None else None
                 ),
             }
         return _operation_response(resolved_id, stage)
@@ -435,6 +433,47 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         },
         required=["task_id"],
         func=record_merge_result,
+    )
+
+    async def close_linked_github_issue(
+        task_id: str,
+        merge_sha: str | None = None,
+    ) -> dict[str, Any]:
+        """Comment, label, and close a GitHub issue linked to a merged task."""
+        resolved_id = _resolve_task(ctx, task_id)
+        task = ctx.task_manager.get_task(resolved_id)
+        if not task.github_repo or not task.github_issue_number:
+            return {"ok": True, "task_id": resolved_id, "closed": False, "reason": "unlinked"}
+
+        mcp_manager = getattr(ctx, "mcp_manager", None)
+        if mcp_manager is None:
+            return {
+                "ok": False,
+                "task_id": resolved_id,
+                "closed": False,
+                "reason": "github_mcp_unavailable",
+            }
+
+        from gobby.github_triage.service import GitHubIssueTriageService
+
+        service = GitHubIssueTriageService(
+            db=ctx.task_manager.db,
+            mcp_manager=mcp_manager,
+            task_manager=ctx.task_manager,
+        )
+        closed = await service.close_linked_issue_after_merge(resolved_id, merge_sha)
+        return {"ok": True, "task_id": resolved_id, "closed": closed}
+
+    _register_stage_tool(
+        registry,
+        name="close_linked_github_issue",
+        description="Comment, label, and close the GitHub issue linked to a merged task.",
+        properties={
+            "task_id": {"type": "string"},
+            "merge_sha": {"type": ["string", "null"]},
+        },
+        required=["task_id"],
+        func=close_linked_github_issue,
     )
 
     return registry

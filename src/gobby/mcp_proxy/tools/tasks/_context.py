@@ -5,7 +5,7 @@ used across task tool modules.
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
@@ -42,6 +42,7 @@ class RegistryContext:
     config: "DaemonConfig | None" = None
     llm_service: "LLMService | None" = None
     completion_registry: "CompletionEventRegistry | None" = None
+    mcp_manager: Any | None = None
 
     # Derived managers (initialized in __post_init__)
     dep_manager: TaskDependencyManager = field(init=False)

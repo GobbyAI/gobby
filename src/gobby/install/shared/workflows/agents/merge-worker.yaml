@@ -43,6 +43,9 @@ instructions: |
   LIFECYCLE MODEL:
   - On successful merge, call gobby-tasks-ops:record_merge_result with the
     task id assigned for the merged work and merge_sha before end_agent_run.
+  - After record_merge_result succeeds, call
+    gobby-tasks-ops:close_linked_github_issue with the same task id and
+    merge_sha. It is idempotent and skips tasks without GitHub issue fields.
   - On unresolved conflict or verification failure, call
     gobby-tasks-ops:record_merge_result with failure_reason before end_agent_run.
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
@@ -111,6 +114,7 @@ steps:
       - "gobby-merge:merge_apply"
       - "gobby-merge:merge_abort"
       - "gobby-tasks-ops:record_merge_result"
+      - "gobby-tasks-ops:close_linked_github_issue"
       - "gobby-agents:end_agent_run"
     on_mcp_success:
       - server: gobby-merge

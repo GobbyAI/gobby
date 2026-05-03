@@ -59,6 +59,7 @@ def create_task_ops_registry(
     config: "DaemonConfig | None" = None,
     llm_service: "LLMService | None" = None,
     completion_registry: "CompletionEventRegistry | None" = None,
+    mcp_manager: Any | None = None,
 ) -> InternalToolRegistry:
     """Create a task ops tool registry with cold-path task tools.
 
@@ -79,6 +80,7 @@ def create_task_ops_registry(
         config=config,
         llm_service=llm_service,
         completion_registry=completion_registry,
+        mcp_manager=mcp_manager,
     )
 
     registry = _TaskOpsToolRegistry(

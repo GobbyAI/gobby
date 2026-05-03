@@ -67,6 +67,7 @@ def setup_internal_registries(
     completion_registry: CompletionEventRegistry | None = None,
     agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
     cron_scheduler: Any | None = None,
+    mcp_manager: Any | None = None,
     transcript_reader: Any | None = None,
     communications_manager: Any | None = None,
     web_chat_session_registry: Any | None = None,
@@ -143,6 +144,7 @@ def setup_internal_registries(
                 config=_config,
                 llm_service=llm_service,
                 completion_registry=completion_registry,
+                mcp_manager=mcp_manager,
             )
             manager.add_registry(ops_registry)
             logger.debug("Tasks-ops registry initialized")

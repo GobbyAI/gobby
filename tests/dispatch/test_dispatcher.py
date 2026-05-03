@@ -119,6 +119,39 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
     assert not _crud.is_blocked_by_deps(candidates[0])
 
 
+def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
+    from gobby.dispatch.dispatcher import count_active_agents
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+
+    sessions = SessionManager(temp_db)
+    agents = LocalAgentRunManager(temp_db)
+    other_project = LocalProjectManager(temp_db).create(name="other-project")
+    parent_a = sessions.register(
+        external_id="parent-a",
+        machine_id="machine-1",
+        source="test",
+        project_id=sample_project["id"],
+    )
+    parent_b = sessions.register(
+        external_id="parent-b",
+        machine_id="machine-1",
+        source="test",
+        project_id=other_project.id,
+    )
+    run_a = agents.create(parent_session_id=parent_a.id, provider="codex", prompt="a")
+    run_b = agents.create(parent_session_id=parent_b.id, provider="codex", prompt="b")
+    run_done = agents.create(parent_session_id=parent_a.id, provider="codex", prompt="done")
+    agents.start(run_a.id)
+    agents.start(run_b.id)
+    agents.complete(run_done.id, result="done")
+
+    assert count_active_agents(temp_db) == 2
+    assert count_active_agents(temp_db, project_id=sample_project["id"]) == 1
+    assert count_active_agents(temp_db, project_id=other_project.id) == 1
+
+
 async def test_max_active_agents_cap(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

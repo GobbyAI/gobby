@@ -67,6 +67,14 @@ def _real_context(temp_db) -> SimpleNamespace:
     )
 
 
+def _real_context_with_github(temp_db, github) -> SimpleNamespace:
+    return SimpleNamespace(
+        task_manager=LocalTaskManager(temp_db),
+        resolve_session_id=lambda session_ref: session_ref,
+        mcp_manager=github,
+    )
+
+
 def _artifact_row(temp_db, task_id: str) -> dict[str, object]:
     row = temp_db.fetchone(
         """
@@ -226,6 +234,45 @@ def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) 
     assert kwargs["reason"] == "merge conflict"
     assert kwargs["by_session_id"] is None
     assert kwargs.get("needs_human", False) is False
+
+
+@pytest.mark.asyncio
+async def test_close_linked_github_issue_tool_comments_labels_and_closes(
+    temp_db,
+    sample_project,
+) -> None:
+    class FakeGitHub:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def call_tool(self, *, server_name: str, tool_name: str, arguments: dict):
+            assert server_name == "github"
+            self.calls.append((tool_name, arguments))
+            return {}
+
+    task = create_task(
+        temp_db,
+        sample_project,
+        task_type="feature",
+        github_repo="owner/repo",
+        github_issue_number=11,
+    )
+    github = FakeGitHub()
+    tool = stage_ops.create_stage_ops_registry(_real_context_with_github(temp_db, github)).get_tool(
+        "close_linked_github_issue"
+    )
+    assert tool is not None
+
+    result = await tool(task_id=task.id, merge_sha="abc123")
+
+    assert result == {"ok": True, "task_id": task.id, "closed": True}
+    assert [name for name, _args in github.calls] == [
+        "add_issue_comment",
+        "add_labels_to_issue",
+        "update_issue",
+    ]
+    assert github.calls[1][1]["labels"] == ["gobby:resolved"]
+    assert github.calls[2][1]["state"] == "closed"
 
 
 def test_failure_path(temp_db, sample_project) -> None:

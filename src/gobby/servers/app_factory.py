@@ -510,6 +510,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_configuration_router,
         create_cron_router,
         create_files_router,
+        create_github_triage_router,
         create_hooks_router,
         create_mcp_router,
         create_memory_router,
@@ -548,6 +549,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_webhooks_router())
     app.include_router(create_pipelines_router(server))
     app.include_router(create_files_router(server))
+    app.include_router(create_github_triage_router(server))
     app.include_router(create_projects_router(server))
     app.include_router(create_providers_router(server))
     app.include_router(create_skills_router(server))

@@ -776,6 +776,25 @@ def init_orchestration(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.error(f"Failed to register Linear sync handlers: {e}")
 
+        # Register GitHub issue triage reconciliation handlers.
+        try:
+            from gobby.github_triage.cron import register_github_triage_cron
+            from gobby.storage.projects import LocalProjectManager
+
+            registered = register_github_triage_cron(
+                cron_storage=runner.cron_storage,
+                cron_executor=cron_executor,
+                db=runner.database,
+                mcp_manager=runner.mcp_proxy,
+                task_manager=runner.task_manager,
+                project_manager=LocalProjectManager(runner.database),
+                memory_manager=runner.memory_manager,
+                secret_store=runner.secret_store,
+            )
+            logger.debug("GitHub issue triage cron handlers registered: %s", registered)
+        except Exception as e:
+            logger.error(f"Failed to register GitHub issue triage cron handlers: {e}")
+
         runner.cron_scheduler = CronScheduler(
             storage=runner.cron_storage,
             executor=cron_executor,

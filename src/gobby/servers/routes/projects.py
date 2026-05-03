@@ -14,6 +14,7 @@ from gobby.servers.tool_approvals import (
     migrate_project_approval_rules,
     save_project_approval_rules,
 )
+from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.projects import SYSTEM_PROJECT_NAMES, LocalProjectManager, Project
 
 if TYPE_CHECKING:
@@ -33,6 +34,16 @@ class ProjectUpdate(BaseModel):
     github_repo: str | None = None
     linear_team_id: str | None = None
     approval_rules: list[str] | None = None
+
+
+class GitHubTriageConfigUpdate(BaseModel):
+    """Request body for project GitHub triage config."""
+
+    enabled: bool | None = None
+    webhook_enabled: bool | None = None
+    repositories: list[str] | None = None
+    reconcile_interval_seconds: int | None = None
+    webhook_secret_ref: str | None = None
 
 
 def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
@@ -161,6 +172,52 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             clear_project_approval_rules(original_repo_path)
 
         return _project_to_response(server, updated)
+
+    @router.get("/{project_id}/github-triage")
+    async def get_github_triage_config(project_id: str) -> dict[str, Any]:
+        """Get GitHub issue triage configuration for a project."""
+        pm = _get_project_manager(server)
+        project = pm.get(project_id)
+        if not project or project.deleted_at:
+            raise HTTPException(404, "Project not found")
+        config = GitHubTriageStore(server.services.database).get_config(
+            project_id,
+            fallback_repo=project.github_repo,
+        )
+        return config.to_dict()
+
+    @router.put("/{project_id}/github-triage")
+    async def update_github_triage_config(
+        project_id: str,
+        body: GitHubTriageConfigUpdate,
+    ) -> dict[str, Any]:
+        """Update GitHub issue triage configuration for a project."""
+        pm = _get_project_manager(server)
+        project = pm.get(project_id)
+        if not project or project.deleted_at:
+            raise HTTPException(404, "Project not found")
+
+        store = GitHubTriageStore(server.services.database)
+        current = store.get_config(project_id, fallback_repo=project.github_repo)
+        values = body.model_dump(exclude_unset=True)
+        interval = values.get(
+            "reconcile_interval_seconds",
+            current.reconcile_interval_seconds,
+        )
+        if interval is not None and interval <= 0:
+            raise HTTPException(400, "reconcile_interval_seconds must be greater than 0")
+
+        updated = store.upsert_config(
+            GitHubTriageConfig(
+                project_id=project_id,
+                enabled=values.get("enabled", current.enabled),
+                webhook_enabled=values.get("webhook_enabled", current.webhook_enabled),
+                repositories=tuple(values.get("repositories", current.repositories)),
+                reconcile_interval_seconds=interval,
+                webhook_secret_ref=values.get("webhook_secret_ref", current.webhook_secret_ref),
+            )
+        )
+        return updated.to_dict()
 
     @router.delete("/{project_id}")
     async def delete_project(project_id: str) -> dict[str, str]:

@@ -78,6 +78,10 @@ instructions: |
     scheduling fresh work in the same worktree.
   - Report: record the campaign result with
     gobby-tasks-ops:record_merge_result.
+  - After a successful merge result is recorded, call
+    gobby-tasks-ops:close_linked_github_issue with the assigned task id and
+    merge_sha. The tool comments on the linked issue, applies `gobby:resolved`,
+    and closes it when the task has github_repo and github_issue_number.
   - Record a clean merge, record a failed merge with failure_reason, or
     escalate_task when human intervention is required. Terminate only by
     calling end_agent_run.
@@ -225,6 +229,7 @@ steps:
       - "gobby-tasks-ops:record_pr_opened"
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks-ops:record_pr_verdict"
+      - "gobby-tasks-ops:close_linked_github_issue"
       - "gobby-worktrees:push_branch"
       - "gobby-worktrees:merge_worktree"
       - "gobby-merge:merge_start"
@@ -266,11 +271,18 @@ steps:
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
       - "gobby-tasks-ops:record_merge_result"
+      - "gobby-tasks-ops:close_linked_github_issue"
       - "gobby-tasks:escalate_task"
       - "gobby-tasks:append_description_section"
     on_mcp_success:
       - server: gobby-tasks-ops
         tool: record_merge_result
+        when: "tool_input.failure_reason"
+        action: set_variable
+        variable: report_complete
+        value: true
+      - server: gobby-tasks-ops
+        tool: close_linked_github_issue
         action: set_variable
         variable: report_complete
         value: true

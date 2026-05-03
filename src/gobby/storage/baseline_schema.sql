@@ -844,6 +844,73 @@ CREATE INDEX idx_cron_runs_triggered ON cron_runs(triggered_at);
 
 CREATE INDEX idx_cron_runs_status ON cron_runs(status);
 
+CREATE TABLE project_github_triage_configs (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    webhook_enabled INTEGER NOT NULL DEFAULT 0 CHECK (webhook_enabled IN (0, 1)),
+    repositories_json TEXT NOT NULL DEFAULT '[]',
+    reconcile_interval_seconds INTEGER NOT NULL DEFAULT 3600
+        CHECK (reconcile_interval_seconds > 0),
+    webhook_secret_ref TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE gh_triage_deliveries (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    delivery_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    action TEXT,
+    repository TEXT,
+    issue_number INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'processed', 'ignored', 'duplicate', 'error')),
+    payload_hash TEXT NOT NULL,
+    headers_json TEXT NOT NULL DEFAULT '{}',
+    raw_body TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    received_at TEXT NOT NULL DEFAULT (datetime('now')),
+    processed_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, delivery_id)
+);
+
+CREATE INDEX idx_gh_triage_deliveries_project_status
+    ON gh_triage_deliveries(project_id, status);
+
+CREATE INDEX idx_gh_triage_deliveries_issue
+    ON gh_triage_deliveries(project_id, repository, issue_number);
+
+CREATE TABLE gh_issues_triaged (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    repo TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    issue_url TEXT,
+    issue_state TEXT,
+    labels_json TEXT NOT NULL DEFAULT '[]',
+    issue_updated_at TEXT,
+    content_hash TEXT NOT NULL,
+    verdict TEXT NOT NULL
+        CHECK (verdict IN ('implement', 'skip', 'escalate', 'dedup')),
+    decision_json TEXT NOT NULL DEFAULT '{}',
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    vector_point_id TEXT,
+    dedup_issue_key TEXT,
+    source TEXT NOT NULL,
+    last_triaged_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, repo, issue_number)
+);
+
+CREATE INDEX idx_gh_issues_triaged_project_hash
+    ON gh_issues_triaged(project_id, content_hash);
+
+CREATE INDEX idx_gh_issues_triaged_task
+    ON gh_issues_triaged(task_id);
+
 CREATE TABLE pipeline_executions (
     id TEXT PRIMARY KEY,
     pipeline_name TEXT NOT NULL,

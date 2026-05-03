@@ -181,6 +181,7 @@ class HTTPServer:
             completion_registry=services.completion_registry,
             agent_lifecycle_monitor=services.agent_lifecycle_monitor,
             cron_scheduler=services.cron_scheduler,
+            mcp_manager=services.mcp_manager,
             transcript_reader=services.transcript_reader,
             communications_manager=services.communications_manager,
             web_chat_session_registry=services.web_chat_session_registry,
