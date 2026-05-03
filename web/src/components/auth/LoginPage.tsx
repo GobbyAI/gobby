@@ -112,7 +112,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   title: {
     margin: 0,
-    fontSize: '1.5rem',
+    fontSize: 'var(--text-3xl)',
     fontWeight: 700,
     color: 'var(--text-primary)',
   },
