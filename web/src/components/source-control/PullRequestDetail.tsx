@@ -75,6 +75,7 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
                   <span
                     key={l.name}
                     className="sc-pr-detail__label"
+                    // Vendor passthrough: l.color is the user-chosen GitHub label hex; preserved literally to honor repo identity.
                     style={{ borderColor: `#${l.color}` }}
                   >
                     {l.name}

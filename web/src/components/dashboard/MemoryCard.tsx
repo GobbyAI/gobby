@@ -12,13 +12,13 @@ import {
 } from './dashboardStyles'
 
 const TYPE_COLORS: Record<string, { label: string; color: string }> = {
-  fact: { label: 'Facts', color: '#3b82f6' },
-  preference: { label: 'Preferences', color: '#8b5cf6' },
-  pattern: { label: 'Patterns', color: '#f59e0b' },
-  context: { label: 'Context', color: '#10b981' },
+  fact: { label: 'Facts', color: 'var(--color-info)' },
+  preference: { label: 'Preferences', color: 'var(--accent)' },
+  pattern: { label: 'Patterns', color: 'var(--color-warning-foreground)' },
+  context: { label: 'Context', color: 'var(--color-success-foreground)' },
 }
 
-const FALLBACK_COLOR = '#737373'
+const FALLBACK_COLOR = 'var(--text-muted)'
 const MAX_CATEGORIES = 5
 
 const SIZE = 120

@@ -18,12 +18,12 @@ type TaskStats = {
 }
 
 const PIE_SEGMENTS: { key: keyof TaskStats; label: string; color: string }[] = [
-  { key: 'ready', label: 'Ready', color: '#8b5cf6' },
-  { key: 'in_progress', label: 'In Progress', color: '#f59e0b' },
-  { key: 'blocked', label: 'Blocked', color: '#ef4444' },
-  { key: 'needs_review', label: 'Needs Review', color: '#06b6d4' },
-  { key: 'review_approved', label: 'Approved', color: '#10b981' },
-  { key: 'escalated', label: 'Escalated', color: '#f97316' },
+  { key: 'ready', label: 'Ready', color: 'var(--accent)' },
+  { key: 'in_progress', label: 'In Progress', color: 'var(--color-warning-foreground)' },
+  { key: 'blocked', label: 'Blocked', color: 'var(--color-error)' },
+  { key: 'needs_review', label: 'Needs Review', color: 'var(--color-review)' },
+  { key: 'review_approved', label: 'Approved', color: 'var(--color-success-foreground)' },
+  { key: 'escalated', label: 'Escalated', color: 'var(--color-destructive-foreground)' },
 ]
 
 const SIZE = 120

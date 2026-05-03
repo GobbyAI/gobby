@@ -17,10 +17,10 @@ interface Props {
 }
 
 const SEGMENTS: readonly { key: SegmentKey; label: string; color: string }[] = [
-  { key: 'running', label: 'Running', color: '#3b82f6' },
-  { key: 'waiting_approval', label: 'Waiting', color: '#f59e0b' },
-  { key: 'completed', label: 'Completed', color: '#22c55e' },
-  { key: 'failed', label: 'Failed', color: '#ef4444' },
+  { key: 'running', label: 'Running', color: 'var(--color-info)' },
+  { key: 'waiting_approval', label: 'Waiting', color: 'var(--color-warning-foreground)' },
+  { key: 'completed', label: 'Completed', color: 'var(--color-success-foreground)' },
+  { key: 'failed', label: 'Failed', color: 'var(--color-error)' },
 ]
 
 const RADIUS = 36
