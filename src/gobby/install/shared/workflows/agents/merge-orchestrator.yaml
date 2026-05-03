@@ -1,7 +1,9 @@
 name: merge-orchestrator
 description: |
-  Bounded merge campaign coordinator. Surveys unmerged worktrees, plans an
-  order, dispatches one merge-worker per step, verifies, and reports.
+  Bounded PR and merge delivery coordinator. In the pr stage it probes
+  branch protection, opens or updates GitHub PRs, records PR gate state,
+  and submits the stage verdict. In the merge stage it either lands the PR
+  through GitHub or runs the existing direct merge-worker campaign.
   Operates within a single coordinating task — does not spawn cross-task
   campaigns. Loads the merge-expert skill on start.
 
@@ -21,9 +23,10 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until the campaign report is written.
   - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
 
-  You are the merge orchestrator. Your assigned campaign task is in your
-  session variables as assigned_task_id. The campaign task description lists
-  the worktrees (or selection criteria) and the target branch.
+  You are the delivery orchestrator for both `pr` and `merge` stages. Your
+  assigned task is in assigned_task_id and the active stage is in stage_name.
+  The task description lists the worktrees (or selection criteria) and the
+  target branch.
 
   METHODOLOGY:
   After claiming the task, your first action MUST be to load the
@@ -31,11 +34,39 @@ instructions: |
   then continue. Follow that skill exactly: Survey -> Plan -> Execute ->
   Recover -> Verify -> Output (campaign report).
 
-  WORKFLOW:
+  PR STAGE WORKFLOW:
+  - Claim the assigned task and load merge-expert.
+  - Survey the relevant worktrees and target branch.
+  - For each delivery unit, call gobby-merge:probe_branch_protection and
+    record the result with gobby-tasks-ops:record_pr_state.
+  - If a unit does not require a PR, record pr_required=false and pr_state
+    "direct_merge"; then submit the pr stage for review and call
+    record_pr_verdict(verdict="approve"). The merge stage will run the
+    direct-merge path.
+  - If a unit requires a PR, push the source branch with
+    gobby-worktrees:push_branch, create or reuse a GitHub PR, record it via
+    record_pr_opened, and post a COMMENT review summarizing the holistic QA
+    notes. Do not APPROVE the PR as the bot.
+  - Poll github:get_pull_request_status, github:get_pull_request, and
+    github:get_pull_request_reviews. Record snapshots with record_pr_state
+    and end the run while waiting; dispatcher heartbeat will respawn you.
+  - If GitHub reports conflicts, call github:update_pull_request_branch
+    first. If that fails, perform one local AI-assisted update using the
+    existing merge tools, push with --force-with-lease, and record
+    local_update_attempts=1. Escalate on a second conflict event.
+  - When CI/review/mergeability are ready, submit the pr stage for review
+    and call record_pr_verdict(verdict="approve", ...). The dispatcher then
+    advances to merge.
+
+  MERGE STAGE WORKFLOW:
   - Claim the assigned campaign task and read its description.
   - Load the merge-expert skill before doing anything else.
-  - Survey: call analyze_merge_landscape, predict_conflicts, and
-    inspect_merge_state for any worktree with non-null merge_state.
+  - Read gobby-tasks-ops:get_delivery_state. If PR URLs are present and
+    ready, land them with github:merge_pull_request using the recorded
+    merge_strategy (default squash), then call record_merge_result.
+  - If delivery state says no PR is required, run the existing direct merge
+    campaign: analyze_merge_landscape, predict_conflicts, and inspect
+    merge_state for any worktree with non-null merge_state.
   - Plan: emit an ordered merge_plan into your session (variable
     merge_plan). Each step picks an action: merge | cherry-pick |
     merge_subset | abort.
@@ -52,8 +83,8 @@ instructions: |
     calling end_agent_run.
 
   CRITICAL RULES:
-  - Do NOT call merge_resolve directly. Workers handle resolution; the
-    orchestrator only routes.
+  - Do NOT call GitHub create_pull_request_review with event=APPROVE. Use
+    COMMENT only; external review remains the approval gate.
   - Do NOT close_task on the campaign task. Use the review flow.
   - Do NOT edit code. Survey + dispatch + verify only.
   - Do NOT call kill_agent on yourself; use end_agent_run in terminate.
@@ -143,9 +174,11 @@ steps:
       - "gobby-merge:analyze_merge_landscape"
       - "gobby-merge:predict_conflicts"
       - "gobby-merge:inspect_merge_state"
+      - "gobby-merge:probe_branch_protection"
       - "gobby-worktrees:list_worktrees"
       - "gobby-worktrees:get_worktree"
       - "gobby-tasks:get_task"
+      - "gobby-tasks-ops:get_delivery_state"
     on_mcp_success:
       - server: gobby-merge
         tool: predict_conflicts
@@ -178,22 +211,37 @@ steps:
         when: "vars.merge_plan"
 
   - name: execute
-    description: "Dispatch merge-worker per step, verify, and record outcomes"
+    description: "Execute PR gating or direct merge steps"
     status_message: |
-      For each step in merge_plan: pre-flight inspect_merge_state, dispatch
-      merge-worker via spawn_agent (or dispatch_batch for parallel-safe
-      steps), wait, then run verify_in_worktree as the gate. Use final=true
-      only on the last campaign-level verification, then recover orphaned
-      state via merge_abort before fresh dispatches. Append a task_lifecycle_event
-      per step.
+      If stage_name is pr, push branches, create/reuse PRs, post COMMENT
+      review summaries, poll CI/review/mergeability, update stale PRs once,
+      record delivery state, and submit/approve the pr stage only when gates
+      are ready. If stage_name is merge, land ready PRs via GitHub or run the
+      direct merge-worker campaign, then verify before reporting.
     allowed_tools: "all"
+    allowed_mcp_tools:
+      - "gobby-tasks-ops:get_delivery_state"
+      - "gobby-tasks-ops:record_pr_state"
+      - "gobby-tasks-ops:record_pr_opened"
+      - "gobby-tasks-ops:submit_for_review"
+      - "gobby-tasks-ops:record_pr_verdict"
+      - "gobby-worktrees:push_branch"
+      - "gobby-worktrees:merge_worktree"
+      - "gobby-merge:merge_start"
+      - "gobby-merge:merge_status"
+      - "gobby-merge:merge_resolve"
+      - "gobby-merge:merge_apply"
+      - "github:create_pull_request"
+      - "github:create_pull_request_review"
+      - "github:get_pull_request"
+      - "github:get_pull_request_status"
+      - "github:get_pull_request_reviews"
+      - "github:update_pull_request_branch"
+      - "github:merge_pull_request"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:reopen_task"
-      - "gobby-tasks-ops:submit_for_review"
       - "gobby-agents:kill_agent"
-      - "gobby-agents:end_agent_run"
-      - "gobby-merge:merge_resolve"
     on_mcp_success:
       - server: gobby-merge
         tool: verify_in_worktree

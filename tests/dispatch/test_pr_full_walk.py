@@ -72,7 +72,7 @@ def test_pr_lifecycle_with_rejection_then_approval(temp_db, sample_project) -> N
     manager.submit_for_review(task.id, "pr", by_session_id="operator")
     record_pr_verdict(
         task_id=task.id,
-        verdict="rejected",
+        verdict="request_changes",
         findings="missing release notes",
     )
 
@@ -85,7 +85,7 @@ def test_pr_lifecycle_with_rejection_then_approval(temp_db, sample_project) -> N
     manager.submit_for_review(task.id, "pr", by_session_id="operator")
     record_pr_verdict(
         task_id=task.id,
-        verdict="approved",
+        verdict="approve",
         findings="approved on second pass",
     )
     assert stage_row(temp_db, task.id, "pr")["state"] == "review_approved"

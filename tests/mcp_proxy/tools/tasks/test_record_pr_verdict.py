@@ -35,6 +35,7 @@ def _context() -> SimpleNamespace:
     stage_states = SimpleNamespace(
         approve_review=Mock(return_value=SimpleNamespace(stage_name="pr", state="review_approved")),
         reject_review=Mock(return_value=SimpleNamespace(stage_name="pr", state="ready")),
+        get=Mock(return_value=SimpleNamespace(stage_name="pr", state="needs_review")),
         complete_stage=Mock(side_effect=AssertionError("record_pr_verdict must not advance")),
     )
     return SimpleNamespace(
@@ -42,6 +43,7 @@ def _context() -> SimpleNamespace:
             db=db,
             stage_states=stage_states,
             get_task=Mock(return_value=SimpleNamespace(id="task-1")),
+            escalate_task=Mock(return_value=SimpleNamespace(id="task-1")),
         ),
         resolve_session_id=lambda session_ref: session_ref,
     )
@@ -96,7 +98,7 @@ def test_approved_calls_approve_review_no_advance(monkeypatch: pytest.MonkeyPatc
 
     result = _record_pr_verdict(ctx)(
         task_id="task-1",
-        verdict="approved",
+        verdict="approve",
         findings="looks good",
         report_ref="pr-review.md",
     )
@@ -117,21 +119,22 @@ def test_approved_writes_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _record_pr_verdict(ctx)(
         task_id="task-1",
-        verdict="approved",
+        verdict="approve",
         findings="looks good",
         report_ref="pr-review.md",
     )
 
     sql, params = ctx.task_manager.db.executed[0]
-    payload = json.loads(params[1])
+    payload = json.loads(params[3])
+    assert "task_delivery_campaigns" in sql
     assert "structured_pr_verdict" in sql
-    assert "pr_review_report" in sql
+    assert "pr_report_ref" in sql
     assert payload == {
-        "verdict": "approved",
+        "verdict": "approve",
         "findings": "looks good",
         "report_ref": "pr-review.md",
     }
-    assert params[2] == "pr-review.md"
+    assert params[4] == "pr-review.md"
 
 
 def _assert_reject_review_for_verdict(
@@ -160,11 +163,26 @@ def _assert_reject_review_for_verdict(
 
 
 def test_rejected_calls_reject_review(monkeypatch: pytest.MonkeyPatch) -> None:
-    _assert_reject_review_for_verdict(monkeypatch, "rejected")
+    _assert_reject_review_for_verdict(monkeypatch, "request_changes")
 
 
-def test_needs_changes_calls_reject_review(monkeypatch: pytest.MonkeyPatch) -> None:
-    _assert_reject_review_for_verdict(monkeypatch, "needs_changes")
+def test_needs_discussion_escalates(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_stage_view(monkeypatch)
+    ctx = _context()
+
+    result = _record_pr_verdict(ctx)(
+        task_id="task-1",
+        verdict="needs_discussion",
+        findings="human decision required",
+    )
+
+    assert result["escalated"] is True
+    ctx.task_manager.escalate_task.assert_called_once_with(
+        "task-1",
+        reason="needs_human:pr_delivery:human decision required",
+    )
+    ctx.task_manager.stage_states.approve_review.assert_not_called()
+    ctx.task_manager.stage_states.reject_review.assert_not_called()
 
 
 def test_rejected_under_cap_returns_to_ready(temp_db, sample_project) -> None:
@@ -172,7 +190,7 @@ def test_rejected_under_cap_returns_to_ready(temp_db, sample_project) -> None:
 
     result = _record_pr_verdict(_real_context(temp_db))(
         task_id=task.id,
-        verdict="rejected",
+        verdict="request_changes",
         findings="needs another pass",
     )
 
@@ -190,7 +208,7 @@ def test_rejected_over_cap_escalates(temp_db, sample_project) -> None:
 
     _record_pr_verdict(_real_context(temp_db))(
         task_id=task.id,
-        verdict="rejected",
+        verdict="request_changes",
         findings="still blocked",
     )
 
@@ -212,7 +230,7 @@ def test_per_stage_max_review_rounds_override_works(temp_db, sample_project) -> 
 
     _record_pr_verdict(_real_context(temp_db))(
         task_id=task.id,
-        verdict="needs_changes",
+        verdict="request_changes",
         findings="second failed review",
     )
 
@@ -240,8 +258,8 @@ register_contract_tests(
         "test_approved_post_state_is_review_approved": (
             "approved PR verdict leaves the pr row in review_approved"
         ),
-        "test_needs_changes_treated_as_rejected": (
-            "needs_changes PR verdict is equivalent to reject_review"
+        "test_request_changes_treated_as_rejected": (
+            "request_changes PR verdict is equivalent to reject_review"
         ),
         "test_raises_when_pr_not_in_needs_review": (
             "record_pr_verdict raises if the pr row is not needs_review"

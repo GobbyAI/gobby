@@ -64,27 +64,31 @@ def test_pr_work_escalates_when_no_agent() -> None:
     assert action.reason == "pr_no_agent"
 
 
-def test_pr_work_spawns_when_pr_agent_registered(
+def test_pr_work_spawns_when_merge_orchestrator_registered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setitem(rules.PROMPT_BUILDERS, "pr-agent", lambda task, context: "open PR")
+    monkeypatch.setitem(
+        rules.PROMPT_BUILDERS,
+        "merge-orchestrator",
+        lambda task, context: "open PR",
+    )
 
     action = rules.pr_work_rule(
         _task(_stage("pr", "in_progress")),
-        _context(agents={"pr-agent": {"enabled": True}}),
+        _context(agents={"merge-orchestrator": {"enabled": True}}),
     )
 
     assert isinstance(action, SpawnAgentAction)
     assert action.task_id == "task-pr"
     assert action.task_ref == "#99"
-    assert action.agent_slug == "pr-agent"
+    assert action.agent_slug == "merge-orchestrator"
     assert action.initial_variables == {"stage_name": "pr", "stage_state": "in_progress"}
 
 
-def test_pr_work_escalates_when_pr_agent_disabled() -> None:
+def test_pr_work_escalates_when_merge_orchestrator_disabled() -> None:
     action = rules.pr_work_rule(
         _task(_stage("pr", "in_progress")),
-        _context(agents={"pr-agent": {"enabled": False}}),
+        _context(agents={"merge-orchestrator": {"enabled": False}}),
     )
 
     assert isinstance(action, EscalateAction)

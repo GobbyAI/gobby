@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import BASELINE_VERSION, get_current_version, run_migrations
+from gobby.storage.migrations import get_current_version, latest_known_version, run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -78,8 +78,8 @@ def test_fresh_database_gets_lifecycle_dispatch_schema(tmp_path: Path) -> None:
 
     applied = run_migrations(db)
 
-    assert applied == 1
-    assert get_current_version(db) == BASELINE_VERSION
+    assert applied == 2
+    assert get_current_version(db) == latest_known_version()
     _assert_lifecycle_schema(db)
 
 
@@ -90,5 +90,5 @@ def test_existing_baseline_database_keeps_lifecycle_dispatch_schema(tmp_path: Pa
     applied = run_migrations(db)
 
     assert applied == 0
-    assert get_current_version(db) == BASELINE_VERSION
+    assert get_current_version(db) == latest_known_version()
     _assert_lifecycle_schema(db)

@@ -18,7 +18,7 @@ _STAGE_AGENTS = {
     "test_arch": "test-architect",
     "development": "backend-developer",
     "holistic_qa": "holistic-reviewer",
-    "pr": "pr-agent",
+    "pr": "merge-orchestrator",
     "merge": "merge-orchestrator",
 }
 
@@ -304,21 +304,21 @@ def test_holistic_rule_fires_when_stage_is_in_progress() -> None:
     assert action.agent_slug == "holistic-reviewer"
 
 
-def test_pr_rule_routes_to_pr_agent() -> None:
+def test_pr_rule_routes_to_merge_orchestrator() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
     action = _evaluate(_task_at("pr", "in_progress", task_type="epic"))
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "pr-agent"
+    assert action.agent_slug == "merge-orchestrator"
 
 
-def test_pr_rule_escalates_when_pr_agent_missing() -> None:
+def test_pr_rule_escalates_when_merge_orchestrator_missing() -> None:
     from gobby.dispatch.actions import EscalateAction
 
     action = _evaluate(
         _task_at("pr", "in_progress", task_type="epic"),
-        _context(agents=_agents(**{"pr-agent": None})),
+        _context(agents=_agents(**{"merge-orchestrator": None})),
     )
 
     assert isinstance(action, EscalateAction)

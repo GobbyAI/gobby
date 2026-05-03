@@ -246,8 +246,8 @@ def pr_work_rule(task: object, context: object) -> Action | None:
         context,
         "pr",
         "in_progress",
-        agent_slug="pr-agent",
-        has_agent=_has_pr_agent,
+        agent_slug="merge-orchestrator",
+        has_agent=_has_merge_agent,
         missing_agent_reason="pr_no_agent",
     )
 
@@ -301,10 +301,6 @@ def stage_agent_available(context: object, stage_name: str) -> bool:
     if not agent_slug:
         return False
     return _has_agent(context, str(agent_slug))
-
-
-def _has_pr_agent(context: object) -> bool:
-    return _has_agent(context, "pr-agent")
 
 
 def _has_merge_agent(context: object) -> bool:

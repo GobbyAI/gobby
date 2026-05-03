@@ -365,4 +365,55 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         finally:
             await _restore_stash()
 
+    @registry.tool(
+        name="push_branch",
+        description="Push a worktree branch to a remote branch.",
+    )
+    async def push_branch(
+        worktree_id: str,
+        branch: str | None = None,
+        remote: str = "origin",
+        target_branch: str | None = None,
+        force_with_lease: bool = False,
+        project_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Push a branch from the isolated worktree."""
+        resolved_git_mgr, _, error = resolve_project_context(
+            project_path, ctx.git_manager, ctx.project_id
+        )
+        if error:
+            return {"success": False, "error": error}
+        if resolved_git_mgr is None:
+            return {"success": False, "error": "Git manager not available"}
+
+        worktree = ctx.worktree_storage.get(worktree_id)
+        if not worktree:
+            return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+
+        source_branch = branch or worktree.branch_name
+        destination_branch = target_branch or source_branch
+        command = ["push", "--no-verify"]
+        if force_with_lease:
+            command.append("--force-with-lease")
+        command.extend([remote, f"{source_branch}:{destination_branch}"])
+
+        result = await asyncio.to_thread(
+            resolved_git_mgr.run_git_command,
+            command,
+            cwd=worktree.worktree_path,
+            timeout=60,
+        )
+        return {
+            "success": result.returncode == 0,
+            "worktree_id": worktree_id,
+            "worktree_path": worktree.worktree_path,
+            "branch": source_branch,
+            "remote": remote,
+            "target_branch": destination_branch,
+            "force_with_lease": force_with_lease,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "error": None if result.returncode == 0 else result.stderr.strip(),
+        }
+
     return registry

@@ -42,7 +42,7 @@ def _dispatch_context() -> SimpleNamespace:
             ),
             "pr": SimpleNamespace(
                 name="pr",
-                default_agent=None,
+                default_agent="merge-orchestrator",
                 requires_human=False,
                 default_max_work_attempts=3,
                 default_max_review_rounds=1,
@@ -57,7 +57,6 @@ def _dispatch_context() -> SimpleNamespace:
         },
         agents={
             "holistic-reviewer": {"enabled": True},
-            "pr-agent": {"enabled": True},
             "merge-orchestrator": {"enabled": True},
         },
         agent_definitions={},
@@ -127,13 +126,13 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
 
     pr_spawn = rules.pr_work_rule(_task_view(task.id, manager.list_for_task(task.id)), context)
     assert isinstance(pr_spawn, SpawnAgentAction)
-    assert pr_spawn.agent_slug == "pr-agent"
-    manager.submit_for_review(task.id, "pr", by_session_id="pr-agent")
+    assert pr_spawn.agent_slug == "merge-orchestrator"
+    manager.submit_for_review(task.id, "pr", by_session_id="merge-orchestrator")
     assert stage_row(temp_db, task.id, "pr")["state"] == "needs_review"
 
     _record_pr_verdict(temp_db)(
         task_id=task.id,
-        verdict="approved",
+        verdict="approve",
         findings="approved",
         report_ref="pr-review.md",
     )

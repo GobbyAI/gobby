@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
+from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.tasks._stage_states import (
     IllegalManifestMutationError,
     StageManifestSpec,
@@ -51,32 +51,14 @@ def _manifest_error(error: IllegalManifestMutationError) -> dict[str, Any]:
     }
 
 
-def _write_artifacts(ctx: RegistryContext, task_id: str, fields: dict[str, Any]) -> None:
-    now = datetime.now(UTC).isoformat()
-    columns = ["task_id", *fields, "updated_at"]
-    placeholders = ", ".join("?" for _ in columns)
-    updates = ", ".join(f"{column} = excluded.{column}" for column in [*fields, "updated_at"])
-    with ctx.task_manager.db.transaction() as conn:
-        conn.execute(
-            f"""
-            INSERT INTO task_artifacts ({", ".join(columns)})
-            VALUES ({placeholders})
-            ON CONFLICT(task_id) DO UPDATE SET {updates}
-            """,  # nosec B608 - columns are fixed by tool implementations.
-            (task_id, *fields.values(), now),
-        )
-
-
-def _read_artifact(ctx: RegistryContext, task_id: str, field: str) -> Any:
-    row = ctx.task_manager.db.fetchone(
-        f"SELECT {field} FROM task_artifacts WHERE task_id = ?",  # nosec B608
-        (task_id,),
-    )
-    return row[field] if row is not None else None
-
-
 def _operation_response(task_id: str, stage: StageState) -> dict[str, Any]:
     return {"ok": True, "task_id": task_id, "stage": stage_state_operation_view(stage)}
+
+
+def _findings_text(findings: str | dict[str, Any] | list[Any]) -> str:
+    if isinstance(findings, str):
+        return findings
+    return json.dumps(findings, sort_keys=True)
 
 
 def _input_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -262,46 +244,74 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     def record_pr_verdict(
         task_id: str,
-        verdict: Literal["approved", "rejected", "needs_changes"],
-        findings: str,
+        verdict: Literal["approve", "request_changes", "needs_discussion"],
+        findings: str | dict[str, Any] | list[Any],
         report_ref: str | None = None,
     ) -> dict[str, Any]:
-        """Persist PR verdict artifacts and advance the pr review state."""
+        """Persist PR verdict delivery state and advance the pr review state."""
         resolved_id = _resolve_task(ctx, task_id)
+        findings_body = _findings_text(findings)
         payload = {"verdict": verdict, "findings": findings, "report_ref": report_ref}
-        _write_artifacts(
-            ctx,
+        delivery = TaskDeliveryStateManager(ctx.task_manager.db)
+        delivery.record_campaign(
             resolved_id,
-            {
-                "structured_pr_verdict": json.dumps(payload, sort_keys=True),
-                "pr_review_report": report_ref or findings,
-            },
+            state=(
+                "ready_to_merge"
+                if verdict == "approve"
+                else "needs_discussion"
+                if verdict == "needs_discussion"
+                else "blocked"
+            ),
+            structured_pr_verdict=payload,
+            pr_report_ref=report_ref or findings_body,
+            last_error="" if verdict == "approve" else findings_body,
         )
-        if verdict == "approved":
+        if verdict == "approve":
             stage = ctx.task_manager.stage_states.approve_review(
                 resolved_id,
                 "pr",
                 by_session_id=_session_id(ctx),
-                notes=findings,
+                notes=findings_body,
             )
-        else:
+        elif verdict == "request_changes":
             stage = ctx.task_manager.stage_states.reject_review(
                 resolved_id,
                 "pr",
-                reason=findings,
+                reason=findings_body,
                 by_session_id=_session_id(ctx),
-                notes=findings,
+                notes=findings_body,
             )
+        else:
+            task = ctx.task_manager.escalate_task(
+                resolved_id,
+                reason=f"needs_human:pr_delivery:{findings_body}",
+            )
+            stage_get = getattr(ctx.task_manager.stage_states, "get", None)
+            current_stage = stage_get(resolved_id, "pr") if callable(stage_get) else None
+            return {
+                "ok": True,
+                "task_id": resolved_id,
+                "escalated": True,
+                "task": {"id": getattr(task, "id", resolved_id)},
+                "stage": (
+                    stage_state_operation_view(current_stage)
+                    if current_stage is not None
+                    else None
+                ),
+            }
         return _operation_response(resolved_id, stage)
 
     _register_stage_tool(
         registry,
         name="record_pr_verdict",
-        description="Persist PR verdict artifacts and advance the pr review state.",
+        description="Persist PR verdict delivery state and advance the pr review state.",
         properties={
             "task_id": {"type": "string"},
-            "verdict": {"type": "string", "enum": ["approved", "rejected", "needs_changes"]},
-            "findings": {"type": "string"},
+            "verdict": {
+                "type": "string",
+                "enum": ["approve", "request_changes", "needs_discussion"],
+            },
+            "findings": {"type": ["string", "object", "array"]},
             "report_ref": {"type": ["string", "null"]},
         },
         required=["task_id", "verdict", "findings"],
@@ -312,32 +322,58 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         task_id: str,
         pr_url: str,
         github_pr_number: int | None = None,
+        unit_key: str | None = None,
+        worktree_id: str | None = None,
+        repo: str | None = None,
+        source_branch: str | None = None,
+        target_branch: str | None = None,
     ) -> dict[str, Any]:
-        """Persist PR metadata without changing pr stage state."""
+        """Persist PR metadata in delivery state without changing pr stage state."""
         resolved_id = _resolve_task(ctx, task_id)
-        existing_url = _read_artifact(ctx, resolved_id, "pr_url")
-        if existing_url != pr_url:
-            _write_artifacts(ctx, resolved_id, {"pr_url": pr_url})
-        if github_pr_number is not None:
-            ctx.task_manager.update_task(resolved_id, github_pr_number=github_pr_number)
+        existing = ctx.task_manager.db.fetchone(
+            """
+            SELECT pr_url
+              FROM task_delivery_units
+             WHERE task_id = ?
+               AND (pr_url = ? OR unit_key = ?)
+            """,
+            (resolved_id, pr_url, unit_key or f"pr:{pr_url}"),
+        )
+        unit = TaskDeliveryStateManager(ctx.task_manager.db).record_unit(
+            resolved_id,
+            unit_key=unit_key,
+            worktree_id=worktree_id,
+            repo=repo,
+            source_branch=source_branch,
+            target_branch=target_branch,
+            pr_url=pr_url,
+            github_pr_number=github_pr_number,
+            pr_state="open",
+        )
         stage = ctx.task_manager.stage_states.get(resolved_id, "pr")
         return {
             "ok": True,
             "task_id": resolved_id,
             "pr_url": pr_url,
             "github_pr_number": github_pr_number,
+            "delivery_unit": unit,
             "stage": stage_state_operation_view(stage) if stage is not None else None,
-            "idempotent": existing_url == pr_url,
+            "idempotent": bool(existing and existing["pr_url"] == pr_url),
         }
 
     _register_stage_tool(
         registry,
         name="record_pr_opened",
-        description="Persist PR metadata without changing pr stage state.",
+        description="Persist PR metadata in delivery state without changing pr stage state.",
         properties={
             "task_id": {"type": "string"},
             "pr_url": {"type": "string"},
             "github_pr_number": {"type": ["integer", "null"]},
+            "unit_key": {"type": ["string", "null"]},
+            "worktree_id": {"type": ["string", "null"]},
+            "repo": {"type": ["string", "null"]},
+            "source_branch": {"type": ["string", "null"]},
+            "target_branch": {"type": ["string", "null"]},
         },
         required=["task_id", "pr_url"],
         func=record_pr_opened,
@@ -351,13 +387,15 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Persist merge outcome and advance or fail the merge stage."""
         resolved_id = _resolve_task(ctx, task_id)
+        delivery = TaskDeliveryStateManager(ctx.task_manager.db)
         if failure_reason is not None:
             if merge_sha is not None:
                 raise ValueError("merge_sha cannot be provided with failure_reason")
-            _write_artifacts(
-                ctx,
+            delivery.record_campaign(
                 resolved_id,
-                {"merge_campaign_report": report_ref or failure_reason},
+                state="failed",
+                merge_report_ref=report_ref or failure_reason,
+                last_error=failure_reason,
             )
             stage = ctx.task_manager.stage_states.fail_stage(
                 resolved_id,
@@ -370,13 +408,12 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         if not merge_sha:
             raise ValueError("merge_sha is required when recording a successful merge")
-        _write_artifacts(
-            ctx,
+        delivery.record_campaign(
             resolved_id,
-            {
-                "merge_commit_sha": merge_sha,
-                "merge_campaign_report": report_ref or "",
-            },
+            state="merged",
+            merge_sha=merge_sha,
+            merge_report_ref=report_ref or "",
+            last_error="",
         )
         stage = ctx.task_manager.stage_states.complete_stage(
             resolved_id,

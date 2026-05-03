@@ -1,6 +1,6 @@
 ---
 name: merge-expert
-description: Methodology for running a multi-worktree merge campaign — survey unmerged worktrees, plan a merge order, dispatch merge-worker agents, verify, recover, and report.
+description: Methodology for PR-aware delivery — probe branch protection, open/gate PRs, land via GitHub when required, or run the direct multi-worktree merge campaign.
 version: "1.0.0"
 category: core
 internal: true
@@ -11,17 +11,17 @@ metadata:
     depth: 0
 ---
 
-# merge-expert — Gobby Merge Campaign Methodology
+# merge-expert — Gobby PR/Merge Delivery Methodology
 
 > Internal methodology skill; loaded with `get_skill(name="merge-expert")` by
-> the `merge-orchestrator` agent before it surveys and merges a set of
-> worktrees.
+> the `merge-orchestrator` agent before it handles either the `pr` or `merge`
+> stage.
 
-Use this skill to drive a bounded merge campaign: take a set of unmerged
-worktrees, decide what order to land them in, dispatch one `merge-worker`
-agent per step, and verify cleanup. The orchestrator never resolves conflicts
-itself — it routes work to `merge-worker` and the `gobby-merge` AI resolution
-flow underneath.
+Use this skill to drive bounded delivery. In the `pr` stage, decide whether
+the target branch requires a GitHub PR, open or update the PR, gate on CI and
+external review, and record the canonical PR verdict. In the `merge` stage,
+land approved PRs via GitHub or run the existing direct merge campaign for
+unprotected branches.
 
 ## Inputs
 
@@ -34,13 +34,44 @@ labels, and `task_artifacts` first. Useful inputs:
 - A verification command per worktree, if the task specifies one. Otherwise
   default to whatever the project conventionally runs (`uv run pytest`, `npm
   test`, etc.); if you are unsure, skip the gate and note that in the report.
-- `yolo` flag from task state — under yolo, prefer deterministic fallbacks
-  (escalate-only-when-stuck, force-advance) over `needs_human:` escalation.
+- Existing delivery state from `gobby-tasks-ops:get_delivery_state`.
+- `yolo` flag from task state. Under yolo, skip PR only when the branch probe
+  says no protection exists; never bypass protected-branch review gates with
+  bot self-approval.
+
+## PR Stage
+
+For each delivery unit:
+
+1. Call `gobby-merge:probe_branch_protection` for the target branch and
+   persist the result with `gobby-tasks-ops:record_pr_state`.
+2. If `requires_pr=false`, record `pr_required=false`, `pr_state=direct_merge`,
+   submit the `pr` stage for review, then call
+   `record_pr_verdict(verdict="approve", ...)`. The merge stage will run the
+   direct merge-worker path.
+3. If `requires_pr=true`, push the source branch with
+   `gobby-worktrees:push_branch`, create or reuse a GitHub PR, and call
+   `record_pr_opened`. Post holistic QA notes to the PR with
+   `github:create_pull_request_review(event="COMMENT")`; never use APPROVE.
+4. Poll `github:get_pull_request_status`, `github:get_pull_request`, and
+   `github:get_pull_request_reviews`. Persist each gate snapshot with
+   `record_pr_state`. If waiting on CI or humans, end the agent run; the
+   dispatcher heartbeat will resume later.
+5. If the PR becomes conflicting, first try
+   `github:update_pull_request_branch`. If that cannot update the branch,
+   perform one local AI-assisted update using `gobby-merge:merge_start`,
+   `merge_resolve`, and `merge_apply`, then `gobby-worktrees:push_branch` with
+   `force_with_lease=true`. Record `local_update_attempts=1`. A second conflict
+   event escalates.
+6. When CI, review, and mergeability are ready, call
+   `record_pr_verdict(verdict="approve", findings=...)`. Use
+   `request_changes` for concrete blockers and `needs_discussion` only when a
+   human decision is required.
 
 ## Methodology
 
-Run the campaign in five phases. Do not skip phases; do not collapse them
-into a single LLM step.
+Run the direct merge campaign in five phases. Do not skip phases; do not
+collapse them into a single LLM step.
 
 ### 1. Survey
 
@@ -172,8 +203,8 @@ what is missing.
 
 ## Output
 
-Write a campaign report to `task_artifacts.merge_campaign_report` before
-closing. Required JSON shape:
+Write a campaign report and pass its reference to
+`gobby-tasks-ops:record_merge_result`. Required JSON shape:
 
 ```json
 {
@@ -210,7 +241,8 @@ Then transition the campaign task:
 ## Boundaries
 
 - Do **not** call `merge_resolve` directly. That is `merge-worker`'s job;
-  the orchestrator only routes.
+  the orchestrator only routes except for the single allowed local PR update
+  fallback after `github:update_pull_request_branch` fails.
 - Do **not** spawn agents deeper than 5 levels — the `child_session_manager`
   enforces this, but plan around it: workers cannot spawn workers.
 - Do **not** `close_task` on the campaign task. Use

@@ -79,7 +79,8 @@ On confirmation:
    - `category`: `"code"`
    - `task_type`: `"task"`
    - `validation_criteria`: name the worktree IDs, the target branch,
-     and require a `merge_campaign_report` artifact.
+     and require a delivery campaign report recorded through
+     `gobby-tasks-ops:record_merge_result`.
    - `claim`: `false` — the orchestrator will claim it itself.
 
 2. **Spawn the orchestrator** via `gobby-agents:spawn_agent`:

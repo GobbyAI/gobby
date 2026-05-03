@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.storage.communications import LocalCommunicationsStore as LocalCommunicationsStore
     from gobby.storage.database import LocalDatabase as LocalDatabase
+    from gobby.storage.delivery import TaskDeliveryStateManager as TaskDeliveryStateManager
     from gobby.storage.expansion_runs import LocalExpansionRunManager as LocalExpansionRunManager
     from gobby.storage.inter_session_messages import (
         InterSessionMessageManager as InterSessionMessageManager,
@@ -31,6 +32,7 @@ __all__ = [
     "SessionManager",
     "LocalTaskManager",
     "TaskDependencyManager",
+    "TaskDeliveryStateManager",
     "run_migrations",
 ]
 
@@ -41,6 +43,7 @@ _EXPORTS = {
     ),
     "LocalCommunicationsStore": ("gobby.storage.communications", "LocalCommunicationsStore"),
     "LocalDatabase": ("gobby.storage.database", "LocalDatabase"),
+    "TaskDeliveryStateManager": ("gobby.storage.delivery", "TaskDeliveryStateManager"),
     "LocalExpansionRunManager": ("gobby.storage.expansion_runs", "LocalExpansionRunManager"),
     "LocalMCPManager": ("gobby.storage.mcp", "LocalMCPManager"),
     "LocalPlanManager": ("gobby.storage.plans", "LocalPlanManager"),

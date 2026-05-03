@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.task_github import create_github_registry
 from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 from gobby.mcp_proxy.tools.tasks._artifacts import create_ops_artifact_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._delivery import create_delivery_registry
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
@@ -96,6 +97,9 @@ def create_task_ops_registry(
 
     # Merge mutating stage manifest tools (read-only stage tools live in gobby-tasks)
     registry.merge_from(create_stage_ops_registry(ctx))
+
+    # Merge PR/merge delivery-state tools
+    registry.merge_from(create_delivery_registry(ctx))
 
     # Merge GitHub integration tools (2 tools)
     registry.merge_from(create_github_registry(ctx))

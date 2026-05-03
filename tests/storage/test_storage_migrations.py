@@ -33,21 +33,21 @@ def _index_names(db: LocalDatabase, table: str) -> set[str]:
 
 
 def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
-    """Fresh databases apply the flattened v239 baseline."""
+    """Fresh databases apply the flattened baseline plus pending migrations."""
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 239
-    assert MIGRATIONS == []
+    assert latest_known_version() == 240
+    assert [version for version, _description, _action in MIGRATIONS] == [240]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 1
-    assert get_current_version(db) == 239
+    assert applied == 2
+    assert get_current_version(db) == 240
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239]
+    assert versions == [239, 240]
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -58,9 +58,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 239
+    assert get_current_version(db) == 240
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239]
+    assert versions == [239, 240]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -91,6 +91,37 @@ def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
         is None
     )
     assert db.fetchall("SELECT version FROM schema_version") == []
+
+
+def test_delivery_migration_drops_legacy_artifact_columns(tmp_path) -> None:
+    db_path = tmp_path / "delivery_migration.db"
+    db = LocalDatabase(db_path)
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute(
+        """
+        CREATE TABLE task_artifacts (
+            task_id TEXT PRIMARY KEY,
+            plan_file_path TEXT,
+            pr_url TEXT,
+            merge_commit_sha TEXT,
+            pr_review_report TEXT,
+            structured_pr_verdict TEXT,
+            merge_campaign_report TEXT
+        )
+        """
+    )
+
+    _run_migration_list(db, current_version=239, migrations=MIGRATIONS)
+
+    assert _table_exists(db, "task_delivery_campaigns")
+    assert _table_exists(db, "task_delivery_units")
+    assert {
+        "pr_url",
+        "merge_commit_sha",
+        "pr_review_report",
+        "structured_pr_verdict",
+        "merge_campaign_report",
+    }.isdisjoint(_column_names(db, "task_artifacts"))
 
 
 def test_migrations_recreate_missing_system_session(tmp_path) -> None:
@@ -178,6 +209,8 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
         "task_stages_registry",
         "task_type_default_stages",
         "task_stage_states",
+        "task_delivery_campaigns",
+        "task_delivery_units",
         "session_tasks",
         "expansion_runs",
         "pending_interactions",
@@ -238,24 +271,27 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
 
     assert "expansion_context" not in _column_names(db, "tasks")
     assert "expansion_status" not in _column_names(db, "tasks")
+    artifact_columns = _column_names(db, "task_artifacts")
     assert {
-        "pr_review_report",
-        "structured_pr_verdict",
-        "merge_campaign_report",
         "last_reviewed_plan_hash",
         "plan_review_attempts",
         "test_arch_attempts",
         "qa_attempts",
         "holistic_attempts",
         "merge_attempts",
-    }.issubset(_column_names(db, "task_artifacts"))
+    }.issubset(artifact_columns)
     assert {
         "max_expansion_attempts",
         "max_qa_rounds",
         "max_merge_attempts",
         "max_holistic_rounds",
         "max_review_rounds",
-    }.isdisjoint(_column_names(db, "task_artifacts"))
+        "pr_url",
+        "merge_commit_sha",
+        "pr_review_report",
+        "structured_pr_verdict",
+        "merge_campaign_report",
+    }.isdisjoint(artifact_columns)
     assert "input_token_usd_per_1m" not in _column_names(db, "model_costs")
     assert "output_token_usd_per_1m" not in _column_names(db, "model_costs")
 
@@ -296,7 +332,7 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
 
     stage_rows = db.fetchall(
         """
-        SELECT name, review_policy, reviewer_agent
+        SELECT name, review_policy, reviewer_agent, default_agent
           FROM task_stages_registry
          ORDER BY position_hint, name
         """
@@ -324,6 +360,7 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
     assert by_stage["development"]["reviewer_agent"] == "qa-reviewer"
     assert by_stage["pr"]["review_policy"] == "required"
     assert by_stage["pr"]["reviewer_agent"] is None
+    assert by_stage["pr"]["default_agent"] == "merge-orchestrator"
 
     default_rows = db.fetchall(
         """

@@ -20,8 +20,6 @@ _ARTIFACT_FIELDS = frozenset(
         "target_branch",
         "expansion_run_id",
         "expansion_attempts",
-        "pr_url",
-        "merge_commit_sha",
     }
 )
 
@@ -60,8 +58,6 @@ class TaskArtifacts:
     target_branch: str | None = None
     expansion_run_id: str | None = None
     expansion_attempts: int = 0
-    pr_url: str | None = None
-    merge_commit_sha: str | None = None
     updated_at: str | None = None
 
     @classmethod
@@ -78,8 +74,6 @@ class TaskArtifacts:
             target_branch=row["target_branch"],
             expansion_run_id=row["expansion_run_id"],
             expansion_attempts=int(row["expansion_attempts"] or 0),
-            pr_url=row["pr_url"],
-            merge_commit_sha=row["merge_commit_sha"],
             updated_at=row["updated_at"],
         )
 

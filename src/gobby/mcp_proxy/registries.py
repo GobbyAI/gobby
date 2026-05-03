@@ -321,6 +321,7 @@ def setup_internal_registries(
             merge_resolver=merge_resolver,
             git_manager=git_manager,
             worktree_manager=worktree_storage,
+            db=db,
         )
         manager.add_registry(merge_registry)
         logger.debug("Merge registry initialized")

@@ -51,8 +51,9 @@ def test_record_pr_opened_persists_pr_metadata(monkeypatch: pytest.MonkeyPatch) 
     result = tool(task_id="#1", pr_url="https://example.test/pr/1", github_pr_number=12)
 
     assert result["ok"] is True
+    assert "task_delivery_units" in ctx.task_manager.db.executed[0][0]
     assert "pr_url" in ctx.task_manager.db.executed[0][0]
-    ctx.task_manager.update_task.assert_called_once_with("#1", github_pr_number=12)
+    ctx.task_manager.update_task.assert_not_called()
 
 
 def test_record_merge_result_records_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:

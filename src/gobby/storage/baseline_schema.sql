@@ -1425,11 +1425,6 @@ CREATE TABLE task_artifacts (
             target_branch TEXT,
             expansion_run_id TEXT,
             expansion_attempts INTEGER NOT NULL DEFAULT 0,
-            pr_url TEXT,
-            merge_commit_sha TEXT,
-            pr_review_report TEXT,
-            structured_pr_verdict TEXT,
-            merge_campaign_report TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now')), last_reviewed_plan_hash TEXT, plan_review_attempts INTEGER NOT NULL DEFAULT 0, test_arch_attempts INTEGER NOT NULL DEFAULT 0, qa_attempts INTEGER NOT NULL DEFAULT 0, holistic_attempts INTEGER NOT NULL DEFAULT 0, merge_attempts INTEGER NOT NULL DEFAULT 0,
             CHECK (
                 (worktree_path IS NULL) = (worktree_id IS NULL)
@@ -1442,6 +1437,47 @@ CREATE TABLE task_artifacts (
                 )
             )
         );
+
+CREATE TABLE task_delivery_campaigns (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    state TEXT NOT NULL DEFAULT 'pending',
+    merge_strategy TEXT NOT NULL DEFAULT 'squash'
+        CHECK (merge_strategy IN ('merge', 'squash', 'rebase')),
+    structured_pr_verdict TEXT,
+    pr_report_ref TEXT,
+    merge_sha TEXT,
+    merge_report_ref TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE task_delivery_units (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    unit_key TEXT NOT NULL,
+    worktree_id TEXT,
+    repo TEXT,
+    source_branch TEXT,
+    target_branch TEXT NOT NULL DEFAULT 'main',
+    pr_required INTEGER CHECK (pr_required IN (0, 1)),
+    protection_json TEXT,
+    pr_url TEXT,
+    github_pr_number INTEGER,
+    gate_snapshot_json TEXT,
+    pr_state TEXT,
+    local_update_attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(task_id, unit_key)
+);
+
+CREATE INDEX idx_task_delivery_units_task_id
+    ON task_delivery_units(task_id);
+
+CREATE INDEX idx_task_delivery_units_pr_url
+    ON task_delivery_units(pr_url);
 
 CREATE INDEX idx_pipeline_executions_created_at
             ON pipeline_executions (created_at DESC);
@@ -1535,7 +1571,7 @@ INSERT INTO "task_stages_registry" ("name", "display_label", "description", "cat
 INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "review_policy", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('expansion', 'Expansion', 'Decompose plan into TDD-wrapped leaf tasks.', 'implementation', NULL, 'expansion-qa', 'required', 80, 0, 0, 3, 5, 'a53b68c312db239d7383a295f90830127b56c988b7218f1635a5a9db64a3a762', datetime('now'));
 INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "review_policy", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('development', 'Development', 'Leaf implementation work; drives TDD sandwiches.', 'implementation', 'backend-developer', 'qa-reviewer', 'required', 100, 0, 0, 3, 5, 'a53b68c312db239d7383a295f90830127b56c988b7218f1635a5a9db64a3a762', datetime('now'));
 INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "review_policy", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('holistic_qa', 'Holistic QA', 'Whole-epic review after every leaf is parked.', 'verification', 'holistic-reviewer', 'holistic-reviewer', 'required', 120, 0, 0, 3, 5, 'a53b68c312db239d7383a295f90830127b56c988b7218f1635a5a9db64a3a762', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "review_policy", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('pr', 'Pull Request', 'Open/update PR, capture verdict, gate on external review.', 'delivery', NULL, NULL, 'required', 130, 0, 0, 3, 5, 'a53b68c312db239d7383a295f90830127b56c988b7218f1635a5a9db64a3a762', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "review_policy", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('pr', 'Pull Request', 'Open/update PR, capture verdict, gate on external review.', 'delivery', 'merge-orchestrator', NULL, 'required', 130, 0, 0, 3, 5, 'a53b68c312db239d7383a295f90830127b56c988b7218f1635a5a9db64a3a762', datetime('now'));
 INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "review_policy", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('merge', 'Merge', 'Land approved PR; resolve conflicts; close terminal task.', 'delivery', 'merge-orchestrator', NULL, 'none', 140, 0, 1, 3, 5, 'a53b68c312db239d7383a295f90830127b56c988b7218f1635a5a9db64a3a762', datetime('now'));
 
 -- Seed rows for task_type_default_stages

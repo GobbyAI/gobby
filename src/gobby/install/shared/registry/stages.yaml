@@ -72,6 +72,7 @@ stages:
     display_label: Pull Request
     description: Open/update PR, capture verdict, gate on external review.
     category: delivery
+    default_agent: merge-orchestrator
     review_policy: required
     position_hint: 130
   - name: merge

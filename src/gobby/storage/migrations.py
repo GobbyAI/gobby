@@ -60,7 +60,76 @@ BASELINE_VERSION = 239
 _MIN_MIGRATION_VERSION = BASELINE_VERSION
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 
-MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
+_DELIVERY_STATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS task_delivery_campaigns (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    state TEXT NOT NULL DEFAULT 'pending',
+    merge_strategy TEXT NOT NULL DEFAULT 'squash'
+        CHECK (merge_strategy IN ('merge', 'squash', 'rebase')),
+    structured_pr_verdict TEXT,
+    pr_report_ref TEXT,
+    merge_sha TEXT,
+    merge_report_ref TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS task_delivery_units (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    unit_key TEXT NOT NULL,
+    worktree_id TEXT,
+    repo TEXT,
+    source_branch TEXT,
+    target_branch TEXT NOT NULL DEFAULT 'main',
+    pr_required INTEGER CHECK (pr_required IN (0, 1)),
+    protection_json TEXT,
+    pr_url TEXT,
+    github_pr_number INTEGER,
+    gate_snapshot_json TEXT,
+    pr_state TEXT,
+    local_update_attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(task_id, unit_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_delivery_units_task_id
+    ON task_delivery_units(task_id);
+
+CREATE INDEX IF NOT EXISTS idx_task_delivery_units_pr_url
+    ON task_delivery_units(pr_url);
+"""
+
+_LEGACY_DELIVERY_ARTIFACT_COLUMNS = frozenset(
+    {
+        "pr_url",
+        "merge_commit_sha",
+        "pr_review_report",
+        "structured_pr_verdict",
+        "merge_campaign_report",
+    }
+)
+
+
+def _apply_delivery_state_schema(db: LocalDatabase) -> None:
+    for statement in _DELIVERY_STATE_SCHEMA.strip().split(";"):
+        statement = statement.strip()
+        if statement:
+            db.execute(statement)
+
+    artifact_columns = {
+        row["name"] for row in db.fetchall("PRAGMA table_info(task_artifacts)")
+    }
+    for column in sorted(_LEGACY_DELIVERY_ARTIFACT_COLUMNS & artifact_columns):
+        db.execute(f"ALTER TABLE task_artifacts DROP COLUMN {column}")  # nosec B608
+
+
+MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
+    (240, "Add task delivery state tables", _apply_delivery_state_schema),
+]
 
 
 def get_current_version(db: LocalDatabase) -> int:

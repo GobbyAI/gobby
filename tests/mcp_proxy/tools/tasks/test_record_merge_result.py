@@ -70,8 +70,8 @@ def _real_context(temp_db) -> SimpleNamespace:
 def _artifact_row(temp_db, task_id: str) -> dict[str, object]:
     row = temp_db.fetchone(
         """
-        SELECT merge_commit_sha, merge_campaign_report
-        FROM task_artifacts
+        SELECT merge_sha, merge_report_ref
+        FROM task_delivery_campaigns
         WHERE task_id = ?
         """,
         (task_id,),
@@ -118,9 +118,10 @@ def test_success_writes_artifacts_and_completes_merge(
     )
 
     sql, params = ctx.task_manager.db.executed[0]
-    assert "merge_commit_sha" in sql
-    assert "merge_campaign_report" in sql
-    assert params[1:3] == ("abc123", "merge-report.md")
+    assert "task_delivery_campaigns" in sql
+    assert "merge_sha" in sql
+    assert "merge_report_ref" in sql
+    assert params[3:5] == ("abc123", "merge-report.md")
     assert result["stage"] == {"stage_name": "merge", "state": "done"}
     ctx.task_manager.stage_states.complete_stage.assert_called_once()
     args, kwargs = ctx.task_manager.stage_states.complete_stage.call_args
@@ -160,8 +161,8 @@ def test_success_close_uses_manifest_exhausted_reason_and_merge_sha(
     assert row["closed_reason"] == "manifest_exhausted"
     assert row["closed_commit_sha"] == "mergeabc123"
     assert _artifact_row(temp_db, task.id) == {
-        "merge_commit_sha": "mergeabc123",
-        "merge_campaign_report": "merge-report.md",
+        "merge_sha": "mergeabc123",
+        "merge_report_ref": "merge-report.md",
     }
 
 
@@ -214,9 +215,10 @@ def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) 
     )
 
     sql, params = ctx.task_manager.db.executed[0]
-    assert "merge_campaign_report" in sql
-    assert "merge_commit_sha" not in sql
-    assert params[1] == "merge-failure.md"
+    assert "task_delivery_campaigns" in sql
+    assert "merge_report_ref" in sql
+    assert "merge_sha" not in sql
+    assert params[3] == "merge-failure.md"
     assert result["stage"] == {"stage_name": "merge", "state": "ready"}
     ctx.task_manager.stage_states.fail_stage.assert_called_once()
     args, kwargs = ctx.task_manager.stage_states.fail_stage.call_args
@@ -242,7 +244,7 @@ def test_failure_path(temp_db, sample_project) -> None:
     under_cap_state = task_row(temp_db, under_cap.id)
     assert under_cap_state["closed_at"] is None
     assert under_cap_state["is_escalated"] == 0
-    assert _artifact_row(temp_db, under_cap.id)["merge_campaign_report"] == "merge-failure.md"
+    assert _artifact_row(temp_db, under_cap.id)["merge_report_ref"] == "merge-failure.md"
 
     over_cap = _merge_task_in_progress(temp_db, sample_project, max_work_attempts=1)
 
