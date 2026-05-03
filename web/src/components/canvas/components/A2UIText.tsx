@@ -9,7 +9,7 @@ export const A2UIText: React.FC<A2UIComponentProps> = ({ def, dataModel }) => {
 
   switch (style) {
     case 'title1':
-      return <h1 className="text-xl font-bold">{text}</h1>;
+      return <h2 className="text-xl font-bold">{text}</h2>;
     case 'title2':
       return <h2 className="text-lg font-semibold">{text}</h2>;
     case 'title3':
