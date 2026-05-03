@@ -1,7 +1,6 @@
 """Dispatcher heartbeat scanner tests."""
 
-from __future__ import annotations
-
+import asyncio
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -14,7 +13,7 @@ from gobby.dispatch.actions import (
     AppendAuditMarkerAction,
     CreateIsolationAction,
     SpawnAgentAction,
-    StartExpansionAction,
+    StartPipelineAction,
     StartStageAction,
 )
 from gobby.storage.tasks import LocalTaskManager
@@ -84,6 +83,41 @@ def _session(temp_db, sample_project, session_id: str = "session-1") -> str:
 
 def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
+
+
+class _FakePipeline:
+    name = "expand-task"
+    enabled = True
+    deprecated = False
+    steps = []
+
+    def model_dump_json(self) -> str:
+        return '{"name":"expand-task"}'
+
+
+class _FakePipelineLoader:
+    async def load_pipeline(self, name: str):
+        return _FakePipeline() if name == "expand-task" else None
+
+
+class _FakePipelineExecutor:
+    def __init__(self) -> None:
+        self.loader = _FakePipelineLoader()
+        self.calls: list[dict[str, object]] = []
+
+    async def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(id=kwargs["execution_id"], status="completed")
+
+
+def _pipeline_action(task_id: str) -> StartPipelineAction:
+    return StartPipelineAction(
+        task_id=task_id,
+        task_ref="#1",
+        stage_name="expansion",
+        pipeline_name="expand-task",
+        dispatch_inputs={"task_id": "${{ task_id }}"},
+    )
 
 
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
@@ -275,7 +309,7 @@ async def test_advance_action_releases_lease_immediately(
     assert storage.get_mutex(task.id) is None
 
 
-async def test_start_expansion_action_links_run_id(
+async def test_start_pipeline_action_links_execution_id(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -287,21 +321,16 @@ async def test_start_expansion_action_links_run_id(
     monkeypatch.setattr(
         dispatcher.dispatch_rules,
         "evaluate",
-        lambda *args, **kwargs: StartExpansionAction(task_id=task.id, task_ref="#1"),
+        lambda *args, **kwargs: _pipeline_action(task.id),
     )
-    monkeypatch.setattr(dispatcher, "allocate_expansion_run_id", lambda: "expansion-1")
-    monkeypatch.setattr(dispatcher, "start_expansion_run_impl", lambda **kwargs: kwargs)
+    services = SimpleNamespace(pipeline_executor=_FakePipelineExecutor())
 
-    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
 
-    assert storage.get_mutex(task.id).run_id == "expansion-1"
-
-
-def test_dispatcher_imports_mcp_expansion_impl_directly() -> None:
-    from gobby.dispatch import dispatcher
-    from gobby.mcp_proxy.tools.tasks import _expansion
-
-    assert dispatcher.start_expansion_run_impl is _expansion.start_expansion_run_impl
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id is not None
+    assert mutex.action_kind == "stage-pipeline:expansion"
 
 
 def test_dispatcher_run_heartbeat_cold_imports() -> None:
@@ -424,7 +453,7 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     assert spawned == ["merge-orchestrator"]
 
 
-async def test_dispatcher_starts_expansion_with_injected_services(
+async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -432,40 +461,37 @@ async def test_dispatcher_starts_expansion_with_injected_services(
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
-    calls: list[dict[str, object]] = []
+    _session(temp_db, sample_project, "session-1")
+    executor = _FakePipelineExecutor()
     services = SimpleNamespace(
-        task_manager="task-manager",
-        llm_service="llm-service",
-        config="config",
-        completion_registry="completion-registry",
+        pipeline_executor=executor,
         triggering_session_id="session-1",
-        project="project-1",
     )
     monkeypatch.setattr(
         dispatcher.dispatch_rules,
         "evaluate",
-        lambda *args, **kwargs: StartExpansionAction(task_id=task.id, task_ref="#1"),
+        lambda *args, **kwargs: _pipeline_action(task.id),
     )
-    monkeypatch.setattr(dispatcher, "allocate_expansion_run_id", lambda: "expansion-1")
-    monkeypatch.setattr(
-        dispatcher, "start_expansion_run_impl", lambda **kwargs: calls.append(kwargs)
-    )
+
+    async def record_background(*args, **kwargs):
+        executor.calls.append(
+            {
+                "inputs": args[2],
+                "execution_id": args[4],
+                "session_id": kwargs.get("session_id"),
+            }
+        )
+
+    monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
+    for _ in range(5):
+        if executor.calls:
+            break
+        await asyncio.sleep(0.01)
 
-    assert calls == [
-        {
-            "task_id": task.id,
-            "run_id": "expansion-1",
-            "auto_apply": True,
-            "task_manager": "task-manager",
-            "llm_service": "llm-service",
-            "config": "config",
-            "completion_registry": "completion-registry",
-            "triggering_session_id": "session-1",
-            "project": "project-1",
-        }
-    ]
+    assert executor.calls[0]["inputs"] == {"task_id": task.id}
+    assert executor.calls[0]["session_id"] == "session-1"
 
 
 async def test_expansion_terminal_event_releases_lease_via_handlers(
@@ -483,7 +509,7 @@ async def test_expansion_terminal_event_releases_lease_via_handlers(
     assert storage.get_mutex(task.id) is None
 
 
-async def test_attach_run_id_precedes_start_expansion_run_impl(
+async def test_execution_id_attaches_before_background_pipeline_start(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -492,26 +518,27 @@ async def test_attach_run_id_precedes_start_expansion_run_impl(
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
     storage = _mutex_storage(temp_db)
-    events: list[str] = []
+    executor = _FakePipelineExecutor()
+    services = SimpleNamespace(pipeline_executor=executor)
     monkeypatch.setattr(
         dispatcher.dispatch_rules,
         "evaluate",
-        lambda *args, **kwargs: StartExpansionAction(task_id=task.id, task_ref="#1"),
+        lambda *args, **kwargs: _pipeline_action(task.id),
     )
-    monkeypatch.setattr(dispatcher, "allocate_expansion_run_id", lambda: "expansion-1")
 
-    def start(**kwargs):
-        assert storage.get_mutex(task.id).run_id == "expansion-1"
-        events.append("start")
+    async def record_background(*args, **kwargs):
+        executor.calls.append({"execution_id": args[4]})
 
-    monkeypatch.setattr(dispatcher, "start_expansion_run_impl", start)
+    monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
 
-    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
+    await asyncio.sleep(0)
 
-    assert events == ["start"]
+    execution_id = executor.calls[0]["execution_id"]
+    assert storage.get_mutex(task.id).run_id == execution_id
 
 
-async def test_synchronous_terminal_expansion_releases_lease(
+async def test_pipeline_terminal_handler_releases_lease(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -521,23 +548,26 @@ async def test_synchronous_terminal_expansion_releases_lease(
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
     storage = _mutex_storage(temp_db)
+    executor = _FakePipelineExecutor()
+    services = SimpleNamespace(pipeline_executor=executor)
     monkeypatch.setattr(
         dispatcher.dispatch_rules,
         "evaluate",
-        lambda *args, **kwargs: StartExpansionAction(task_id=task.id, task_ref="#1"),
-    )
-    monkeypatch.setattr(dispatcher, "allocate_expansion_run_id", lambda: "expansion-1")
-    monkeypatch.setattr(
-        dispatcher,
-        "start_expansion_run_impl",
-        lambda **kwargs: _dispatch.on_expansion_run_cancelled(
-            task.id,
-            "expansion-1",
-            storage=storage,
-        ),
+        lambda *args, **kwargs: _pipeline_action(task.id),
     )
 
-    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    async def record_background(*args, **kwargs):
+        executor.calls.append({"execution_id": args[4]})
+
+    monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
+    await asyncio.sleep(0)
+    _dispatch.on_pipeline_failed(
+        {"execution_id": executor.calls[0]["execution_id"], "error": "boom"},
+        db=temp_db,
+        storage=storage,
+    )
 
     assert storage.get_mutex(task.id) is None
 
@@ -555,7 +585,7 @@ def test_terminal_handler_release_by_task_id_fallback(temp_db, sample_project) -
     assert storage.get_mutex(task.id) is None
 
 
-async def test_dispatcher_pins_auto_apply_true_on_start_expansion(
+async def test_invalid_pipeline_target_escalates_and_releases(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -563,19 +593,24 @@ async def test_dispatcher_pins_auto_apply_true_on_start_expansion(
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
-    configs: list[dict[str, object]] = []
+    storage = _mutex_storage(temp_db)
     monkeypatch.setattr(
         dispatcher.dispatch_rules,
         "evaluate",
-        lambda *args, **kwargs: StartExpansionAction(task_id=task.id, task_ref="#1"),
+        lambda *args, **kwargs: StartPipelineAction(
+            task_id=task.id,
+            task_ref="#1",
+            stage_name="expansion",
+            pipeline_name="missing",
+            dispatch_inputs={},
+        ),
     )
-    monkeypatch.setattr(
-        dispatcher, "start_expansion_run_impl", lambda **kwargs: configs.append(kwargs)
-    )
+    services = SimpleNamespace(pipeline_executor=_FakePipelineExecutor())
 
-    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
 
-    assert configs[0]["auto_apply"] is True
+    assert storage.get_mutex(task.id) is None
+    assert get_task(temp_db, task.id).is_escalated is True
 
 
 async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_atomically(

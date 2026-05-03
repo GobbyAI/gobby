@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -14,8 +15,10 @@ from gobby.storage.database import DatabaseProtocol
 
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
 ReviewPolicy = Literal["none", "required", "optional"]
+DispatchType = Literal["agent", "pipeline"]
 _CATEGORIES: set[str] = {"discovery", "design", "verification", "implementation", "delivery"}
 _REVIEW_POLICIES: set[str] = {"none", "required", "optional"}
+_DISPATCH_TYPES: set[str] = {"agent", "pipeline"}
 
 
 class StageRegistryLoadError(ValueError):
@@ -31,6 +34,9 @@ class StageRegistryEntry:
     default_agent: str | None
     reviewer_agent: str | None
     review_policy: ReviewPolicy
+    dispatch_type: DispatchType | None
+    dispatch_target: str | None
+    dispatch_inputs_json: str | None
     position_hint: int
     requires_human: bool = False
     is_terminal: bool = False
@@ -81,9 +87,10 @@ class StageRegistryLoader:
                     """
                     INSERT INTO task_stages_registry (
                         name, display_label, description, category, default_agent,
-                        reviewer_agent, review_policy, position_hint, requires_human,
-                        is_terminal, bundled_hash, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        reviewer_agent, review_policy, dispatch_type, dispatch_target,
+                        dispatch_inputs_json, position_hint, requires_human, is_terminal,
+                        bundled_hash, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     ON CONFLICT(name) DO UPDATE SET
                         display_label = excluded.display_label,
                         description = excluded.description,
@@ -91,6 +98,9 @@ class StageRegistryLoader:
                         default_agent = excluded.default_agent,
                         reviewer_agent = excluded.reviewer_agent,
                         review_policy = excluded.review_policy,
+                        dispatch_type = excluded.dispatch_type,
+                        dispatch_target = excluded.dispatch_target,
+                        dispatch_inputs_json = excluded.dispatch_inputs_json,
                         position_hint = excluded.position_hint,
                         requires_human = excluded.requires_human,
                         is_terminal = excluded.is_terminal,
@@ -105,6 +115,9 @@ class StageRegistryLoader:
                         entry.default_agent,
                         entry.reviewer_agent,
                         entry.review_policy,
+                        entry.dispatch_type,
+                        entry.dispatch_target,
+                        entry.dispatch_inputs_json,
                         entry.position_hint,
                         1 if entry.requires_human else 0,
                         1 if entry.is_terminal else 0,
@@ -197,6 +210,20 @@ class StageRegistryLoader:
             raise StageRegistryLoadError(
                 f"Stage {name} reviewer_agent is required for review_policy={review_policy}"
             )
+        dispatch_type = raw_stage.get("dispatch_type")
+        if dispatch_type is not None:
+            if not isinstance(dispatch_type, str) or dispatch_type not in _DISPATCH_TYPES:
+                raise StageRegistryLoadError(f"Stage {name} has invalid dispatch_type")
+
+        dispatch_target = raw_stage.get("dispatch_target")
+        if dispatch_target is not None and not isinstance(dispatch_target, str):
+            raise StageRegistryLoadError(f"Stage {name} dispatch_target must be a string")
+        if dispatch_type == "pipeline" and not dispatch_target:
+            raise StageRegistryLoadError(f"Stage {name} dispatch_target is required")
+
+        dispatch_inputs = raw_stage.get("dispatch_inputs")
+        if dispatch_inputs is not None and not isinstance(dispatch_inputs, dict):
+            raise StageRegistryLoadError(f"Stage {name} dispatch_inputs must be a mapping")
 
         return StageRegistryEntry(
             name=name,
@@ -206,6 +233,11 @@ class StageRegistryLoader:
             default_agent=default_agent,
             reviewer_agent=reviewer_agent,
             review_policy=review_policy,  # type: ignore[arg-type]
+            dispatch_type=dispatch_type,  # type: ignore[arg-type]
+            dispatch_target=dispatch_target,
+            dispatch_inputs_json=(
+                json.dumps(dispatch_inputs, sort_keys=True) if dispatch_inputs is not None else None
+            ),
             position_hint=position_hint,
             requires_human=self._optional_bool(raw_stage, "requires_human", name),
             is_terminal=self._optional_bool(raw_stage, "is_terminal", name),

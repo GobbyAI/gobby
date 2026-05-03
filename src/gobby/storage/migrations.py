@@ -360,6 +360,23 @@ def _apply_github_issue_task_link_index(db: LocalDatabase) -> None:
     db.execute(_GITHUB_ISSUE_TASK_LINK_INDEX)
 
 
+def _apply_stage_dispatch_schema(db: LocalDatabase) -> None:
+    columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_stages_registry)")}
+    additions = {
+        "dispatch_type": (
+            "ALTER TABLE task_stages_registry ADD COLUMN dispatch_type TEXT "
+            "CHECK (dispatch_type IS NULL OR dispatch_type IN ('agent','pipeline'))"
+        ),
+        "dispatch_target": "ALTER TABLE task_stages_registry ADD COLUMN dispatch_target TEXT",
+        "dispatch_inputs_json": (
+            "ALTER TABLE task_stages_registry ADD COLUMN dispatch_inputs_json TEXT"
+        ),
+    }
+    for column, sql in additions.items():
+        if column not in columns:
+            db.execute(sql)
+
+
 def _apply_config_store_cleanup(db: LocalDatabase) -> None:
     row = db.fetchone(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'config_store'"
@@ -409,6 +426,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (243, "Clean stale config store keys", _apply_config_store_cleanup),
     (244, "Add persisted task state bucket", _apply_task_state_bucket_schema),
     (245, "Add unique linked GitHub issue task index", _apply_github_issue_task_link_index),
+    (246, "Add generic stage dispatch target columns", _apply_stage_dispatch_schema),
 ]
 
 

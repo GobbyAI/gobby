@@ -56,7 +56,18 @@ def _registry(stage_name: str, **overrides):
         "default_max_work_attempts": 3,
         "default_max_review_rounds": 2,
         "reviewer_agent": _REVIEW_AGENTS.get(stage_name),
+        "dispatch_type": None,
+        "dispatch_target": None,
+        "dispatch_inputs_json": None,
     }
+    if stage_name == "expansion":
+        values.update(
+            {
+                "dispatch_type": "pipeline",
+                "dispatch_target": "expand-task",
+                "dispatch_inputs_json": '{"task_id": "${{ task_id }}"}',
+            }
+        )
     values.update(overrides)
     return SimpleNamespace(**values)
 
@@ -160,9 +171,12 @@ def test_test_arch_rule_fires_on_in_progress_stage() -> None:
 
 
 def test_expansion_work_rule_fires_and_holds_when_cap_reached() -> None:
-    from gobby.dispatch.actions import StartExpansionAction
+    from gobby.dispatch.actions import StartPipelineAction
 
-    assert isinstance(_evaluate(_task_at("expansion", "in_progress")), StartExpansionAction)
+    action = _evaluate(_task_at("expansion", "in_progress"))
+    assert isinstance(action, StartPipelineAction)
+    assert action.pipeline_name == "expand-task"
+    assert action.dispatch_inputs == {"task_id": "${{ task_id }}"}
 
     capped = _evaluate(
         _task_at(

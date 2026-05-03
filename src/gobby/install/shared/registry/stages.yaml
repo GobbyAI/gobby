@@ -51,6 +51,11 @@ stages:
     category: implementation
     reviewer_agent: expansion-qa
     review_policy: required
+    dispatch_type: pipeline
+    dispatch_target: expand-task
+    dispatch_inputs:
+      task_id: "${{ task_id }}"
+      plan_file: "${{ artifacts.plan_file_path }}"
     position_hint: 80
   - name: development
     display_label: Development

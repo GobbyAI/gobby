@@ -58,6 +58,9 @@ def test_parses_bundled_yaml() -> None:
     assert by_name["planning"].review_policy == "required"
     assert by_name["planning"].reviewer_agent == "plan-adversary"
     assert by_name["expansion"].reviewer_agent == "expansion-qa"
+    assert by_name["expansion"].dispatch_type == "pipeline"
+    assert by_name["expansion"].dispatch_target == "expand-task"
+    assert by_name["expansion"].dispatch_inputs_json is not None
     assert by_name["development"].reviewer_agent == "qa-reviewer"
     assert by_name["pr"].review_policy == "required"
     assert by_name["pr"].reviewer_agent is None
@@ -163,7 +166,7 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
 
     row = db.fetchone(
         """
-        SELECT display_label, bundled_hash, review_policy, reviewer_agent
+        SELECT display_label, bundled_hash, review_policy, reviewer_agent, dispatch_type
         FROM task_stages_registry
         WHERE name = 'planning'
         """
@@ -173,6 +176,7 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
     assert row["bundled_hash"] != "stale-hash"
     assert row["review_policy"] == "required"
     assert row["reviewer_agent"] == "plan-adversary"
+    assert row["dispatch_type"] is None
 
 
 def test_user_added_stage_preserved(tmp_path: Path) -> None:

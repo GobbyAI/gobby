@@ -11,6 +11,7 @@ from gobby.storage.database import DatabaseProtocol
 
 ReviewPolicy = Literal["none", "required", "optional"]
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
+DispatchType = Literal["agent", "pipeline"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,9 @@ class StageRegistryEntry:
     default_agent: str | None
     reviewer_agent: str | None
     review_policy: ReviewPolicy
+    dispatch_type: DispatchType | None
+    dispatch_target: str | None
+    dispatch_inputs_json: str | None
     position_hint: int
     requires_human: bool
     is_terminal: bool
@@ -58,11 +62,11 @@ class StageRegistryManager:
                 """
                 INSERT INTO task_stages_registry (
                     name, display_label, description, category, default_agent,
-                    reviewer_agent, review_policy, position_hint, requires_human,
-                    is_terminal, default_max_work_attempts, default_max_review_rounds,
-                    bundled_hash, updated_at
+                    reviewer_agent, review_policy, dispatch_type, dispatch_target,
+                    dispatch_inputs_json, position_hint, requires_human, is_terminal,
+                    default_max_work_attempts, default_max_review_rounds, bundled_hash, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(name) DO UPDATE SET
                     display_label = excluded.display_label,
                     description = excluded.description,
@@ -70,6 +74,9 @@ class StageRegistryManager:
                     default_agent = excluded.default_agent,
                     reviewer_agent = excluded.reviewer_agent,
                     review_policy = excluded.review_policy,
+                    dispatch_type = excluded.dispatch_type,
+                    dispatch_target = excluded.dispatch_target,
+                    dispatch_inputs_json = excluded.dispatch_inputs_json,
                     position_hint = excluded.position_hint,
                     requires_human = excluded.requires_human,
                     is_terminal = excluded.is_terminal,
@@ -86,6 +93,9 @@ class StageRegistryManager:
                     entry.default_agent,
                     entry.reviewer_agent,
                     entry.review_policy,
+                    entry.dispatch_type,
+                    entry.dispatch_target,
+                    entry.dispatch_inputs_json,
                     entry.position_hint,
                     1 if entry.requires_human else 0,
                     1 if entry.is_terminal else 0,
@@ -145,6 +155,9 @@ class StageRegistryManager:
             default_agent=self._row_value(row, "default_agent"),
             reviewer_agent=self._row_value(row, "reviewer_agent"),
             review_policy=review_policy,
+            dispatch_type=self._dispatch_type_from_row(row),
+            dispatch_target=self._row_value(row, "dispatch_target"),
+            dispatch_inputs_json=self._row_value(row, "dispatch_inputs_json"),
             position_hint=int(row["position_hint"]),
             requires_human=bool(row["requires_human"]),
             is_terminal=bool(row["is_terminal"]),
@@ -168,6 +181,11 @@ class StageRegistryManager:
                 "ALTER TABLE task_stages_registry ADD COLUMN default_max_review_rounds "
                 "INTEGER NOT NULL DEFAULT 5"
             ),
+            "dispatch_type": "ALTER TABLE task_stages_registry ADD COLUMN dispatch_type TEXT",
+            "dispatch_target": "ALTER TABLE task_stages_registry ADD COLUMN dispatch_target TEXT",
+            "dispatch_inputs_json": (
+                "ALTER TABLE task_stages_registry ADD COLUMN dispatch_inputs_json TEXT"
+            ),
         }
         with self.db.transaction() as conn:
             for column, sql in additions.items():
@@ -184,10 +202,21 @@ class StageRegistryManager:
         except (IndexError, KeyError):
             return None
 
+    @classmethod
+    def _dispatch_type_from_row(cls, row: sqlite3.Row) -> DispatchType | None:
+        value = cls._row_value(row, "dispatch_type")
+        return value if value in {"agent", "pipeline"} else None
+
     @staticmethod
     def _validate_entry(entry: StageRegistryEntry) -> None:
         if entry.review_policy not in {"none", "required", "optional"}:
             raise ValueError(f"Invalid review_policy '{entry.review_policy}'")
+        if entry.dispatch_type not in {None, "agent", "pipeline"}:
+            raise ValueError(f"Invalid dispatch_type '{entry.dispatch_type}'")
+        if entry.dispatch_type == "pipeline" and not entry.dispatch_target:
+            raise ValueError("dispatch_target is required for pipeline dispatch")
+        if entry.dispatch_type == "agent" and not (entry.dispatch_target or entry.default_agent):
+            raise ValueError("dispatch_target or default_agent is required for agent dispatch")
         if entry.review_policy != "none" and not entry.reviewer_agent and entry.name != "pr":
             raise ValueError(
                 f"reviewer_agent is required for stage '{entry.name}' with review policy"

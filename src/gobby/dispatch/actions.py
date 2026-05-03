@@ -21,11 +21,14 @@ class SpawnAgentAction:
 
 
 @dataclass(frozen=True)
-class StartExpansionAction:
-    """Start deterministic expansion for an epic or planning anchor."""
+class StartPipelineAction:
+    """Start a configured pipeline for a task stage."""
 
     task_id: str
     task_ref: str
+    stage_name: str
+    pipeline_name: str
+    dispatch_inputs: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +91,7 @@ class EscalateAction:
 
 type Action = (
     SpawnAgentAction
-    | StartExpansionAction
+    | StartPipelineAction
     | StartStageAction
     | CreateIsolationAction
     | AdvanceStageAction
@@ -106,6 +109,6 @@ __all__ = [
     "CreateIsolationAction",
     "EscalateAction",
     "SpawnAgentAction",
-    "StartExpansionAction",
+    "StartPipelineAction",
     "StartStageAction",
 ]

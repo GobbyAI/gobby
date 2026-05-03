@@ -156,3 +156,68 @@ def test_expansion_rule_does_not_refire_after_handler_advances(
     _dispatch.on_expansion_run_completed("task-1", "expansion-1", apply_created_children=True)
 
     assert advances == [("task-1", "in_development", "open")]
+
+
+def _stage_pipeline_task(temp_db, sample_project, *, review_policy: str = "required"):
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+    from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
+
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(project_id=sample_project["id"], title="Pipeline stage")
+    temp_db.execute(
+        "UPDATE task_stages_registry SET review_policy = ? WHERE name = 'expansion'",
+        (review_policy,),
+    )
+    initialize_manifest(temp_db, task.id, [spec("expansion", 0)])
+    set_stage_state(temp_db, task.id, "expansion", "in_progress")
+    storage = TaskDispatchMutexManager(temp_db)
+    storage.ensure_table()
+    storage.acquire_mutex(task.id, holder="dispatcher", kind="heartbeat", ttl_seconds=30)
+    temp_db.execute(
+        """
+        UPDATE task_dispatch_mutex
+           SET run_id = ?, action_kind = ?
+         WHERE task_id = ?
+        """,
+        ("pe-1", "stage-pipeline:expansion", task.id),
+    )
+    return manager, task, storage
+
+
+def test_pipeline_completed_submits_required_stage_for_review(temp_db, sample_project) -> None:
+    from gobby.hooks.event_handlers import _dispatch
+
+    manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
+
+    _dispatch.on_pipeline_completed({"execution_id": "pe-1"}, db=temp_db, storage=storage)
+
+    assert manager.stage_states.get(task.id, "expansion").state == "needs_review"
+    assert storage.get_mutex(task.id) is None
+
+
+def test_pipeline_failed_returns_stage_to_ready(temp_db, sample_project) -> None:
+    from gobby.hooks.event_handlers import _dispatch
+
+    manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
+
+    _dispatch.on_pipeline_failed(
+        {"execution_id": "pe-1", "error": "boom"}, db=temp_db, storage=storage
+    )
+
+    stage = manager.stage_states.get(task.id, "expansion")
+    assert stage.state == "ready"
+    assert storage.get_mutex(task.id) is None
+
+
+def test_pipeline_cancelled_escalates_stage_and_releases_mutex(temp_db, sample_project) -> None:
+    from gobby.hooks.event_handlers import _dispatch
+
+    manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
+
+    _dispatch.on_pipeline_cancelled({"execution_id": "pe-1"}, db=temp_db, storage=storage)
+
+    stage = manager.stage_states.get(task.id, "expansion")
+    assert stage.state == "ready"
+    assert manager.get_task(task.id).is_escalated is True
+    assert storage.get_mutex(task.id) is None

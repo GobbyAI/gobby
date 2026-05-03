@@ -21,6 +21,9 @@ class StageRegistryEntryView(BaseModel):
     default_agent: str | None
     reviewer_agent: str | None
     review_policy: Literal["none", "required", "optional"]
+    dispatch_type: Literal["agent", "pipeline"] | None
+    dispatch_target: str | None
+    dispatch_inputs_json: str | None
     position_hint: int
     requires_human: bool
     is_terminal: bool

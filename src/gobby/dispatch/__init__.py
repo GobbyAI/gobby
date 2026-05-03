@@ -7,7 +7,7 @@ from gobby.dispatch.actions import (
     CreateIsolationAction,
     EscalateAction,
     SpawnAgentAction,
-    StartExpansionAction,
+    StartPipelineAction,
 )
 
 __all__ = [
@@ -17,5 +17,5 @@ __all__ = [
     "CreateIsolationAction",
     "EscalateAction",
     "SpawnAgentAction",
-    "StartExpansionAction",
+    "StartPipelineAction",
 ]

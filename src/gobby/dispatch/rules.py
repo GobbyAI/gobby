@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
@@ -11,7 +12,7 @@ from gobby.dispatch.actions import (
     CreateIsolationAction,
     EscalateAction,
     SpawnAgentAction,
-    StartExpansionAction,
+    StartPipelineAction,
     StartStageAction,
 )
 from gobby.dispatch.prompts import PROMPT_BUILDERS
@@ -169,7 +170,7 @@ def expansion_work_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "expansion", "in_progress")
     if stage is None or _stage_work_exhausted(stage, context):
         return None
-    return StartExpansionAction(task_id=_task_id(task), task_ref=_task_ref(task))
+    return _start_configured_stage_pipeline(task, stage, context)
 
 
 def expansion_review_rule(task: object, context: object) -> Action | None:
@@ -377,6 +378,45 @@ def _spawn_configured_stage_agent(
     return _spawn_on_stage(
         task, context, stage_name, state, _STAGE_AGENT_SLUGS[(stage_name, state)]
     )
+
+
+def _start_configured_stage_pipeline(
+    task: object,
+    stage: object,
+    context: object,
+) -> Action | None:
+    stage_name = _stage_name(stage)
+    registry_entry = _registry_entry(context, stage_name, stage)
+    dispatch_type = _field(registry_entry, "dispatch_type")
+    if dispatch_type not in {None, "agent", "pipeline"}:
+        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_invalid_dispatch_type")
+    if dispatch_type != "pipeline":
+        return None
+    pipeline_name = _field(registry_entry, "dispatch_target")
+    if not pipeline_name:
+        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_missing_pipeline")
+    return StartPipelineAction(
+        task_id=_task_id(task),
+        task_ref=_task_ref(task),
+        stage_name=stage_name,
+        pipeline_name=str(pipeline_name),
+        dispatch_inputs=_dispatch_inputs(registry_entry),
+    )
+
+
+def _dispatch_inputs(registry_entry: object | None) -> dict[str, object]:
+    raw = _field(registry_entry, "dispatch_inputs_json")
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return cast(dict[str, object], raw)
+    if not isinstance(raw, str):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
 
 
 def _spawn_required_stage_agent(

@@ -75,6 +75,13 @@ class TaskDispatchMutexManager:
         )
         return DispatchMutex.from_row(row) if row is not None else None
 
+    def get_mutex_by_run_id(self, run_id: str) -> DispatchMutex | None:
+        row = self.db.fetchone(
+            "SELECT * FROM task_dispatch_mutex WHERE run_id = ?",
+            (run_id,),
+        )
+        return DispatchMutex.from_row(row) if row is not None else None
+
     def acquire_mutex(
         self,
         task_id: str,

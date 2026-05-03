@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import uuid
@@ -18,7 +19,7 @@ from gobby.dispatch.actions import (
     CreateIsolationAction,
     EscalateAction,
     SpawnAgentAction,
-    StartExpansionAction,
+    StartPipelineAction,
     StartStageAction,
 )
 from gobby.dispatch.mutex import (
@@ -27,7 +28,10 @@ from gobby.dispatch.mutex import (
     RuntimeDispatchMutex,
     RuntimeStageSnapshotState,
 )
-from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
+from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
+    _execute_pipeline_background,
+    _register_background_task,
+)
 from gobby.storage.database import DatabaseProtocol, LocalDatabase
 from gobby.storage.tasks._artifacts import (
     TaskArtifactManager,
@@ -44,7 +48,10 @@ from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistr
 from gobby.storage.tasks._stage_states import StageState, StageStatesManager
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.templates import TemplateEngine
 
 MAX_ACTIVE_AGENTS = 10
 DISPATCH_HOLDER = "dispatcher"
@@ -305,8 +312,10 @@ def build_context(
         build_config=build_config,
         current_stage=dispatch_rules.current_stage(task),
         db=db,
+        project_id=task.project_id,
         services=services,
         stage_registry=stage_registry,
+        task=task,
     )
 
 
@@ -413,19 +422,9 @@ def execute_action(
             mutex.attach(str(run_id))
         return run_id
 
-    if isinstance(action, StartExpansionAction):
-        run_id = allocate_expansion_run_id()
-        mutex.attach(run_id)
-        return start_expansion_run_impl(
-            task_id=action.task_id,
-            run_id=run_id,
-            auto_apply=True,
-            task_manager=getattr(services, "task_manager", None),
-            llm_service=getattr(services, "llm_service", None),
-            config=getattr(services, "config", None),
-            completion_registry=getattr(services, "completion_registry", None),
-            triggering_session_id=getattr(services, "triggering_session_id", None),
-            project=getattr(services, "project", None),
+    if isinstance(action, StartPipelineAction):
+        return _start_pipeline_action(
+            action, mutex=mutex, db=db, context=context, services=services
         )
 
     try:
@@ -459,6 +458,168 @@ def execute_action(
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")
     finally:
         mutex.release()
+
+
+async def _start_pipeline_action(
+    action: StartPipelineAction,
+    *,
+    mutex: RuntimeDispatchMutex,
+    db: DatabaseProtocol,
+    context: object | None,
+    services: object | None,
+) -> dict[str, object]:
+    executor = getattr(services, "pipeline_executor", None)
+    loader = getattr(services, "workflow_loader", None) or getattr(executor, "loader", None)
+    if executor is None:
+        return _escalate_pipeline_dispatch(action, mutex, db, "pipeline_executor_missing")
+    if loader is None:
+        return _escalate_pipeline_dispatch(action, mutex, db, "pipeline_loader_missing")
+
+    try:
+        pipeline = await loader.load_pipeline(action.pipeline_name)
+    except ValueError as exc:
+        return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_invalid:{exc}")
+    if pipeline is None:
+        return _escalate_pipeline_dispatch(
+            action, mutex, db, f"pipeline_missing:{action.pipeline_name}"
+        )
+    if not getattr(pipeline, "enabled", True):
+        return _escalate_pipeline_dispatch(
+            action, mutex, db, f"pipeline_disabled:{action.pipeline_name}"
+        )
+    if getattr(pipeline, "deprecated", False):
+        return _escalate_pipeline_dispatch(
+            action, mutex, db, f"pipeline_deprecated:{action.pipeline_name}"
+        )
+
+    try:
+        inputs = _render_dispatch_inputs(action, context, services)
+    except ValueError as exc:
+        return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_render_failed:{exc}")
+
+    try:
+        execution_id = _create_stage_pipeline_execution(
+            action,
+            pipeline=pipeline,
+            inputs=inputs,
+            mutex=mutex,
+            db=db,
+            services=services,
+        )
+    except Exception as exc:
+        return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_attach_failed:{exc}")
+    task = asyncio.create_task(
+        _execute_pipeline_background(
+            executor,
+            pipeline,
+            inputs,
+            str(_field(context, "project_id", "")),
+            execution_id,
+            action.pipeline_name,
+            session_id=getattr(services, "triggering_session_id", None),
+        ),
+        name=f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}",
+    )
+    _register_background_task(task)
+    return {"success": True, "execution_id": execution_id, "status": "running"}
+
+
+def _escalate_pipeline_dispatch(
+    action: StartPipelineAction,
+    mutex: RuntimeDispatchMutex,
+    db: DatabaseProtocol,
+    reason: str,
+) -> dict[str, object]:
+    escalate_task(db=db, task_id=action.task_id, reason=f"stage_pipeline_dispatch:{reason}")
+    mutex.release()
+    return {"success": False, "error": reason}
+
+
+def _render_dispatch_inputs(
+    action: StartPipelineAction,
+    context: object | None,
+    services: object | None,
+) -> dict[str, Any]:
+    render_context = _pipeline_render_context(action, context, services)
+    renderer = StepRenderer(TemplateEngine())
+    return renderer.render_mcp_arguments(dict(action.dispatch_inputs or {}), render_context)
+
+
+def _pipeline_render_context(
+    action: StartPipelineAction,
+    context: object | None,
+    services: object | None,
+) -> dict[str, Any]:
+    task = _field(context, "task")
+    artifacts = _field(context, "artifacts", {})
+    children = _field(context, "children", [])
+    stage_state = _field(context, "current_stage")
+    project_id = _field(task, "project_id", _field(context, "project_id"))
+    return {
+        "task": task,
+        "stage": stage_state,
+        "artifacts": artifacts,
+        "children": children,
+        "task_id": action.task_id,
+        "task_ref": action.task_ref,
+        "stage_name": action.stage_name,
+        "stage_state": stage_state,
+        "project_id": project_id,
+        "session_id": getattr(services, "triggering_session_id", None),
+    }
+
+
+def _create_stage_pipeline_execution(
+    action: StartPipelineAction,
+    *,
+    pipeline: object,
+    inputs: dict[str, Any],
+    mutex: RuntimeDispatchMutex,
+    db: DatabaseProtocol,
+    services: object | None,
+) -> str:
+    execution_id = generate_prefixed_id("pe")
+    session_id = getattr(services, "triggering_session_id", None)
+    try:
+        definition_json = pipeline.model_dump_json()
+    except Exception:
+        definition_json = json.dumps(
+            {"name": action.pipeline_name, "error": "serialization failed"}
+        )
+    with db.transaction_immediate() as conn:
+        conn.execute(
+            """
+            INSERT INTO pipeline_executions (
+                id, pipeline_name, project_id, status, inputs_json, session_id,
+                definition_json, created_at, updated_at
+            )
+            SELECT ?, ?, project_id, 'pending', ?, ?, ?, datetime('now'), datetime('now')
+              FROM tasks
+             WHERE id = ?
+            """,
+            (
+                execution_id,
+                action.pipeline_name,
+                json.dumps(inputs),
+                session_id,
+                definition_json,
+                action.task_id,
+            ),
+        )
+        cursor = conn.execute(
+            """
+            UPDATE task_dispatch_mutex
+               SET run_id = ?,
+                   action_kind = ?,
+                   updated_at = datetime('now')
+             WHERE task_id = ?
+            """,
+            (execution_id, f"stage-pipeline:{action.stage_name}", action.task_id),
+        )
+        if cursor.rowcount < 1:
+            raise RuntimeError(f"dispatch mutex missing before attaching {execution_id}")
+    mutex._run_id = execution_id
+    return execution_id
 
 
 def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> StageStatesManager:
@@ -641,5 +802,4 @@ __all__ = [
     "reload_candidate",
     "run_heartbeat",
     "spawn_agent",
-    "start_expansion_run_impl",
 ]

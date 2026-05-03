@@ -113,6 +113,36 @@ def on_expansion_run_cancelled(
     return _release_run_mutex(expansion_run_id, storage=storage)
 
 
+def on_pipeline_completed(
+    event: object,
+    *,
+    db: DatabaseProtocol | None = None,
+    storage: TaskDispatchMutexManager | None = None,
+) -> object | None:
+    """Advance the stage that launched a completed stage pipeline."""
+    return _handle_stage_pipeline_terminal(event, "completed", db=db, storage=storage)
+
+
+def on_pipeline_failed(
+    event: object,
+    *,
+    db: DatabaseProtocol | None = None,
+    storage: TaskDispatchMutexManager | None = None,
+) -> object | None:
+    """Fail the stage that launched a failed stage pipeline."""
+    return _handle_stage_pipeline_terminal(event, "failed", db=db, storage=storage)
+
+
+def on_pipeline_cancelled(
+    event: object,
+    *,
+    db: DatabaseProtocol | None = None,
+    storage: TaskDispatchMutexManager | None = None,
+) -> object | None:
+    """Escalate the stage that launched a cancelled stage pipeline."""
+    return _handle_stage_pipeline_terminal(event, "cancelled", db=db, storage=storage)
+
+
 def _release_event_mutex(event: object, *, storage: TaskDispatchMutexManager | None) -> int:
     run_id = _event_value(event, "run_id")
     if run_id:
@@ -122,6 +152,59 @@ def _release_event_mutex(event: object, *, storage: TaskDispatchMutexManager | N
     if not task_id or storage is None:
         return 0
     return int(RuntimeDispatchMutex.force_release_for_task(storage, str(task_id)))
+
+
+def _handle_stage_pipeline_terminal(
+    event: object,
+    status: str,
+    *,
+    db: DatabaseProtocol | None,
+    storage: TaskDispatchMutexManager | None,
+) -> object | None:
+    run_id = _event_value(event, "execution_id") or _event_value(event, "run_id")
+    if not run_id:
+        return None
+    resolved_storage = _storage_from_db(db, storage)
+    mutex = resolved_storage.get_mutex_by_run_id(str(run_id)) if resolved_storage else None
+    if mutex is None or not str(mutex.action_kind or "").startswith("stage-pipeline:"):
+        return None
+    if db is None:
+        _release_run_mutex(str(run_id), storage=resolved_storage)
+        return None
+    stage_name = str(mutex.action_kind).split(":", 1)[1]
+    manager = _stage_states(db)
+    if manager is None:
+        _release_run_mutex(str(run_id), storage=resolved_storage)
+        return None
+    stage = _current_stage_for_task(manager, mutex.task_id)
+    _release_run_mutex(str(run_id), storage=resolved_storage)
+    if stage is None or stage.stage_name != stage_name or stage.state != "in_progress":
+        return None
+    if status == "completed":
+        if stage.review_policy == "required":
+            return manager.submit_for_review(mutex.task_id, stage_name, by_session_id=None)
+        return manager.complete_stage(mutex.task_id, stage_name, by_session_id=None)
+    if status == "cancelled":
+        return manager.fail_stage(
+            mutex.task_id,
+            stage_name,
+            reason="pipeline_cancelled",
+            needs_human=True,
+            by_session_id=None,
+        )
+    reason = _event_value(event, "error") or _event_value(event, "reason") or "pipeline_failed"
+    return manager.fail_stage(
+        mutex.task_id,
+        stage_name,
+        reason=str(reason),
+        by_session_id=None,
+    )
+
+
+def _current_stage_for_task(manager: StageStatesManager, task_id: str) -> Any | None:
+    stages = manager.list_for_task(task_id)
+    pending = [stage for stage in stages if stage.state != "done"]
+    return min(pending, key=lambda stage: stage.position) if pending else None
 
 
 def _event_storage(
@@ -238,5 +321,8 @@ __all__ = [
     "on_expansion_run_cancelled",
     "on_expansion_run_completed",
     "on_expansion_run_failed",
+    "on_pipeline_cancelled",
+    "on_pipeline_completed",
+    "on_pipeline_failed",
     "on_task_reopened",
 ]

@@ -40,7 +40,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 245
+    assert latest_known_version() == 246
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -48,15 +48,16 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         243,
         244,
         245,
+        246,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 7
-    assert get_current_version(db) == 245
+    assert applied == 8
+    assert get_current_version(db) == 246
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245]
+    assert versions == [239, 240, 241, 242, 243, 244, 245, 246]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
 
 
@@ -68,9 +69,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 245
+    assert get_current_version(db) == 246
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245]
+    assert versions == [239, 240, 241, 242, 243, 244, 245, 246]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:

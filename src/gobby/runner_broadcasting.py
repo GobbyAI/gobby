@@ -174,6 +174,19 @@ def setup_pipeline_event_broadcasting(
 
     async def broadcast_pipeline_event(event: str, execution_id: str, **kwargs: Any) -> None:
         """Broadcast pipeline events via WebSocket."""
+        if event in {"pipeline_completed", "pipeline_failed", "pipeline_cancelled"}:
+            from types import SimpleNamespace
+
+            from gobby.hooks.event_handlers import _dispatch
+
+            payload = SimpleNamespace(execution_id=execution_id, **kwargs)
+            db = getattr(pipeline_executor, "db", None)
+            if event == "pipeline_completed":
+                _dispatch.on_pipeline_completed(payload, db=db)
+            elif event == "pipeline_failed":
+                _dispatch.on_pipeline_failed(payload, db=db)
+            else:
+                _dispatch.on_pipeline_cancelled(payload, db=db)
         if websocket_server:
             await websocket_server.broadcast_pipeline_event(
                 event=event,
