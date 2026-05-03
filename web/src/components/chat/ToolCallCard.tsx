@@ -72,7 +72,7 @@ const highlighterTheme = {
   ...oneDark,
   'pre[class*="language-"]': {
     ...oneDark['pre[class*="language-"]'],
-    background: '#0d0d0d',
+    background: 'var(--code-bg)',
     margin: '0',
     padding: '0.75rem',
     fontSize: '0.75rem',
@@ -130,7 +130,7 @@ const lineNumberStyle = {
   paddingRight: '1em',
   textAlign: 'right' as const,
   userSelect: 'none' as const,
-  color: '#555',
+  color: 'var(--text-muted)',
 }
 
 function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
@@ -280,7 +280,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
               paddingRight: '1em',
               textAlign: 'right',
               userSelect: 'none',
-              color: '#555',
+              color: 'var(--text-muted)',
             }}
             customStyle={{
               margin: 0,

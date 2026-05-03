@@ -8,7 +8,7 @@ const customTheme = {
   ...oneDark,
   'pre[class*="language-"]': {
     ...oneDark['pre[class*="language-"]'],
-    background: '#0d0d0d',
+    background: 'var(--code-bg)',
     margin: '0',
     padding: '1rem',
     fontSize: '0.9em',
@@ -57,12 +57,12 @@ export function LazyHighlighter({
       <div ref={containerRef}>
         <pre
           style={{
-            background: '#0d0d0d',
+            background: 'var(--code-bg)',
             margin: 0,
             padding: '1rem',
             fontSize: '0.9em',
             fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-            color: '#abb2bf',
+            color: 'var(--text-primary)',
             overflow: 'auto',
             borderRadius: 0,
             ...((props.customStyle as React.CSSProperties) || {}),
@@ -163,7 +163,7 @@ export function CodeBlockInner({ children, className }: CodeProps) {
           paddingRight: '1em',
           textAlign: 'right',
           userSelect: 'none',
-          color: '#555',
+          color: 'var(--text-muted)',
         }}
         customStyle={{ margin: 0, borderRadius: 0 }}
       >
