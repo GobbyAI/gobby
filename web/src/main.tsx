@@ -1,4 +1,5 @@
 import { createRoot } from 'react-dom/client'
+import '@fontsource-variable/geist'
 import './styles/index.css'
 import './styles/buttons.css'
 import './styles/settings.css'
