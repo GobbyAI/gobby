@@ -6,7 +6,7 @@ import { YamlEditorModal } from './WorkflowsPage'
 import { AgentEditForm } from '../agents/AgentEditForm'
 import type { AgentFormData } from '../agents/AgentEditForm'
 import type { WorkflowStep } from '../agents/AgentStepsEditor'
-import { PROVIDER_COLORS } from '../shared/sourceTheme'
+import { getProviderColorVar } from '../shared/sourceTheme'
 import {
   AUTO_REASONING_EFFORT,
   fetchProviderModelCatalog,
@@ -783,7 +783,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                       </span>
                       <span
                         className="agent-def-badge agent-def-badge--filled"
-                        style={{ background: PROVIDER_COLORS[d.provider] || '#666' }}
+                        style={{ background: getProviderColorVar(d.provider) }}
                       >
                         {d.provider}
                       </span>

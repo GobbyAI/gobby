@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { SourceIcon } from "../SourceIcon";
-import { PROVIDER_COLORS, SOURCE_COLORS, SOURCE_LABELS } from "../sourceTheme";
+import { PROVIDER_COLOR_PAIRS, SOURCE_COLOR_PAIRS, SOURCE_LABELS } from "../sourceTheme";
 import { KNOWN_SOURCES } from "../../../types/sessions";
 
 describe("SourceIcon", () => {
@@ -37,7 +37,8 @@ describe("SourceIcon", () => {
   it("includes Droid in shared source metadata", () => {
     expect(KNOWN_SOURCES).toContain("droid");
     expect(SOURCE_LABELS.droid).toBe("Droid");
-    expect(SOURCE_COLORS.droid).toBeTruthy();
-    expect(PROVIDER_COLORS.droid).toBe(SOURCE_COLORS.droid);
+    expect(SOURCE_COLOR_PAIRS.droid).toBeTruthy();
+    expect(PROVIDER_COLOR_PAIRS.droid.dark).toBe(SOURCE_COLOR_PAIRS.droid.dark);
+    expect(PROVIDER_COLOR_PAIRS.droid.light).toBe(SOURCE_COLOR_PAIRS.droid.light);
   });
 });

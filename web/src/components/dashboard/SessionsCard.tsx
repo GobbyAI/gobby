@@ -1,5 +1,5 @@
 import { useTimeStats } from '../../hooks/useTimeStats'
-import { SOURCE_COLORS, SOURCE_LABELS } from '../shared/sourceTheme'
+import { getSourceColorVar, SOURCE_LABELS } from '../shared/sourceTheme'
 import { DashboardCard } from './DashboardCard'
 import {
   dashboardCardBodyRowClass,
@@ -10,7 +10,6 @@ import {
   dashboardStatusRowValueClass,
 } from './dashboardStyles'
 
-const FALLBACK_COLOR = SOURCE_COLORS.default
 
 const SIZE = 120
 const STROKE = 18
@@ -33,7 +32,7 @@ export function SessionsCard({ hours, projectId }: Props) {
     .map(([src, statuses]) => ({
       key: src,
       label: SOURCE_LABELS[src] ?? src,
-      color: SOURCE_COLORS[src] ?? FALLBACK_COLOR,
+      color: getSourceColorVar(src),
       value: Object.values(statuses).reduce((sum, n) => sum + n, 0),
     }))
     .filter(s => s.value > 0)

@@ -485,7 +485,7 @@
 
 .agent-def-badge--filled {
   border: none;
-  /* Background is set inline from PROVIDER_COLORS — always-bright hues in both themes.
+  /* Background is set inline via getProviderColorVar() — see sourceTheme.ts.
      Use a fixed dark text color since accent-foreground would flip to white in light. */
   color: oklch(15% 0 0);
   font-weight: 600;

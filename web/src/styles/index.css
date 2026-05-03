@@ -117,6 +117,29 @@
   --exec-status-cancelled: oklch(60% 0.005 125);
   --exec-status-interrupted: oklch(70% 0.16 290);
 
+  /* Session-source palette — see components/shared/sourceTheme.ts. */
+  --source-claude: oklch(70% 0.16 290);
+  --source-gemini: oklch(72% 0.16 145);
+  --source-qwen: oklch(78% 0.15 75);
+  --source-codex: oklch(70% 0.14 240);
+  --source-droid: oklch(72% 0.13 200);
+  --source-pipeline: oklch(60% 0.005 125);
+  --source-cron: oklch(70% 0.005 125);
+  --source-unknown: oklch(60% 0.005 125);
+  --source-default: oklch(60% 0.005 125);
+
+  /* Agent-provider palette — see components/shared/sourceTheme.ts. */
+  --provider-inherit: oklch(70% 0.005 250);
+  --provider-claude: oklch(70% 0.16 290);
+  --provider-gemini: oklch(72% 0.16 145);
+  --provider-qwen: oklch(78% 0.15 75);
+  --provider-codex: oklch(70% 0.14 240);
+  --provider-droid: oklch(72% 0.13 200);
+  --provider-cursor: oklch(70% 0.14 240);
+  --provider-windsurf: oklch(72% 0.12 190);
+  --provider-copilot: oklch(72% 0.18 50);
+  --provider-unknown: oklch(60% 0.005 125);
+
   --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
   /* stylelint-disable value-keyword-case */
   --font-sans:
@@ -223,6 +246,29 @@
   --exec-status-waiting_approval: oklch(45% 0.18 75);
   --exec-status-cancelled: oklch(40% 0.005 125);
   --exec-status-interrupted: oklch(42% 0.18 290);
+
+  /* Session-source palette — light theme variants. */
+  --source-claude: oklch(42% 0.18 290);
+  --source-gemini: oklch(42% 0.18 145);
+  --source-qwen: oklch(45% 0.18 75);
+  --source-codex: oklch(42% 0.16 240);
+  --source-droid: oklch(45% 0.15 200);
+  --source-pipeline: oklch(40% 0.005 125);
+  --source-cron: oklch(50% 0.005 125);
+  --source-unknown: oklch(40% 0.005 125);
+  --source-default: oklch(40% 0.005 125);
+
+  /* Agent-provider palette — light theme variants. */
+  --provider-inherit: oklch(45% 0.005 250);
+  --provider-claude: oklch(42% 0.18 290);
+  --provider-gemini: oklch(42% 0.18 145);
+  --provider-qwen: oklch(45% 0.18 75);
+  --provider-codex: oklch(42% 0.16 240);
+  --provider-droid: oklch(45% 0.15 200);
+  --provider-cursor: oklch(42% 0.16 240);
+  --provider-windsurf: oklch(42% 0.14 190);
+  --provider-copilot: oklch(48% 0.20 50);
+  --provider-unknown: oklch(40% 0.005 125);
 }
 
 /* Light theme overrides: shared status badges */

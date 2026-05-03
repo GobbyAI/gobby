@@ -3,7 +3,7 @@ import { Dialog, DialogContent } from "./ui/Dialog";
 import type { GobbySession } from "../../types/sessions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { getSessionTitleText } from "../../lib/sessionTitle";
-import { SOURCE_COLORS, SOURCE_LABELS } from "../shared/sourceTheme";
+import { getSourceColorVar, SOURCE_LABELS } from "../shared/sourceTheme";
 
 interface ResumeSessionModalProps {
   isOpen: boolean;
@@ -178,7 +178,7 @@ export function ResumeSessionModal({
                     width: "8px",
                     height: "8px",
                     borderRadius: "50%",
-                    background: SOURCE_COLORS[session.source] ?? "var(--text-muted)",
+                    background: getSourceColorVar(session.source),
                     flexShrink: 0,
                   }}
                 />
