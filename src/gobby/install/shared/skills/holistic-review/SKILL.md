@@ -27,6 +27,7 @@ Review all available evidence before deciding:
 - The approved plan artifact at `epic.plan_file_path`.
 - The aggregate worktree diff for the epic.
 - Linked subtask descriptions, validation criteria, commits, and close notes.
+- The coverage matrix or plan-to-task mapping when available.
 
 If the plan artifact or diff is unavailable, escalate with a `needs_human:`
 reason unless the prompt explicitly provides equivalent evidence. Never use
@@ -35,32 +36,32 @@ or request-changes outcome from available evidence.
 
 ## Methodology
 
-Walk the evidence mechanically with these four checks.
+Walk the evidence mechanically in this order.
 
-### Scope
+### spec_compliance
 
-Compare the approved plan to the final diff. The implementation should do
-exactly what the plan called for: no missing plan sections, no unrelated product
-behavior, no unplanned rewrites, and no omitted cleanup or migration steps.
+Compare the approved plan, coverage matrix, full task subtree, aggregate diff,
+and delivered behavior. Catch missing plan items, child-work gaps, integration
+failures, scope drift, omitted cleanup, and divergent product behavior here.
+Reject on missing or incorrect required behavior before moving to code quality.
 
-### Reality
+### code_quality
 
-Verify the end-to-end behavior implied by the plan is actually present in the
-changed code and task outputs. Do not accept a change just because individual
-subtasks were closed if their combined behavior does not produce the planned
-outcome.
+After spec_compliance passes, review cross-cutting maintainability,
+architecture fit, consistency across leaves, duplicate or fragile
+implementations, safety, and repo-pattern alignment.
 
-### Testing
+### testing
 
-Check whether tests, fixtures, validation commands, or manual verification cover
-the risk introduced by the diff. Coverage can be unit, integration, E2E,
-regression, contract, or infrastructure depending on what the plan required.
+Evaluate validation evidence against epic-level risk and end-to-end behavior.
+Coverage can be unit, integration, E2E, regression, contract, manual, or
+infrastructure depending on what the plan required.
 
-### YAGNI
+### yagni
 
-Look for drift, creep, or scope bloat. Flag extra abstractions, speculative
-framework work, broad rewrites, or added product behavior that was not needed to
-deliver the plan.
+Flag speculative abstractions, unnecessary rewrites, duplicate frameworks,
+scope creep, and unplanned product behavior that was not needed to deliver the
+plan.
 
 ## Finding Attribution
 
@@ -80,8 +81,8 @@ Return a structured verdict block in this shape:
 ## Holistic Findings
 
 verdict: approve | request_changes | needs_discussion
-scope: OK | Drift | Gap - <citation and one-line rationale>
-reality: OK | Drift | Gap - <citation and one-line rationale>
+spec_compliance: OK | Drift | Gap - <citation and one-line rationale>
+code_quality: OK | Drift | Gap - <citation and one-line rationale>
 testing: OK | Drift | Gap - <citation and one-line rationale>
 yagni: OK | Drift | Gap - <citation and one-line rationale>
 

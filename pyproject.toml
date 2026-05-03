@@ -136,6 +136,7 @@ markers = [
     "integration: marks tests as integration tests",
     "e2e: marks tests as end-to-end tests",
     "cli: marks tests as CLI command tests",
+    "skill_tdd: marks skill pressure-scenario tests",
     "no_config_protection: skip config protection for this test",
 ]
 filterwarnings = [

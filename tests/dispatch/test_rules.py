@@ -313,6 +313,31 @@ def test_pr_rule_routes_to_merge_orchestrator() -> None:
     assert action.agent_slug == "merge-orchestrator"
 
 
+def test_review_dispatch_remains_single_existing_agent_per_stage() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+    from gobby.dispatch.rules import BASE_RULES, RULES
+
+    scenarios = [
+        (BASE_RULES, _task_at("development", "needs_review"), "qa-reviewer"),
+        (
+            BASE_RULES,
+            _task_at("holistic_qa", "in_progress", task_type="epic"),
+            "holistic-reviewer",
+        ),
+        (BASE_RULES, _task_at("pr", "in_progress", task_type="epic"), "merge-orchestrator"),
+        (RULES, _task_at("merge", "in_progress", task_type="epic"), "merge-orchestrator"),
+    ]
+
+    for rule_set, task, expected_agent in scenarios:
+        actions = [
+            action
+            for rule in rule_set
+            if isinstance((action := rule(task, _context())), SpawnAgentAction)
+        ]
+
+        assert [action.agent_slug for action in actions] == [expected_agent]
+
+
 def test_pr_rule_escalates_when_merge_orchestrator_missing() -> None:
     from gobby.dispatch.actions import EscalateAction
 

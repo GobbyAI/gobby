@@ -41,3 +41,15 @@ def test_reads_subtree() -> None:
     assert "gobby-tasks:list_tasks" in claim_step["allowed_mcp_tools"]
     assert "list_tasks(parent_task_id=" in agent["instructions"]
     assert "list_tasks(parent_task_id=assigned_task_id)" in review_text
+
+
+def test_holistic_review_order_is_spec_quality_testing_yagni() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    status = next(step for step in agent["steps"] if step["name"] == "review")["status_message"]
+
+    ordered = ["spec_compliance", "code_quality", "testing", "yagni"]
+    for earlier, later in zip(ordered, ordered[1:], strict=False):
+        assert instructions.index(earlier) < instructions.index(later)
+    assert "operational_risk" not in instructions
+    assert "aggregate diff" in status

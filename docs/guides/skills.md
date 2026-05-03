@@ -155,6 +155,19 @@ src/gobby/install/shared/skills/
 
 Project skills override user skills with the same name.
 
+## Behavioral Skill Validation
+
+Bundled skills that change agent behavior should have a pressure scenario under
+`tests/skills/scenarios/<skill-name>/`. Each scenario records two runs: one with
+the skill excluded and one with it loaded. The test must assert a behavioral
+delta, such as verification occurring before a completion claim.
+
+Run focused skill scenarios with:
+
+```bash
+uv run pytest tests/skills/ -m skill_tdd
+```
+
 ## Examples
 
 ### Simple Documentation Skill

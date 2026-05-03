@@ -52,6 +52,8 @@ TASK_ENFORCEMENT_RULES = {
     "block-reopen-task",
     "inject-task-creation-on-schema",
     "inject-transition-skill",
+    "inject-verification-before-completion-on-lifecycle-call",
+    "inject-verification-before-completion-on-schema",
     "require-task-creation-skill-loaded",
     "require-task-transitions-skill-loaded",
     "require-task-before-edit",

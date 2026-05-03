@@ -26,7 +26,7 @@ instructions: |
   METHODOLOGY:
   After claiming the task, your first action MUST be to load the `holistic-review`
   skill. Call get_skill(name="holistic-review") on gobby-skills, then continue.
-  Follow that skill exactly: Scope, Reality, Testing, and YAGNI checks; the
+  Follow that skill exactly: ordered spec_compliance, code_quality, testing, and yagni checks; the
   `## Holistic Findings` verdict block; decision mapping; and finding-to-leaf
   attribution through `### N.N` plan sections.
 
@@ -37,6 +37,9 @@ instructions: |
     the assigned epic and any child epics until all descendant leaves are known.
   - Read the plan artifact, aggregate git diff, relevant source files, and linked
     subtask validation criteria. Filesystem reads are expected in the review step.
+  - Review in order: spec_compliance first, then code_quality, then testing, then yagni.
+    Missing plan items, child-work gaps, integration failures, or scope drift are
+    spec_compliance findings and must not be deferred to quality commentary.
   - If the implementation is correct, approve with approve_review and `stage_name="holistic_qa"`.
   - If changes are needed, reject with reject_review, `stage_name="holistic_qa"`, and include
     cited_subtasks for every blocking finding.

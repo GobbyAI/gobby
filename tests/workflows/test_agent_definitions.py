@@ -46,14 +46,20 @@ def _blocked_mcp_tools(step: dict[str, Any]) -> set[str]:
 def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
     skill_text = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
 
-    for heading in ("### Scope", "### Reality", "### Testing", "### YAGNI"):
+    for heading in (
+        "### spec_compliance",
+        "### code_quality",
+        "### testing",
+        "### yagni",
+    ):
         assert heading in skill_text
     assert "## Holistic Findings" in skill_text
     assert "verdict: approve | request_changes | needs_discussion" in skill_text
-    assert "scope: OK | Drift | Gap" in skill_text
-    assert "reality: OK | Drift | Gap" in skill_text
+    assert "spec_compliance: OK | Drift | Gap" in skill_text
+    assert "code_quality: OK | Drift | Gap" in skill_text
     assert "testing: OK | Drift | Gap" in skill_text
     assert "yagni: OK | Drift | Gap" in skill_text
+    assert "operational_risk" not in skill_text
 
 
 def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:

@@ -43,3 +43,16 @@ def test_emits_review_verdict() -> None:
         "gobby-tasks-ops:approve_review",
         "gobby-tasks-ops:reject_review",
     } <= allowed_mcp_tools
+
+
+def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    status_message = review_step["status_message"]
+
+    assert instructions.index("spec_compliance") < instructions.index("code_quality")
+    assert status_message.index("spec_compliance") < status_message.index("code_quality")
+    assert "Reject immediately" in instructions
+    assert "Reject before code_quality" in status_message
+    assert "only when both" in instructions

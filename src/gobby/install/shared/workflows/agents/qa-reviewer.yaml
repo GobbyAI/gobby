@@ -13,9 +13,15 @@ instructions: |
 
   Your behavior is enforced by a step workflow. Follow the step prompts:
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
-  2. REVIEW: Check diff, verify tests, check code quality
+  2. REVIEW: Perform ordered leaf review:
+     a. spec_compliance: compare task description, validation criteria, coverage labels,
+        required files/tests, and diff. Reject immediately on missing or incorrect
+        required behavior.
+     b. code_quality: only after spec_compliance passes, review tests,
+        maintainability, regressions, safety, style, and repo fit.
   3. DECIDE:
-     - APPROVE: Call approve_review with `stage_name="development"` if code is good
+     - APPROVE: Call approve_review with `stage_name="development"` only when both
+       spec_compliance and code_quality pass
      - REJECT: Call reject_review with `stage_name="development"` and concrete blocking findings if code
        needs changes before approval
      - ESCALATE: Call escalate_task only for human-intervention blockers
@@ -80,12 +86,15 @@ steps:
         when: "vars.task_claimed"
 
   - name: review
-    description: "Review code, run tests, emit verdict"
+    description: "Review spec compliance first, then code quality, and emit verdict"
     status_message: |
       Review the code changes for the assigned task.
-      1. Check diff: git diff, git log
-      2. Run tests: uv run pytest <test_file> -v
-      3. APPROVE: call approve_review with stage_name="development"
+      1. spec_compliance: compare task description, validation criteria, coverage labels,
+         required files/tests, and diff. Reject before code_quality if required behavior
+         is missing or incorrect.
+      2. code_quality: after spec_compliance passes, review tests, maintainability,
+         regressions, safety, style, and repo fit.
+      3. APPROVE: call approve_review with stage_name="development" only when both pass
       4. REJECT: call reject_review with stage_name="development" and blocking findings
       5. ESCALATE: call escalate_task for human-intervention blockers
     allowed_tools:
