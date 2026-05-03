@@ -15,11 +15,11 @@ import {
 import {
   type AgentDefInfo,
   SOURCE_LABELS,
-  ISOLATION_COLORS,
   DEFAULT_FORM,
   agentDefToYaml,
   getBaseUrl,
 } from './AgentsTab.types'
+import { getIsolationColorVar } from './isolationColors'
 
 // =============================================================================
 // Component
@@ -795,7 +795,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                       {d.isolation && (
                         <span
                           className="agent-def-badge agent-def-badge--filled"
-                          style={{ background: ISOLATION_COLORS[d.isolation] || 'var(--text-muted)' }}
+                          style={{ background: getIsolationColorVar(d.isolation) }}
                         >
                           {d.isolation}
                         </span>

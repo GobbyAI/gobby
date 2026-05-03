@@ -56,12 +56,6 @@ export const SOURCE_LABELS: Record<string, string> = {
   'project': 'Project',
 }
 
-export const ISOLATION_COLORS: Record<string, string> = {
-  clone: 'var(--color-error)',
-  worktree: 'var(--color-warning-foreground)',
-  none: 'var(--text-muted)',
-}
-
 export const DEFAULT_FORM: AgentFormData = {
   name: '',
   description: '',

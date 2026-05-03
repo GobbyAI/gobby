@@ -160,6 +160,12 @@
   --category-manual: oklch(72% 0.18 50);
   --category-default: oklch(50% 0.005 125);
 
+  /* Agent-isolation palette — see components/workflows/isolationColors.ts. */
+  --isolation-clone: oklch(72% 0.20 350);
+  --isolation-worktree: oklch(78% 0.16 75);
+  --isolation-none: oklch(60% 0.005 125);
+  --isolation-inherit: oklch(70% 0.005 250);
+
   --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
   /* stylelint-disable value-keyword-case */
   --font-sans:
@@ -309,6 +315,12 @@
   --category-planning: oklch(40% 0.005 125);
   --category-manual: oklch(48% 0.20 50);
   --category-default: oklch(45% 0.005 125);
+
+  /* Agent-isolation palette — light theme variants. */
+  --isolation-clone: oklch(52% 0.22 350);
+  --isolation-worktree: oklch(58% 0.16 75);
+  --isolation-none: oklch(45% 0.005 125);
+  --isolation-inherit: oklch(45% 0.005 250);
 }
 
 /* Light theme overrides: shared status badges */
