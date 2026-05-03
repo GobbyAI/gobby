@@ -177,6 +177,42 @@ class TestToolHandlerEdgeCases:
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
+    def test_after_tool_notifies_code_index_with_project_root_path(
+        self, mock_dependencies: dict, tmp_path: Path
+    ) -> None:
+        """Test code index notification uses project root even when cwd is nested."""
+        repo_root = tmp_path / "project"
+        deep_cwd = repo_root / "src" / "pkg"
+        (repo_root / ".gobby").mkdir(parents=True)
+        (repo_root / ".gobby" / "project.json").write_text('{"id": "proj-1"}')
+        deep_cwd.mkdir(parents=True)
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        code_index_trigger = MagicMock()
+        resolve_project_id = MagicMock(return_value="proj-1")
+        handlers = EventHandlers(
+            **mock_dependencies,
+            code_index_trigger=code_index_trigger,
+            resolve_project_id=resolve_project_id,
+        )
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": "edited.py"},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(deep_cwd)
+
+        handlers.handle_after_tool(event)
+
+        resolve_project_id.assert_called_once_with(None, str(repo_root.resolve()))
+        code_index_trigger.notify_file_changed.assert_called_once_with(
+            file_path="src/pkg/edited.py",
+            project_id="proj-1",
+            root_path=str(repo_root.resolve()),
+        )
+
     def test_after_tool_edit_skips_gobby_internal_files(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for .gobby/ internal files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [

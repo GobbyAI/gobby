@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from pathlib import Path
 
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -30,12 +32,10 @@ class CodeIndexTrigger:
     ) -> None:
         self._loop = loop
         self._debounce_seconds = debounce_seconds
-        # Pending files grouped by project_id
-        self._pending: dict[str, set[str]] = {}
-        # Root path per project (same for all files in a project)
-        self._root_paths: dict[str, str] = {}
-        # Per-project flush timer handle
-        self._flush_timers: dict[str, asyncio.TimerHandle] = {}
+        # Pending files grouped by canonical root path.
+        self._pending_by_root: dict[str, set[str]] = {}
+        self._root_paths_by_root: dict[str, str] = {}
+        self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
 
     def notify_file_changed(
         self,
@@ -52,32 +52,51 @@ class CodeIndexTrigger:
 
     def _schedule_file(self, file_path: str, project_id: str, root_path: str) -> None:
         """Schedule or reschedule indexing for a file (runs on event loop)."""
-        # Cancel existing flush timer for this project
-        if project_id in self._flush_timers:
-            self._flush_timers[project_id].cancel()
+        root_key = self._root_key(root_path)
+        normalized_path = self._normalize_file_path(file_path, root_key)
 
-        # Add file to pending set
-        if project_id not in self._pending:
-            self._pending[project_id] = set()
-        self._pending[project_id].add(file_path)
-        self._root_paths[project_id] = root_path
+        if root_key in self._flush_timers_by_root:
+            self._flush_timers_by_root[root_key].cancel()
+
+        if root_key not in self._pending_by_root:
+            self._pending_by_root[root_key] = set()
+        self._pending_by_root[root_key].add(normalized_path)
+        self._root_paths_by_root[root_key] = root_key
 
         # Set new flush timer
-        def _schedule_flush(pid: str = project_id) -> None:
-            self._loop.create_task(self._flush(pid))
+        def _schedule_flush(root: str = root_key, pid: str = project_id) -> None:
+            self._loop.create_task(self._flush(root, pid))
 
-        self._flush_timers[project_id] = self._loop.call_later(
+        self._flush_timers_by_root[root_key] = self._loop.call_later(
             self._debounce_seconds,
             _schedule_flush,
         )
 
-    async def _flush(self, project_id: str) -> None:
-        """Flush pending files for a project via gcode subprocess."""
-        files = self._pending.pop(project_id, set())
-        self._flush_timers.pop(project_id, None)
-        root_path = self._root_paths.pop(project_id, None)
+    @staticmethod
+    def _root_key(root_path: str) -> str:
+        """Return the canonical debounce key for a filesystem root."""
+        return str(Path(root_path).resolve(strict=False))
 
-        if not files or not root_path:
+    @staticmethod
+    def _normalize_file_path(file_path: str, root_key: str) -> str:
+        """Return a gcode --files path that resolves under cwd=root_key."""
+        root = Path(root_key)
+        target = Path(file_path)
+        if not target.is_absolute():
+            target = root / target
+
+        resolved = target.resolve(strict=False)
+        if resolved.is_relative_to(root):
+            return os.path.normpath(os.fspath(resolved.relative_to(root)))
+        return os.path.normpath(os.fspath(resolved))
+
+    async def _flush(self, root_key: str, project_id: str) -> None:
+        """Flush pending files for a root via gcode subprocess."""
+        files = self._pending_by_root.pop(root_key, set())
+        self._flush_timers_by_root.pop(root_key, None)
+        root_path = self._root_paths_by_root.pop(root_key, root_key)
+
+        if not files:
             return
 
         gcode_bin = resolve_native_bin("gcode")
@@ -99,7 +118,9 @@ class CodeIndexTrigger:
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode == 0:
-                logger.debug(f"gcode indexed {len(files)} files for project {project_id}")
+                logger.debug(
+                    f"gcode indexed {len(files)} files for project {project_id} at {root_path}"
+                )
             else:
                 detail = stderr.decode().strip() if stderr else "(no stderr)"
                 logger.warning(f"gcode index exited {proc.returncode}: {detail}")

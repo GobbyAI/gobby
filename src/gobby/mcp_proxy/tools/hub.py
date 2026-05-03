@@ -260,7 +260,7 @@ def create_hub_registry(
                     "id": row["id"],
                     "project_id": row["project_id"],
                     "title": row["title"],
-                    "state": _task_state_from_row(row),
+                    "state": _task_state_from_row(dict(row)),
                     "task_type": row["task_type"],
                     "priority": row["priority"],
                     "created_at": row["created_at"],

@@ -742,6 +742,7 @@ class TestEnsureProjectJsonForIsolation:
         assert result["id"] == "proj-1"
         assert result["name"] == "test"
         assert result["parent_project_path"] == str(repo.resolve())
+        assert result["parent_project_id"] == "proj-1"
 
     def test_augments_existing(self, tmp_path: Path) -> None:
         """Target already has project.json (git-tracked) — overwrites with parent_project_path."""
@@ -759,6 +760,7 @@ class TestEnsureProjectJsonForIsolation:
         result = json.loads((target / ".gobby" / "project.json").read_text())
         assert result["id"] == "proj-1"
         assert result["parent_project_path"] == str(repo.resolve())
+        assert result["parent_project_id"] == "proj-1"
 
     def test_noop_when_source_missing(self, tmp_path: Path) -> None:
         """Source has no project.json — does nothing."""

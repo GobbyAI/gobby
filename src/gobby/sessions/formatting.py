@@ -34,12 +34,16 @@ def _active_task_state(task: dict[str, Any]) -> str | None:
         if state.get("is_escalated"):
             return "escalated"
         current_stage = state.get("current_stage")
-        if isinstance(current_stage, dict) and isinstance(current_stage.get("state"), str):
-            return current_stage["state"]
+        if isinstance(current_stage, dict):
+            stage_state = current_stage.get("state")
+            if isinstance(stage_state, str):
+                return stage_state
         return "ready"
     current_stage = task.get("current_stage")
-    if isinstance(current_stage, dict) and isinstance(current_stage.get("state"), str):
-        return current_stage["state"]
+    if isinstance(current_stage, dict):
+        stage_state = current_stage.get("state")
+        if isinstance(stage_state, str):
+            return stage_state
     return None
 
 

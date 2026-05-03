@@ -206,13 +206,18 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         or tool_input.get("target_file")
                         or tool_input.get("path")
                     )
-                    is_internal = file_path and ".gobby/" in str(file_path)
-                    repo_relative_path = (
-                        self._resolve_repo_relative_edit_path(str(file_path), event.cwd)
+                    repo_edit = (
+                        self._resolve_repo_edit_paths(str(file_path), event.cwd)
                         if file_path
                         else None
                     )
-                    in_repo_edit = not file_path or repo_relative_path is not None
+                    repo_relative_path = repo_edit[1] if repo_edit else None
+                    raw_internal = bool(file_path and ".gobby/" in str(file_path))
+                    normalized_internal = bool(
+                        repo_relative_path and Path(repo_relative_path).parts[:1] == (".gobby",)
+                    )
+                    is_internal = raw_internal or normalized_internal
+                    in_repo_edit = not file_path or repo_edit is not None
 
                     if not is_internal and in_repo_edit:
                         # Track repo-relative file path in session variables
@@ -222,14 +227,15 @@ class ToolEventHandlerMixin(EventHandlersBase):
                             self._track_session_edited_file(session_id, str(file_path), event.cwd)
 
                             # Trigger incremental code index update
-                            if self._code_index_trigger:
+                            if self._code_index_trigger and repo_edit:
                                 try:
-                                    project_id = self._resolve_project_id(None, event.cwd)
+                                    root_path = os.fspath(repo_edit[0])
+                                    project_id = self._resolve_project_id(None, root_path)
                                     if project_id:
                                         self._code_index_trigger.notify_file_changed(
-                                            file_path=str(file_path),
+                                            file_path=repo_edit[1],
                                             project_id=project_id,
-                                            root_path=event.cwd or "",
+                                            root_path=root_path,
                                         )
                                 except Exception as e:
                                     self.logger.debug(f"Failed to trigger code index update: {e}")
@@ -258,21 +264,38 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(decision="allow")
 
-    def _resolve_repo_relative_edit_path(self, file_path: str, cwd: str | None) -> str | None:
-        """Return a repo-relative edit path, or ``None`` when the edit escapes ``cwd``."""
-        if not cwd:
-            return os.path.normpath(file_path)
-
-        repo_root = Path(cwd).resolve(strict=False)
+    def _resolve_repo_edit_paths(self, file_path: str, cwd: str | None) -> tuple[Path, str] | None:
+        """Return ``(repo_root, repo_relative_path)`` for an edited file."""
         target_path = Path(file_path)
-        if not target_path.is_absolute():
-            target_path = repo_root / target_path
+        cwd_path = Path(cwd).resolve(strict=False) if cwd else None
+        if target_path.is_absolute():
+            resolved_target = target_path.resolve(strict=False)
+            search_start = cwd_path or resolved_target.parent
+        elif cwd_path is not None:
+            resolved_target = (cwd_path / target_path).resolve(strict=False)
+            search_start = cwd_path
+        else:
+            return None
 
-        resolved_target = target_path.resolve(strict=False)
+        from gobby.utils.project_context import find_project_root
+
+        repo_root = find_project_root(search_start) or cwd_path or resolved_target.parent
+        repo_root = repo_root.resolve(strict=False)
         if not resolved_target.is_relative_to(repo_root):
             return None
 
-        return os.path.normpath(os.fspath(resolved_target.relative_to(repo_root)))
+        rel_path = os.path.normpath(os.fspath(resolved_target.relative_to(repo_root)))
+        return repo_root, rel_path
+
+    def _resolve_repo_relative_edit_path(self, file_path: str, cwd: str | None) -> str | None:
+        """Return a repo-relative edit path, or ``None`` when the edit escapes the repo."""
+        if not cwd and not Path(file_path).is_absolute():
+            return os.path.normpath(file_path)
+
+        repo_edit = self._resolve_repo_edit_paths(file_path, cwd)
+        if repo_edit is None:
+            return None
+        return repo_edit[1]
 
     def _track_session_edited_file(self, session_id: str, file_path: str, cwd: str | None) -> None:
         """Record a repo-relative file path in session_edited_files variable.

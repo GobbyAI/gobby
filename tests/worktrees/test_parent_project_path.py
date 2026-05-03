@@ -52,10 +52,13 @@ class TestCopyProjectJsonToWorktree:
 
         assert "parent_project_path" in data, "parent_project_path should be added"
         assert data["parent_project_path"] == str(main_repo.resolve())
+        assert data["parent_project_id"] == "proj-123"
         assert data["id"] == "proj-123"
         assert data["name"] == "test-project"
 
-    def test_overwrites_existing_project_json(self, tmp_path: Path) -> None:
+    def test_overwrites_existing_project_json_preserves_parent_project_id(
+        self, tmp_path: Path
+    ) -> None:
         """Verify existing worktree project.json is overwritten with source data.
 
         ensure_project_json_for_isolation always overwrites so that
@@ -90,6 +93,7 @@ class TestCopyProjectJsonToWorktree:
         assert data["parent_project_path"] == str(main_repo.resolve()), (
             "parent_project_path should point to source repo"
         )
+        assert data["parent_project_id"] == "new-id"
 
     def test_no_project_json_in_main_repo(self, tmp_path: Path) -> None:
         """Verify function handles missing project.json in main repo gracefully."""
@@ -262,6 +266,7 @@ class TestReadParentProjectPath:
                     "id": "wt-id",
                     "name": "worktree-project",
                     "parent_project_path": "/path/to/parent",
+                    "parent_project_id": "parent-id",
                 }
             )
         )
@@ -270,6 +275,7 @@ class TestReadParentProjectPath:
 
         assert result is not None
         assert result["parent_project_path"] == "/path/to/parent"
+        assert result["parent_project_id"] == "parent-id"
         assert result["id"] == "wt-id"
 
     def test_get_project_context_without_parent_project_path(self, tmp_path: Path) -> None:

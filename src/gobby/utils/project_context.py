@@ -84,6 +84,8 @@ def get_project_context(cwd: Path | None = None) -> dict[str, Any] | None:
         - name: Project name
         - created_at: Creation timestamp
         - project_path: Path to project root
+        - parent_project_path: Optional path to parent project for isolated roots
+        - parent_project_id: Optional parent logical project ID for isolated roots
         - verification: Optional dict with unit_tests, type_check, lint, integration, custom
     """
     # 1. Check context var (set per-MCP-call from session), but only when
@@ -295,7 +297,9 @@ def ensure_project_json_for_isolation(
         with open(source_project_json) as f:
             data = json.load(f)
 
+        parent_project_id = data["id"]
         data["parent_project_path"] = str(Path(source_repo_path).resolve())
+        data["parent_project_id"] = parent_project_id
 
         target_gobby_dir = Path(isolated_path) / ".gobby"
         target_gobby_dir.mkdir(parents=True, exist_ok=True)
