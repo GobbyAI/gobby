@@ -157,6 +157,12 @@ def _open_database() -> LocalDatabase:
 )
 @click.option("--target-branch", help="Target branch for the build.")
 @click.option("--agent", "assigned_agent", help="Agent to assign to build work.")
+@click.option(
+    "--reset-expansion-output",
+    is_flag=True,
+    default=False,
+    help="Delete existing generated expansion output before rebuilding a task ref.",
+)
 def build_command(
     input_ref: str | None,
     profile: str | None,
@@ -169,6 +175,7 @@ def build_command(
     yolo: bool,
     target_branch: str | None,
     assigned_agent: str | None,
+    reset_expansion_output: bool,
 ) -> None:
     """Start lifecycle automation from a plan file or task reference."""
     if input_ref == "stop":
@@ -192,6 +199,7 @@ def build_command(
         stage_caps=_parse_stage_cap(stage_cap),
         target_branch=target_branch,
         assigned_agent=assigned_agent,
+        reset_expansion_output=reset_expansion_output,
     )
     project_id = resolve_project_id()
     db = _open_database()

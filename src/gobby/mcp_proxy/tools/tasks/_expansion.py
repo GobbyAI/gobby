@@ -286,6 +286,7 @@ def start_expansion_run_impl(
     model: str | None = None,
     project: str | None = None,
     run_id: str | None = None,
+    reset_output: bool = False,
 ) -> ExpansionRunResult:
     """Start an expansion run from MCP or in-process dispatcher code."""
     _ = project
@@ -297,6 +298,17 @@ def start_expansion_run_impl(
         return ExpansionRunResult(False, run_id, "failed", False, error=f"Task {task_id} not found")
 
     run_manager = LocalExpansionRunManager(task_manager.db)
+    service = ExpansionService(
+        task_manager=task_manager,
+        llm_service=llm_service,
+        config=config,
+        run_manager=run_manager,
+    )
+    if reset_output:
+        try:
+            service.reset_expansion_output(task.id, session_id=triggering_session_id)
+        except ValueError as exc:
+            return ExpansionRunResult(False, run_id, "failed", False, error=str(exc))
     existing_run = run_manager.get(run_id) if run_id is not None else None
     if existing_run is not None:
         _emit_terminal_event(
@@ -399,6 +411,7 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
         plan_file: str | None = None,
         auto_apply: bool = True,
         force_new: bool = False,
+        reset_output: bool = False,
         provider: str | None = None,
         model: str | None = None,
         project: str | None = None,
@@ -428,6 +441,7 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
             plan_file=plan_file,
             auto_apply=auto_apply,
             force_new=force_new,
+            reset_output=reset_output,
             provider=provider,
             model=model,
         )
@@ -457,6 +471,11 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "description": "When true, create a new run even if another run is active",
                     "default": False,
                 },
+                "reset_output": {
+                    "type": "boolean",
+                    "description": "Delete existing generated output before starting the run",
+                    "default": False,
+                },
                 "provider": {
                     "type": "string",
                     "description": "Optional provider override",
@@ -476,6 +495,60 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["task_id"],
         },
         func=start_expansion_run,
+    )
+
+    async def reset_expansion_output(
+        task_id: str,
+        run_id: str | None = None,
+        project: str | None = None,
+    ) -> dict[str, Any]:
+        session_result = _resolve_current_session(ctx)
+        if isinstance(session_result, dict):
+            return session_result
+        _session_ref, resolved_session_id = session_result
+
+        try:
+            project_id = ctx.resolve_project_filter(project)
+        except ValueError as e:
+            return {"error": str(e)}
+
+        try:
+            resolved_task_id = resolve_task_id_for_mcp(ctx.task_manager, task_id, project_id)
+        except (TaskNotFoundError, ValueError) as e:
+            return {"error": f"Task not found: {e}"}
+
+        service = _build_expansion_service(ctx)
+        try:
+            result = service.reset_expansion_output(
+                resolved_task_id,
+                run_id=run_id,
+                session_id=resolved_session_id,
+            )
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"success": True, "reset": result.to_dict()}
+
+    registry.register(
+        name="reset_expansion_output",
+        description="Delete generated output for the latest or specified expansion run.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task reference to reset"},
+                "run_id": {
+                    "type": "string",
+                    "description": "Optional expansion run ID to reset",
+                    "default": None,
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Optional project ref for task resolution",
+                    "default": None,
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=reset_expansion_output,
     )
 
     async def get_expansion_run(run_id: str) -> dict[str, Any]:

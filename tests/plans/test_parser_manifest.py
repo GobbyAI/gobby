@@ -103,6 +103,9 @@ def test_parse_mode_signature_accepts_three_values() -> None:
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
     assert parameter.default == "strict"
     assert set(get_args(ParseMode)) == {"draft", "expansion", "strict"}
+    override = signature.parameters["plan_id_override"]
+    assert override.kind is inspect.Parameter.KEYWORD_ONLY
+    assert override.default is None
 
 
 def test_draft_tolerates_missing_manifest_but_validates_present_one(tmp_path: Path) -> None:
@@ -209,6 +212,68 @@ def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
     assert entry.source_section == "A1"
     assert entry.tdd is True
     assert entry.labels == ("covers:test-plan:A1:A1.1",)
+
+
+def test_plan_id_override_validates_covers_labels(tmp_path: Path) -> None:
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=_MINIMAL_MANIFEST.replace("covers:test-plan", "covers:12761"),
+        plan_id="12761",
+        name="task-12761-demo.md",
+    )
+
+    document = parse_plan(plan, parse_mode="expansion", plan_id_override="12761")
+
+    assert document.plan_id == "12761"
+    assert document.manifest_entries[0].labels == ("covers:12761:A1:A1.1",)
+
+
+def test_plan_id_override_rejects_embedded_mismatch(tmp_path: Path) -> None:
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=_MINIMAL_MANIFEST,
+        plan_id="test-plan",
+    )
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode="expansion", plan_id_override="other-plan")
+
+    assert "does not match override" in str(excinfo.value)
+
+
+def test_task_filename_fallback_sets_plan_id(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1 Section
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — file: `foo.py`
+
+        ## M1 Task Manifest
+        `kind: manifest`
+
+        ```yaml
+        - title: "Build foo"
+          category: code
+          task_type: feature
+          depends_on: []
+          validation_criteria: "foo.py exists"
+          labels:
+            - "covers:12761:A1:A1.1"
+          assigned_agent: backend-developer
+          tdd: true
+          source_section: "A1"
+        ```
+        """,
+        name="task-12761-demo.md",
+    )
+
+    document = parse_plan(plan, parse_mode="expansion")
+
+    assert document.plan_id == "12761"
 
 
 @pytest.mark.parametrize("parse_mode", get_args(ParseMode))

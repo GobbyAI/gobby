@@ -131,6 +131,9 @@ def test_signature() -> None:
     plan_kind_param = sig.parameters["plan_kind"]
     assert plan_kind_param.kind is inspect.Parameter.KEYWORD_ONLY
     assert plan_kind_param.default is PlanKind.implementation
+    override_param = sig.parameters["plan_id"]
+    assert override_param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert override_param.default is None
     assert set(get_args(EmitOutcome)) == {
         "fresh",
         "replaced_malformed",
@@ -320,9 +323,9 @@ def test_synthesized_entry_preserves_section_depends_on(tmp_path: Path) -> None:
     assert list(by_section["1.2"].depends_on) == ["1.1"]
 
 
-def test_synthesized_entry_preserves_multi_dep(tmp_path: Path) -> None:
+def test_synthesized_phase_dep_expands_to_phase_deliverables(tmp_path: Path) -> None:
     plan = _write(
-        tmp_path / "multi-depends.md",
+        tmp_path / "phase-depends.md",
         """
         > **Plan ID:** demo-plan
 
@@ -335,11 +338,20 @@ def test_synthesized_entry_preserves_multi_dep(tmp_path: Path) -> None:
         **Acceptance:**
         - 1.1.1 — file: `a.py`
 
-        ### 1.2 B [category: code] (depends: 1.1, 2.3, Phase 1)
+        ### 1.2 B [category: code]
         `kind: deliverable`
 
         **Acceptance:**
         - 1.2.1 — file: `b.py`
+
+        ## P2 Phase 2
+        `kind: framing`
+
+        ### 2.1 C [category: code] (depends: P1, 1.1)
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 2.1.1 — file: `c.py`
         """,
     )
 
@@ -348,7 +360,56 @@ def test_synthesized_entry_preserves_multi_dep(tmp_path: Path) -> None:
     assert outcome == "fresh"
     document = parse_plan(plan, parse_mode="expansion")
     by_section = {entry.source_section: entry for entry in document.manifest_entries}
-    assert list(by_section["1.2"].depends_on) == ["1.1", "2.3", "Phase 1"]
+    assert list(by_section["2.1"].depends_on) == ["1.1", "1.2"]
+
+
+@pytest.mark.parametrize("dependency", ["P9", "P3a"])
+def test_synthesized_unknown_phase_dep_falls_back(
+    tmp_path: Path,
+    dependency: str,
+) -> None:
+    plan = _write(
+        tmp_path / f"unknown-{dependency}.md",
+        f"""
+        > **Plan ID:** demo-plan
+
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 A [category: code] (depends: {dependency})
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `a.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fallback_force_approve"
+    assert "## Yolo Fallbacks" in plan.read_text(encoding="utf-8")
+
+
+def test_synthesized_self_phase_dep_falls_back(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "self-phase.md",
+        """
+        > **Plan ID:** demo-plan
+
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 A [category: code] (depends: P1)
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `a.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fallback_force_approve"
 
 
 def test_emit_and_reparse_round_trips_with_no_plan_id(tmp_path: Path) -> None:
@@ -399,6 +460,53 @@ def test_emit_and_reparse_round_trips_with_no_plan_id(tmp_path: Path) -> None:
         label for entry in document_with_id.manifest_entries for label in entry.labels
     ]
     assert labels_with_id == ["covers:demo-plan:1.1:1.1.1"]
+
+
+def test_emit_and_reparse_task_filename_plan_id(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "task-12761-foo.md",
+        """
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 Work [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `src/work.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fresh"
+    document = parse_plan(plan, parse_mode="expansion")
+    labels = [label for entry in document.manifest_entries for label in entry.labels]
+    assert document.plan_id == "12761"
+    assert labels == ["covers:12761:1.1:1.1.1"]
+
+
+def test_emit_plan_id_override_round_trips(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "plan.md",
+        """
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 Work [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `src/work.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan, plan_id="12761")
+
+    assert outcome == "fresh"
+    document = parse_plan(plan, parse_mode="expansion", plan_id_override="12761")
+    labels = [label for entry in document.manifest_entries for label in entry.labels]
+    assert labels == ["covers:12761:1.1:1.1.1"]
 
 
 def test_yolo_fallback_audit_is_parser_safe(tmp_path: Path) -> None:

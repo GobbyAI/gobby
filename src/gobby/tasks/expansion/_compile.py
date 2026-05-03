@@ -19,6 +19,7 @@ from gobby.plans.parser import (
 )
 from gobby.plans.semantic_lint import lint_plan_document
 from gobby.storage.expansion_runs import ExpansionRun
+from gobby.storage.plans import LocalPlanManager
 from gobby.storage.tasks import Task
 from gobby.tasks.commits import extract_mentioned_files
 from gobby.tasks.expansion._common import (
@@ -506,22 +507,108 @@ def _parse_contract_plan(self: Any, run: ExpansionRun, task: Task) -> PlanDocume
     if not run.plan_file:
         return None
     plan_path = Path(run.plan_file)
+    repo_path = None
     if not plan_path.is_absolute():
         repo_path = self._resolve_repo_path(task)
         if repo_path is not None:
             plan_path = repo_path / plan_path
+    else:
+        repo_path = self._resolve_repo_path(task)
+    registry_plan_id = _registry_plan_id_for_run(self, run, task, plan_path, repo_path)
+    if registry_plan_id is not None:
+        try:
+            return parse_plan(
+                plan_path,
+                parse_mode="expansion",
+                plan_id_override=registry_plan_id,
+            )
+        except (OSError, PlanParseError) as exc:
+            _log_contract_parse_failure(self, run, plan_path, exc)
+            raise ValueError(
+                f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
+            ) from exc
+
+    first_error: OSError | PlanParseError | None = None
     try:
         return parse_plan(plan_path, parse_mode="expansion")
     except (OSError, PlanParseError) as exc:
-        self.run_manager.append_log(
-            run.id,
-            level="error",
-            message="Plan file did not parse as Plan-Coverage Contract",
-            extra={"plan_file": str(plan_path), "error": str(exc)},
-        )
-        raise ValueError(
-            f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
-        ) from exc
+        first_error = exc
+
+    root_fallback = str(task.seq_num) if task.seq_num is not None else None
+    if root_fallback is not None:
+        try:
+            return parse_plan(
+                plan_path,
+                parse_mode="expansion",
+                plan_id_override=root_fallback,
+            )
+        except (OSError, PlanParseError) as exc:
+            _log_contract_parse_failure(self, run, plan_path, exc, first_error=first_error)
+            raise ValueError(
+                f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
+            ) from exc
+
+    assert first_error is not None
+    _log_contract_parse_failure(self, run, plan_path, first_error)
+    raise ValueError(
+        f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
+    ) from first_error
+
+
+def _registry_plan_id_for_run(
+    self: Any,
+    run: ExpansionRun,
+    task: Task,
+    plan_path: Path,
+    repo_path: Path | None,
+) -> str | None:
+    manager = LocalPlanManager(self.db)
+    root_ref = f"#{task.seq_num}" if task.seq_num is not None else None
+    try:
+        records = manager.list_plans(state="active", project_id=task.project_id)
+    except Exception:  # noqa: BLE001 - plan registry is an optional identity source here
+        return None
+    relative_plan_path = _relative_plan_path(plan_path, repo_path)
+    run_plan_path = Path(run.plan_file) if run.plan_file else None
+    for record in records:
+        record_path = Path(record.plan_path)
+        if relative_plan_path is not None and record_path == relative_plan_path:
+            return record.plan_id
+        if run_plan_path is not None and record_path == run_plan_path:
+            return record.plan_id
+    if root_ref is not None:
+        for record in records:
+            if record.root_task_ref == root_ref:
+                return record.plan_id
+    return None
+
+
+def _relative_plan_path(plan_path: Path, repo_path: Path | None) -> Path | None:
+    if repo_path is None:
+        return None
+    try:
+        return plan_path.relative_to(repo_path)
+    except ValueError:
+        return None
+
+
+def _log_contract_parse_failure(
+    self: Any,
+    run: ExpansionRun,
+    plan_path: Path,
+    exc: OSError | PlanParseError,
+    *,
+    first_error: OSError | PlanParseError | None = None,
+) -> None:
+    extra: dict[str, Any] = {"plan_file": str(plan_path), "error": str(exc)}
+    if first_error is not None:
+        extra["first_error"] = str(first_error)
+    self.run_manager.append_log(
+        run.id,
+        level="error",
+        message="Plan file did not parse as Plan-Coverage Contract",
+        extra=extra,
+    )
 
 
 async def compile_run(self: Any, run_id: str) -> ExpansionRun:

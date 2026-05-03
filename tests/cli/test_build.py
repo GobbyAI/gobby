@@ -34,6 +34,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--max-review-rounds" not in result.output
     assert "--target-branch" in result.output
     assert "--agent" in result.output
+    assert "--reset-expansion-output" in result.output
 
 
 def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
@@ -82,6 +83,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "release/0.4",
                 "--agent",
                 "backend-developer",
+                "--reset-expansion-output",
             ],
         )
 
@@ -109,6 +111,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     ]
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"
+    assert opts.reset_expansion_output is True
     assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
 
 

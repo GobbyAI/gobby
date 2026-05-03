@@ -13,7 +13,7 @@ from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.expansion import _apply, _compile
+from gobby.tasks.expansion import _apply, _compile, _reset
 from gobby.tasks.expansion._common import (
     AUTOMATED_LEAF_CATEGORIES,
     _contract_single_task_id,
@@ -87,6 +87,10 @@ class ExpansionService:
     _external_blocker_id = _apply._external_blocker_id
     _resolve_created_blocker = _apply._resolve_created_blocker
     _add_dependency = _apply._add_dependency
+
+    reset_expansion_output = _reset.reset_expansion_output
+    find_existing_expansion_output = _reset.find_existing_expansion_output
+    _complete_parent_expansion_stage_if_current = _reset.complete_parent_expansion_stage_if_current
 
 
 def compile_plan_to_spec(

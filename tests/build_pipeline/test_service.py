@@ -337,3 +337,55 @@ async def test_build_leaf_rejects_non_automated_category(
             db=temp_db,
             project_id=sample_project["id"],
         )
+
+
+@pytest.mark.asyncio
+async def test_build_task_ref_requires_reset_for_existing_expansion_output(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.storage.expansion_runs import LocalExpansionRunManager
+
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Expanded epic",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Generated child",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    run = LocalExpansionRunManager(temp_db).create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="task",
+    )
+    LocalExpansionRunManager(temp_db).save_apply_result(
+        run.id,
+        task_id_map={"child": child.id},
+        created_task_ids=[child.id],
+    )
+
+    with pytest.raises(ValueError, match="reset-expansion-output"):
+        await _build(
+            f"#{parent.seq_num}",
+            _options(isolation="none"),
+            db=temp_db,
+            project_id=sample_project["id"],
+        )
+
+    result = await _build(
+        f"#{parent.seq_num}",
+        _options(isolation="none", reset_expansion_output=True),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert result.task_id == parent.id
+    assert temp_db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (child.id,)) is None

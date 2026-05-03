@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -14,6 +15,7 @@ import yaml
 from gobby.storage.tasks import TDD_ELIGIBLE_CATEGORIES
 
 ParseMode = Literal["draft", "expansion", "strict"]
+logger = logging.getLogger(__name__)
 
 PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
     r"^#{2,6}\s+(?:§\s*)?(?P<section_id>"
@@ -24,6 +26,7 @@ PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
 _KIND_LINE_RE = re.compile(r"^`?kind:\s*(?P<kind>[a-z_]+)`?$")
 _PLAN_ID_RE = re.compile(r"^\s*>?\s*\*\*Plan ID:\*\*\s*(?P<plan_id>.+?)\s*$")
+_TASK_PLAN_FILENAME_RE = re.compile(r"^task-(?P<seq>\d+)(?:[-_].*)?$")
 _SECTION_DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)
 _ACCEPTANCE_MARKER = "**Acceptance:**"
 _ACCEPTANCE_BULLET_RE = re.compile(
@@ -40,7 +43,10 @@ MISSING_PLAN_ID_SENTINEL = "unknown"
 
 def resolve_plan_id(plan_id: str | None) -> str:
     """Return the plan ID used for generated and validated covers labels."""
-    return plan_id or MISSING_PLAN_ID_SENTINEL
+    if plan_id:
+        return plan_id
+    logger.warning("Plan ID missing; falling back to %r covers labels", MISSING_PLAN_ID_SENTINEL)
+    return MISSING_PLAN_ID_SENTINEL
 
 
 def extract_section_dependencies(title: str) -> tuple[str, ...]:
@@ -161,6 +167,7 @@ def parse_plan(
     *,
     plan_kind: PlanKind = PlanKind.implementation,
     parse_mode: ParseMode = "strict",
+    plan_id_override: str | None = None,
 ) -> PlanDocument:
     """Parse a markdown plan into a structured AST."""
 
@@ -169,9 +176,15 @@ def parse_plan(
     lines = source_bytes.decode("utf-8").splitlines()
     mask = _compute_fence_mask(lines)
     headings = _collect_headings(lines, mask)
-    plan_id = _parse_plan_id(lines, mask)
 
     errors: list[tuple[int, str]] = []
+    plan_id = _resolve_document_plan_id(
+        path=path,
+        lines=lines,
+        mask=mask,
+        plan_id_override=plan_id_override,
+        errors=errors,
+    )
     sections: list[PlanSection] = []
     framing_headings: list[tuple[int, str, int]] = []
     seen_section_ids: set[str] = set()
@@ -350,15 +363,49 @@ def _heading_title(line: str, canonical_match: re.Match[str] | None) -> str:
     return suffix
 
 
-def _parse_plan_id(lines: list[str], mask: list[bool]) -> str | None:
+def _resolve_document_plan_id(
+    *,
+    path: Path,
+    lines: list[str],
+    mask: list[bool],
+    plan_id_override: str | None,
+    errors: list[tuple[int, str]],
+) -> str | None:
+    embedded = _parse_plan_id(lines, mask)
+    if plan_id_override is not None:
+        override = _clean_ref(plan_id_override)
+        if not override:
+            errors.append((1, "plan_id_override must not be blank"))
+            return None
+        if embedded is not None and embedded[0] != override:
+            errors.append(
+                (
+                    embedded[1],
+                    f"embedded Plan ID {embedded[0]!r} does not match override {override!r}",
+                )
+            )
+        return override
+    if embedded is not None:
+        return embedded[0]
+    return _plan_id_from_task_filename(path)
+
+
+def _parse_plan_id(lines: list[str], mask: list[bool]) -> tuple[str, int] | None:
     for index, line in enumerate(lines):
         if index < len(mask) and mask[index]:
             continue
         match = _PLAN_ID_RE.match(line)
         if match is None:
             continue
-        return _clean_ref(match.group("plan_id"))
+        return _clean_ref(match.group("plan_id")), index + 1
     return None
+
+
+def _plan_id_from_task_filename(path: Path) -> str | None:
+    match = _TASK_PLAN_FILENAME_RE.match(path.stem)
+    if match is None:
+        return None
+    return match.group("seq")
 
 
 def _section_kind(

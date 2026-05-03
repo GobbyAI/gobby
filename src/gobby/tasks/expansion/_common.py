@@ -14,6 +14,7 @@ from gobby.plans.parser import (
     PlanDocument,
     PlanSection,
     extract_section_dependencies,
+    resolve_plan_id,
     strip_section_dependencies,
 )
 from gobby.prompts.models import parse_frontmatter
@@ -254,7 +255,7 @@ def _contract_phase_spec_id(phase_id: str) -> str:
 
 
 def _contract_plan_id(plan_doc: PlanDocument) -> str:
-    return plan_doc.source_path.stem
+    return resolve_plan_id(plan_doc.plan_id)
 
 
 def _contract_covers_labels(plan_id: str, section: PlanSection) -> list[str]:

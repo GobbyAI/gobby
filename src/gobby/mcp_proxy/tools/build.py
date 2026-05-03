@@ -45,6 +45,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         stage_caps: list[dict[str, Any]] | None = None,
         target_branch: str | None = None,
         agent: str | None = None,
+        reset_expansion_output: bool = False,
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """Start lifecycle automation for a plan file, epic, or automated leaf task."""
@@ -70,6 +71,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             stage_caps=_stage_caps_from_payload(stage_caps or []),
             target_branch=target_branch,
             assigned_agent=agent,
+            reset_expansion_output=reset_expansion_output,
         )
         result = await build(
             input_ref,
@@ -127,6 +129,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "target_branch": {"type": "string"},
                 "agent": {"type": "string"},
+                "reset_expansion_output": {"type": "boolean", "default": False},
                 "project_id": {"type": "string"},
             },
             "required": ["input_ref"],

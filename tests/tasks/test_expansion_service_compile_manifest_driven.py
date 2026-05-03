@@ -321,6 +321,69 @@ def test_phase_nesting_p1_p2_p3(
     assert phase_by_id["phase-p3"]["tdd_sandwich_emitted"] is True
 
 
+def test_compile_uses_plan_doc_plan_id_not_file_stem(
+    service: ExpansionService,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_doc = parse_plan(
+        _write_plan(tmp_path, _MANIFEST_PLAN, name="different-file-name.md"),
+        parse_mode="expansion",
+    )
+
+    spec = service.compile_plan_to_spec(plan_doc, parent)
+
+    assert spec["plan_id"] == "manifest-driven"
+
+
+def test_parse_contract_plan_uses_task_filename_plan_id_fallback(
+    service: ExpansionService,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_path = _write_plan(
+        tmp_path,
+        """
+        ## A1 Immediate
+        `kind: deliverable`
+
+        **Acceptance:**
+        - A1.1 - Immediate work exists. file: `src/immediate.py`
+
+        ## M1 Task Manifest
+        `kind: manifest`
+
+        ```yaml
+        - title: "Immediate from manifest"
+          category: code
+          task_type: task
+          depends_on: []
+          validation_criteria: "Immediate validation from manifest"
+          labels:
+            - "covers:12761:A1:A1.1"
+          assigned_agent: backend-developer
+          tdd: false
+          source_section: "A1"
+        ```
+        """,
+        name="task-12761-demo.md",
+    )
+    run = service.run_manager.create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="plan",
+        plan_file=str(plan_path),
+    )
+
+    document = service._parse_contract_plan(run, parent)
+
+    assert document is not None
+    assert document.plan_id == "12761"
+
+
 def test_missing_manifest_raises(
     service: ExpansionService,
     sample_project,

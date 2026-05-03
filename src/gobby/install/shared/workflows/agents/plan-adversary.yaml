@@ -112,8 +112,10 @@ instructions: |
        a. Append a `## Yolo Fallbacks` audit section to the planning anchor's
           description (NOT the plan file) documenting the failure mode.
        b. Fall back to the deterministic stub-manifest path by calling
-          `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)` from
-          §2.21a. Re-run `parse_plan(plan_path, parse_mode="expansion")`.
+          `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path,
+          plan_id=<parent/root plan id>)` from §2.21a. Re-run
+          `parse_plan(plan_path, parse_mode="expansion",
+          plan_id_override=<same parent/root plan id>)`.
        c. If the stub also fails (deliverable schema in the plan itself is
           malformed beyond the emitter's reach), append a second
           `## Yolo Fallbacks` audit marker and force-approve the plan with

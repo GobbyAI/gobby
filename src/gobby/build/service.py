@@ -43,6 +43,7 @@ class BuildOptions:
     target_branch: str | None = None
     assigned_agent: str | None = None
     clones_dir: Path | None = None
+    reset_expansion_output: bool = False
 
 
 @dataclass
@@ -166,6 +167,7 @@ async def build(
 
     assert isinstance(task_or_plan, Task)
     task = task_or_plan
+    _prepare_task_ref_expansion_output(task_manager, task, opts)
     if input_kind == "leaf":
         return await _build_leaf(task_manager, task, opts, skip_stages, db, project_id)
 
@@ -500,6 +502,25 @@ def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArti
         raise ValueError(f"task already has worktree artifact: {artifacts.worktree_path}")
     if isolation == "worktree" and artifacts.clone_path:
         raise ValueError(f"task already has clone artifact: {artifacts.clone_path}")
+
+
+def _prepare_task_ref_expansion_output(
+    task_manager: LocalTaskManager,
+    task: Task,
+    opts: BuildOptions,
+) -> None:
+    from gobby.tasks.expansion_service import ExpansionService
+
+    service = ExpansionService(task_manager=task_manager, llm_service=None)
+    if opts.reset_expansion_output:
+        service.reset_expansion_output(task.id)
+        return
+    existing = service.find_existing_expansion_output(task.id)
+    if existing is not None:
+        raise ValueError(
+            "Expansion output already exists for this task. "
+            "Use --reset-expansion-output before rebuilding."
+        )
 
 
 def _cascade_target_branch_to_subtree(

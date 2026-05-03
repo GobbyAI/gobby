@@ -54,6 +54,7 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     )
     assert schema["properties"]["target_branch"]["type"] == "string"
     assert schema["properties"]["agent"]["type"] == "string"
+    assert schema["properties"]["reset_expansion_output"]["type"] == "boolean"
 
 
 def test_unattended_with_composer_yolo_distinct_fields(temp_db) -> None:
@@ -95,6 +96,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
             stage_caps=[{"stage_name": "pr", "max_review_rounds": 2}],
             target_branch="release/0.4",
             agent="backend-developer",
+            reset_expansion_output=True,
             project_id="project-1",
         )
 
@@ -120,5 +122,6 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     ] == [("pr", None, 2)]
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"
+    assert opts.reset_expansion_output is True
     assert call.kwargs["db"] is temp_db
     assert call.kwargs["project_id"] == "project-1"

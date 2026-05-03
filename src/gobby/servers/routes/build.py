@@ -39,6 +39,7 @@ class BuildRequest(BaseModel):
     target_branch: str | None = None
     agent: str | None = None
     clones_dir: str | None = None
+    reset_expansion_output: bool = False
 
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
@@ -63,6 +64,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         target_branch=request_data.target_branch,
         assigned_agent=request_data.agent,
         clones_dir=clones_dir,
+        reset_expansion_output=request_data.reset_expansion_output,
     )
 
 

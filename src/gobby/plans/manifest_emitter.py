@@ -40,6 +40,7 @@ _KIND_DIRECTIVE_RE = re.compile(r"^`?kind:\s*(?P<value>[a-z_]+)`?\s*$")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<value>[a-z_]+)\]")
 _TITLE_BRACKET_RE = re.compile(r"\s*(?:\[category:[^\]]+\]|\(depends:[^)]+\))")
 _FENCE_OPEN_RE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})")
+_PHASE_REF_RE = re.compile(r"^P\d+$")
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "backend-developer",
@@ -50,11 +51,16 @@ _DEFAULT_AGENT_FALLBACK = "backend-developer"
 _DEFAULT_TASK_TYPE = "feature"
 
 
+class ManifestSynthesisError(ValueError):
+    """Raised when deterministic manifest synthesis cannot produce valid dependencies."""
+
+
 def emit_stub_manifest(
     plan_path: str | Path,
     *,
     by_actor: str = "dispatcher",
     plan_kind: PlanKind = PlanKind.implementation,
+    plan_id: str | None = None,
 ) -> EmitOutcome:
     """Idempotent manifest emitter — see §2.21a.
 
@@ -70,33 +76,62 @@ def emit_stub_manifest(
 
     path = Path(plan_path)
     try:
-        return _emit(path, by_actor=by_actor, plan_kind=plan_kind)
+        return _emit(path, by_actor=by_actor, plan_kind=plan_kind, plan_id=plan_id)
     except Exception as exc:  # noqa: BLE001 — yolo invariant: absorb everything
         _append_yolo_fallback(path, by_actor=by_actor, reason=f"emitter exception: {exc!r}")
         return "fallback_force_approve"
 
 
-def _emit(path: Path, *, by_actor: str, plan_kind: PlanKind) -> EmitOutcome:
+def _emit(path: Path, *, by_actor: str, plan_kind: PlanKind, plan_id: str | None) -> EmitOutcome:
     raw = path.read_text(encoding="utf-8")
 
     draft_doc: PlanDocument | None = None
     draft_error: PlanParseError | None = None
     try:
-        draft_doc = parse_plan(path, plan_kind=plan_kind, parse_mode="draft")
+        draft_doc = parse_plan(
+            path,
+            plan_kind=plan_kind,
+            parse_mode="draft",
+            plan_id_override=plan_id,
+        )
     except PlanParseError as exc:
         draft_error = exc
 
     if draft_doc is not None:
         if draft_doc.manifest_entries:
             try:
-                parse_plan(path, plan_kind=plan_kind, parse_mode="expansion")
+                parse_plan(
+                    path,
+                    plan_kind=plan_kind,
+                    parse_mode="expansion",
+                    plan_id_override=plan_id,
+                )
                 return "noop_existing_valid"
             except PlanParseError:
-                return _replace_existing_manifest(path, raw, plan_kind=plan_kind, by_actor=by_actor)
-        return _emit_fresh(path, raw, draft_doc, by_actor=by_actor, plan_kind=plan_kind)
+                return _replace_existing_manifest(
+                    path,
+                    raw,
+                    plan_kind=plan_kind,
+                    by_actor=by_actor,
+                    plan_id=plan_id,
+                )
+        return _emit_fresh(
+            path,
+            raw,
+            draft_doc,
+            by_actor=by_actor,
+            plan_kind=plan_kind,
+            plan_id=plan_id,
+        )
 
     if _has_manifest_section(raw):
-        return _replace_existing_manifest(path, raw, plan_kind=plan_kind, by_actor=by_actor)
+        return _replace_existing_manifest(
+            path,
+            raw,
+            plan_kind=plan_kind,
+            by_actor=by_actor,
+            plan_id=plan_id,
+        )
 
     assert draft_error is not None
     _append_yolo_fallback(
@@ -113,12 +148,18 @@ def _replace_existing_manifest(
     *,
     plan_kind: PlanKind,
     by_actor: str,
+    plan_id: str | None,
 ) -> EmitOutcome:
     stripped = _strip_manifest_section(raw)
     path.write_text(stripped, encoding="utf-8")
 
     try:
-        stripped_doc = parse_plan(path, plan_kind=plan_kind, parse_mode="draft")
+        stripped_doc = parse_plan(
+            path,
+            plan_kind=plan_kind,
+            parse_mode="draft",
+            plan_id_override=plan_id,
+        )
     except PlanParseError as exc:
         path.write_text(raw, encoding="utf-8")
         _append_yolo_fallback(
@@ -128,7 +169,14 @@ def _replace_existing_manifest(
         )
         return "fallback_force_approve"
 
-    outcome = _emit_fresh(path, stripped, stripped_doc, by_actor=by_actor, plan_kind=plan_kind)
+    outcome = _emit_fresh(
+        path,
+        stripped,
+        stripped_doc,
+        by_actor=by_actor,
+        plan_kind=plan_kind,
+        plan_id=plan_id,
+    )
     if outcome == "fresh":
         return "replaced_malformed"
     return outcome
@@ -141,6 +189,7 @@ def _emit_fresh(
     *,
     by_actor: str,
     plan_kind: PlanKind,
+    plan_id: str | None,
 ) -> EmitOutcome:
     plan_id = resolve_plan_id(document.plan_id)
     deliverables = [section for section in document.sections if section.kind is Kind.deliverable]
@@ -152,12 +201,25 @@ def _emit_fresh(
         )
         return "fallback_force_approve"
 
-    entries = [_synthesize_entry(plan_id, section) for section in deliverables]
+    try:
+        dependencies_by_section = _synthesized_dependencies(document, deliverables)
+        entries = [
+            _synthesize_entry(plan_id, section, dependencies_by_section[section.section_id])
+            for section in deliverables
+        ]
+    except ManifestSynthesisError as exc:
+        _append_yolo_fallback(path, by_actor=by_actor, reason=str(exc))
+        return "fallback_force_approve"
     new_text = _write_manifest_section(body, entries)
     path.write_text(new_text, encoding="utf-8")
 
     try:
-        parse_plan(path, plan_kind=plan_kind, parse_mode="expansion")
+        parse_plan(
+            path,
+            plan_kind=plan_kind,
+            parse_mode="expansion",
+            plan_id_override=plan_id,
+        )
     except PlanParseError as exc:
         _append_yolo_fallback(
             path,
@@ -169,7 +231,9 @@ def _emit_fresh(
     return "fresh"
 
 
-def _synthesize_entry(plan_id: str, section: PlanSection) -> dict[str, object]:
+def _synthesize_entry(
+    plan_id: str, section: PlanSection, dependencies: tuple[str, ...]
+) -> dict[str, object]:
     category = _extract_category(section.title)
     title = _clean_title(section.title) or section.section_id
     if section.acceptance_items:
@@ -184,13 +248,86 @@ def _synthesize_entry(plan_id: str, section: PlanSection) -> dict[str, object]:
         "title": title,
         "category": category,
         "task_type": _DEFAULT_TASK_TYPE,
-        "depends_on": list(extract_section_dependencies(section.title)),
+        "depends_on": list(dependencies),
         "validation_criteria": validation,
         "labels": labels,
         "assigned_agent": _agent_for(category),
         "tdd": category in TDD_ELIGIBLE_CATEGORIES,
         "source_section": section.section_id,
     }
+
+
+def _synthesized_dependencies(
+    document: PlanDocument,
+    deliverables: list[PlanSection],
+) -> dict[str, tuple[str, ...]]:
+    section_by_id = {section.section_id: section for section in document.sections}
+    deliverable_ids = {section.section_id for section in deliverables}
+    deliverables_by_phase = _deliverables_by_phase(document, deliverables)
+    dependencies_by_section: dict[str, tuple[str, ...]] = {}
+
+    for section in deliverables:
+        resolved: list[str] = []
+        for raw_ref in extract_section_dependencies(section.title):
+            if not raw_ref:
+                raise ManifestSynthesisError(
+                    f"empty dependency reference in section {section.section_id!r}"
+                )
+            if raw_ref in deliverable_ids:
+                candidates = (raw_ref,)
+            elif _PHASE_REF_RE.match(raw_ref):
+                candidates = tuple(deliverables_by_phase.get(raw_ref, ()))
+                if not candidates:
+                    if raw_ref in section_by_id:
+                        raise ManifestSynthesisError(
+                            f"phase dependency {raw_ref!r} in section {section.section_id!r} "
+                            "has no deliverable sections"
+                        )
+                    raise ManifestSynthesisError(
+                        f"unknown dependency reference {raw_ref!r} in section "
+                        f"{section.section_id!r}"
+                    )
+            else:
+                raise ManifestSynthesisError(
+                    f"unknown dependency reference {raw_ref!r} in section {section.section_id!r}"
+                )
+            for candidate in candidates:
+                if candidate == section.section_id:
+                    raise ManifestSynthesisError(
+                        f"section {section.section_id!r} cannot depend on itself"
+                    )
+                if candidate not in resolved:
+                    resolved.append(candidate)
+        dependencies_by_section[section.section_id] = tuple(resolved)
+    return dependencies_by_section
+
+
+def _deliverables_by_phase(
+    document: PlanDocument,
+    deliverables: list[PlanSection],
+) -> dict[str, list[str]]:
+    section_by_id = {section.section_id: section for section in document.sections}
+    by_phase: dict[str, list[str]] = {}
+    for deliverable in deliverables:
+        phase_id = _phase_parent_id(deliverable, section_by_id)
+        if phase_id is not None:
+            by_phase.setdefault(phase_id, []).append(deliverable.section_id)
+    return by_phase
+
+
+def _phase_parent_id(
+    section: PlanSection,
+    section_by_id: dict[str, PlanSection],
+) -> str | None:
+    current = section
+    while current.parent_id is not None:
+        parent = section_by_id.get(current.parent_id)
+        if parent is None:
+            return None
+        if _PHASE_REF_RE.match(parent.section_id):
+            return parent.section_id
+        current = parent
+    return None
 
 
 def _agent_for(category: str) -> str:

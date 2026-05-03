@@ -16,6 +16,9 @@ from gobby.tasks.expansion._common import (
     _stable_test_id,
 )
 
+_PHASE_SUBEPIC_STAGES = ("holistic_qa", "pr", "merge")
+_MANIFEST_WORK_ITEM_STAGES = ("development", "pr", "merge")
+
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
     return self.task_manager.artifacts.get_artifacts(parent_task_id).target_branch
@@ -33,7 +36,7 @@ def _copy_target_branch_to_leaf(
 
 def _complete_dev_only_run(self: Any, run_id: str, task: Task) -> ExpansionRun:
     """Complete dev-only builds without creating expansion children."""
-    self.task_manager.stage_states.complete_stage(task.id, "expansion", by_session_id=None)
+    self._complete_parent_expansion_stage_if_current(task.id, session_id=None)
     self.run_manager.append_log(
         run_id,
         level="info",
@@ -69,6 +72,12 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     if not validation["valid"]:
         errors = "; ".join(validation["errors"])
         raise ValueError(f"Cannot apply invalid compiled spec: {errors}")
+    existing_output = self.find_existing_expansion_output(task.id)
+    if existing_output is not None:
+        raise ValueError(
+            "Expansion output already exists for this task. "
+            "Reset expansion output before applying a new run."
+        )
 
     phase_list = spec["phases"]
     tasks = spec["tasks"]
@@ -100,10 +109,12 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     phase_child_ids: dict[str, list[str]] = defaultdict(list)
     task_label_map = {}
     target_branch = _parent_target_branch(self, task.id)
+    provenance_label = f"expansion-run:{run_id}"
     for task_item in tasks:
         labels = list(task_item.get("labels") or [])
         if task_item.get("execution_group"):
             labels.append(f"parallel:{task_item['execution_group']}")
+        labels.append(provenance_label)
         task_label_map[task_item["id"]] = labels or None
 
     with self.db.transaction():
@@ -122,6 +133,8 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                     validation_criteria=epic_validation,
                     created_in_session_id=session_id,
                     description=phase.get("summary"),
+                    labels=[provenance_label],
+                    stages_override=_PHASE_SUBEPIC_STAGES,
                 )
                 phase_parent_map[phase["id"]] = result["task"]["id"]
         else:
@@ -184,6 +197,7 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                     labels=task_label_map.get(task_item["id"]),
                     assigned_agent=task_item.get("assigned_agent"),
                     additional_skills=task_item.get("additional_skills"),
+                    stages_override=_stages_override_for_task_item(spec, task_item),
                 )
                 created_id = create_result["task"]["id"]
                 created_task_map[task_item["id"]] = created_id
@@ -276,15 +290,29 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
             for child_id in phase_child_ids.get(phase_list[0]["id"], []):
                 self._add_dependency(task.id, child_id)
 
-        created_ids = list(dict.fromkeys(created_task_map.values()))
+        created_ids = list(
+            dict.fromkeys(
+                [
+                    *(
+                        phase_parent_map[phase["id"]]
+                        for phase in phase_list
+                        if phase_parent_map[phase["id"]] != task.id
+                    ),
+                    *created_task_map.values(),
+                ]
+            )
+        )
+        self.task_manager.artifacts.set_artifact(task.id, "expansion_run_id", run_id)
+        self._complete_parent_expansion_stage_if_current(task.id, session_id=session_id)
         run = self.run_manager.save_apply_result(
             run_id,
             task_id_map=created_task_map,
             created_task_ids=created_ids,
             checkpoints={
+                "phase_parent_map": phase_parent_map,
                 "apply_validation": self.validate_applied_run(
                     run_id, compiled_spec=spec, task_id_map=created_task_map
-                )
+                ),
             },
             completed=True,
         )
@@ -297,6 +325,15 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     if run is None:
         raise RuntimeError(f"Expansion run {run_id} disappeared after apply")
     return run
+
+
+def _stages_override_for_task_item(
+    spec: dict[str, Any],
+    task_item: dict[str, Any],
+) -> tuple[str, ...] | None:
+    if spec.get("contract_plan") and task_item.get("source_section_id") is not None:
+        return _MANIFEST_WORK_ITEM_STAGES
+    return None
 
 
 def validate_applied_run(
