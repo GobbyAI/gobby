@@ -68,11 +68,11 @@ def _insert_task(
     session_manager.db.execute(
         """
         INSERT INTO tasks (
-            id, project_id, title, status, lifecycle, allow_automation, yolo, isolation,
+            id, project_id, title,
             seq_num, claimed_by_session_id, created_in_session_id, closed_in_session_id,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, 'open', 'open', 0, 0, 'worktree', ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             task_id,
