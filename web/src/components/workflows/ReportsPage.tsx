@@ -79,7 +79,7 @@ const ROW_BASE_CLS =
   "cursor-pointer transition-colors duration-100 hover:bg-[var(--bg-tertiary)]";
 
 const ROW_SELECTED_CLS =
-  "bg-[color-mix(in_srgb,var(--color-agent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-agent)_8%,transparent)]";
+  "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]";
 
 const CELL_BASE_CLS =
   "reports-cell border-b border-[var(--border)] px-2.5 py-2 whitespace-nowrap";
@@ -107,7 +107,7 @@ const TYPE_BADGE_BASE_CLS =
   "reports-type-badge inline-block rounded px-1.5 py-0.5 text-[length:calc(var(--font-size-base)*0.7)] font-medium";
 
 const TYPE_BADGE_AGENT_CLS =
-  "reports-type-badge--agent bg-[var(--color-agent-soft)] text-[var(--color-agent)]";
+  "reports-type-badge--agent bg-[var(--accent-soft)] text-[var(--accent)]";
 
 const DETAIL_BACKDROP_CLS =
   "fixed inset-0 z-[90] bg-[var(--surface-scrim)]";

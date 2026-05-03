@@ -91,7 +91,7 @@ export function DigestView({ tasks, onSelectTask }: DigestViewProps) {
 
     return [
       { key: 'blocked', title: 'Blocked', icon: '⚠', tasks: blocked, color: 'var(--color-warning-foreground)' },
-      { key: 'review', title: 'In Review', icon: '\u{1F50D}', tasks: review, color: 'var(--color-agent)' },
+      { key: 'review', title: 'In Review', icon: '\u{1F50D}', tasks: review, color: 'var(--color-info)' },
       { key: 'approved', title: 'Review Approved', icon: '\u{1F9F7}', tasks: approved, color: 'var(--color-review)' },
       { key: 'in-progress', title: 'In Progress', icon: '\u{1F504}', tasks: inProgress, color: 'var(--color-info)' },
       {

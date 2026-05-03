@@ -68,8 +68,8 @@
 
 /* Light theme overrides for tinted surfaces */
 [data-theme="light"] .reports-type-badge--agent {
-  background: color-mix(in srgb, var(--color-agent) 10%, transparent);
-  color: var(--color-agent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
 }
 
 [data-theme="light"] .reports-detail-code {

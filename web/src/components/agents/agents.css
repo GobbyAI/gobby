@@ -115,9 +115,9 @@
 }
 
 .agent-edit-input:focus {
-  border-color: var(--accent, var(--color-agent));
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px
-    color-mix(in srgb, var(--accent, var(--color-agent)) 20%, transparent);
+    color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .agent-edit-textarea {
@@ -510,8 +510,8 @@
 }
 
 .agent-def-badge.chip--local {
-  background: color-mix(in srgb, var(--color-agent) 15%, transparent);
-  color: var(--color-agent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 
 

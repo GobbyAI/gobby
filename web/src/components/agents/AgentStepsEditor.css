@@ -14,7 +14,7 @@
 }
 
 .step-card--expanded {
-  border-color: var(--accent, var(--color-agent));
+  border-color: var(--accent);
 }
 
 .step-card-header {
@@ -34,8 +34,8 @@
   font-family: inherit;
   font-size: calc(var(--font-size-base) * 0.75);
   font-weight: 600;
-  color: var(--accent, var(--color-agent));
-  background: color-mix(in srgb, var(--accent, var(--color-agent)) 10%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   padding: 1px 8px;
   border-radius: 10px;
   white-space: nowrap;

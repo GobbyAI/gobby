@@ -46,8 +46,8 @@
 .chip--state-needs_review,
 .chip--state-needs-review,
 .chip--state-claimed {
-  background: color-mix(in srgb, var(--color-agent) 15%, transparent);
-  color: var(--color-agent);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
 }
 
 .chip--state-blocked,

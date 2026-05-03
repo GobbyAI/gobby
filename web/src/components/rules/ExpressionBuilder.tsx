@@ -18,7 +18,7 @@ const TOGGLE_BTN_ACTIVE_CLS =
   'bg-[var(--bg-tertiary)] font-semibold text-[var(--text-primary)]'
 
 const FIELD_INPUT_CLS =
-  'min-w-0 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--accent,var(--color-agent))] focus:[box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent,var(--color-agent))_20%,transparent)] pointer-coarse:min-h-11'
+  'min-w-0 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--accent)] focus:[box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent)_20%,transparent)] pointer-coarse:min-h-11'
 
 interface ParsedExpression {
   variable: string;

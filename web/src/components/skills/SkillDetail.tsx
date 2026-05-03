@@ -24,7 +24,7 @@ const ACTIONS_CLS = 'flex gap-1.5 border-b border-[var(--border)] px-5 py-3'
 const ACTION_BTN_CLS =
   'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 const ACTION_BTN_SCAN_CLS =
-  'border-[color-mix(in_srgb,var(--color-agent)_30%,transparent)] text-[var(--accent)]'
+  'border-[color-mix(in_srgb,var(--accent)_30%,transparent)] text-[var(--accent)]'
 
 const SCAN_ERROR_CLS = 'px-5 py-2 text-[length:var(--text-sm)] text-[var(--color-error)]'
 const CONTENT_CLS = 'flex-1 px-5 py-4 text-[length:var(--text-base)]'

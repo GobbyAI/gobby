@@ -8,7 +8,7 @@ const SELECTS_CLS = 'flex items-center gap-1.5'
 const CHIP_CLS =
   'inline-flex cursor-pointer items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--text-muted)] pointer-coarse:min-h-11'
 const CHIP_ACTIVE_CLS =
-  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-agent)_10%,transparent)] text-[var(--accent)]'
+  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)]'
 const CHIP_COUNT_CLS =
   'text-[length:var(--text-2xs)] text-[var(--text-muted)] [font-variant-numeric:tabular-nums]'
 

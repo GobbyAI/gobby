@@ -21,7 +21,7 @@ const TRIGGER_CLS =
 const TRIGGER_AGENT_CLS =
   'text-[var(--accent)] hover:border-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)]'
 const TRIGGER_HUMAN_CLS =
-  'text-[var(--color-agent)] hover:border-[var(--color-agent)] hover:bg-[color-mix(in_srgb,var(--color-agent)_8%,transparent)]'
+  'text-[var(--color-warning-foreground)] hover:border-[var(--color-warning-foreground)] hover:bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,transparent)]'
 
 const FORM_CLS = 'flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-2.5'
 const FORM_HEADER_CLS = 'flex items-center justify-between'

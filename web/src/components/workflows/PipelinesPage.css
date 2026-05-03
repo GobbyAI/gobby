@@ -895,9 +895,9 @@
 }
 
 .reporting-tag--model {
-  background: color-mix(in srgb, var(--color-agent) 8%, transparent);
-  border-color: color-mix(in srgb, var(--color-agent) 20%, transparent);
-  color: var(--color-agent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
 }
 
 .reporting-tag--mode {
@@ -1002,8 +1002,8 @@
 }
 
 .pipeline-badge--interrupted {
-  background: var(--color-agent-soft);
-  color: var(--color-agent);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
 }
 
 /* Legacy badge aliases for provider/model/mode — kept for StatusBadge compat */
@@ -1067,9 +1067,9 @@
 }
 
 [data-theme="light"] .reporting-tag--model {
-  background: color-mix(in srgb, var(--color-agent) 6%, transparent);
-  border-color: color-mix(in srgb, var(--color-agent) 15%, transparent);
-  color: var(--color-agent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 
 [data-theme="light"] .reporting-tag--mode {
@@ -1109,8 +1109,8 @@
 }
 
 [data-theme="light"] .pipeline-badge--interrupted {
-  background: var(--color-agent-soft);
-  color: var(--color-agent);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
 }
 
 .pipeline-pagination-footer {

@@ -5,7 +5,7 @@ const OVERVIEW_CLS = 'flex shrink-0 gap-3 py-3'
 const CARD_CLS =
   'flex flex-1 cursor-pointer flex-col items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-3 transition-colors duration-150 hover:border-[var(--text-muted)]'
 const CARD_ACTIVE_CLS =
-  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-agent)_8%,transparent)]'
+  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]'
 const COUNT_CLS = 'font-[inherit] text-[length:var(--text-3xl)] font-semibold'
 const LABEL_CLS =
   'text-[length:var(--text-xs)] uppercase tracking-[0.04em] text-[var(--text-muted)]'

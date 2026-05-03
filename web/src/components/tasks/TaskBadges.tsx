@@ -20,7 +20,7 @@ import { cn } from '../../lib/utils'
 const STATUS_COLORS: Record<string, string> = {
   open: TASK_STATE_COLORS.ready,
   in_progress: "var(--color-warning-foreground)",
-  needs_review: "var(--color-agent)",
+  needs_review: "var(--color-info)",
   review_approved: "var(--color-review)",
   closed: "var(--text-muted)",
   escalated: "var(--color-error)",

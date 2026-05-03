@@ -80,7 +80,7 @@ export const TASK_STATE_LABELS: Record<TaskDisplayState | StageState5, string> =
 export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
   ready: 'var(--color-info)',
   in_progress: 'var(--color-warning-foreground)',
-  needs_review: 'var(--color-agent)',
+  needs_review: 'var(--color-info)',
   blocked: 'var(--color-error)',
   review_approved: 'var(--color-review)',
   closed: 'var(--text-muted)',
@@ -89,7 +89,7 @@ export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
 export const TASK_STATE_BG: Record<TaskDisplayState, string> = {
   ready: 'var(--color-info-soft)',
   in_progress: 'var(--color-warning-soft)',
-  needs_review: 'var(--color-agent-soft)',
+  needs_review: 'var(--color-info-soft)',
   blocked: 'var(--color-error-soft)',
   review_approved: 'var(--color-review-soft)',
   closed: 'color-mix(in srgb, var(--text-muted) 15%, transparent)',
