@@ -72,24 +72,24 @@ function getBaseUrl(): string {
 
 function getFileIconColor(ext: string): string {
   const e = ext.toLowerCase()
-  if (['ts', 'tsx'].includes(e)) return '#3178c6'
-  if (['js', 'jsx'].includes(e)) return '#f7df1e'
-  if (e === 'py') return '#3776ab'
-  if (e === 'rs') return '#ce422b'
-  if (e === 'go') return '#00add8'
-  if (['json', 'yaml', 'yml', 'toml'].includes(e)) return '#cb8742'
-  if (['md', 'txt', 'rst'].includes(e)) return '#737373'
-  if (['css', 'scss', 'less'].includes(e)) return '#563d7c'
-  if (['html', 'htm'].includes(e)) return '#e34c26'
-  if (['sh', 'bash', 'zsh'].includes(e)) return '#4eaa25'
-  if (['sql'].includes(e)) return '#e38c00'
-  if (['rb'].includes(e)) return '#cc342d'
-  return '#a3a3a3'
+  if (['ts', 'tsx'].includes(e)) return 'var(--lang-typescript)'
+  if (['js', 'jsx'].includes(e)) return 'var(--lang-javascript)'
+  if (e === 'py') return 'var(--lang-python)'
+  if (e === 'rs') return 'var(--lang-rust)'
+  if (e === 'go') return 'var(--lang-go)'
+  if (['json', 'yaml', 'yml', 'toml'].includes(e)) return 'var(--lang-config)'
+  if (['md', 'txt', 'rst'].includes(e)) return 'var(--lang-doc)'
+  if (['css', 'scss', 'less'].includes(e)) return 'var(--lang-style)'
+  if (['html', 'htm'].includes(e)) return 'var(--lang-markup)'
+  if (['sh', 'bash', 'zsh'].includes(e)) return 'var(--lang-shell)'
+  if (['sql'].includes(e)) return 'var(--lang-sql)'
+  if (['rb'].includes(e)) return 'var(--lang-ruby)'
+  return 'var(--lang-default)'
 }
 
 function FolderIcon({ open }: { open: boolean }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--lang-folder)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       {open && <line x1="9" y1="14" x2="15" y2="14" />}
     </svg>
@@ -508,7 +508,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
                   paddingRight: '1em',
                   textAlign: 'right',
                   userSelect: 'none',
-                  color: '#555',
+                  color: 'var(--text-muted)',
                 }}
                 customStyle={{
                   margin: 0,
@@ -548,17 +548,17 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
 })
 
 const GIT_STATUS_COLORS: Record<string, string> = {
-  M: '#e5c07b',   // modified — yellow
-  A: '#4ade80',   // added — green
-  D: '#f87171',   // deleted — red
-  R: '#60a5fa',   // renamed — blue
-  '?': '#737373', // untracked — gray
-  '??': '#737373',
+  M: 'var(--git-status-modified)',
+  A: 'var(--git-status-added)',
+  D: 'var(--git-status-deleted)',
+  R: 'var(--git-status-renamed)',
+  '?': 'var(--git-status-untracked)',
+  '??': 'var(--git-status-untracked)',
 }
 
 function GitStatusBadge({ status }: { status: string }) {
   const label = status === '??' ? '?' : status.charAt(0)
-  const color = GIT_STATUS_COLORS[status] ?? GIT_STATUS_COLORS[label] ?? '#737373'
+  const color = GIT_STATUS_COLORS[status] ?? GIT_STATUS_COLORS[label] ?? 'var(--git-status-untracked)'
   return (
     <span
       className="files-git-badge"
