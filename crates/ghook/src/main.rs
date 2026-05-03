@@ -323,6 +323,35 @@ fn action_from_success_response(
         return Ok(action_from_droid_success(result, serialized));
     }
 
+    // Claude carries a structured permissionDecision channel; emitting a
+    // second stderr+exit(2) channel on top makes Claude render every
+    // PreToolUse deny twice. Mirror the daemon contract: only the
+    // top-level continue:false + stopReason shape (HARD_STOP) becomes
+    // exit 2. Codex/Gemini/Qwen keep the legacy is_blocked path below.
+    if canonical_source == "claude" {
+        let map = result.as_object();
+        let continue_false =
+            map.and_then(|m| m.get("continue")).and_then(Value::as_bool) == Some(false);
+        let stop_reason = map
+            .and_then(|m| m.get("stopReason"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+
+        if continue_false && let Some(reason) = stop_reason {
+            return Ok(HookAction {
+                exit_code: 2,
+                stdout_json: None,
+                stderr_message: Some(reason.to_string()),
+            });
+        }
+
+        return Ok(HookAction {
+            exit_code: 0,
+            stdout_json: json_value_is_meaningful(&result).then_some(serialized),
+            stderr_message: None,
+        });
+    }
+
     if is_blocked(&result) {
         if hook_type != "Stop" {
             return Ok(HookAction {
@@ -642,6 +671,48 @@ mod tests {
                 stderr_message: Some("Task still in_progress".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn action_from_success_claude_hard_stop_exits_two() {
+        let action = action_from_success_response(
+            "claude",
+            "Stop",
+            r#"{"continue":false,"stopReason":"Daemon halted run"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            action,
+            HookAction {
+                exit_code: 2,
+                stdout_json: None,
+                stderr_message: Some("Daemon halted run".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn action_from_success_claude_stop_with_permission_deny_no_exit_two() {
+        let action = action_from_success_response(
+            "claude",
+            "Stop",
+            r#"{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"r"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.exit_code, 0);
+        assert!(action.stdout_json.is_some());
+        assert_eq!(action.stderr_message, None);
+    }
+
+    #[test]
+    fn action_from_success_claude_continue_false_without_reason_does_not_exit_two() {
+        let action =
+            action_from_success_response("claude", "Stop", r#"{"continue":false}"#).unwrap();
+
+        assert_eq!(action.exit_code, 0);
+        assert_eq!(action.stderr_message, None);
     }
 
     #[test]

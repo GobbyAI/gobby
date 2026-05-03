@@ -105,9 +105,12 @@ gcode init
 # Search
 gcode search "query"                      # Hybrid: FTS + semantic + graph boost
 gcode search "query" --kind function      # Filter by symbol kind
+gcode search "query" --language rust      # Filter by source language
 gcode search "query" --path "src/**/*.rs" # Filter by file path glob
+gcode search-symbol "outline"             # Exact-first symbol/command lookup
+gcode search-symbol "outline" --kind function --language rust
 gcode search-text "query"                 # FTS5 on symbol names/signatures
-gcode search-content "query"              # FTS5 on file content
+gcode search-content "query"              # FTS5 on file content, comments, config, CSS
 
 # Symbol retrieval
 gcode outline src/auth.ts                 # Hierarchical symbol tree
@@ -138,6 +141,7 @@ gcode search --project /path/to/app "q"   # By path
 # Global flags
 --format text|json                        # Output format (default: json)
 --quiet                                   # Suppress warnings and progress
+--no-freshness                            # Skip read-time index/source freshness checks
 ```
 
 ## Standalone vs Gobby

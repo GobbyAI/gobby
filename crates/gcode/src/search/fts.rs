@@ -13,6 +13,13 @@ pub struct ResolvedGraphSymbol {
     pub display_name: String,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct SymbolFilters<'a> {
+    kind: Option<&'a str>,
+    language: Option<&'a str>,
+    path: Option<&'a str>,
+}
+
 /// Escape LIKE wildcards (`%`, `_`) and the backslash escape char itself.
 /// Must be paired with `ESCAPE '\'` in the SQL for SQLite to honor it.
 fn escape_like(s: &str) -> String {
@@ -38,6 +45,79 @@ fn glob_to_like_prefix(pattern: &str) -> Option<String> {
     } else {
         Some(format!("{}%", escape_like(&prefix)))
     }
+}
+
+fn push_symbol_filters(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    alias: &str,
+    filters: SymbolFilters<'_>,
+) {
+    if let Some(k) = filters.kind {
+        conditions.push(format!("{alias}.kind = ?"));
+        params.push(Box::new(k.to_string()));
+    }
+    if let Some(lang) = filters.language {
+        conditions.push(format!("{alias}.language = ?"));
+        params.push(Box::new(lang.to_string()));
+    }
+    if let Some(like) = filters.path.and_then(glob_to_like_prefix) {
+        conditions.push(format!("{alias}.file_path LIKE ?"));
+        params.push(Box::new(like));
+    }
+}
+
+fn append_unique_symbols(
+    out: &mut Vec<Symbol>,
+    seen: &mut HashSet<String>,
+    symbols: Vec<Symbol>,
+    limit: usize,
+) {
+    for symbol in symbols {
+        if seen.insert(symbol.id.clone()) {
+            out.push(symbol);
+            if out.len() >= limit {
+                return;
+            }
+        }
+    }
+}
+
+fn query_symbols_by_name_predicate(
+    conn: &Connection,
+    project_id: &str,
+    predicate: &str,
+    predicate_values: Vec<String>,
+    filters: SymbolFilters<'_>,
+    limit: usize,
+) -> Vec<Symbol> {
+    let mut conditions = vec!["cs.project_id = ?".to_string(), predicate.to_string()];
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(project_id.to_string())];
+    for value in predicate_values {
+        params.push(Box::new(value));
+    }
+    push_symbol_filters(&mut conditions, &mut params, "cs", filters);
+    params.push(Box::new(limit as i64));
+
+    let where_clause = conditions.join(" AND ");
+    let sql = format!(
+        "SELECT cs.* FROM code_symbols cs \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path \
+         WHERE {where_clause} \
+         ORDER BY cs.file_path, cs.line_start \
+         LIMIT ?"
+    );
+
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map(param_refs.as_slice(), Symbol::from_row)
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
 }
 
 /// Sanitize user input for FTS5 queries.
@@ -67,6 +147,7 @@ pub fn search_symbols_fts(
     query: &str,
     project_id: &str,
     kind: Option<&str>,
+    language: Option<&str>,
     path: Option<&str>,
     limit: usize,
 ) -> Vec<Symbol> {
@@ -78,20 +159,20 @@ pub fn search_symbols_fts(
     let mut conditions = vec!["cs.project_id = ?".to_string()];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
         vec![Box::new(fts_query), Box::new(project_id.to_string())];
-    if let Some(k) = kind {
-        conditions.push("cs.kind = ?".to_string());
-        params.push(Box::new(k.to_string()));
-    }
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        conditions.push("cs.file_path LIKE ?".to_string());
-        params.push(Box::new(like));
-    }
+    let filters = SymbolFilters {
+        kind,
+        language,
+        path,
+    };
+    push_symbol_filters(&mut conditions, &mut params, "cs", filters);
     params.push(Box::new(limit as i64));
 
     let where_clause = conditions.join(" AND ");
     let sql = format!(
         "SELECT cs.* FROM code_symbols_fts fts \
          JOIN code_symbols cs ON cs.rowid = fts.rowid \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path \
          WHERE code_symbols_fts MATCH ? AND {where_clause} \
          ORDER BY rank LIMIT ?"
     );
@@ -113,32 +194,37 @@ pub fn search_symbols_by_name(
     query: &str,
     project_id: &str,
     kind: Option<&str>,
+    language: Option<&str>,
     path: Option<&str>,
     limit: usize,
 ) -> Vec<Symbol> {
     let escaped_query = escape_like(query);
     let pattern = format!("%{escaped_query}%");
     let mut conditions = vec![
-        "project_id = ?".to_string(),
-        "(name LIKE ? ESCAPE '\\' OR qualified_name LIKE ? ESCAPE '\\')".to_string(),
+        "cs.project_id = ?".to_string(),
+        "(cs.name LIKE ? ESCAPE '\\' OR cs.qualified_name LIKE ? ESCAPE '\\')".to_string(),
     ];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
         Box::new(project_id.to_string()),
         Box::new(pattern.clone()),
         Box::new(pattern),
     ];
-    if let Some(k) = kind {
-        conditions.push("kind = ?".to_string());
-        params.push(Box::new(k.to_string()));
-    }
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        conditions.push("file_path LIKE ?".to_string());
-        params.push(Box::new(like));
-    }
+    let filters = SymbolFilters {
+        kind,
+        language,
+        path,
+    };
+    push_symbol_filters(&mut conditions, &mut params, "cs", filters);
     params.push(Box::new(limit as i64));
 
     let where_clause = conditions.join(" AND ");
-    let sql = format!("SELECT * FROM code_symbols WHERE {where_clause} ORDER BY name LIMIT ?");
+    let sql = format!(
+        "SELECT cs.* FROM code_symbols cs \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path \
+         WHERE {where_clause} \
+         ORDER BY cs.name, cs.file_path, cs.line_start LIMIT ?"
+    );
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = match conn.prepare(&sql) {
@@ -149,6 +235,79 @@ pub fn search_symbols_by_name(
         .ok()
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
+}
+
+pub fn search_symbols_exact_first(
+    conn: &Connection,
+    query: &str,
+    project_id: &str,
+    kind: Option<&str>,
+    language: Option<&str>,
+    path: Option<&str>,
+    limit: usize,
+) -> Vec<Symbol> {
+    if query.trim().is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    let filters = SymbolFilters {
+        kind,
+        language,
+        path,
+    };
+
+    let exact = query_symbols_by_name_predicate(
+        conn,
+        project_id,
+        "(cs.name = ? OR cs.qualified_name = ?)",
+        vec![query.to_string(), query.to_string()],
+        filters,
+        limit,
+    );
+    append_unique_symbols(&mut results, &mut seen, exact, limit);
+    if results.len() >= limit {
+        return results;
+    }
+
+    let ci_exact = query_symbols_by_name_predicate(
+        conn,
+        project_id,
+        "(lower(cs.name) = lower(?) OR lower(cs.qualified_name) = lower(?))",
+        vec![query.to_string(), query.to_string()],
+        filters,
+        limit,
+    );
+    append_unique_symbols(&mut results, &mut seen, ci_exact, limit);
+    if results.len() >= limit {
+        return results;
+    }
+
+    let prefix = format!("{}%", escape_like(query));
+    let prefix_matches = query_symbols_by_name_predicate(
+        conn,
+        project_id,
+        "(cs.name LIKE ? ESCAPE '\\' OR cs.qualified_name LIKE ? ESCAPE '\\')",
+        vec![prefix.clone(), prefix],
+        filters,
+        limit,
+    );
+    append_unique_symbols(&mut results, &mut seen, prefix_matches, limit);
+    if results.len() >= limit {
+        return results;
+    }
+
+    let contains = search_symbols_by_name(conn, query, project_id, kind, language, path, limit);
+    append_unique_symbols(&mut results, &mut seen, contains, limit);
+    if results.len() >= limit {
+        return results;
+    }
+
+    let fts = search_symbols_fts(conn, query, project_id, kind, language, path, limit);
+    append_unique_symbols(&mut results, &mut seen, fts, limit);
+
+    results
 }
 
 fn exact_symbol_matches(
@@ -235,18 +394,24 @@ pub fn resolve_graph_symbol(
         return (resolved, suggestions);
     }
 
-    let like_matches = search_symbols_by_name(conn, input, project_id, None, None, 6);
+    let like_matches = search_symbols_by_name(conn, input, project_id, None, None, None, 6);
     let (resolved, suggestions) = resolve_from_candidates(like_matches);
     if resolved.is_some() || !suggestions.is_empty() {
         return (resolved, suggestions);
     }
 
-    let fts_results = search_symbols_fts(conn, input, project_id, None, None, 6);
+    let fts_results = search_symbols_fts(conn, input, project_id, None, None, None, 6);
     resolve_from_candidates(fts_results)
 }
 
 /// Count matching symbols (FTS5 with LIKE fallback).
-pub fn count_text(conn: &Connection, query: &str, project_id: &str, path: Option<&str>) -> usize {
+pub fn count_text(
+    conn: &Connection,
+    query: &str,
+    project_id: &str,
+    language: Option<&str>,
+    path: Option<&str>,
+) -> usize {
     let fts_query = sanitize_fts_query(query);
     if fts_query.is_empty() {
         return 0;
@@ -257,14 +422,22 @@ pub fn count_text(conn: &Connection, query: &str, project_id: &str, path: Option
         Box::new(fts_query.clone()),
         Box::new(project_id.to_string()),
     ];
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        conditions.push("cs.file_path LIKE ?".to_string());
-        params.push(Box::new(like));
-    }
+    push_symbol_filters(
+        &mut conditions,
+        &mut params,
+        "cs",
+        SymbolFilters {
+            kind: None,
+            language,
+            path,
+        },
+    );
     let where_clause = conditions.join(" AND ");
     let sql = format!(
         "SELECT COUNT(*) FROM code_symbols_fts fts \
          JOIN code_symbols cs ON cs.rowid = fts.rowid \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path \
          WHERE code_symbols_fts MATCH ? AND {where_clause}"
     );
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -283,20 +456,31 @@ pub fn count_text(conn: &Connection, query: &str, project_id: &str, path: Option
     let escaped_query = escape_like(query);
     let pattern = format!("%{escaped_query}%");
     let mut conditions = vec![
-        "project_id = ?".to_string(),
-        "(name LIKE ? ESCAPE '\\' OR qualified_name LIKE ? ESCAPE '\\')".to_string(),
+        "cs.project_id = ?".to_string(),
+        "(cs.name LIKE ? ESCAPE '\\' OR cs.qualified_name LIKE ? ESCAPE '\\')".to_string(),
     ];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
         Box::new(project_id.to_string()),
         Box::new(pattern.clone()),
         Box::new(pattern),
     ];
-    if let Some(like) = path.and_then(glob_to_like_prefix) {
-        conditions.push("file_path LIKE ?".to_string());
-        params.push(Box::new(like));
-    }
+    push_symbol_filters(
+        &mut conditions,
+        &mut params,
+        "cs",
+        SymbolFilters {
+            kind: None,
+            language,
+            path,
+        },
+    );
     let where_clause = conditions.join(" AND ");
-    let sql = format!("SELECT COUNT(*) FROM code_symbols WHERE {where_clause}");
+    let sql = format!(
+        "SELECT COUNT(*) FROM code_symbols cs \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path \
+         WHERE {where_clause}"
+    );
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))
         .unwrap_or(0)
@@ -330,6 +514,10 @@ mod tests {
                 created_at TEXT,
                 updated_at TEXT
             );
+            CREATE TABLE code_indexed_files (
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL
+            );
             CREATE VIRTUAL TABLE code_symbols_fts USING fts5(name, signature, docstring, summary);",
         )
         .expect("create schema");
@@ -344,19 +532,46 @@ mod tests {
         qualified_name: &str,
         summary: Option<&str>,
     ) {
+        insert_symbol_with(
+            conn,
+            id,
+            file_path,
+            name,
+            qualified_name,
+            "function",
+            "python",
+            summary,
+        );
+    }
+
+    fn insert_symbol_with(
+        conn: &Connection,
+        id: &str,
+        file_path: &str,
+        name: &str,
+        qualified_name: &str,
+        kind: &str,
+        language: &str,
+        summary: Option<&str>,
+    ) {
         conn.execute(
             "INSERT INTO code_symbols (
                 id, project_id, file_path, name, qualified_name, kind, language,
                 byte_start, byte_end, line_start, line_end, signature, docstring,
                 parent_symbol_id, content_hash, summary, created_at, updated_at
             ) VALUES (
-                ?1, 'proj', ?2, ?3, ?4, 'function', 'python',
-                0, 10, 1, 1, '', '', NULL, '', ?5, '', ''
+                ?1, 'proj', ?2, ?3, ?4, ?5, ?6,
+                0, 10, 1, 1, '', '', NULL, '', ?7, '', ''
             )",
-            rusqlite::params![id, file_path, name, qualified_name, summary],
+            rusqlite::params![id, file_path, name, qualified_name, kind, language, summary],
         )
         .expect("insert symbol");
         let rowid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO code_indexed_files (project_id, file_path) VALUES ('proj', ?1)",
+            rusqlite::params![file_path],
+        )
+        .expect("insert indexed file");
         conn.execute(
             "INSERT INTO code_symbols_fts(rowid, name, signature, docstring, summary)
              VALUES (?1, ?2, '', '', ?3)",
@@ -429,6 +644,69 @@ mod tests {
         assert!(resolved.is_none());
         assert_eq!(suggestions.len(), 2);
     }
+
+    #[test]
+    fn search_symbols_exact_first_prioritizes_exact_name() {
+        let conn = setup_conn();
+        insert_symbol(
+            &conn,
+            "sym-1",
+            "src/outline_helpers.py",
+            "outline_helper",
+            "outline_helper",
+            None,
+        );
+        insert_symbol(
+            &conn,
+            "sym-2",
+            "src/commands.py",
+            "outline",
+            "outline",
+            None,
+        );
+
+        let results = search_symbols_exact_first(&conn, "outline", "proj", None, None, None, 10);
+
+        assert_eq!(results[0].id, "sym-2");
+    }
+
+    #[test]
+    fn search_symbols_exact_first_respects_kind_language_and_path() {
+        let conn = setup_conn();
+        insert_symbol_with(
+            &conn,
+            "sym-1",
+            "src/commands.py",
+            "outline",
+            "outline",
+            "function",
+            "python",
+            None,
+        );
+        insert_symbol_with(
+            &conn,
+            "sym-2",
+            "src/commands.rs",
+            "outline",
+            "outline",
+            "function",
+            "rust",
+            None,
+        );
+
+        let results = search_symbols_exact_first(
+            &conn,
+            "outline",
+            "proj",
+            Some("function"),
+            Some("rust"),
+            Some("src/**/*.rs"),
+            10,
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "sym-2");
+    }
 }
 
 /// Count matching content chunks (FTS5 with LIKE fallback).
@@ -436,6 +714,7 @@ pub fn count_content(
     conn: &Connection,
     query: &str,
     project_id: &str,
+    language: Option<&str>,
     path: Option<&str>,
 ) -> usize {
     if query.trim().is_empty() {
@@ -448,6 +727,10 @@ pub fn count_content(
     let mut conditions = vec!["c.project_id = ?".to_string()];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
         vec![Box::new(fts_match), Box::new(project_id.to_string())];
+    if let Some(lang) = language {
+        conditions.push("c.language = ?".to_string());
+        params.push(Box::new(lang.to_string()));
+    }
     if let Some(like) = path.and_then(glob_to_like_prefix) {
         conditions.push("c.file_path LIKE ?".to_string());
         params.push(Box::new(like));
@@ -456,6 +739,8 @@ pub fn count_content(
     let sql = format!(
         "SELECT COUNT(*) FROM code_content_fts fts \
          JOIN code_content_chunks c ON c.rowid = fts.rowid \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = c.project_id AND cf.file_path = c.file_path \
          WHERE code_content_fts MATCH ? AND {where_clause}"
     );
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -474,17 +759,26 @@ pub fn count_content(
     let escaped_query = escape_like(query);
     let like_query = format!("%{escaped_query}%");
     let mut conditions = vec![
-        "project_id = ?".to_string(),
-        "content LIKE ? ESCAPE '\\'".to_string(),
+        "c.project_id = ?".to_string(),
+        "c.content LIKE ? ESCAPE '\\'".to_string(),
     ];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
         vec![Box::new(project_id.to_string()), Box::new(like_query)];
+    if let Some(lang) = language {
+        conditions.push("c.language = ?".to_string());
+        params.push(Box::new(lang.to_string()));
+    }
     if let Some(like) = path.and_then(glob_to_like_prefix) {
-        conditions.push("file_path LIKE ?".to_string());
+        conditions.push("c.file_path LIKE ?".to_string());
         params.push(Box::new(like));
     }
     let where_clause = conditions.join(" AND ");
-    let sql = format!("SELECT COUNT(*) FROM code_content_chunks WHERE {where_clause}");
+    let sql = format!(
+        "SELECT COUNT(*) FROM code_content_chunks c \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = c.project_id AND cf.file_path = c.file_path \
+         WHERE {where_clause}"
+    );
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))
         .unwrap_or(0)
@@ -495,12 +789,13 @@ pub fn search_text(
     conn: &Connection,
     query: &str,
     project_id: &str,
+    language: Option<&str>,
     path: Option<&str>,
     limit: usize,
 ) -> Vec<SearchResult> {
-    let mut results = search_symbols_fts(conn, query, project_id, None, path, limit);
+    let mut results = search_symbols_fts(conn, query, project_id, None, language, path, limit);
     if results.is_empty() {
-        results = search_symbols_by_name(conn, query, project_id, None, path, limit);
+        results = search_symbols_by_name(conn, query, project_id, None, language, path, limit);
     }
     results.into_iter().map(|s| s.to_brief()).collect()
 }
@@ -510,6 +805,7 @@ pub fn search_content(
     conn: &Connection,
     query: &str,
     project_id: &str,
+    language: Option<&str>,
     path: Option<&str>,
     limit: usize,
 ) -> Vec<ContentSearchHit> {
@@ -524,6 +820,10 @@ pub fn search_content(
     let mut conditions = vec!["c.project_id = ?".to_string()];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
         vec![Box::new(fts_match), Box::new(project_id.to_string())];
+    if let Some(lang) = language {
+        conditions.push("c.language = ?".to_string());
+        params.push(Box::new(lang.to_string()));
+    }
     if let Some(like) = path.and_then(glob_to_like_prefix) {
         conditions.push("c.file_path LIKE ?".to_string());
         params.push(Box::new(like));
@@ -536,6 +836,8 @@ pub fn search_content(
          snippet(code_content_fts, 0, '>>>', '<<<', '...', 40) as snippet \
          FROM code_content_fts fts \
          JOIN code_content_chunks c ON c.rowid = fts.rowid \
+         JOIN code_indexed_files cf \
+              ON cf.project_id = c.project_id AND cf.file_path = c.file_path \
          WHERE code_content_fts MATCH ? AND {where_clause} \
          ORDER BY rank LIMIT ?"
     );
@@ -562,24 +864,30 @@ pub fn search_content(
             let escaped_query = escape_like(query);
             let like_query = format!("%{escaped_query}%");
             let mut conditions = vec![
-                "project_id = ?".to_string(),
-                "content LIKE ? ESCAPE '\\'".to_string(),
+                "c.project_id = ?".to_string(),
+                "c.content LIKE ? ESCAPE '\\'".to_string(),
             ];
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
                 Box::new(query.to_string()),
                 Box::new(project_id.to_string()),
                 Box::new(like_query),
             ];
+            if let Some(lang) = language {
+                conditions.push("c.language = ?".to_string());
+                params.push(Box::new(lang.to_string()));
+            }
             if let Some(like) = path.and_then(glob_to_like_prefix) {
-                conditions.push("file_path LIKE ?".to_string());
+                conditions.push("c.file_path LIKE ?".to_string());
                 params.push(Box::new(like));
             }
             params.push(Box::new(limit as i64));
             let where_clause = conditions.join(" AND ");
             let sql = format!(
-                "SELECT file_path, line_start, line_end, language, \
-                 substr(content, max(1, instr(content, ?) - 60), 120) as snippet \
-                 FROM code_content_chunks \
+                "SELECT c.file_path, c.line_start, c.line_end, c.language, \
+                 substr(c.content, max(1, instr(c.content, ?) - 60), 120) as snippet \
+                 FROM code_content_chunks c \
+                 JOIN code_indexed_files cf \
+                      ON cf.project_id = c.project_id AND cf.file_path = c.file_path \
                  WHERE {where_clause} LIMIT ?"
             );
             let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -601,5 +909,81 @@ pub fn search_content(
             .map(|rows| rows.filter_map(|r| r.ok()).collect())
             .unwrap_or_default()
         }
+    }
+}
+
+#[cfg(test)]
+mod content_tests {
+    use super::*;
+
+    fn setup_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE code_content_chunks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                language TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE code_indexed_files (
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL
+            );
+            CREATE VIRTUAL TABLE code_content_fts USING fts5(
+                content, file_path, language,
+                content='code_content_chunks', content_rowid='rowid'
+            );",
+        )
+        .expect("create schema");
+        conn
+    }
+
+    fn insert_chunk(conn: &Connection, file_path: &str, language: &str, content: &str) {
+        conn.execute(
+            "INSERT INTO code_content_chunks (
+                id, project_id, file_path, chunk_index, line_start, line_end,
+                content, language, created_at
+             ) VALUES ('chunk-1', 'proj', ?1, 0, 1, 10, ?2, ?3, '')",
+            rusqlite::params![file_path, content, language],
+        )
+        .expect("insert chunk");
+        let rowid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO code_content_fts(rowid, content, file_path, language)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![rowid, content, file_path, language],
+        )
+        .expect("insert fts row");
+    }
+
+    #[test]
+    fn search_content_excludes_orphan_chunks() {
+        let conn = setup_conn();
+        insert_chunk(&conn, "src/missing.rs", "rust", "pub fn outline() {}");
+
+        let results = search_content(&conn, "outline", "proj", None, None, 10);
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_content_returns_chunks_with_indexed_file_row() {
+        let conn = setup_conn();
+        insert_chunk(&conn, "src/lib.rs", "rust", "pub fn outline() {}");
+        conn.execute(
+            "INSERT INTO code_indexed_files (project_id, file_path) VALUES ('proj', 'src/lib.rs')",
+            [],
+        )
+        .expect("insert indexed file");
+
+        let results = search_content(&conn, "outline", "proj", Some("rust"), None, 10);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_path, "src/lib.rs");
     }
 }

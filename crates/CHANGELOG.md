@@ -7,7 +7,30 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] — gobby-hooks
+## [0.7.0] — gcode
+
+### Added
+
+#### gcode
+
+- **`gcode search-symbol` command** — Exact-first symbol/name lookup with deterministic ranking. Resolves precise names ahead of fuzzy matches before falling back to FTS5, and accepts the same `--kind`, `--language`, and `--path` filters as `gcode search`. Use it when you already know (most of) the name and want the canonical hit at rank 0 instead of letting RRF rerank it. (#151)
+- **`--language` filter on search commands** — `search`, `search-symbol`, `search-text`, and `search-content` accept `--language <lang>` to narrow results to a tree-sitter language (e.g. `rust`, `python`, `css`). Composes with `--kind` and `--path`. (#151)
+- **`search-content` covers comments, config, and CSS** — content search now indexes and matches the same comment/config/CSS chunks the indexer already wrote, so doc strings, `*.toml`/`*.yaml`/`*.json` config, and stylesheets are reachable from `gcode search-content`. (#151)
+- **Isolated index roots** — `Context::resolve` now distinguishes five project-identity sources, written up as `ProjectIdentitySource` (`ProjectJson`, `GcodeJson`, `IsolatedRoot`, `LinkedWorktree`, `Generated`):
+  - **Isolation marker** — when `.gobby/project.json` carries `parent_project_path` and/or `parent_project_id`, the directory gets its own filesystem-derived code-index id (UUID5 of the canonical path, namespace `c0de1de0-…`) and is no longer conflated with the parent project. Reading the marker is via the new `project::read_isolation_marker` helper.
+  - **Linked git worktrees** — runs from inside a `git worktree add` directory now resolve to the worktree's own top-level (via `git rev-parse --show-toplevel` + `git worktree list --porcelain` parsing in the new `git` module), and the code-index id is derived from that path rather than from any inherited `.gobby/project.json`. A warning is printed when an inherited id would have been used.
+  - **Generated** — directories without any identity file get a deterministic UUID5 from the canonical path; `.gobby/gcode.json` is only written when `gcode init` runs (via `MissingIdentity::Generate`). Other commands fall back to `MissingIdentity::Error` and ask the user to run `gcode init`.
+- **Read-time freshness checks** — search, symbol, outline, and graph read commands now verify that on-disk source still matches the index before returning results, and incrementally re-index the affected file(s) transparently when they don't. Backed by the new `freshness` module (`FreshnessScope::Project` for project-wide commands, `FreshnessScope::Files` for file-scoped commands like `outline`, plus `ensure_symbol_fresh` for `gcode symbol`). Disable per-call with the new global `--no-freshness` flag, or via `GCODE_FRESHNESS_INFLIGHT=1` for nested processes (a re-entrancy guard so the indexer doesn't recurse into itself). Not a substitute for `gcode index` on bulk changes — intended to keep individual reads honest. (#153)
+- **Project-root walk-up consults git worktree top-level** — `Context::resolve`'s walk-up now prefers `git rev-parse --show-toplevel` (treating linked worktrees as their own top-level) before falling back to generic `.git`/`.hg` markers, so commands invoked deep inside a worktree resolve to the right project root. (#153)
+
+### Changed
+
+#### gcode
+
+- **Project-scoped search and graph commands tightened** — search, symbol, outline, and graph commands now validate that resolved file paths still belong to the current project context before returning results. Stale entries from other projects sharing the same `gobby-hub.db` no longer leak across project boundaries. The new `commands::scope` module owns the path-validation helpers (`normalize_file_arg`, `path_exists_in_current_project`, `indexed_file_exists`, `content_chunks_exist`, `current_indexed_path_is_valid`). (#151)
+- **`gcode init` reports identity source** — init output now distinguishes `initialized`, `existing`, `gobby`, `isolated`, and `linked-worktree` cases when announcing the project context, so it's obvious which identity source resolved.
+
+## [0.4.1] — gobby-hooks
 
 ### Added
 
@@ -21,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### gobby-hooks
 
 - **Droid blocking semantics** — droid daemon responses with `continue:false` now exit 2 with the daemon reason while preserving the response JSON on stdout. Other droid block JSON is forwarded on stdout with exit 0 for droid's hook protocol, and daemon transport failures surface as exit 1 stderr diagnostics.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Stop double-emitting Claude PreToolUse denies** — for `--cli=claude`, ghook now narrows the legacy `stderr+exit(2)` channel to daemon responses that explicitly set top-level `continue:false` with a non-empty `stopReason` (the HARD_STOP shape). All other responses — including PreToolUse denies that arrive via `hookSpecificOutput.permissionDecision:"deny"` — are emitted as JSON on stdout with exit 0, matching the structured-channel contract the Python `ClaudeCodeAdapter` already targets. Previously, ghook synthesized a second deny channel on top of the structured one, causing Claude Code to render every PreToolUse deny twice (once as a permission denial, once as a "hook blocking error"). Codex/Gemini/Qwen/Droid paths are unchanged.
 
 ## [0.3.1] — gobby-hooks
 

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use gobby_core::project::{find_project_root, read_project_id};
 
+use crate::git::{self, WorktreeKind};
 use crate::secrets;
 
 /// Neo4j connection configuration.
@@ -56,6 +57,30 @@ pub struct Context {
     pub daemon_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingIdentity {
+    Error,
+    Generate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectIdentitySource {
+    ProjectJson,
+    GcodeJson,
+    IsolatedRoot,
+    LinkedWorktree,
+    Generated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectIdentity {
+    pub project_id: String,
+    pub root: PathBuf,
+    pub source: ProjectIdentitySource,
+    pub warning: Option<String>,
+    pub should_write_gcode_json: bool,
+}
+
 impl Context {
     /// Resolve context from CLI args and filesystem state.
     pub fn resolve(project_override: Option<&str>, quiet: bool) -> anyhow::Result<Self> {
@@ -73,7 +98,9 @@ impl Context {
         };
 
         let db_path = resolve_db_path(&project_root)?;
-        let project_id = resolve_project_id(&project_root)?;
+        let identity = resolve_project_identity(&project_root, MissingIdentity::Error)?;
+        warn_project_identity(&identity, quiet);
+        let project_id = identity.project_id;
 
         // Resolve service configs from config_store (best-effort)
         let neo4j = resolve_neo4j_config(&db_path, quiet);
@@ -92,6 +119,92 @@ impl Context {
             embedding,
             daemon_url,
         })
+    }
+}
+
+pub fn resolve_project_identity(
+    project_root: &Path,
+    missing: MissingIdentity,
+) -> anyhow::Result<ProjectIdentity> {
+    let root = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_fallback(project_root));
+
+    if crate::project::read_isolation_marker(&root).is_some() {
+        return Ok(ProjectIdentity {
+            project_id: crate::project::code_index_id_for_root(&root),
+            root,
+            source: ProjectIdentitySource::IsolatedRoot,
+            warning: None,
+            should_write_gcode_json: false,
+        });
+    }
+
+    let worktree = git::worktree_info(&root)?;
+    if worktree.kind == WorktreeKind::Linked {
+        let project_id = crate::project::code_index_id_for_root(&worktree.top_level);
+        let copied_id = read_project_id(&worktree.top_level).ok();
+        let warning = copied_id
+            .filter(|id| id != &project_id)
+            .map(|id| {
+                format!(
+                    "linked git worktree {} has copied .gobby/project.json id {}; using filesystem-scoped code index id {}",
+                    worktree.top_level.display(),
+                    short_id(&id),
+                    short_id(&project_id)
+                )
+            });
+
+        return Ok(ProjectIdentity {
+            project_id,
+            root: worktree.top_level,
+            source: ProjectIdentitySource::LinkedWorktree,
+            warning,
+            should_write_gcode_json: false,
+        });
+    }
+
+    let gobby_dir = root.join(".gobby");
+    if gobby_dir.join("project.json").exists() {
+        return Ok(ProjectIdentity {
+            project_id: read_project_id(&root)?,
+            root,
+            source: ProjectIdentitySource::ProjectJson,
+            warning: None,
+            should_write_gcode_json: false,
+        });
+    }
+    if gobby_dir.join("gcode.json").exists() {
+        return Ok(ProjectIdentity {
+            project_id: crate::project::read_gcode_json(&root)?,
+            root,
+            source: ProjectIdentitySource::GcodeJson,
+            warning: None,
+            should_write_gcode_json: false,
+        });
+    }
+
+    match missing {
+        MissingIdentity::Generate => Ok(ProjectIdentity {
+            project_id: crate::project::code_index_id_for_root(&root),
+            root,
+            source: ProjectIdentitySource::Generated,
+            warning: None,
+            should_write_gcode_json: true,
+        }),
+        MissingIdentity::Error => anyhow::bail!(
+            "No gcode project found. Run `gcode init` to initialize, \
+             or use `--project <path>` to specify a project directory."
+        ),
+    }
+}
+
+pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
+    if quiet {
+        return;
+    }
+    if let Some(warning) = &identity.warning {
+        eprintln!("Warning: {warning}");
     }
 }
 
@@ -195,21 +308,43 @@ pub fn resolve_db_path(project_root: &Path) -> anyhow::Result<PathBuf> {
 /// 3. Current working directory
 pub fn detect_project_root() -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
+    detect_project_root_from(&cwd)
+}
+
+pub fn detect_project_root_from(start: &Path) -> anyhow::Result<PathBuf> {
+    let start = start
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_fallback(start));
+    let start = if start.is_file() {
+        start
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| start.clone())
+    } else {
+        start
+    };
 
     // First: look for an identity file (.gobby/project.json or .gobby/gcode.json)
-    if let Some(root) = find_project_root(&cwd) {
-        return Ok(root);
+    if let Some(root) = find_project_root(&start) {
+        return Ok(root.canonicalize().unwrap_or(root));
     }
 
-    // Second: fall back to VCS root
-    let mut dir = cwd.as_path();
+    // Second: prefer the Git worktree top-level, including linked worktrees.
+    if let Ok(info) = git::worktree_info(&start)
+        && info.kind != WorktreeKind::NotGit
+    {
+        return Ok(info.top_level);
+    }
+
+    // Third: fall back to VCS root
+    let mut dir = start.as_path();
     loop {
         if dir.join(".git").exists() || dir.join(".hg").exists() {
             return Ok(dir.to_path_buf());
         }
         match dir.parent() {
             Some(parent) => dir = parent,
-            None => return Ok(cwd), // Last resort: cwd
+            None => return Ok(start), // Last resort: start
         }
     }
 }
@@ -252,20 +387,23 @@ pub(crate) fn resolve_daemon_url() -> Option<String> {
 /// 1. `.gobby/project.json` — gobby's file (reads `"id"`, falls back to `"project_id"`)
 /// 2. `.gobby/gcode.json` — gcode's standalone identity
 /// 3. Generate deterministic UUID5 from canonical path (no filesystem writes)
+#[cfg(test)]
 fn resolve_project_id(project_root: &Path) -> anyhow::Result<String> {
-    let gobby_dir = project_root.join(".gobby");
+    Ok(resolve_project_identity(project_root, MissingIdentity::Error)?.project_id)
+}
 
-    if gobby_dir.join("project.json").exists() {
-        return read_project_id(project_root);
+fn absolute_fallback(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
     }
-    if gobby_dir.join("gcode.json").exists() {
-        return crate::project::read_gcode_json(project_root);
-    }
+}
 
-    anyhow::bail!(
-        "No gcode project found. Run `gcode init` to initialize, \
-         or use `--project <path>` to specify a project directory."
-    )
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
 }
 
 // ── Config store helpers ─────────────────────────────────────────────
@@ -452,6 +590,7 @@ fn resolve_embedding_config(db_path: &Path, quiet: bool) -> Option<EmbeddingConf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn create_test_db() -> (tempfile::NamedTempFile, rusqlite::Connection) {
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -476,6 +615,58 @@ mod tests {
         )
         .unwrap();
         (tmp, conn)
+    }
+
+    fn write_project_json(root: &Path, json: serde_json::Value) {
+        let gobby_dir = root.join(".gobby");
+        std::fs::create_dir_all(&gobby_dir).expect("create .gobby");
+        std::fs::write(
+            gobby_dir.join("project.json"),
+            serde_json::to_string_pretty(&json).expect("serialize project json"),
+        )
+        .expect("write project json");
+    }
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    fn create_linked_worktree(tmp: &tempfile::TempDir) -> (PathBuf, PathBuf) {
+        let repo = tmp.path().join("repo");
+        let linked = tmp.path().join("linked");
+        std::fs::create_dir(&repo).expect("create repo");
+        run_git(&repo, &["init"]);
+        std::fs::write(repo.join("README.md"), "hello\n").expect("write readme");
+        run_git(&repo, &["add", "README.md"]);
+        run_git(
+            &repo,
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test User",
+                "commit",
+                "-m",
+                "initial",
+            ],
+        );
+        run_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "linked-branch",
+                linked.to_str().unwrap(),
+            ],
+        );
+        (repo, linked)
     }
 
     #[test]
@@ -527,6 +718,99 @@ mod tests {
         assert!(
             err.to_string().contains("gcode init"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn main_repo_keeps_project_json_id() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_project_json(
+            tmp.path(),
+            serde_json::json!({
+                "id": "main-project-id",
+                "name": "main"
+            }),
+        );
+
+        let identity =
+            resolve_project_identity(tmp.path(), MissingIdentity::Error).expect("identity");
+
+        assert_eq!(identity.project_id, "main-project-id");
+        assert_eq!(identity.source, ProjectIdentitySource::ProjectJson);
+        assert!(!identity.should_write_gcode_json);
+        assert!(identity.warning.is_none());
+    }
+
+    #[test]
+    fn isolated_marker_uses_path_derived_id_without_warning() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_project_json(
+            tmp.path(),
+            serde_json::json!({
+                "id": "copied-parent-id",
+                "parent_project_path": "/parent",
+                "parent_project_id": "parent-id"
+            }),
+        );
+
+        let identity =
+            resolve_project_identity(tmp.path(), MissingIdentity::Error).expect("identity");
+
+        assert_eq!(
+            identity.project_id,
+            crate::project::code_index_id_for_root(tmp.path())
+        );
+        assert_eq!(identity.source, ProjectIdentitySource::IsolatedRoot);
+        assert!(!identity.should_write_gcode_json);
+        assert!(identity.warning.is_none());
+    }
+
+    #[test]
+    fn linked_worktree_uses_path_id_and_warns_only_for_copied_project_id() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (_repo, linked) = create_linked_worktree(&tmp);
+
+        let identity = resolve_project_identity(&linked, MissingIdentity::Error).expect("identity");
+
+        assert_eq!(
+            identity.project_id,
+            crate::project::code_index_id_for_root(&linked)
+        );
+        assert_eq!(identity.source, ProjectIdentitySource::LinkedWorktree);
+        assert!(identity.warning.is_none());
+        assert!(!identity.should_write_gcode_json);
+
+        write_project_json(
+            &linked,
+            serde_json::json!({
+                "id": "copied-parent-id",
+                "name": "linked"
+            }),
+        );
+        let copied =
+            resolve_project_identity(&linked, MissingIdentity::Error).expect("copied identity");
+
+        assert_eq!(copied.source, ProjectIdentitySource::LinkedWorktree);
+        assert_eq!(
+            copied.project_id,
+            crate::project::code_index_id_for_root(&linked)
+        );
+        assert!(copied.warning.as_deref().unwrap_or("").contains("copied"));
+        assert!(!copied.should_write_gcode_json);
+    }
+
+    #[test]
+    fn generated_identity_writes_only_for_non_isolated_roots() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let identity =
+            resolve_project_identity(tmp.path(), MissingIdentity::Generate).expect("identity");
+
+        assert_eq!(identity.source, ProjectIdentitySource::Generated);
+        assert!(identity.should_write_gcode_json);
+        assert_eq!(
+            identity.project_id,
+            crate::project::code_index_id_for_root(tmp.path())
         );
     }
 }

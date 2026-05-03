@@ -1,6 +1,8 @@
 mod commands;
 mod config;
 mod db;
+mod freshness;
+mod git;
 mod index;
 mod models;
 mod neo4j;
@@ -33,6 +35,10 @@ struct Cli {
     /// Enable verbose output
     #[arg(long, global = true)]
     verbose: bool,
+
+    /// Skip read-time freshness checks
+    #[arg(long, global = true)]
+    no_freshness: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -80,6 +86,27 @@ enum Command {
         /// Filter by symbol kind
         #[arg(long)]
         kind: Option<String>,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
+        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Exact-first symbol/name search with deterministic ranking
+    SearchSymbol {
+        query: String,
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        /// Filter by symbol kind
+        #[arg(long)]
+        kind: Option<String>,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
         /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
         #[arg(long)]
         path: Option<String>,
@@ -92,6 +119,9 @@ enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
         /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
         #[arg(long)]
         path: Option<String>,
@@ -104,6 +134,9 @@ enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Filter by source language (e.g. rust, python, css)
+        #[arg(long)]
+        language: Option<String>,
         /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
         #[arg(long)]
         path: Option<String>,
@@ -171,6 +204,31 @@ enum GraphCommand {
     Rebuild,
 }
 
+fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
+    if !disabled {
+        freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?;
+    }
+    Ok(())
+}
+
+fn ensure_files_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+    files: Vec<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    if !disabled {
+        freshness::ensure_fresh(ctx, freshness::FreshnessScope::Files(files))?;
+    }
+    Ok(())
+}
+
+fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyhow::Result<()> {
+    if !disabled {
+        freshness::ensure_symbol_fresh(ctx, id)?;
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -197,7 +255,10 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
         Command::Index { path, files, full } => commands::index::run(&ctx, path, files, full),
-        Command::Status => commands::status::run(&ctx, cli.format),
+        Command::Status => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::status::run(&ctx, cli.format)
+        }
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
         Command::Graph {
             command: GraphCommand::Clear,
@@ -211,62 +272,136 @@ fn main() -> anyhow::Result<()> {
             limit,
             offset,
             kind,
+            language,
             path,
-        } => commands::search::search(
-            &ctx,
-            &query,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search(
+                &ctx,
+                &query,
+                commands::search::SearchOptions {
+                    limit,
+                    offset,
+                    kind: kind.as_deref(),
+                    language: language.as_deref(),
+                    path: path.as_deref(),
+                    format: cli.format,
+                },
+            )
+        }
+        Command::SearchSymbol {
+            query,
             limit,
             offset,
-            kind.as_deref(),
-            path.as_deref(),
-            cli.format,
-        ),
+            kind,
+            language,
+            path,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search_symbol(
+                &ctx,
+                &query,
+                commands::search::SearchOptions {
+                    limit,
+                    offset,
+                    kind: kind.as_deref(),
+                    language: language.as_deref(),
+                    path: path.as_deref(),
+                    format: cli.format,
+                },
+            )
+        }
         Command::SearchText {
             query,
             limit,
             offset,
+            language,
             path,
         } => {
-            commands::search::search_text(&ctx, &query, limit, offset, path.as_deref(), cli.format)
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search_text(
+                &ctx,
+                &query,
+                limit,
+                offset,
+                language.as_deref(),
+                path.as_deref(),
+                cli.format,
+            )
         }
         Command::SearchContent {
             query,
             limit,
             offset,
+            language,
             path,
-        } => commands::search::search_content(
-            &ctx,
-            &query,
-            limit,
-            offset,
-            path.as_deref(),
-            cli.format,
-        ),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::search::search_content(
+                &ctx,
+                &query,
+                limit,
+                offset,
+                language.as_deref(),
+                path.as_deref(),
+                cli.format,
+            )
+        }
 
         Command::Outline { file } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
             commands::symbols::outline(&ctx, &file, cli.format, cli.verbose)
         }
-        Command::Symbol { id } => commands::symbols::symbol(&ctx, &id, cli.format),
-        Command::Symbols { ids } => commands::symbols::symbols(&ctx, &ids, cli.format),
-        Command::Kinds => commands::symbols::kinds(&ctx, cli.format),
-        Command::Tree => commands::symbols::tree(&ctx, cli.format),
+        Command::Symbol { id } => {
+            ensure_symbol_fresh(&ctx, cli.no_freshness, &id)?;
+            commands::symbols::symbol(&ctx, &id, cli.format)
+        }
+        Command::Symbols { ids } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::symbols::symbols(&ctx, &ids, cli.format)
+        }
+        Command::Kinds => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::symbols::kinds(&ctx, cli.format)
+        }
+        Command::Tree => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::symbols::tree(&ctx, cli.format)
+        }
 
         Command::Callers {
             symbol_name,
             limit,
             offset,
-        } => commands::graph::callers(&ctx, &symbol_name, limit, offset, cli.format),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::callers(&ctx, &symbol_name, limit, offset, cli.format)
+        }
         Command::Usages {
             symbol_name,
             limit,
             offset,
-        } => commands::graph::usages(&ctx, &symbol_name, limit, offset, cli.format),
-        Command::Imports { file } => commands::graph::imports(&ctx, &file, cli.format),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::usages(&ctx, &symbol_name, limit, offset, cli.format)
+        }
+        Command::Imports { file } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::imports(&ctx, &file, cli.format)
+        }
         Command::BlastRadius { target, depth } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::graph::blast_radius(&ctx, &target, depth, cli.format)
         }
 
-        Command::RepoOutline => commands::status::repo_outline(&ctx, cli.format),
+        Command::RepoOutline => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::status::repo_outline(&ctx, cli.format)
+        }
     }
 }
 
@@ -357,5 +492,61 @@ mod tests {
             }
             _ => panic!("expected top-level blast-radius command"),
         }
+    }
+
+    #[test]
+    fn test_parse_search_symbol_filters() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "search-symbol",
+            "outline",
+            "--kind",
+            "function",
+            "--language",
+            "rust",
+            "--path",
+            "src/**/*.rs",
+        ])
+        .expect("search-symbol parses");
+
+        match cli.command {
+            Command::SearchSymbol {
+                query,
+                limit,
+                offset,
+                kind,
+                language,
+                path,
+            } => {
+                assert_eq!(query, "outline");
+                assert_eq!(limit, 10);
+                assert_eq!(offset, 0);
+                assert_eq!(kind.as_deref(), Some("function"));
+                assert_eq!(language.as_deref(), Some("rust"));
+                assert_eq!(path.as_deref(), Some("src/**/*.rs"));
+            }
+            _ => panic!("expected search-symbol command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_language_filters() {
+        let cli = Cli::try_parse_from(["gcode", "search", "outline", "--language", "rust"])
+            .expect("search parses");
+
+        match cli.command {
+            Command::Search { language, .. } => {
+                assert_eq!(language.as_deref(), Some("rust"));
+            }
+            _ => panic!("expected search command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_no_freshness_global_flag() {
+        let cli = Cli::try_parse_from(["gcode", "--no-freshness", "tree"]).expect("tree parses");
+
+        assert!(cli.no_freshness);
+        assert!(matches!(cli.command, Command::Tree));
     }
 }

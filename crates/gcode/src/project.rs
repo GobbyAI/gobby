@@ -3,13 +3,19 @@
 //! Resolution order: .gobby/project.json (gobby) > .gobby/gcode.json (standalone) > generate on-the-fly.
 //! gcode never writes to project.json — that's gobby's file.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use gobby_core::project::read_project_id;
 use uuid::Uuid;
 
 use crate::models::CODE_INDEX_UUID_NAMESPACE;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsolationMarker {
+    pub parent_project_path: Option<String>,
+    pub parent_project_id: Option<String>,
+}
 
 /// Read project ID from `.gobby/gcode.json`.
 pub fn read_gcode_json(project_root: &Path) -> anyhow::Result<String> {
@@ -23,18 +29,49 @@ pub fn read_gcode_json(project_root: &Path) -> anyhow::Result<String> {
         .context("'id' field not found in .gobby/gcode.json")
 }
 
-/// Generate a deterministic project ID from the canonical project root path.
+/// Generate a deterministic code-index ID from the canonical project root path.
 /// Uses UUID5 with the same namespace as symbol IDs — key format (bare path)
 /// differs from symbol keys so there's no collision risk.
-pub fn generate_project_id(project_root: &Path) -> String {
-    let canonical = project_root
+pub fn code_index_id_for_root(root: &Path) -> String {
+    let canonical = root
         .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
+        .unwrap_or_else(|_| absolute_fallback(root));
     Uuid::new_v5(
         &CODE_INDEX_UUID_NAMESPACE,
         canonical.to_string_lossy().as_bytes(),
     )
     .to_string()
+}
+
+/// Backward-compatible name for standalone gcode identity generation.
+pub fn generate_project_id(project_root: &Path) -> String {
+    code_index_id_for_root(project_root)
+}
+
+/// Read the isolated-root marker from `.gobby/project.json`, if present.
+pub fn read_isolation_marker(project_root: &Path) -> Option<IsolationMarker> {
+    let path = project_root.join(".gobby").join("project.json");
+    let contents = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let parent_project_path = json
+        .get("parent_project_path")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+    let parent_project_id = json
+        .get("parent_project_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+
+    if parent_project_path.is_some() || parent_project_id.is_some() {
+        Some(IsolationMarker {
+            parent_project_path,
+            parent_project_id,
+        })
+    } else {
+        None
+    }
 }
 
 /// Ensure a gcode identity file exists. Non-destructive:
@@ -125,6 +162,16 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y as u64, m, d)
 }
 
+fn absolute_fallback(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +193,28 @@ mod tests {
         let id1 = generate_project_id(dir1.path());
         let id2 = generate_project_id(dir2.path());
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_read_isolation_marker_detects_parent_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let gobby_dir = dir.path().join(".gobby");
+        std::fs::create_dir_all(&gobby_dir).unwrap();
+        std::fs::write(
+            gobby_dir.join("project.json"),
+            serde_json::json!({
+                "id": "copied-parent-id",
+                "parent_project_path": "/parent/root",
+                "parent_project_id": "parent-id"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let marker = read_isolation_marker(dir.path()).expect("isolation marker");
+
+        assert_eq!(marker.parent_project_path.as_deref(), Some("/parent/root"));
+        assert_eq!(marker.parent_project_id.as_deref(), Some("parent-id"));
     }
 
     #[test]

@@ -60,27 +60,18 @@ pub fn index_directory(
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
 
-    // Build current hash map for incremental detection
-    let mut current_hashes: HashMap<String, String> = HashMap::new();
+    // Build current hash map for incremental detection and orphan cleanup.
+    let current_hashes = current_file_hashes(root_path, &candidates, &content_only);
     let stale: Option<HashMap<String, ()>> = if incremental {
-        for path in &candidates {
-            if let Ok(rel) = relative_path(path, root_path)
-                && let Ok(h) = hasher::file_content_hash(path)
-            {
-                current_hashes.insert(rel, h);
-            }
-        }
         Some(get_stale_files(conn, project_id, &current_hashes))
     } else {
         None
     };
 
     // Clean orphans (SQLite only — daemon handles Neo4j/Qdrant cleanup)
-    if incremental && !current_hashes.is_empty() {
-        let orphans = get_orphan_files(conn, project_id, &current_hashes);
-        for orphan in &orphans {
-            delete_file_sqlite_data(conn, project_id, orphan);
-        }
+    let orphans = get_orphan_files(conn, project_id, &current_hashes);
+    for orphan in &orphans {
+        delete_file_sqlite_data(conn, project_id, orphan);
     }
 
     // Index each candidate file
@@ -124,7 +115,17 @@ pub fn index_directory(
     for path in &content_only {
         let rel = relative_path(path, root_path).unwrap_or_default();
         progress.tick(&rel);
-        index_content_only(conn, path, project_id, root_path);
+        if let Some(ref stale_map) = stale
+            && !stale_map.contains_key(&rel)
+        {
+            result.files_skipped += 1;
+            continue;
+        }
+        if index_content_only(conn, path, project_id, root_path) {
+            result.files_indexed += 1;
+        } else {
+            result.files_skipped += 1;
+        }
     }
 
     progress.finish();
@@ -132,21 +133,12 @@ pub fn index_directory(
     let elapsed_ms = start.elapsed().as_millis() as u64;
     result.duration_ms = elapsed_ms;
 
-    // Update project stats
-    let total_files = count_rows(conn, "code_indexed_files", project_id);
-    let total_symbols = count_rows(conn, "code_symbols", project_id);
-
-    upsert_project_stats(
+    refresh_project_stats(
         conn,
-        &IndexedProject {
-            id: project_id.to_string(),
-            root_path: root_path.to_string_lossy().to_string(),
-            total_files,
-            total_symbols,
-            last_indexed_at: epoch_secs_str(),
-            index_duration_ms: elapsed_ms,
-            total_eligible_files: Some(eligible_files),
-        },
+        root_path,
+        project_id,
+        elapsed_ms,
+        Some(eligible_files),
     );
 
     Ok(result)
@@ -170,7 +162,7 @@ pub fn index_files(
     };
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let (candidates, _) = walker::discover_files(root_path, &excludes);
+    let (candidates, content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
 
     for fp in file_paths {
@@ -200,6 +192,13 @@ pub fn index_files(
     }
 
     result.duration_ms = start.elapsed().as_millis() as u64;
+    refresh_project_stats(
+        conn,
+        root_path,
+        project_id,
+        result.duration_ms,
+        Some(candidates.len() + content_only.len()),
+    );
     Ok(result)
 }
 
@@ -280,25 +279,25 @@ fn index_file(
 }
 
 /// Index content-only file (no AST, just chunks).
-fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_path: &Path) {
+fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_path: &Path) -> bool {
     let rel = match relative_path(path, root_path) {
         Ok(r) => r,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let meta = match path.metadata() {
         Ok(m) if m.len() > 0 && m.len() <= 10 * 1024 * 1024 => m,
-        _ => return,
+        _ => return false,
     };
 
     let source = match std::fs::read(path) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     // Skip binary
     if source[..source.len().min(8192)].contains(&0) {
-        return;
+        return false;
     }
 
     // Clear old chunks
@@ -308,12 +307,29 @@ fn index_content_only(conn: &Connection, path: &Path, project_id: &str, root_pat
     );
 
     let lang = path.extension().map(|e| e.to_string_lossy().to_string());
+    let content_hash = hasher::file_content_hash(path).unwrap_or_default();
+    upsert_file(
+        conn,
+        &IndexedFile {
+            id: IndexedFile::make_id(project_id, &rel),
+            project_id: project_id.to_string(),
+            file_path: rel.clone(),
+            language: lang.clone().unwrap_or_else(|| "unknown".to_string()),
+            content_hash,
+            symbol_count: 0,
+            byte_size: meta.len() as usize,
+            indexed_at: epoch_secs_str(),
+        },
+        has_graph_synced_column(conn),
+        has_vectors_synced_column(conn),
+    );
+
     let chunks = chunker::chunk_file_content(&source, &rel, project_id, lang.as_deref());
     if !chunks.is_empty() {
         upsert_content_chunks(conn, &chunks);
     }
 
-    let _ = meta; // used for size check above
+    true
 }
 
 /// Invalidate all index data for a project.
@@ -550,6 +566,30 @@ fn upsert_project_stats(conn: &Connection, project: &IndexedProject) {
     );
 }
 
+fn refresh_project_stats(
+    conn: &Connection,
+    root_path: &Path,
+    project_id: &str,
+    elapsed_ms: u64,
+    total_eligible_files: Option<usize>,
+) {
+    let total_files = count_rows(conn, "code_indexed_files", project_id);
+    let total_symbols = count_rows(conn, "code_symbols", project_id);
+
+    upsert_project_stats(
+        conn,
+        &IndexedProject {
+            id: project_id.to_string(),
+            root_path: root_path.to_string_lossy().to_string(),
+            total_files,
+            total_symbols,
+            last_indexed_at: epoch_secs_str(),
+            index_duration_ms: elapsed_ms,
+            total_eligible_files,
+        },
+    );
+}
+
 /// Delete SQLite data for a file.
 fn delete_file_sqlite_data(conn: &Connection, project_id: &str, file_path: &str) {
     let _ = conn.execute(
@@ -721,6 +761,102 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn content_only_indexing_writes_indexed_file_row() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file_path = tmp.path().join("README.md");
+        std::fs::write(&file_path, "# Outline\n\ncontent").expect("write file");
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE code_indexed_files (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                language TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                symbol_count INTEGER NOT NULL DEFAULT 0,
+                byte_size INTEGER NOT NULL DEFAULT 0,
+                indexed_at TEXT NOT NULL
+            );
+            CREATE TABLE code_content_chunks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                language TEXT,
+                created_at TEXT
+            );",
+        )
+        .expect("create schema");
+
+        assert!(index_content_only(&conn, &file_path, "proj", tmp.path()));
+
+        let row: (String, i64) = conn
+            .query_row(
+                "SELECT language, symbol_count FROM code_indexed_files WHERE project_id = 'proj' AND file_path = 'README.md'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("indexed file row");
+        assert_eq!(row, ("md".to_string(), 0));
+    }
+
+    #[test]
+    fn index_files_refreshes_project_stats() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file_path = tmp.path().join("lib.rs");
+        std::fs::write(&file_path, "pub fn target() {}\n").expect("write file");
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        crate::schema::ensure_schema(&conn).expect("schema");
+
+        let result =
+            index_files(&conn, tmp.path(), "proj", &["lib.rs".to_string()]).expect("index files");
+
+        assert_eq!(result.files_indexed, 1);
+        let stats: (i64, i64) = conn
+            .query_row(
+                "SELECT total_files, total_symbols FROM code_indexed_projects WHERE id = 'proj'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("project stats");
+        assert_eq!(stats, (1, 1));
+    }
+
+    #[test]
+    fn index_directory_removes_orphans_on_incremental_refresh() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("keep.rs"), "pub fn keep() {}\n").expect("write keep");
+        std::fs::write(tmp.path().join("gone.rs"), "pub fn gone() {}\n").expect("write gone");
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        crate::schema::ensure_schema(&conn).expect("schema");
+
+        index_directory(&conn, tmp.path(), "proj", true, true).expect("initial index");
+        std::fs::remove_file(tmp.path().join("gone.rs")).expect("remove gone");
+        index_directory(&conn, tmp.path(), "proj", true, true).expect("refresh index");
+
+        let gone_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM code_indexed_files WHERE project_id = 'proj' AND file_path = 'gone.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count gone");
+        let keep_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM code_indexed_files WHERE project_id = 'proj' AND file_path = 'keep.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count keep");
+
+        assert_eq!(gone_rows, 0);
+        assert_eq!(keep_rows, 1);
+    }
 }
 
 /// Check if the code_indexed_files table has a graph_synced column (gobby-hub.db only).
@@ -794,6 +930,21 @@ fn get_stale_files(
 
     let _ = conn.execute_batch("DROP TABLE IF EXISTS _current_hashes;");
     stale
+}
+
+fn current_file_hashes(
+    root_path: &Path,
+    candidates: &[std::path::PathBuf],
+    content_only: &[std::path::PathBuf],
+) -> HashMap<String, String> {
+    let mut current_hashes = HashMap::new();
+    for path in candidates.iter().chain(content_only.iter()) {
+        if let Ok(rel) = relative_path(path, root_path) {
+            let hash = hasher::file_content_hash(path).unwrap_or_default();
+            current_hashes.insert(rel, hash);
+        }
+    }
+    current_hashes
 }
 
 fn get_orphan_files(
