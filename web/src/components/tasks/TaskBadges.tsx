@@ -37,14 +37,6 @@ const PRIORITY_STYLES: Record<
   4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)", label: "Backlog" },
 };
 
-const TYPE_STYLES: Record<string, { bg: string; color: string }> = {
-  task: { bg: "var(--color-info-soft)", color: "var(--color-info)" },
-  bug: { bg: "var(--color-error-soft)", color: "var(--color-error)" },
-  feature: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)" },
-  epic: { bg: "var(--color-agent-soft)", color: "var(--color-agent)" },
-  chore: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)" },
-};
-
 const TASK_BADGE_CLS =
   'inline-flex items-center justify-center h-5 px-1.5 rounded-full text-[length:var(--text-2xs)] font-semibold leading-none whitespace-nowrap'
 const TASK_BADGE_DOT_CLS = 'inline-block w-[7px] h-[7px] rounded-full shrink-0'
@@ -183,7 +175,6 @@ export function BlockedIndicator({ count }: { count?: number }) {
 export {
   STATUS_COLORS,
   PRIORITY_STYLES,
-  TYPE_STYLES,
   TASK_BADGE_BLOCKED_CLS,
   TASK_BADGE_CLS,
   TASK_BADGE_DOT_CLS,

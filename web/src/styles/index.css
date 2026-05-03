@@ -496,10 +496,6 @@ body {
   background: var(--accent);
 }
 
-.session-dot.agent {
-  background: var(--color-agent);
-}
-
 .session-dot.dead {
   background: var(--text-muted);
 }
@@ -535,11 +531,6 @@ body {
   letter-spacing: 0.03em;
   font-weight: 500;
   flex-shrink: 0;
-}
-
-.agent-badge {
-  background: var(--color-agent-bg);
-  color: var(--color-agent);
 }
 
 .dead-badge {

@@ -24,7 +24,7 @@ const MEMORY_TYPES = [
 const CHIP_BASE_CLS =
   'inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--text-muted)] pointer-coarse:min-h-11 pointer-coarse:py-2'
 const CHIP_ACTIVE_CLS =
-  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--color-agent)_8%,transparent)] text-[var(--text-primary)]'
+  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-[var(--text-primary)]'
 
 export function MemoryFilters({
   filters, stats, recentCount, onFiltersChange,
