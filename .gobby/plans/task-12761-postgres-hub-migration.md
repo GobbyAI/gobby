@@ -1096,8 +1096,33 @@ def postgres_schema(worker_id: str) -> Iterator[str]:
                 conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
+_SEED_PRESERVING_TABLES: frozenset[str] = frozenset({
+    "schema_migrations",
+    "gobby_migration_state",
+    # Static baseline seed rows that fresh PostgresHubDatabase.apply_migrations()
+    # produces; tests rely on these existing in the same shape on Postgres as on
+    # SQLite. If §4.2's baseline ships additional static seed-bearing tables,
+    # add them here in lockstep.
+    "task_type_default_stages",
+    "projects",  # holds the _orphaned/_migrated/_personal/_global placeholders
+})
+
+
 def _reset_schema(url: str, schema: str) -> None:
-    """Truncate all user tables in the worker schema and reset identities."""
+    """Truncate mutable user tables in the worker schema; preserve baseline seed rows.
+
+    Tables in `_SEED_PRESERVING_TABLES` are NOT truncated — they hold the
+    seed rows that `PostgresHubDatabase.apply_migrations()` writes once on
+    fresh databases (placeholder projects, default stage manifests, schema
+    bookkeeping). Truncating them would diverge `postgres_db` from a fresh
+    runtime database and would silently mask Postgres-side bugs that depend
+    on those seed rows being present (or hide SQLite-side regressions when
+    parametrized parity tests compare both backends).
+
+    For tests that explicitly want a stripped seed (e.g., to assert the seed
+    application logic itself), opt out of this fixture and use a raw psycopg
+    connection.
+    """
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(f"SET search_path TO {schema}")
         tables = [
@@ -1107,9 +1132,9 @@ def _reset_schema(url: str, schema: str) -> None:
                 SELECT tablename
                 FROM pg_tables
                 WHERE schemaname = current_schema()
-                  AND tablename <> 'schema_migrations'
                 """
             ).fetchall()
+            if row[0] not in _SEED_PRESERVING_TABLES
         ]
         if tables:
             joined = ", ".join(tables)
@@ -1135,6 +1160,7 @@ The reset-based approach is intentional: a single outer savepoint is not suffici
 
 - 2.2.1 — Per-worker `postgres_schema` session fixture creates `gobby_test_<epoch>_<pid>_<worker>_<nonce>` schemas, drops them on teardown, and sweeps aged orphans on startup. Per-test `postgres_db` fixture wires `PostgresHubDatabase` against the worker's schema with `TRUNCATE … RESTART IDENTITY CASCADE` reset on entry and exit. symbol: `tests.fixtures.postgres.postgres_schema`.
 - 2.2.2 — `postgres_db` per-test fixture yields a `PostgresHubDatabase` scoped to the worker schema with reset semantics suitable for pooled connections. symbol: `tests.fixtures.postgres.postgres_db`.
+- 2.2.3 — `_reset_schema` preserves baseline seed-bearing tables (`schema_migrations`, `gobby_migration_state`, `task_type_default_stages`, `projects` placeholder rows) so each test starts from a state equivalent to a fresh `PostgresHubDatabase.apply_migrations()` invocation; only mutable application tables are truncated. symbol: `tests.fixtures.postgres._reset_schema`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset`.
 
 ### 2.3 Parametrize storage fixtures over both backends [category: test] (depends: 2.2, 3.1, 3.2, 3.3)
 `kind: deliverable`
@@ -1174,7 +1200,7 @@ These tests catch silent semantic drift during Phase 3–4 work.
 
 **Goal**: storage call sites depend on a backend-neutral `HubDatabase` protocol, and the migration runner works on both backends.
 
-### 3.1 Define the `HubDatabase` protocol [category: code] (depends: P2)
+### 3.1 Define the `HubDatabase` protocol [category: code] (depends: P1)
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/protocol.py` (new)
@@ -1407,7 +1433,7 @@ Upsert dialect translation is limited to placeholder rewriting; `ON CONFLICT` SQ
 - 3.2.2 — `_remap_placeholders` rewrites `$N` to `?` and rebuilds the param tuple to handle sequential, out-of-order, repeated, and skipped indices; preserves Postgres dollar-quoted bodies untouched. symbol: `gobby.storage.hub.sqlite._remap_placeholders`.
 - 3.2.3 — Placeholder-remap test suite covers sequential / out-of-order / repeated / IN-clause / skipped-index / dollar-quote / identifier-suffix / `executemany` / out-of-range-index cases. file: `tests/storage/hub/test_sqlite_placeholder_remap.py`.
 
-### 3.3 Implement `PostgresHubDatabase` [category: code] (depends: 3.1)
+### 3.3 Implement `PostgresHubDatabase` [category: code] (depends: 3.1, 4.2)
 `kind: deliverable`
 
 Target: `src/gobby/storage/hub/postgres.py` (new)
@@ -1484,11 +1510,27 @@ class _PostgresTransaction:
         return self._conn.execute(new_sql, new_params)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
-        new_sql, _ = _remap_placeholders_to_psycopg(sql, ())
-        # Per-row remap of params using the SQL's $N -> position map computed once.
-        # Implementation: cache the index permutation built by the first call and
-        # apply it to every row tuple to avoid rescanning SQL per row.
-        ...
+        # Mirror §3.2's SQLite executemany: derive new_sql and the index
+        # permutation from the first row, then apply the permutation to every
+        # subsequent row WITHOUT rescanning SQL.
+        # The remapper is NEVER called with params=() when placeholders are
+        # present — that combination is a contract violation that raises
+        # ValueError on the empty-tuple validation step.
+        materialized = list(rows)
+        if not materialized:
+            # Empty rows: psycopg's executemany no-op. Skip the remapper entirely
+            # because we cannot validate $N indices without a row, and there is
+            # no work to send to the server.
+            return
+        first = tuple(materialized[0])
+        new_sql, first_permuted = _remap_placeholders_to_psycopg(sql, first)
+        # Build the integer index permutation from the first call so subsequent
+        # rows skip the SQL scan; signature: list[int] mapping output position
+        # to input-tuple index. _build_param_permutation is exposed by the
+        # remapper as a sibling helper for exactly this case.
+        permutation = _build_param_permutation(sql, len(first))
+        permuted_rows = [first_permuted, *(tuple(row[i] for i in permutation) for row in materialized[1:])]
+        self._conn.executemany(new_sql, permuted_rows)
 ```
 
 **Migration files vs application code.** SQL files under `src/gobby/storage/migrations/` (Phase 3.7) are **DDL** in the common case — no parameter binding — and therefore pass through psycopg unchanged with `params=()`. Postgres reads `$N` natively on the wire, so a parameter-less migration file written in `$N` form works as-is. Migration files that DO bind parameters must declare so explicitly and route through the same `_remap_placeholders_to_psycopg` helper so the runtime contract is uniform.
@@ -1507,8 +1549,9 @@ Required tests in `tests/storage/hub/test_postgres_placeholder_remap.py` (mirror
 - bind placeholder inside a single-quoted string preserved; `''` escape inside string handled correctly
 - bind placeholder inside line/block comments preserved
 - identifier-suffix: `SELECT foo$1, $1 FROM t` keeps `foo$1` and rewrites only the bare `$1`
-- `executemany` parity: SQL rewritten exactly once, every row tuple permuted by the cached index map
-- raises `ValueError` when SQL references a `$N` outside the param tuple's range
+- `executemany` parity: SQL rewritten exactly once via the first row, subsequent rows permuted by the cached index map without rescanning SQL; remapper is never invoked with `params=()` when placeholders are present
+- `executemany` empty-rows branch: rows iterator is empty → no SQL rewrite, no server call, returns cleanly
+- raises `ValueError` when SQL references a `$N` outside the param tuple's range (single `execute` and first-row of `executemany`)
 - raises `ValueError` on an unterminated dollar-quote tag
 
 **Postgres baseline application.** A fresh Postgres database (no `schema_migrations` table, no `gobby_migration_state` table) **must** receive `postgres_baseline_schema.sql` before the file-based migration runner walks the on-disk migration directory. `PostgresHubDatabase.apply_migrations()` ensures this by gating on the presence of `schema_migrations`:
@@ -1796,7 +1839,7 @@ No new `.sql` files are produced by this task. The prior-revision scope (port `_
 
 - 4.1.1 — No Python migration callables survive into the Postgres path; only declarative SQL files under `src/gobby/storage/migrations/`. The SQLite-only `_apply_*` callables in `migrations.py` and the FTS5 setup helpers in `migration_helpers.py` may persist (they are gated to the SQLite baseline path), but neither is invoked from the Postgres dialect path. behavior: "no Python migration callables in Postgres migration path" in `src/gobby/storage/migrations/`.
 
-### 4.2 Add `postgres_baseline_schema.sql` [category: code] (depends: 3.7)
+### 4.2 Add `postgres_baseline_schema.sql` [category: code] (depends: P0)
 `kind: deliverable`
 
 Target: `src/gobby/storage/postgres_baseline_schema.sql` (new)
