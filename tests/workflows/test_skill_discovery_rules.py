@@ -241,11 +241,11 @@ class TestInjectPythonSkillCondition:
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
         context = {
-            "variables": {
-                "loaded_skills": loaded_skills or [],
-                "injected_skills": injected_skills or [],
-            },
+            "variables": variables,
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
@@ -273,8 +273,8 @@ class TestInjectPythonSkillCondition:
     def test_skips_when_already_loaded(self) -> None:
         assert self._eval("/project/src/main.py", loaded_skills=["python"]) is False
 
-    def test_skips_when_legacy_injected(self) -> None:
-        assert self._eval("/project/src/main.py", injected_skills=["python"]) is False
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main.py", injected_skills=["python"]) is True
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main.py", canonical_tool_kind="read") is False
@@ -332,11 +332,11 @@ class TestInjectRustSkillCondition:
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
         context = {
-            "variables": {
-                "loaded_skills": loaded_skills or [],
-                "injected_skills": injected_skills or [],
-            },
+            "variables": variables,
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
@@ -364,8 +364,8 @@ class TestInjectRustSkillCondition:
     def test_skips_when_already_loaded(self) -> None:
         assert self._eval("/project/src/main.rs", loaded_skills=["rust"]) is False
 
-    def test_skips_when_legacy_injected(self) -> None:
-        assert self._eval("/project/src/main.rs", injected_skills=["rust"]) is False
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main.rs", injected_skills=["rust"]) is True
 
     def test_skips_non_edit_write_tool(self) -> None:
         assert self._eval("/project/src/main.rs", canonical_tool_kind="read") is False
@@ -394,11 +394,11 @@ class TestCodeIndexRuleCondition:
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
         context = {
-            "variables": {
-                "loaded_skills": loaded_skills or [],
-                "injected_skills": injected_skills or [],
-            },
+            "variables": variables,
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
@@ -425,8 +425,8 @@ class TestCodeIndexRuleCondition:
     def test_skips_when_already_loaded(self) -> None:
         assert self._eval(canonical_tool_kind="search", loaded_skills=["code-index"]) is False
 
-    def test_skips_when_legacy_injected(self) -> None:
-        assert self._eval(canonical_tool_kind="search", injected_skills=["code-index"]) is False
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval(canonical_tool_kind="search", injected_skills=["code-index"]) is True
 
 
 class TestContext7RuleCondition:
@@ -450,12 +450,14 @@ class TestContext7RuleCondition:
         injected_skills: list[str] | None = None,
         context7_available: bool = True,
     ) -> bool:
+        variables: dict[str, object] = {
+            "loaded_skills": loaded_skills or [],
+            "context7_available": context7_available,
+        }
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
         context = {
-            "variables": {
-                "loaded_skills": loaded_skills or [],
-                "injected_skills": injected_skills or [],
-                "context7_available": context7_available,
-            },
+            "variables": variables,
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
@@ -477,8 +479,8 @@ class TestContext7RuleCondition:
     def test_skips_when_already_loaded(self) -> None:
         assert self._eval("/project/src/main.ts", loaded_skills=["context7"]) is False
 
-    def test_skips_when_legacy_injected(self) -> None:
-        assert self._eval("/project/src/main.ts", injected_skills=["context7"]) is False
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main.ts", injected_skills=["context7"]) is True
 
     def test_skips_when_context7_unavailable(self) -> None:
         assert self._eval("/project/src/main.ts", context7_available=False) is False

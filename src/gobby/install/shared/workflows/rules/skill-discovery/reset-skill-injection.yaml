@@ -15,8 +15,5 @@ rules:
         variable: loaded_skills
         value: []
       - type: set_variable
-        variable: injected_skills
-        value: []
-      - type: set_variable
         variable: memory_nudge_fired
         value: false

@@ -1285,7 +1285,6 @@ class TestSyntheticCodexMcpAfterTool:
 
         variables = SessionVariableManager(temp_db).get_variables(resolved_session_id)
         assert "task-creation" not in variables.get("loaded_skills", [])
-        assert "task-creation" not in variables.get("injected_skills", [])
 
 
 class TestStripUnknownParameters:

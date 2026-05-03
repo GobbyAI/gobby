@@ -30,10 +30,11 @@ def mock_stop_registry() -> MagicMock:
     return reg
 
 
-def _make_task(status: str = "open") -> MagicMock:
-    """Create a mock task with given status."""
+def _make_task(*, closed: bool = False, stage_state: str = "ready") -> MagicMock:
+    """Create a mock task with canonical projected-state fields."""
     task = MagicMock()
-    task.status = status
+    task.closed_at = "2024-01-02T00:00:00Z" if closed else None
+    task.current_stage = {"state": "done" if closed else stage_state}
     return task
 
 
@@ -63,7 +64,7 @@ class TestTaskTreeComplete:
         assert ev.evaluate("task_tree_complete(None)") is True
 
     def test_returns_true_when_task_closed(self, mock_task_manager: MagicMock) -> None:
-        task = _make_task(status="closed")
+        task = _make_task(closed=True)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 
@@ -72,7 +73,7 @@ class TestTaskTreeComplete:
         assert ev.evaluate("task_tree_complete('task-123')") is True
 
     def test_returns_false_when_task_open(self, mock_task_manager: MagicMock) -> None:
-        task = _make_task(status="open")
+        task = _make_task()
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 
@@ -81,8 +82,8 @@ class TestTaskTreeComplete:
         assert ev.evaluate("task_tree_complete('task-123')") is False
 
     def test_returns_false_when_subtask_open(self, mock_task_manager: MagicMock) -> None:
-        parent = _make_task(status="closed")
-        child = _make_task(status="open")
+        parent = _make_task(closed=True)
+        child = _make_task()
         child.id = "child-1"
 
         mock_task_manager.get_task.side_effect = lambda task_id: (
@@ -287,10 +288,10 @@ class TestSkillLoaded:
         ev = _build_evaluator(ctx)
         assert ev.evaluate("skill_loaded('python')") is True
 
-    def test_returns_true_when_legacy_injected_skill_present(self) -> None:
+    def test_returns_false_when_only_legacy_injected_skill_present(self) -> None:
         ctx: dict[str, Any] = {"variables": {"injected_skills": ["python"]}}
         ev = _build_evaluator(ctx)
-        assert ev.evaluate("skill_loaded('python')") is True
+        assert ev.evaluate("skill_loaded('python')") is False
 
     def test_returns_false_when_skill_missing(self) -> None:
         ctx: dict[str, Any] = {"variables": {"loaded_skills": ["rust"]}}
@@ -360,7 +361,7 @@ class TestLowercaseConstants:
 class TestCombinedExpressions:
     def test_boolean_and_with_helpers(self, mock_task_manager: MagicMock) -> None:
         """Test combining task helpers with boolean logic."""
-        task = _make_task(status="closed")
+        task = _make_task(closed=True)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 
@@ -490,7 +491,7 @@ class TestCombinedExpressions:
 
     def test_helper_with_variable_reference(self, mock_task_manager: MagicMock) -> None:
         """Test calling a helper with a variable from context."""
-        task = _make_task(status="closed")
+        task = _make_task(closed=True)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 

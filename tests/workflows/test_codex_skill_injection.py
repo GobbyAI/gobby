@@ -211,10 +211,10 @@ async def test_synthesized_event_skipped_when_skill_already_loaded(
 
 
 @pytest.mark.asyncio
-async def test_synthesized_event_skipped_when_skill_legacy_injected(
+async def test_synthesized_event_not_skipped_when_skill_legacy_injected(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
-    """Existing sessions with injected_skills still satisfy skill_loaded()."""
+    """Legacy injected_skills no longer satisfies skill_loaded()."""
     _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
 
     tool_event = ParsedToolEvent(
@@ -242,7 +242,9 @@ async def test_synthesized_event_skipped_when_skill_legacy_injected(
     variables: dict[str, object] = {"injected_skills": ["task-creation"]}
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
-    assert response.context is None
+    assert (
+        response.context == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+    )
 
 
 @pytest.mark.asyncio
