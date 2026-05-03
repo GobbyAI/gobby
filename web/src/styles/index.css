@@ -66,6 +66,10 @@
   --color-success-soft: oklch(82% 0.10 125 / 0.12);
   --text-on-success: oklch(15% 0 0);
 
+  /* DEPRECATED: --color-agent is on its way out. Do not add new consumers.
+     Pending impeccable audit will replace remaining taxonomic uses (cron,
+     MCP, dashboard, memory, knowledge-graph, code-graph, workflows, skills,
+     tasks, chat) with renamed semantic tokens. See gobby task #13937. */
   --color-agent: oklch(72% 0.18 320);
   --color-agent-bg: oklch(28% 0.10 320);
   --color-agent-soft: oklch(72% 0.18 320 / 0.12);
@@ -132,6 +136,7 @@
   --color-success-soft: oklch(48% 0.10 125 / 0.10);
   --text-on-success: oklch(99% 0 0);
 
+  /* DEPRECATED: see dark-theme block above. Pending impeccable audit. */
   --color-agent: oklch(48% 0.20 320);
   --color-agent-bg: oklch(94% 0.05 320);
   --color-agent-soft: oklch(48% 0.20 320 / 0.10);
