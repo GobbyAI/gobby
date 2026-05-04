@@ -289,14 +289,6 @@
   }
 }
 
-/* Wide-viewport tier (1024px+): validated at 1024/1440/1920px so
-   command-bar chrome density tracks the wider canvas without overlap. */
-@media (min-width: 1024px) {
-  .command-bar {
-    padding: 0 1.25rem;
-  }
-}
-
 .command-bar-session:hover {
   background: var(--bg-tertiary);
 }
