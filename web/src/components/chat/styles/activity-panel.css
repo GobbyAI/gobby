@@ -281,29 +281,6 @@
   white-space: nowrap;
 }
 
-.activity-panel-pin {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  margin-left: auto;
-  border-radius: 0.25rem;
-  transition:
-    background 0.1s,
-    color 0.1s;
-}
-
-.activity-panel-pin:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
 .activity-panel-content {
   flex: 1;
   min-height: 0;
