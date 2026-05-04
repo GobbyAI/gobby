@@ -2,12 +2,18 @@
 
 import json
 import os
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from gobby.cli.installers.gemini import install_gemini, uninstall_gemini
+from gobby.cli.installers.gemini import (
+    _install_gemini_policy,
+    _uninstall_gemini_policy,
+    install_gemini,
+    uninstall_gemini,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -1111,3 +1117,96 @@ class TestUninstallGeminiEdgeCases:
                 updated = json.load(f)
             # general section should still have enableHooks (it was False)
             assert updated["general"]["enableHooks"] is False
+
+
+class TestGeminiPolicy:
+    """Tests for ~/.gemini/policies/gobby.toml management."""
+
+    def test_install_gemini_policy_writes_expected_rules(self, temp_dir: Path) -> None:
+        """Policy file contains the two rules with the resolved bin path."""
+        gemini_home = temp_dir / ".gemini"
+        gobby_bin = temp_dir / ".gobby" / "bin"
+        gobby_bin.mkdir(parents=True)
+
+        result = _install_gemini_policy(gemini_home, gobby_bin)
+
+        assert result["written"] is True
+        assert result["backup_path"] is None
+
+        policy_file = gemini_home / "policies" / "gobby.toml"
+        assert policy_file.exists()
+
+        parsed = tomllib.loads(policy_file.read_text())
+        rules = parsed["rule"]
+        assert len(rules) == 2
+
+        mcp_rule, bin_rule = rules
+        assert mcp_rule == {
+            "mcpName": "gobby",
+            "toolName": "*",
+            "decision": "allow",
+            "priority": 500,
+            "modes": ["plan"],
+        }
+        assert bin_rule == {
+            "toolName": "run_shell_command",
+            "commandPrefix": f"{gobby_bin}/",
+            "decision": "allow",
+            "priority": 500,
+        }
+
+    def test_install_gemini_policy_backs_up_existing(self, temp_dir: Path) -> None:
+        """Existing gobby.toml is preserved as a timestamped backup."""
+        gemini_home = temp_dir / ".gemini"
+        policies_dir = gemini_home / "policies"
+        policies_dir.mkdir(parents=True)
+        existing = policies_dir / "gobby.toml"
+        existing.write_text("# user customization\n")
+
+        gobby_bin = temp_dir / ".gobby" / "bin"
+        gobby_bin.mkdir(parents=True)
+
+        with patch("gobby.cli.installers.gemini.time") as mock_time:
+            mock_time.time.return_value = 1234567890
+            result = _install_gemini_policy(gemini_home, gobby_bin)
+
+        backup_file = policies_dir / "gobby.toml.1234567890.backup"
+        assert result["backup_path"] == str(backup_file)
+        assert backup_file.exists()
+        assert backup_file.read_text() == "# user customization\n"
+
+    def test_install_gemini_policy_regeneration_is_idempotent(self, temp_dir: Path) -> None:
+        """Running install twice yields one current file with no rule duplication."""
+        gemini_home = temp_dir / ".gemini"
+        gobby_bin = temp_dir / ".gobby" / "bin"
+        gobby_bin.mkdir(parents=True)
+
+        with patch("gobby.cli.installers.gemini.time") as mock_time:
+            mock_time.time.return_value = 1
+            _install_gemini_policy(gemini_home, gobby_bin)
+            mock_time.time.return_value = 2
+            _install_gemini_policy(gemini_home, gobby_bin)
+
+        policy_file = gemini_home / "policies" / "gobby.toml"
+        parsed = tomllib.loads(policy_file.read_text())
+        assert len(parsed["rule"]) == 2
+
+    def test_uninstall_gemini_policy_removes_file(self, temp_dir: Path) -> None:
+        """Uninstall deletes the policy file."""
+        gemini_home = temp_dir / ".gemini"
+        gobby_bin = temp_dir / ".gobby" / "bin"
+        gobby_bin.mkdir(parents=True)
+        _install_gemini_policy(gemini_home, gobby_bin)
+        policy_file = gemini_home / "policies" / "gobby.toml"
+        assert policy_file.exists()
+
+        removed = _uninstall_gemini_policy(gemini_home)
+
+        assert removed is True
+        assert not policy_file.exists()
+
+    def test_uninstall_gemini_policy_idempotent_when_absent(self, temp_dir: Path) -> None:
+        """Uninstall with no policy file present returns False without error."""
+        gemini_home = temp_dir / ".gemini"
+        removed = _uninstall_gemini_policy(gemini_home)
+        assert removed is False
