@@ -4,17 +4,19 @@ import asyncio
 import json
 import logging
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from gobby.agents.idle_detector import IdleDetector
+from gobby.utils.datetime import parse_stored_datetime
 
 if TYPE_CHECKING:
+    from gobby.agents.agent_cleanup import AgentCleanupHandler
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
+    from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
-    from gobby.agents.agent_cleanup import AgentCleanupHandler
-    from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +88,14 @@ class IdleCheckHandler:
             session = await asyncio.to_thread(session_manager.get, session_id)
             if session and session.updated_at:
                 try:
-                    last_update = datetime.fromisoformat(session.updated_at)
-                    elapsed = (datetime.now(UTC) - last_update).total_seconds()
-                    if elapsed < idle_timeout_seconds:
-                        self._idle_detector.reset_idle(run.id)
-                        return 0
-                    else:
-                        session_stale = True
+                    last_update = parse_stored_datetime(session.updated_at)
+                    if last_update is not None:
+                        elapsed = (datetime.now(UTC) - last_update).total_seconds()
+                        if elapsed < idle_timeout_seconds:
+                            self._idle_detector.reset_idle(run.id)
+                            return 0
+                        else:
+                            session_stale = True
                 except (ValueError, TypeError):
                     pass
 

@@ -1165,6 +1165,8 @@ Use:
 
 - `gobby build <plan_file>` to create and automate a planning epic from a plan
 - `gobby build <#taskref>` to opt an existing epic or leaf into automation
+- `gobby unbuild <#taskref>` to stop automation for an existing built task or
+  subtree without deleting task history or build artifacts
 - `gobby build --profile quick|review|full|full-yolo|auto ...` to use a
   build-time preset
 - `gobby pipelines run ...` for deterministic sequences outside task dispatch

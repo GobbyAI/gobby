@@ -442,6 +442,14 @@ class TestUpdateTask:
         assert response.status_code == 200
         assert response.json()["category"] == "testing"
 
+    def test_update_allow_automation(self, client: TestClient, sample_task: dict) -> None:
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"allow_automation": True},
+        )
+        assert response.status_code == 200
+        assert response.json()["allow_automation"] is True
+
 
 # ---------------------------------------------------------------------------
 # DELETE /tasks/{task_id}

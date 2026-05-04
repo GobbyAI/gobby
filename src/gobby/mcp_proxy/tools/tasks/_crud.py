@@ -415,11 +415,13 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         parent_task_id: str | None = None,
         category: str | None = None,
         task_type: str | None = None,
+        status: str | None = None,
         workflow_name: str | None = None,
         verification: str | None = None,
         sequence_order: int | None = None,
         start_date: str | None = None,
         due_date: str | None = None,
+        allow_automation: bool | None = None,
     ) -> dict[str, Any]:
         """Update task fields."""
         # Resolve task reference (supports #N, path, UUID formats)
@@ -434,6 +436,21 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {
                 "error": "Cannot set assignee via update_task. "
                 "Use claim_task(task_id, session_id='...') to properly claim tasks with session tracking."
+            }
+        if status is not None:
+            normalized_status = "needs_review" if status == "review" else status
+            transition_tool = {
+                "open": "reopen_task",
+                "in_progress": "claim_task",
+                "needs_review": "submit_for_review",
+                "closed": "close_task",
+                "escalated": "escalate_task",
+            }.get(normalized_status, "dedicated lifecycle tools")
+            return {
+                "error": (
+                    f"Cannot set status to '{normalized_status}' via update_task. "
+                    f"Use {transition_tool} instead."
+                )
             }
 
         # Build kwargs only for non-None values to avoid overwriting with NULL
@@ -474,6 +491,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["start_date"] = start_date
         if due_date is not None:
             kwargs["due_date"] = due_date
+        if allow_automation is not None:
+            kwargs["allow_automation"] = allow_automation
 
         task = ctx.task_manager.update_task(resolved_id, **kwargs)
         if not task:
@@ -526,6 +545,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "enum": list(TASK_TYPE_ENUM),
                     "default": None,
                 },
+                "status": {
+                    "type": "string",
+                    "description": "Legacy status field. Rejected; use lifecycle tools.",
+                    "default": None,
+                },
                 "workflow_name": {
                     "type": "string",
                     "description": "Workflow name for execution context",
@@ -549,6 +573,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "due_date": {
                     "type": "string",
                     "description": "Expected completion date (ISO 8601, e.g. '2025-03-15'). Optional.",
+                    "default": None,
+                },
+                "allow_automation": {
+                    "type": "boolean",
+                    "description": "Enable or disable dispatcher automation for this task.",
                     "default": None,
                 },
             },

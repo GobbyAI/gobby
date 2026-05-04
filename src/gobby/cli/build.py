@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from typing import cast
 
 import click
@@ -14,8 +15,12 @@ from gobby.build import (
     DispatcherTickSummary,
     StageInsertion,
     build,
+    build_clean_target,
+    build_restart_target,
     build_resume,
+    build_resume_target,
     build_stop,
+    build_stop_target,
 )
 from gobby.config.build import Isolation, StageCapOverride
 from gobby.storage.database import LocalDatabase
@@ -207,6 +212,37 @@ def _echo_build_control_result(result: BuildControlResult) -> None:
     click.echo(f"Event: {result.lifecycle_event.reason}")
 
 
+def _echo_target_control_result(payload: dict[str, object]) -> None:
+    action = str(payload["action"])
+    click.echo(f"Build {action}: task-scoped")
+    click.echo(f"Root task: {payload['root_task_id']}")
+    affected = payload.get("affected_tasks")
+    if isinstance(affected, list):
+        click.echo(f"Affected tasks: {len(affected)}")
+    agents = payload.get("agents")
+    if isinstance(agents, list):
+        click.echo(f"Agents: {len(agents)}")
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, list):
+        deleted = sum(1 for item in artifacts if isinstance(item, dict) and item.get("deleted"))
+        click.echo(f"Artifacts: {len(artifacts)}" + (f" deleted={deleted}" if deleted else ""))
+    blockers = payload.get("blocked_reasons")
+    if isinstance(blockers, list) and blockers:
+        click.echo("Blocked:")
+        for reason in blockers:
+            click.echo(f"  {reason}")
+    tick = payload.get("dispatcher_tick")
+    if isinstance(tick, dict):
+        click.echo(
+            "Dispatcher tick: "
+            f"scanned={tick.get('scanned', 0)} "
+            f"executed={tick.get('executed', 0)} "
+            f"skipped={tick.get('skipped', 0)}"
+        )
+    if payload.get("dry_run"):
+        click.echo("Dry run: no changes made")
+
+
 def _open_database() -> LocalDatabase:
     """Open the hub database and apply pending migrations before build storage use."""
     db = LocalDatabase()
@@ -219,7 +255,8 @@ def _open_database() -> LocalDatabase:
 
 
 @click.command("build")
-@click.argument("input_ref", required=False, metavar="[INPUT]")
+@click.argument("input_ref", required=False, metavar="[INPUT|ACTION]")
+@click.argument("target_ref", required=False, metavar="[REF]")
 @click.option("--profile", help="Build profile to apply.")
 @click.option("--stages", help="Comma-separated explicit stage manifest.")
 @click.option("--add-stage", multiple=True, help="Add a stage, optionally as name@position.")
@@ -260,8 +297,12 @@ def _open_database() -> LocalDatabase:
     default=False,
     help="Delete existing generated expansion output before rebuilding a task ref.",
 )
+@click.option("--dry-run", is_flag=True, default=False, help="Preview clean/restart effects.")
+@click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
+@click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
 def build_command(
     input_ref: str | None,
+    target_ref: str | None,
     profile: str | None,
     stages: str | None,
     add_stage: tuple[str, ...],
@@ -273,17 +314,28 @@ def build_command(
     target_branch: str | None,
     assigned_agent: str | None,
     reset_expansion_output: bool,
+    dry_run: bool,
+    force: bool,
+    yes: bool,
 ) -> None:
     """Start lifecycle automation from a plan file or task reference."""
     if input_ref == "stop":
-        _run_build_stop()
+        _run_build_stop(target_ref)
         return
     if input_ref == "resume":
-        _run_build_resume()
+        _run_build_resume(target_ref)
+        return
+    if input_ref == "clean":
+        _run_build_clean(target_ref, dry_run=dry_run, force=force, yes=yes)
+        return
+    if input_ref == "restart":
+        _run_build_restart(target_ref, dry_run=dry_run, force=force, yes=yes)
         return
     if input_ref is None:
         invoke_build_skill()
         return
+    if target_ref is not None:
+        raise click.ClickException(f"Unexpected build argument: {target_ref}")
 
     opts = BuildOptions(
         profile=profile,
@@ -313,38 +365,135 @@ def build_command(
 
 
 @click.command("stop")
-def build_stop_command() -> None:
+@click.argument("input_ref", required=False, metavar="[REF]")
+def build_stop_command(input_ref: str | None) -> None:
     """Stop future dispatcher build ticks."""
-    _run_build_stop()
+    _run_build_stop(input_ref)
 
 
 @click.command("resume")
-def build_resume_command() -> None:
+@click.argument("input_ref", required=False, metavar="[REF]")
+def build_resume_command(input_ref: str | None) -> None:
     """Resume dispatcher build ticks."""
-    _run_build_resume()
+    _run_build_resume(input_ref)
 
 
-def _run_build_stop() -> None:
+@click.command("unbuild")
+@click.argument("input_ref", metavar="REF")
+def unbuild_command(input_ref: str) -> None:
+    """Stop task-scoped automation for a previously built task."""
+    _run_build_stop(input_ref)
+
+
+def _run_build_stop(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
     db = _open_database()
     try:
-        result = build_stop(db=db, project_id=project_id)
+        if input_ref is None:
+            result = build_stop(db=db, project_id=project_id)
+            payload: dict[str, object] | None = None
+        else:
+            target_result = asyncio.run(build_stop_target(input_ref, db=db, project_id=project_id))
+            result = None
+            payload = asdict(target_result)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
 
-    _echo_build_control_result(result)
+    if payload is not None:
+        _echo_target_control_result(payload)
+    elif result is not None:
+        _echo_build_control_result(result)
 
 
-def _run_build_resume() -> None:
+def _run_build_resume(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
     db = _open_database()
     try:
-        result = build_resume(db=db, project_id=project_id)
+        if input_ref is None:
+            result = build_resume(db=db, project_id=project_id)
+            payload: dict[str, object] | None = None
+        else:
+            target_result = asyncio.run(
+                build_resume_target(input_ref, db=db, project_id=project_id)
+            )
+            result = None
+            payload = asdict(target_result)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
 
-    _echo_build_control_result(result)
+    if payload is not None:
+        _echo_target_control_result(payload)
+    elif result is not None:
+        _echo_build_control_result(result)
+
+
+def _confirm_destructive(action: str, input_ref: str, yes: bool, dry_run: bool) -> bool:
+    if yes or dry_run:
+        return True
+    return click.confirm(f"Delete build artifacts for {input_ref} before build {action}?")
+
+
+def _run_build_clean(
+    input_ref: str | None,
+    *,
+    dry_run: bool,
+    force: bool,
+    yes: bool,
+) -> None:
+    if input_ref is None:
+        raise click.ClickException("gobby build clean requires a task ref")
+    if not _confirm_destructive("clean", input_ref, yes, dry_run):
+        return
+    project_id = resolve_project_id()
+    db = _open_database()
+    try:
+        result = asyncio.run(
+            build_clean_target(
+                input_ref,
+                db=db,
+                project_id=project_id,
+                dry_run=dry_run,
+                force=force,
+                yes=True,
+            )
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        db.close()
+    _echo_target_control_result(asdict(result))
+
+
+def _run_build_restart(
+    input_ref: str | None,
+    *,
+    dry_run: bool,
+    force: bool,
+    yes: bool,
+) -> None:
+    if input_ref is None:
+        raise click.ClickException("gobby build restart requires a task ref")
+    if not _confirm_destructive("restart", input_ref, yes, dry_run):
+        return
+    project_id = resolve_project_id()
+    db = _open_database()
+    try:
+        result = asyncio.run(
+            build_restart_target(
+                input_ref,
+                db=db,
+                project_id=project_id,
+                dry_run=dry_run,
+                force=force,
+                yes=True,
+            )
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        db.close()
+    _echo_target_control_result(asdict(result))

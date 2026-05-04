@@ -122,3 +122,89 @@ def test_post_api_build_returns_400_for_validation_errors() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "quick profile requires a leaf task ref"
+
+
+def test_post_api_build_stop_preserves_project_wide_control() -> None:
+    from gobby.build.service import BuildControlResult, BuildLifecycleEvent
+
+    control_result = BuildControlResult(
+        project_id="project-1",
+        enabled=False,
+        cron_job_id="cron-1",
+        lifecycle_event=BuildLifecycleEvent(
+            id=1,
+            project_id="project-1",
+            event="build_stop",
+            reason="gobby build stop",
+            by_actor="build",
+            created_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+    with patch("gobby.servers.routes.build.build_stop", return_value=control_result) as stop:
+        response = _client().post("/api/build/stop", json={})
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+    stop.assert_called_once()
+
+
+def test_post_api_build_stop_accepts_task_ref() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="stop",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        automation_updated=1,
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_stop_target",
+        new=AsyncMock(return_value=target_result),
+    ) as stop:
+        response = _client().post("/api/build/stop", json={"input_ref": "#1"})
+
+    assert response.status_code == 200
+    assert response.json()["action"] == "stop"
+    stop.assert_called_once()
+
+
+def test_post_api_build_clean_requires_ref() -> None:
+    response = _client().post("/api/build/clean", json={"yes": True})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "input_ref is required"
+
+
+def test_post_api_build_restart_forwards_destructive_flags() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="restart",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        dry_run=True,
+        force=True,
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_restart_target",
+        new=AsyncMock(return_value=target_result),
+    ) as restart:
+        response = _client().post(
+            "/api/build/restart",
+            json={"input_ref": "#1", "dry_run": True, "force": True},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["action"] == "restart"
+    call = restart.call_args
+    assert call.kwargs["dry_run"] is True
+    assert call.kwargs["force"] is True

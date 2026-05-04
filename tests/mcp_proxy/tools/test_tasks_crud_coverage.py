@@ -280,6 +280,27 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
+    async def test_update_task_allow_automation(self, mock_task_manager, mock_sync_manager):
+        """update_task forwards allow_automation to the storage layer."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "allow_automation": False,
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000", allow_automation=False
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
     async def test_update_task_blocks_open_status(self, mock_task_manager, mock_sync_manager):
         """Test update_task blocks 'open' status changes."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)

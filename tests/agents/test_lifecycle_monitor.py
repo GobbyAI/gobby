@@ -617,6 +617,64 @@ class TestCheckIdleAgents:
         mock_send.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_naive_legacy_session_timestamp_is_treated_as_utc(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Naive legacy updated_at values should not crash idle checks."""
+        import time
+        from datetime import UTC, datetime, timedelta
+
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+        child = session_manager.register(
+            external_id="child-naive-stale",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        stale_time = (datetime.now(UTC) - timedelta(seconds=120)).replace(tzinfo=None).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            (stale_time, child.id),
+        )
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-session-naive-stale",
+            tmux_session_name="gobby-session-naive-stale",
+            child_session_id=child.id,
+        )
+        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 120
+
+        with (
+            patch.object(
+                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
+            ) as mock_capture,
+            patch.object(
+                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+            ) as mock_send,
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 1
+        mock_capture.assert_called_once()
+        mock_send.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_xhigh_session_within_scaled_timeout_skips_pane_check(
         self,
         agent_run_manager: LocalAgentRunManager,
@@ -1651,6 +1709,51 @@ class TestCheckInitializationTimeout:
 
         assert killed == 0
         mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_naive_legacy_init_timestamps_are_treated_as_utc(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        """Naive started_at/created_at/updated_at values should not crash init checks."""
+        child = session_manager.register(
+            external_id="child-naive-uninit",
+            machine_id="machine-1",
+            source="gemini",
+            project_id=sample_project["id"],
+        )
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-naive-uninit",
+            tmux_session_name="gobby-naive-uninit",
+            child_session_id=child.id,
+        )
+        started = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
+        session_time = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
+        agent_run_manager.db.execute(
+            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            (started, run.id),
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET created_at = ?, updated_at = ? WHERE id = ?",
+            (session_time, session_time, child.id),
+        )
+        monitor._session_manager = session_manager
+
+        with patch.object(
+            monitor._tmux,
+            "kill_session",
+            new_callable=AsyncMock,
+        ) as mock_kill:
+            killed = await monitor.check_initialization_timeout()
+
+        assert killed == 1
+        mock_kill.assert_called_once_with("gobby-naive-uninit")
 
     @pytest.mark.asyncio
     async def test_error_matches_provider_pattern(

@@ -1,0 +1,631 @@
+"""Task-scoped build lifecycle controls."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+from gobby.agents.kill import kill_agent
+from gobby.clones.git import CloneGitManager
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
+from gobby.storage.clones import LocalCloneManager
+from gobby.storage.database import DatabaseProtocol
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.worktrees.git import WorktreeGitManager
+
+from .service import DispatcherTickSummary, _kick_dispatcher_tick
+
+logger = logging.getLogger(__name__)
+
+BuildTargetAction = Literal["stop", "resume", "clean", "restart"]
+ArtifactFamily = Literal["worktree", "clone"]
+
+
+@dataclass(frozen=True)
+class BuildTaskSummary:
+    """Task touched by a task-scoped build control."""
+
+    task_id: str
+    ref: str
+    title: str
+    task_type: str
+
+
+@dataclass(frozen=True)
+class BuildAgentSummary:
+    """Active agent affected by a task-scoped build control."""
+
+    run_id: str
+    task_id: str | None
+    status: str
+    child_session_id: str | None
+    worktree_id: str | None
+    clone_id: str | None
+
+
+@dataclass
+class BuildArtifactSummary:
+    """Build artifact considered or removed by a clean operation."""
+
+    family: ArtifactFamily
+    task_id: str | None
+    path: str
+    artifact_id: str | None = None
+    source: str = "tracked"
+    orphan: bool = False
+    exists: bool = False
+    deleted: bool = False
+    error: str | None = None
+
+
+@dataclass
+class BuildTargetControlResult:
+    """Result returned by task-scoped build lifecycle controls."""
+
+    action: BuildTargetAction
+    project_id: str
+    root_task_id: str
+    affected_tasks: list[BuildTaskSummary]
+    agents: list[BuildAgentSummary] = field(default_factory=list)
+    artifacts: list[BuildArtifactSummary] = field(default_factory=list)
+    dry_run: bool = False
+    force: bool = False
+    automation_updated: int = 0
+    mutexes_cleared: int = 0
+    claims_released: int = 0
+    dispatcher_tick: DispatcherTickSummary | None = None
+    blocked_reasons: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation."""
+        return asdict(self)
+
+
+async def build_stop_target(
+    input_ref: str,
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+    services: object | None = None,
+) -> BuildTargetControlResult:
+    """Stop automation for a single task or epic subtree."""
+    task_manager = LocalTaskManager(db)
+    root = _resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = _affected_tasks(task_manager, root)
+    task_ids = [task.id for task in tasks]
+    agents = _active_agents(db, task_ids)
+
+    for task in tasks:
+        task_manager.update_task(task.id, allow_automation=False, unattended=False)
+
+    await _cancel_active_agents(db, agents, services=services)
+
+    return BuildTargetControlResult(
+        action="stop",
+        project_id=project_id,
+        root_task_id=root.id,
+        affected_tasks=_task_summaries(tasks),
+        agents=_agent_summaries(agents),
+        automation_updated=len(tasks),
+    )
+
+
+async def build_resume_target(
+    input_ref: str,
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+    services: object | None = None,
+) -> BuildTargetControlResult:
+    """Resume automation for a single task or epic subtree."""
+    task_manager = LocalTaskManager(db)
+    root = _resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = _affected_tasks(task_manager, root)
+    task_ids = [task.id for task in tasks]
+
+    updated = 0
+    for task in tasks:
+        task_manager.update_task(task.id, allow_automation=True)
+        updated += 1
+
+    mutexes_cleared = _clear_stale_dispatch_mutexes(db, task_ids)
+    claims_released = _release_stale_agent_claims(task_manager, db, tasks)
+    tick = await _kick_dispatcher_tick(db, project_id, services=services)
+
+    return BuildTargetControlResult(
+        action="resume",
+        project_id=project_id,
+        root_task_id=root.id,
+        affected_tasks=_task_summaries(tasks),
+        automation_updated=updated,
+        mutexes_cleared=mutexes_cleared,
+        claims_released=claims_released,
+        dispatcher_tick=tick,
+    )
+
+
+async def build_clean_target(
+    input_ref: str,
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+    dry_run: bool = False,
+    force: bool = False,
+    yes: bool = False,
+    services: object | None = None,
+) -> BuildTargetControlResult:
+    """Delete failed build artifacts for a single task or epic subtree."""
+    if not dry_run and not yes:
+        raise ValueError("clean is destructive; pass yes=True to confirm")
+
+    task_manager = LocalTaskManager(db)
+    root = _resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = _affected_tasks(task_manager, root)
+    task_ids = [task.id for task in tasks]
+    agents = _active_agents(db, task_ids)
+    artifacts = _collect_clean_artifacts(db, project_id, tasks)
+    blocked = _clean_blockers(tasks, agents, force=force)
+
+    if dry_run:
+        return BuildTargetControlResult(
+            action="clean",
+            project_id=project_id,
+            root_task_id=root.id,
+            affected_tasks=_task_summaries(tasks),
+            agents=_agent_summaries(agents),
+            artifacts=artifacts,
+            dry_run=True,
+            force=force,
+            blocked_reasons=blocked,
+        )
+
+    if blocked:
+        raise ValueError("; ".join(blocked))
+
+    if force and agents:
+        await _cancel_active_agents(db, agents, services=services)
+
+    _delete_artifacts(db, project_id, artifacts, force=force)
+    delete_errors = [artifact.error for artifact in artifacts if artifact.error]
+    if delete_errors:
+        raise ValueError("; ".join(delete_errors))
+
+    return BuildTargetControlResult(
+        action="clean",
+        project_id=project_id,
+        root_task_id=root.id,
+        affected_tasks=_task_summaries(tasks),
+        agents=_agent_summaries(agents),
+        artifacts=artifacts,
+        force=force,
+    )
+
+
+async def build_restart_target(
+    input_ref: str,
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+    dry_run: bool = False,
+    force: bool = False,
+    yes: bool = False,
+    services: object | None = None,
+) -> BuildTargetControlResult:
+    """Stop, clean, and resume automation for a task or epic subtree."""
+    if not dry_run and not yes:
+        raise ValueError("restart is destructive; pass yes=True to confirm")
+
+    if dry_run:
+        preview = await build_clean_target(
+            input_ref,
+            db=db,
+            project_id=project_id,
+            dry_run=True,
+            force=force,
+            yes=True,
+            services=services,
+        )
+        preview.action = "restart"
+        return preview
+
+    await build_stop_target(input_ref, db=db, project_id=project_id, services=services)
+    clean_result = await build_clean_target(
+        input_ref,
+        db=db,
+        project_id=project_id,
+        dry_run=False,
+        force=True if force else False,
+        yes=True,
+        services=services,
+    )
+    resume_result = await build_resume_target(
+        input_ref,
+        db=db,
+        project_id=project_id,
+        services=services,
+    )
+    clean_result.action = "restart"
+    clean_result.automation_updated = resume_result.automation_updated
+    clean_result.mutexes_cleared = resume_result.mutexes_cleared
+    clean_result.claims_released = resume_result.claims_released
+    clean_result.dispatcher_tick = resume_result.dispatcher_tick
+    return clean_result
+
+
+def _resolve_task_ref(
+    task_manager: LocalTaskManager,
+    input_ref: str,
+    project_id: str,
+) -> Task:
+    try:
+        resolved_id = task_manager.resolve_task_reference(input_ref, project_id)
+        return task_manager.get_task(resolved_id, project_id=project_id)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"task ref not found: {input_ref}") from exc
+
+
+def _affected_tasks(task_manager: LocalTaskManager, root: Task) -> list[Task]:
+    if root.task_type != "epic":
+        return [root]
+
+    rows = task_manager.db.fetchall(
+        """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT id
+            FROM tasks
+            WHERE id = ?
+            UNION ALL
+            SELECT child.id
+            FROM tasks child
+            JOIN subtree parent ON child.parent_task_id = parent.id
+        )
+        SELECT id
+        FROM subtree
+        """,
+        (root.id,),
+    )
+    return [task_manager.get_task(row["id"]) for row in rows]
+
+
+def _task_summaries(tasks: list[Task]) -> list[BuildTaskSummary]:
+    return [
+        BuildTaskSummary(
+            task_id=task.id,
+            ref=f"#{task.seq_num}" if task.seq_num else task.id,
+            title=task.title,
+            task_type=task.task_type,
+        )
+        for task in tasks
+    ]
+
+
+def _active_agents(db: DatabaseProtocol, task_ids: list[str]) -> list[AgentRun]:
+    task_id_set = set(task_ids)
+    return [
+        run
+        for run in LocalAgentRunManager(db).list_active(limit=1000)
+        if run.task_id in task_id_set
+    ]
+
+
+def _agent_summaries(agents: list[AgentRun]) -> list[BuildAgentSummary]:
+    return [
+        BuildAgentSummary(
+            run_id=run.id,
+            task_id=run.task_id,
+            status=run.status,
+            child_session_id=run.child_session_id,
+            worktree_id=run.worktree_id,
+            clone_id=run.clone_id,
+        )
+        for run in agents
+    ]
+
+
+async def _cancel_active_agents(
+    db: DatabaseProtocol,
+    agents: list[AgentRun],
+    *,
+    services: object | None,
+) -> None:
+    lifecycle_monitor = getattr(services, "agent_lifecycle_monitor", None)
+    run_manager = LocalAgentRunManager(db)
+
+    for run in agents:
+        try:
+            result = await kill_agent(
+                run,
+                db,
+                signal_name="TERM",
+                timeout=5.0,
+                close_terminal=True,
+            )
+            if not result.get("success"):
+                logger.info("agent_kill_noop", extra={"run_id": run.id, "result": result})
+        except Exception as exc:
+            logger.warning("Failed to kill active build agent %s: %s", run.id, exc)
+
+        if lifecycle_monitor is not None:
+            transitioned = await lifecycle_monitor.terminalize_cancelled_run(
+                run.id,
+                terminal_reason="user_cancelled",
+            )
+        else:
+            transitioned = run_manager.cancel(run.id, terminal_reason="user_cancelled") is not None
+        if not transitioned:
+            logger.debug("Agent %s was already terminal while stopping build", run.id)
+
+
+def _clear_stale_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> int:
+    mutexes = TaskDispatchMutexManager(db)
+    cleared = mutexes.sweep_expired()
+    active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active(limit=1000)}
+    for task_id in task_ids:
+        mutex = mutexes.get_mutex(task_id)
+        if mutex is not None and mutex.run_id and mutex.run_id not in active_run_ids:
+            if mutexes.force_release(task_id):
+                cleared += 1
+    return cleared
+
+
+def _release_stale_agent_claims(
+    task_manager: LocalTaskManager,
+    db: DatabaseProtocol,
+    tasks: list[Task],
+) -> int:
+    active_session_ids = {
+        session_id
+        for run in LocalAgentRunManager(db).list_active(limit=1000)
+        for session_id in (run.child_session_id, run.claimed_session_id, run.parent_session_id)
+        if session_id
+    }
+    released = 0
+    for task in tasks:
+        claim = task.claimed_by_session_id
+        if not claim or claim in active_session_ids:
+            continue
+        if not _has_terminal_agent_claim(db, task.id, claim):
+            continue
+        task_manager.release_task_claim(task.id)
+        released += 1
+    return released
+
+
+def _has_terminal_agent_claim(db: DatabaseProtocol, task_id: str, session_id: str) -> bool:
+    rows = db.fetchall(
+        """
+        SELECT status
+        FROM agent_runs
+        WHERE task_id = ?
+          AND (
+            child_session_id = ?
+            OR claimed_session_id = ?
+            OR parent_session_id = ?
+          )
+        """,
+        (task_id, session_id, session_id, session_id),
+    )
+    return any(row["status"] not in ACTIVE_AGENT_RUN_STATUSES for row in rows)
+
+
+def _clean_blockers(
+    tasks: list[Task],
+    agents: list[AgentRun],
+    *,
+    force: bool,
+) -> list[str]:
+    blockers: list[str] = []
+    if not force:
+        active_refs = [f"#{task.seq_num}" for task in tasks if task.allow_automation]
+        if active_refs:
+            blockers.append(
+                "automation must be stopped before clean; active tasks: " + ", ".join(active_refs)
+            )
+        if agents:
+            blockers.append(
+                "live agents must be stopped before clean; active runs: "
+                + ", ".join(run.id for run in agents)
+            )
+    return blockers
+
+
+def _collect_clean_artifacts(
+    db: DatabaseProtocol,
+    project_id: str,
+    tasks: list[Task],
+) -> list[BuildArtifactSummary]:
+    worktrees = LocalWorktreeManager(db)
+    clones = LocalCloneManager(db)
+    summaries: list[BuildArtifactSummary] = []
+    seen: set[tuple[str, str]] = set()
+
+    for task in tasks:
+        artifacts = LocalTaskManager(db).artifacts.get_artifacts(task.id)
+        _append_artifact(
+            summaries,
+            seen,
+            family="worktree",
+            task_id=task.id,
+            path=artifacts.worktree_path,
+            artifact_id=artifacts.worktree_id,
+            source="task_artifacts",
+        )
+        _append_artifact(
+            summaries,
+            seen,
+            family="clone",
+            task_id=task.id,
+            path=artifacts.clone_path,
+            artifact_id=artifacts.clone_id,
+            source="task_artifacts",
+        )
+
+        worktree = worktrees.get_by_task(task.id)
+        if worktree is not None:
+            _append_artifact(
+                summaries,
+                seen,
+                family="worktree",
+                task_id=task.id,
+                path=worktree.worktree_path,
+                artifact_id=worktree.id,
+                source="worktrees",
+            )
+        clone = clones.get_by_task(task.id)
+        if clone is not None:
+            _append_artifact(
+                summaries,
+                seen,
+                family="clone",
+                task_id=task.id,
+                path=clone.clone_path,
+                artifact_id=clone.id,
+                source="clones",
+            )
+
+    summaries.extend(_detect_orphan_artifacts(db, project_id, tasks, seen))
+    return summaries
+
+
+def _append_artifact(
+    summaries: list[BuildArtifactSummary],
+    seen: set[tuple[str, str]],
+    *,
+    family: ArtifactFamily,
+    task_id: str | None,
+    path: str | None,
+    artifact_id: str | None,
+    source: str,
+) -> None:
+    if not path:
+        return
+    key = (family, str(Path(path).expanduser()))
+    if key in seen:
+        return
+    seen.add(key)
+    summaries.append(
+        BuildArtifactSummary(
+            family=family,
+            task_id=task_id,
+            path=str(Path(path).expanduser()),
+            artifact_id=artifact_id,
+            source=source,
+            exists=Path(path).expanduser().exists(),
+        )
+    )
+
+
+def _detect_orphan_artifacts(
+    db: DatabaseProtocol,
+    project_id: str,
+    tasks: list[Task],
+    seen: set[tuple[str, str]],
+) -> list[BuildArtifactSummary]:
+    project_path = _project_path(db, project_id)
+    project_name = project_path.name
+    roots: dict[ArtifactFamily, Path] = {
+        "worktree": Path.home() / ".gobby" / "worktrees" / project_name,
+        "clone": Path.home() / ".gobby" / "clones" / project_name,
+    }
+    orphan_summaries: list[BuildArtifactSummary] = []
+
+    for task in tasks:
+        if not task.seq_num:
+            continue
+        prefix = f"task-{task.seq_num}-"
+        expected = _default_branch_dir_name(task)
+        for family, root in roots.items():
+            if not root.exists() or not root.is_dir():
+                continue
+            for candidate in root.iterdir():
+                if candidate.name != expected and not candidate.name.startswith(prefix):
+                    continue
+                key = (family, str(candidate))
+                if key in seen:
+                    continue
+                seen.add(key)
+                orphan_summaries.append(
+                    BuildArtifactSummary(
+                        family=family,
+                        task_id=task.id,
+                        path=str(candidate),
+                        source="orphan",
+                        orphan=True,
+                        exists=candidate.exists(),
+                    )
+                )
+    return orphan_summaries
+
+
+def _default_branch_dir_name(task: Task) -> str:
+    slug = task.title.lower().replace(" ", "-")
+    slug = "".join(c for c in slug if c.isalnum() or c == "-")
+    return f"task-{task.seq_num}-{slug[:40]}"
+
+
+def _delete_artifacts(
+    db: DatabaseProtocol,
+    project_id: str,
+    artifacts: list[BuildArtifactSummary],
+    *,
+    force: bool,
+) -> None:
+    project_path = _project_path(db, project_id)
+    worktree_git = WorktreeGitManager(project_path)
+    clone_git = CloneGitManager(project_path)
+    worktrees = LocalWorktreeManager(db)
+    clones = LocalCloneManager(db)
+    task_manager = LocalTaskManager(db)
+
+    for artifact in artifacts:
+        try:
+            path = Path(artifact.path)
+            if artifact.family == "worktree":
+                if path.exists():
+                    worktree_result = worktree_git.delete_worktree(path, force=force)
+                    if not worktree_result.success:
+                        artifact.error = worktree_result.error or worktree_result.message
+                        continue
+                if artifact.artifact_id:
+                    worktrees.delete(artifact.artifact_id)
+            else:
+                if path.exists():
+                    clone_result = clone_git.delete_clone(path, force=force)
+                    if not clone_result.success:
+                        artifact.error = clone_result.error or clone_result.message
+                        continue
+                if artifact.artifact_id:
+                    clones.delete(artifact.artifact_id)
+
+            if artifact.task_id is not None and not artifact.orphan:
+                task_manager.artifacts.clear_isolation_pair(artifact.task_id, artifact.family)
+            artifact.deleted = True
+            artifact.exists = path.exists()
+        except Exception as exc:
+            artifact.error = str(exc)
+
+
+def _project_path(db: DatabaseProtocol, project_id: str) -> Path:
+    project = LocalProjectManager(db).get(project_id)
+    if project is not None and project.repo_path:
+        return Path(project.repo_path)
+    return Path.cwd()
+
+
+__all__ = [
+    "BuildAgentSummary",
+    "BuildArtifactSummary",
+    "BuildTargetControlResult",
+    "BuildTaskSummary",
+    "build_clean_target",
+    "build_restart_target",
+    "build_resume_target",
+    "build_stop_target",
+]

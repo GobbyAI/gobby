@@ -160,3 +160,108 @@ def test_build_stop_cli_runs_migrations_before_control_service() -> None:
     assert result.exit_code == 0
     run_migrations.assert_called_once_with(db_cls.return_value)
     build_stop.assert_called_once_with(db=db_cls.return_value, project_id="project-1")
+
+
+def test_build_stop_cli_accepts_task_ref() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.cli import cli
+
+    control_result = BuildTargetControlResult(
+        action="stop",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        automation_updated=1,
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
+        patch("gobby.cli.build.build_stop_target", new=AsyncMock()) as stop_target,
+    ):
+        result = CliRunner().invoke(cli, ["build", "stop", "#1"])
+
+    assert result.exit_code == 0
+    assert "Build stop: task-scoped" in result.output
+    run.assert_called_once()
+    call = stop_target.call_args
+    assert call.args[0] == "#1"
+    assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
+
+
+def test_unbuild_cli_stops_task_ref() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.cli import cli
+
+    control_result = BuildTargetControlResult(
+        action="stop",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        automation_updated=1,
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
+        patch("gobby.cli.build.build_stop_target", new=AsyncMock()) as stop_target,
+    ):
+        result = CliRunner().invoke(cli, ["unbuild", "#1"])
+
+    assert result.exit_code == 0
+    assert "Build stop: task-scoped" in result.output
+    run.assert_called_once()
+    call = stop_target.call_args
+    assert call.args[0] == "#1"
+    assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
+
+
+def test_build_clean_cli_requires_task_ref() -> None:
+    from gobby.cli import cli
+
+    result = CliRunner().invoke(cli, ["build", "clean", "--yes"])
+
+    assert result.exit_code != 0
+    assert "requires a task ref" in result.output
+
+
+def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.cli import cli
+
+    control_result = BuildTargetControlResult(
+        action="restart",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        dry_run=True,
+        force=True,
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build.LocalDatabase"),
+        patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
+        patch("gobby.cli.build.build_restart_target", new=AsyncMock()) as restart_target,
+    ):
+        result = CliRunner().invoke(cli, ["build", "restart", "#1", "--dry-run", "--force"])
+
+    assert result.exit_code == 0
+    assert "Dry run: no changes made" in result.output
+    run.assert_called_once()
+    call = restart_target.call_args
+    assert call.args[0] == "#1"
+    assert call.kwargs["dry_run"] is True
+    assert call.kwargs["force"] is True
+    assert call.kwargs["yes"] is True

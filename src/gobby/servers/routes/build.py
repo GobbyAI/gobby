@@ -9,7 +9,20 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from gobby.build import BuildOptions, BuildResult, StageInsertion, build
+from gobby.build import (
+    BuildControlResult,
+    BuildOptions,
+    BuildResult,
+    BuildTargetControlResult,
+    StageInsertion,
+    build,
+    build_clean_target,
+    build_restart_target,
+    build_resume,
+    build_resume_target,
+    build_stop,
+    build_stop_target,
+)
 from gobby.config.build import Isolation
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
@@ -42,6 +55,15 @@ class BuildRequest(BaseModel):
     agent: str | None = None
     clones_dir: str | None = None
     reset_expansion_output: bool = False
+
+
+class BuildControlRequest(BaseModel):
+    """Request body for POST /api/build/{stop,resume,clean,restart}."""
+
+    input_ref: str | None = None
+    dry_run: bool = False
+    force: bool = False
+    yes: bool = False
 
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
@@ -82,6 +104,12 @@ def _build_result_json(result: BuildResult) -> dict[str, Any]:
     return asdict(result)
 
 
+def _result_json(result: BuildControlResult | BuildTargetControlResult) -> dict[str, Any]:
+    if isinstance(result, BuildTargetControlResult):
+        return result.to_dict()
+    return asdict(result)
+
+
 def create_build_router(server: HTTPServer) -> APIRouter:
     """Create the build API router."""
     router = APIRouter(prefix="/api/build", tags=["build"])
@@ -99,6 +127,82 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 services=server.services,
             )
             return _build_result_json(result)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/stop")
+    async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any]:
+        """Stop project-wide dispatcher ticks or task-scoped automation."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            if request_data.input_ref is None:
+                return _result_json(build_stop(db=server.services.database, project_id=project_id))
+            result = await build_stop_target(
+                request_data.input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                services=server.services,
+            )
+            return result.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/resume")
+    async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any]:
+        """Resume project-wide dispatcher ticks or task-scoped automation."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            if request_data.input_ref is None:
+                return _result_json(
+                    build_resume(db=server.services.database, project_id=project_id)
+                )
+            result = await build_resume_target(
+                request_data.input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                services=server.services,
+            )
+            return result.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/clean")
+    async def post_build_clean(request_data: BuildControlRequest) -> dict[str, Any]:
+        """Delete failed build artifacts for a task ref."""
+        if request_data.input_ref is None:
+            raise HTTPException(status_code=400, detail="input_ref is required")
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            result = await build_clean_target(
+                request_data.input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                dry_run=request_data.dry_run,
+                force=request_data.force,
+                yes=request_data.yes,
+                services=server.services,
+            )
+            return result.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/restart")
+    async def post_build_restart(request_data: BuildControlRequest) -> dict[str, Any]:
+        """Stop, clean, and resume task-scoped build automation."""
+        if request_data.input_ref is None:
+            raise HTTPException(status_code=400, detail="input_ref is required")
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            result = await build_restart_target(
+                request_data.input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                dry_run=request_data.dry_run,
+                force=request_data.force,
+                yes=request_data.yes,
+                services=server.services,
+            )
+            return result.to_dict()
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

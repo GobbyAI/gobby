@@ -4,20 +4,22 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from gobby.agents.kill import kill_agent
 from gobby.agents.stall_classifier import StallStatus
+from gobby.utils.datetime import parse_stored_datetime
 
 if TYPE_CHECKING:
+    from gobby.agents.agent_cleanup import AgentCleanupHandler
+    from gobby.agents.stall_classifier import StallClassifier
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
+    from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.sessions import SessionManager
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
-    from gobby.agents.stall_classifier import StallClassifier
-    from gobby.agents.agent_cleanup import AgentCleanupHandler
-    from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,9 @@ class AgentHealthMonitor:
                 is_timeout = False
 
                 if run.timeout_seconds and run.started_at:
-                    started = datetime.fromisoformat(run.started_at)
+                    started = parse_stored_datetime(run.started_at)
+                    if started is None:
+                        continue
                     age = (now - started).total_seconds()
                     if age > run.timeout_seconds:
                         reason = f"Agent exceeded {run.timeout_seconds}s timeout"
@@ -144,7 +148,9 @@ class AgentHealthMonitor:
             if not run.started_at:
                 continue
             try:
-                started = datetime.fromisoformat(run.started_at)
+                started = parse_stored_datetime(run.started_at)
+                if started is None:
+                    continue
                 age = (now - started).total_seconds()
                 if age < self._tmux_config.init_timeout_seconds:
                     continue
@@ -157,8 +163,10 @@ class AgentHealthMonitor:
                 if not session or not session.updated_at or not session.created_at:
                     continue
 
-                updated = datetime.fromisoformat(session.updated_at)
-                created = datetime.fromisoformat(session.created_at)
+                updated = parse_stored_datetime(session.updated_at)
+                created = parse_stored_datetime(session.created_at)
+                if updated is None or created is None:
+                    continue
                 if (updated - created).total_seconds() > 5.0:
                     continue
 
@@ -220,7 +228,9 @@ class AgentHealthMonitor:
                         f"(provider={run.provider}, "
                         f"consecutive_hits={classification.consecutive_hits})"
                     )
-                    await self._cleanup_handler.cleanup_agent(run, error=error_msg, is_success=False)
+                    await self._cleanup_handler.cleanup_agent(
+                        run, error=error_msg, is_success=False
+                    )
                     stalled += 1
             except Exception as e:
                 logger.warning(f"Error checking provider stall for agent {run.id}: {e}")
