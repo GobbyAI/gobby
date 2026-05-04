@@ -15,9 +15,14 @@ def native_bin_name(name: str) -> str:
     return name
 
 
+def native_bin_dir() -> Path:
+    """Return the managed native binary directory."""
+    return Path.home() / ".gobby" / "bin"
+
+
 def local_native_bin_path(name: str) -> Path:
     """Return the preferred ``~/.gobby/bin`` path for a native binary."""
-    return Path.home() / ".gobby" / "bin" / native_bin_name(name)
+    return native_bin_dir() / native_bin_name(name)
 
 
 def resolve_native_bin(name: str) -> str | None:

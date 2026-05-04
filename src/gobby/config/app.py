@@ -19,6 +19,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Internal imports for DaemonConfig fields - NOT re-exported
+from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.conductor import ConductorConfig
@@ -514,6 +515,10 @@ class DaemonConfig(BaseModel):
     code_index: CodeIndexConfig = Field(
         default_factory=CodeIndexConfig,
         description="Native AST-based code indexing configuration",
+    )
+    bin_freshness: BinFreshnessConfig = Field(
+        default_factory=BinFreshnessConfig,
+        description="Managed native binary freshness checks.",
     )
     clones_dir: str = Field(
         default="~/.gobby/clones",

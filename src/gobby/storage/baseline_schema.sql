@@ -1321,6 +1321,32 @@ CREATE TABLE metric_snapshots (
 
 CREATE INDEX idx_metric_snapshots_ts ON metric_snapshots(timestamp);
 
+CREATE TABLE bin_update_state (
+    tool_name TEXT PRIMARY KEY,
+    installed_version TEXT,
+    floor_version TEXT NOT NULL,
+    latest_version TEXT,
+    binary_path TEXT,
+    target TEXT,
+    last_status TEXT NOT NULL CHECK (
+        last_status IN (
+            'updated',
+            'up_to_date',
+            'failed',
+            'floor_violated',
+            'dev',
+            'source_unavailable'
+        )
+    ),
+    last_error TEXT,
+    checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+    installed_at TEXT,
+    source_url TEXT,
+    is_dev INTEGER NOT NULL DEFAULT 0 CHECK (is_dev IN (0, 1)),
+    floor_drift INTEGER NOT NULL DEFAULT 0 CHECK (floor_drift IN (0, 1)),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE comms_channels (
     id TEXT PRIMARY KEY,
     channel_type TEXT NOT NULL,

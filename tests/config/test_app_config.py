@@ -17,6 +17,7 @@ from gobby.config.app import (
     load_yaml,
     save_config,
 )
+from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.extensions import (
     HookExtensionsConfig,
     WebhookEndpointConfig,
@@ -353,6 +354,7 @@ class TestDaemonConfig:
         assert config.daemon_port == 60887
         assert config.daemon_health_check_interval == 10.0
         assert config.database_path == "~/.gobby/gobby-hub.db"
+        assert isinstance(config.bin_freshness, BinFreshnessConfig)
 
     def test_port_validation(self) -> None:
         """Test daemon port validation."""
@@ -1137,6 +1139,28 @@ class TestMetricsConfig:
             MetricsConfig(list_limit=-1)
 
 
+class TestBinFreshnessConfig:
+    """Tests for managed native binary freshness config."""
+
+    def test_default_values(self) -> None:
+        config = BinFreshnessConfig()
+        assert config.enabled is True
+        assert config.initial_delay_seconds == 30.0
+        assert config.interval_seconds == 3600.0
+        assert config.jitter_seconds == 300.0
+        assert config.github_timeout_seconds == 30.0
+
+    def test_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            BinFreshnessConfig(initial_delay_seconds=-1)
+        with pytest.raises(ValidationError):
+            BinFreshnessConfig(interval_seconds=0)
+        with pytest.raises(ValidationError):
+            BinFreshnessConfig(jitter_seconds=-1)
+        with pytest.raises(ValidationError):
+            BinFreshnessConfig(github_timeout_seconds=0)
+
+
 # ==============================================================================
 # Cross-module reference tests (ensure DaemonConfig wires everything correctly)
 # ==============================================================================
@@ -1184,6 +1208,7 @@ class TestDaemonConfigComposition:
         # Workflow
         assert isinstance(config.workflow, WorkflowConfig)
         assert isinstance(config.metrics, MetricsConfig)
+        assert isinstance(config.bin_freshness, BinFreshnessConfig)
 
         # Memory
         assert isinstance(config.memory, MemoryConfig)
@@ -1257,11 +1282,12 @@ class TestAllConfigClassesInstantiate:
             MessageTrackingConfig(),
             SessionLifecycleConfig(),
             MetricsConfig(),
+            BinFreshnessConfig(),
             MemoryConfig(),
             MemoryBackupConfig(),
             DaemonConfig(),
         ]
 
-        assert len(configs) == 26
+        assert len(configs) == 27
         for config in configs:
             assert config is not None

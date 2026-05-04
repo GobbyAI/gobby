@@ -89,6 +89,7 @@ def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:
 async def run_daemon(runner: GobbyRunner) -> None:
     """Main daemon startup, event loop, and shutdown sequence."""
     from gobby.runner_maintenance import (
+        bin_freshness_loop,
         cleanup_comms_messages_loop,
         cleanup_expired_isolation_loop,
         cleanup_pid_file,
@@ -159,6 +160,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
             cleanup_comms_messages_loop=cleanup_comms_messages_loop,
             cleanup_expired_isolation_loop=cleanup_expired_isolation_loop,
             metric_snapshot_loop=metric_snapshot_loop,
+            bin_freshness_loop=bin_freshness_loop,
             drain_hook_inbox_loop=drain_hook_inbox_loop,
             expire_approval_timeouts_loop=expire_approval_timeouts_loop,
         )

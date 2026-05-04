@@ -10,19 +10,79 @@ import asyncio
 import json
 import logging
 import os
+import random
 import signal
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
+from gobby.config.bin_freshness import BinFreshnessConfig
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
+
+
+async def _sleep_until_next_bin_freshness_cycle(
+    duration: float,
+    *,
+    is_shutdown_requested: Callable[[], bool],
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    if duration <= 0 or is_shutdown_requested():
+        return
+    await sleep(duration)
+
+
+async def bin_freshness_loop(
+    db: Any,
+    config: BinFreshnessConfig,
+    is_shutdown_requested: Callable[[], bool],
+    *,
+    update_once: Callable[[Any, BinFreshnessConfig], list[Any]] | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    jitter: Callable[[float], float] | None = None,
+) -> None:
+    """Background loop for GitHub-backed managed native binary updates."""
+    if not config.enabled:
+        return
+
+    from gobby.install.bin_freshness_updater import update_all_managed_bins
+
+    updater = update_once or update_all_managed_bins
+    jitter_fn = jitter or (lambda upper: random.uniform(0, upper))
+
+    try:
+        await _sleep_until_next_bin_freshness_cycle(
+            config.initial_delay_seconds,
+            is_shutdown_requested=is_shutdown_requested,
+            sleep=sleep,
+        )
+        while not is_shutdown_requested():
+            try:
+                await asyncio.to_thread(updater, db, config)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in bin freshness loop: {e}")
+
+            interval = config.interval_seconds
+            if config.jitter_seconds > 0:
+                interval += jitter_fn(config.jitter_seconds)
+            try:
+                await _sleep_until_next_bin_freshness_cycle(
+                    interval,
+                    is_shutdown_requested=is_shutdown_requested,
+                    sleep=sleep,
+                )
+            except asyncio.CancelledError:
+                break
+    except asyncio.CancelledError:
+        pass
 
 
 async def drain_hook_inbox_loop(

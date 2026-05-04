@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.runner_lifecycle_startup import StartupTracker
 
 if TYPE_CHECKING:
@@ -69,6 +70,17 @@ def start_periodic_tasks(
         loops["drain_hook_inbox_loop"](runner.http_server.app, lambda: runner._shutdown_requested),
         name="hook-inbox-drain",
     )
+    runner._bin_freshness_task = None
+    bin_freshness_config = getattr(runner.config, "bin_freshness", None)
+    if isinstance(bin_freshness_config, BinFreshnessConfig) and bin_freshness_config.enabled:
+        runner._bin_freshness_task = asyncio.create_task(
+            loops["bin_freshness_loop"](
+                runner.database,
+                bin_freshness_config,
+                lambda: runner._shutdown_requested,
+            ),
+            name="bin-freshness",
+        )
 
     runner._approval_timeout_task = None
     if runner.pipeline_execution_manager:
@@ -91,6 +103,7 @@ def start_periodic_tasks(
             runner._expired_isolation_task,
             runner._metric_snapshot_task,
             runner._hook_inbox_task,
+            runner._bin_freshness_task,
             runner._approval_timeout_task,
         )
         if task is not None

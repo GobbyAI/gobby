@@ -20,6 +20,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from gobby.storage.bin_update_state import BIN_UPDATE_STATE_SCHEMA
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migration_helpers import (
     _setup_code_content_fts,
@@ -377,6 +378,10 @@ def _apply_stage_dispatch_schema(db: LocalDatabase) -> None:
             db.execute(sql)
 
 
+def _apply_bin_update_state_schema(db: LocalDatabase) -> None:
+    db.execute(BIN_UPDATE_STATE_SCHEMA)
+
+
 def _apply_config_store_cleanup(db: LocalDatabase) -> None:
     row = db.fetchone(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'config_store'"
@@ -427,6 +432,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (244, "Add persisted task state bucket", _apply_task_state_bucket_schema),
     (245, "Add unique linked GitHub issue task index", _apply_github_issue_task_link_index),
     (246, "Add generic stage dispatch target columns", _apply_stage_dispatch_schema),
+    (247, "Add managed native binary update state", _apply_bin_update_state_schema),
 ]
 
 

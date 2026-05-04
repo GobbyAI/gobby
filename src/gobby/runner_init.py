@@ -187,6 +187,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._metrics_archive_task = None
     runner._metric_snapshot_task = None
     runner._hook_inbox_task = None
+    runner._bin_freshness_task = None
     runner._expired_isolation_task = None
 
     # Initialize local storage with dual-write if in project context
