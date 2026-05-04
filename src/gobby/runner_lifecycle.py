@@ -6,6 +6,7 @@ Extracted from runner.py to keep the main module under the monolith limit.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import sys
@@ -23,8 +24,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
-_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS = 5.0
-
 # ---------------------------------------------------------------------------
 # Startup progress tracking (module-level so the admin API can read it)
 # ---------------------------------------------------------------------------
@@ -84,6 +83,58 @@ def _log_subsystem_init_result(task: asyncio.Task[None]) -> None:
             "Subsystem initialization failed",
             exc_info=(type(error), error, error.__traceback__),
         )
+
+
+async def _refresh_provider_model_catalog(
+    provider_catalog: Any,
+    codex_client: Any,
+) -> dict[str, dict[str, Any]]:
+    """Refresh provider models when the catalog exposes an async refresh API."""
+    refresh = getattr(provider_catalog, "refresh", None)
+    if not callable(refresh):
+        return {}
+
+    result = refresh(codex_client=codex_client)
+    if not inspect.isawaitable(result):
+        logger.debug("Provider model catalog refresh skipped: refresh() is not awaitable")
+        return {}
+
+    refreshed = await result
+    return refreshed if isinstance(refreshed, dict) else {}
+
+
+def _record_provider_model_refresh_result(
+    task: asyncio.Future[dict[str, dict[str, Any]]],
+    tracker: StartupTracker | None,
+) -> None:
+    """Record optional provider model refresh outcome without blocking startup."""
+    if task.cancelled():
+        return
+    try:
+        status = task.result()
+    except Exception as e:
+        logger.debug("Provider model discovery failed in background: %s", e)
+        if tracker:
+            tracker.error("Provider models", str(e))
+        return
+
+    if tracker:
+        tracker.complete("Provider model catalogs updated")
+        for provider, info in status.items():
+            source = info.get("source", "failed")
+            error = info.get("error")
+            if source == "live":
+                continue
+            if source == "cache":
+                tracker.error(
+                    f"Provider models ({provider})",
+                    f"using cache: {error or 'live probe failed'}",
+                )
+            else:
+                tracker.error(
+                    f"Provider models ({provider})",
+                    error or "model discovery failed",
+                )
 
 
 async def _await_critical_stop_hook_grace_window() -> None:
@@ -330,42 +381,15 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
 
     provider_catalog = getattr(runner.http_server.services, "provider_model_catalog", None)
     if provider_catalog is not None:
-        try:
-            status = await asyncio.wait_for(
-                provider_catalog.refresh(codex_client=runner.http_server.codex_client),
-                timeout=_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS,
-            )
-            if tracker:
-                tracker.complete("Provider model catalogs updated")
-                for provider, info in status.items():
-                    source = info.get("source", "failed")
-                    error = info.get("error")
-                    if source == "live":
-                        continue
-                    if source == "cache":
-                        tracker.error(
-                            f"Provider models ({provider})",
-                            f"using cache: {error or 'live probe failed'}",
-                        )
-                    else:
-                        tracker.error(
-                            f"Provider models ({provider})",
-                            error or "model discovery failed",
-                        )
-        except TimeoutError:
-            logger.warning(
-                "Provider model discovery timed out after %.1fs",
-                _PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS,
-            )
-            if tracker:
-                tracker.error(
-                    "Provider models",
-                    f"timed out after {_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS:.1f}s",
-                )
-        except Exception as e:
-            logger.warning(f"Provider model discovery failed: {e}")
-            if tracker:
-                tracker.error("Provider models", str(e))
+        runner._provider_model_refresh_task = asyncio.create_task(
+            _refresh_provider_model_catalog(provider_catalog, runner.http_server.codex_client),
+            name="provider-model-catalog-refresh",
+        )
+        runner._provider_model_refresh_task.add_done_callback(
+            lambda task: _record_provider_model_refresh_result(task, tracker)
+        )
+        if tracker:
+            tracker.schedule("Provider model catalog refresh")
 
     # Connect MCP servers
     try:
@@ -895,6 +919,17 @@ async def run_daemon(runner: GobbyRunner) -> None:
             runner._subsystem_init_task.cancel()
             try:
                 await asyncio.wait_for(runner._subsystem_init_task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+
+        if (
+            hasattr(runner, "_provider_model_refresh_task")
+            and runner._provider_model_refresh_task
+            and not runner._provider_model_refresh_task.done()
+        ):
+            runner._provider_model_refresh_task.cancel()
+            try:
+                await asyncio.wait_for(runner._provider_model_refresh_task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
                 pass
 

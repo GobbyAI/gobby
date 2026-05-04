@@ -2,7 +2,7 @@
 
 import asyncio
 import signal
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -312,7 +312,9 @@ class TestInitSubsystems:
         vector_store.initialize.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_provider_model_discovery_timeout_does_not_block_vector_init(self) -> None:
+    async def test_provider_model_discovery_runs_in_background_without_startup_warning(
+        self, caplog
+    ) -> None:
         async def slow_refresh(**_kwargs):
             await asyncio.sleep(10)
 
@@ -354,15 +356,20 @@ class TestInitSubsystems:
             websocket_server=None,
         )
 
-        with (
-            patch.object(runner_lifecycle, "_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.01),
-            patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager,
-        ):
+        with patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager:
             mock_tmux_manager.return_value.health_check = AsyncMock()
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
 
         vector_store.initialize.assert_awaited_once()
         vector_store.ensure_collection.assert_awaited_once()
+        assert "Provider model discovery timed out" not in caplog.text
+
+        task = runner._provider_model_refresh_task
+        assert task is not None
+        assert not task.done()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 class TestRunGobbyFunction:

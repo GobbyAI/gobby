@@ -152,6 +152,7 @@ class GobbyRunner:
     _sync_worker_shutdown: asyncio.Event | None
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
+    _provider_model_refresh_task: asyncio.Task[dict[str, dict[str, Any]]] | None
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
