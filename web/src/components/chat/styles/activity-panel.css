@@ -293,9 +293,14 @@
   cursor: pointer;
   flex-shrink: 0;
   margin-left: auto;
+  border-radius: 0.25rem;
+  transition:
+    background 0.1s,
+    color 0.1s;
 }
 
 .activity-panel-pin:hover {
+  background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 
