@@ -597,7 +597,7 @@ class TestTemporalDecayIntegration:
         vs.search = AsyncMock(return_value=[("mem-1", 0.675)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
-        manager._fts5_ranked = AsyncMock(return_value=[])
+        manager._search_service._fts5_ranked = AsyncMock(return_value=[])
 
         mem = _mock_memory("mem-1", "content")
         mem.source_type = "agent"
