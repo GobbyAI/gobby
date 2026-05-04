@@ -12,7 +12,7 @@ from typing import Literal
 
 from gobby.config.build import Isolation, StageCapOverride
 from gobby.runner import install_dispatcher_cron_row
-from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, Task, TaskArtifacts
@@ -349,7 +349,15 @@ def _set_dispatcher_enabled(
     enabled: bool,
 ) -> BuildControlResult:
     job = install_dispatcher_cron_row(db, project_id=project_id)
-    updated = CronJobStorage(db).update_job(job.id, enabled=enabled)
+    next_run = compute_next_run(replace(job, enabled=True)) if enabled else None
+    storage = CronJobStorage(db)
+    updated = storage.update_job(job.id, enabled=enabled)
+    if updated is None:
+        raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
+    updated = storage.update_system_job_bookkeeping(
+        job.id,
+        next_run_at=next_run.isoformat() if next_run else None,
+    )
     if updated is None:
         raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
 

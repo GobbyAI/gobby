@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
     UNSET,
@@ -25,6 +28,97 @@ from gobby.tasks.state_semantics import is_task_closed
 
 def _stage_states(db: DatabaseProtocol) -> StageStatesManager:
     return StageStatesManager(db, TaskLifecycleEventManager(db))
+
+
+def _task_ref(task: Task, fallback: str) -> str:
+    return f"#{task.seq_num}" if task.seq_num else fallback
+
+
+def _parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _has_active_dispatch_mutex(db: DatabaseProtocol, task_id: str) -> bool:
+    mutex = TaskDispatchMutexManager(db).get_mutex(task_id)
+    if mutex is None:
+        return False
+    lease_until = _parse_time(mutex.lease_until)
+    return lease_until is None or lease_until >= datetime.now(UTC)
+
+
+def _has_active_agent_run(db: DatabaseProtocol, task_id: str) -> bool:
+    return bool(LocalAgentRunManager(db).list_active(task_ids=[task_id], limit=1))
+
+
+def _active_build_automation_message(task: Task, task_id: str) -> str:
+    ref = _task_ref(task, task_id)
+    return (
+        f"Task {ref} is controlled by active build automation. "
+        f"Run gobby build stop {ref} before reopening it."
+    )
+
+
+def _current_stage_row(db: DatabaseProtocol, task_id: str) -> Any | None:
+    return db.fetchone(
+        """
+        SELECT *
+          FROM task_stage_states
+         WHERE task_id = ? AND state != 'done'
+         ORDER BY position, stage_name
+         LIMIT 1
+        """,
+        (task_id,),
+    )
+
+
+def reset_current_non_ready_stage(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    reason: str,
+    by_actor: str = "system",
+) -> bool:
+    """Reset the current non-ready stage to ready without a failure transition."""
+    row = _current_stage_row(db, task_id)
+    if row is None or row["state"] == "ready":
+        return False
+
+    now = datetime.now(UTC).isoformat()
+    stage_name = row["stage_name"]
+    from_state = row["state"]
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'ready',
+                   entered_at = NULL,
+                   entered_by_session_id = NULL,
+                   completed_at = NULL,
+                   completed_by_session_id = NULL,
+                   completed_commit_sha = NULL,
+                   artifact_refs = NULL,
+                   notes = NULL,
+                   updated_at = ?
+             WHERE task_id = ? AND stage_name = ?
+            """,
+            (now, task_id, stage_name),
+        )
+    TaskLifecycleEventManager(db).record_lifecycle_event(
+        task_id,
+        f"{stage_name}:{from_state}",
+        f"{stage_name}:ready",
+        reason,
+        by_actor=by_actor,
+    )
+    return True
 
 
 def get_effective_claim_owner(task: Task, db: DatabaseProtocol) -> str | None:
@@ -98,8 +192,17 @@ def reopen_task(
 ) -> Task:
     """Reopen a task and clear ownership/closure metadata."""
     task = get_task(db, task_id)
-    if not is_task_closed(task) and not task.is_escalated:
-        raise ValueError(f"Task {task_id} is not closed or escalated")
+    if (
+        task.allow_automation
+        or _has_active_dispatch_mutex(db, task_id)
+        or _has_active_agent_run(db, task_id)
+    ):
+        raise ValueError(_active_build_automation_message(task, task_id))
+
+    current_stage = _current_stage_row(db, task_id)
+    current_stage_ready = current_stage is None or current_stage["state"] == "ready"
+    if not is_task_closed(task) and not task.is_escalated and current_stage_ready:
+        raise ValueError(f"Task {_task_ref(task, task_id)} is already ready")
 
     description = task.description
     if reason:
@@ -120,6 +223,12 @@ def reopen_task(
         escalation_reason=None,
         validation_fail_count=0,
         dispatch_failure_count=0,
+    )
+    reset_current_non_ready_stage(
+        db,
+        task_id,
+        reason="reopen_task",
+        by_actor="system",
     )
     return get_task(db, task_id)
 

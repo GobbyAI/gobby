@@ -94,6 +94,13 @@ async def spawn_agent(
             initial_variables["_agent_rules"] = agent_body.workflows.rules
         if agent_body.workflows.variables:
             initial_variables.update(agent_body.workflows.variables)
+        if agent_body.steps:
+            from gobby.mcp_proxy.tools.spawn_agent._factory import _register_agent_step_workflow
+
+            initial_variables["_step_workflow_name"] = _register_agent_step_workflow(
+                agent_body,
+                db,
+            )
 
     workflow = (
         agent_body.workflows.pipeline if agent_body and agent_body.workflows.pipeline else None

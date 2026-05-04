@@ -92,7 +92,7 @@ def build_persona_changes(
     if agent_body.blocked_mcp_tools:
         changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools
 
-    if agent_body.steps:
+    if agent_body.steps and is_spawned:
         from gobby.workflows.definitions import WorkflowInstance
         from gobby.workflows.state_manager import WorkflowInstanceManager
 

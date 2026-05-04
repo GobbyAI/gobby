@@ -15,6 +15,7 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._transitions import reset_current_non_ready_stage
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -78,6 +79,7 @@ class BuildTargetControlResult:
     automation_updated: int = 0
     mutexes_cleared: int = 0
     claims_released: int = 0
+    stages_reset: int = 0
     dispatcher_tick: DispatcherTickSummary | None = None
     blocked_reasons: list[str] = field(default_factory=list)
 
@@ -104,6 +106,9 @@ async def build_stop_target(
         task_manager.update_task(task.id, allow_automation=False, unattended=False)
 
     await _cancel_active_agents(db, agents, services=services)
+    mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
+    claims_released = _release_stale_agent_claims(task_manager, db, tasks)
+    stages_reset = _reset_current_stages(db, tasks, reason="build_stop")
 
     return BuildTargetControlResult(
         action="stop",
@@ -112,6 +117,9 @@ async def build_stop_target(
         affected_tasks=_task_summaries(tasks),
         agents=_agent_summaries(agents),
         automation_updated=len(tasks),
+        mutexes_cleared=mutexes_cleared,
+        claims_released=claims_released,
+        stages_reset=stages_reset,
     )
 
 
@@ -195,6 +203,10 @@ async def build_clean_target(
     if delete_errors:
         raise ValueError("; ".join(delete_errors))
 
+    mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
+    claims_released = _release_stale_agent_claims(task_manager, db, tasks)
+    stages_reset = _reset_current_stages(db, tasks, reason="build_clean")
+
     return BuildTargetControlResult(
         action="clean",
         project_id=project_id,
@@ -203,6 +215,9 @@ async def build_clean_target(
         agents=_agent_summaries(agents),
         artifacts=artifacts,
         force=force,
+        mutexes_cleared=mutexes_cleared,
+        claims_released=claims_released,
+        stages_reset=stages_reset,
     )
 
 
@@ -370,6 +385,15 @@ def _clear_stale_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> 
     return cleared
 
 
+def _clear_dispatch_mutexes(db: DatabaseProtocol, task_ids: list[str]) -> int:
+    mutexes = TaskDispatchMutexManager(db)
+    cleared = mutexes.sweep_expired()
+    for task_id in task_ids:
+        if mutexes.force_release(task_id):
+            cleared += 1
+    return cleared
+
+
 def _release_stale_agent_claims(
     task_manager: LocalTaskManager,
     db: DatabaseProtocol,
@@ -408,6 +432,14 @@ def _has_terminal_agent_claim(db: DatabaseProtocol, task_id: str, session_id: st
         (task_id, session_id, session_id, session_id),
     )
     return any(row["status"] not in ACTIVE_AGENT_RUN_STATUSES for row in rows)
+
+
+def _reset_current_stages(db: DatabaseProtocol, tasks: list[Task], *, reason: str) -> int:
+    reset = 0
+    for task in tasks:
+        if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
+            reset += 1
+    return reset
 
 
 def _clean_blockers(

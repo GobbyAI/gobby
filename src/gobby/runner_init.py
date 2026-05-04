@@ -688,6 +688,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             storage=runner.cron_storage,
             agent_runner=runner.agent_runner,
             pipeline_executor=runner.pipeline_executor,
+            services=runner,
         )
         cron_executor.register_handler(
             "dispatch.tick",

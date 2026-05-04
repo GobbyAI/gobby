@@ -118,6 +118,8 @@ def _echo_build_result(result: BuildResult) -> None:
     elif tick.reason:
         line = f"{line} reason={tick.reason}"
     click.echo(line)
+    if tick.reason == "dispatcher_cron_disabled":
+        click.echo("Dispatcher cron is disabled. Run `gobby build resume` to re-enable it.")
 
 
 def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
@@ -242,6 +244,9 @@ def _echo_target_control_result(payload: dict[str, object]) -> None:
     agents = payload.get("agents")
     if isinstance(agents, list):
         click.echo(f"Agents: {len(agents)}")
+    stages_reset = payload.get("stages_reset")
+    if isinstance(stages_reset, int):
+        click.echo(f"Stages reset: {stages_reset}")
     artifacts = payload.get("artifacts")
     if isinstance(artifacts, list):
         deleted = sum(1 for item in artifacts if isinstance(item, dict) and item.get("deleted"))
@@ -396,13 +401,6 @@ def build_stop_command(input_ref: str | None) -> None:
 def build_resume_command(input_ref: str | None) -> None:
     """Resume dispatcher build ticks."""
     _run_build_resume(input_ref)
-
-
-@click.command("unbuild")
-@click.argument("input_ref", metavar="REF")
-def unbuild_command(input_ref: str) -> None:
-    """Stop task-scoped automation for a previously built task."""
-    _run_build_stop(input_ref)
 
 
 def _run_build_stop(input_ref: str | None = None) -> None:

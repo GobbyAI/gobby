@@ -358,6 +358,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert run.agent_name == "backend-developer"
     assert run.task_id == task.id
     assert spawn_kwargs["task_id"] == task.id
+    assert spawn_kwargs["initial_variables"]["_step_workflow_name"] == "backend-developer-steps"
     assert launcher.source == "dispatcher_launcher"
     assert storage.get_mutex(task.id).run_id == "run-services"
 

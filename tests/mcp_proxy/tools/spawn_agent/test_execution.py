@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.isolation import IsolationContext
+from gobby.config.tmux import TmuxConfig
 
 pytestmark = pytest.mark.unit
 
@@ -299,6 +301,8 @@ class TestSpawnAgentPreRegistration:
         mock_runner.run_storage.update_child_session = MagicMock()
         mock_runner.run_storage.update_runtime = MagicMock()
         mock_runner.run_storage.start = MagicMock()
+        registered_run = MagicMock(status="running")
+        mock_runner.run_storage.get.return_value = registered_run
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
@@ -350,6 +354,7 @@ class TestSpawnAgentPreRegistration:
         mock_runner.run_storage.update_child_session = MagicMock()
         mock_runner.run_storage.update_runtime = MagicMock()
         mock_runner.run_storage.start = MagicMock()
+        mock_runner.run_storage.get.return_value = MagicMock(status="running")
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
         health_task = MagicMock()
@@ -399,11 +404,81 @@ class TestSpawnAgentPreRegistration:
         assert result["tmux_session_name"] == "gobby-agent"
         assert result["tmux_socket_name"] == "gobby"
         assert result["tmux_socket_path"] == "/tmp/tmux-1000/gobby"
+        mock_runner.run_storage.start.assert_not_called()
         mock_health.assert_awaited_once_with(
             "gobby-agent",
             socket_name="gobby",
             socket_path="/tmp/tmux-1000/gobby",
         )
+
+    @pytest.mark.asyncio
+    async def test_tmux_registration_timeout_fails_run(self, mock_runner, agent_body):
+        """A live tmux pane that never registers is a spawn failure."""
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        mock_runner.run_storage = MagicMock()
+        mock_runner.run_storage.has_active_run_for_task.return_value = False
+        mock_runner.run_storage.update_child_session = MagicMock()
+        mock_runner.run_storage.update_runtime = MagicMock()
+        mock_runner.run_storage.start = MagicMock()
+        mock_runner.run_storage.fail = MagicMock()
+        mock_runner.run_storage.get.return_value = MagicMock(status="pending")
+
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            db=MagicMock(),
+            daemon_config=SimpleNamespace(
+                tmux=TmuxConfig(registration_timeout_seconds=0.01),
+            ),
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation._kill_tmux_session",
+                new_callable=AsyncMock,
+            ) as kill_tmux,
+        ):
+            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_execute.return_value = MagicMock(
+                success=True,
+                run_id="run-canonical",
+                child_session_id="child-456",
+                status="pending",
+                pid=12345,
+                terminal_type="tmux",
+                tmux_session_name="gobby-agent-timeout",
+                tmux_socket_name="gobby",
+                tmux_socket_path=None,
+                message="Spawned",
+            )
+
+            result = await registry.call(
+                "spawn_agent",
+                {"prompt": "Test", "parent_session_id": "parent-789"},
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "agent_did_not_register"
+        kill_tmux.assert_awaited_once()
+        mock_runner.run_storage.start.assert_not_called()
+        mock_runner.run_storage.update_child_session.assert_not_called()
+        mock_runner.run_storage.fail.assert_called_once()
+        assert mock_runner.run_storage.fail.call_args.kwargs["error"] == "agent_did_not_register"
 
     @pytest.mark.asyncio
     async def test_status_not_transitioned_on_spawn_failure(self, mock_runner, agent_body):

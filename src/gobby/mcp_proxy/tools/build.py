@@ -26,6 +26,11 @@ BuildProfileName = Literal[
 ]
 BuildIsolation = Literal["none", "worktree", "clone"]
 
+DISPATCHER_CRON_DISABLED_MESSAGE = (
+    "dispatcher_cron_disabled: dispatcher cron is disabled. "
+    "Run `gobby build resume` to re-enable build automation."
+)
+
 
 def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
     """Create the build tool registry."""
@@ -81,7 +86,15 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             project_id=resolved_project_id,
             services=get_app_context(),
         )
-        return asdict(result)
+        payload = asdict(result)
+        dispatcher_tick = payload.get("dispatcher_tick")
+        if (
+            isinstance(dispatcher_tick, dict)
+            and dispatcher_tick.get("reason") == "dispatcher_cron_disabled"
+        ):
+            payload["dispatcher_cron_disabled"] = True
+            payload["message"] = DISPATCHER_CRON_DISABLED_MESSAGE
+        return payload
 
     registry.register(
         name="build_task",

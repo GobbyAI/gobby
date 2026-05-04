@@ -8,7 +8,7 @@ from gobby.config.app import load_config
 
 from .agents import agents
 from .auth import auth
-from .build import build_command, unbuild_command
+from .build import build_command
 from .clones import clones
 from .communications import comms
 from .cron import cron
@@ -100,6 +100,5 @@ cli.add_command(pack)
 cli.add_command(unpack)
 cli.add_command(comms)
 cli.add_command(build_command)
-cli.add_command(unbuild_command)
 cli.add_command(plan)
 cli.add_command(plans)

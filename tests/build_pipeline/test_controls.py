@@ -97,6 +97,83 @@ async def test_stop_disables_leaf_automation_and_cancels_active_agent(
 
 
 @pytest.mark.asyncio
+async def test_stop_clears_runtime_claim_and_resets_current_stage(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.build.controls import build_stop_target
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+    from tests.storage.tasks._stage_test_helpers import (
+        initialize_manifest,
+        lifecycle_events,
+        set_stage_state,
+        spec,
+        stage_row,
+    )
+
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Phantom build",
+        category="code",
+        task_type="task",
+    )
+    task_manager.update_task(task.id, allow_automation=True, unattended=True)
+    initialize_manifest(temp_db, task.id, [spec("development", 0)])
+    set_stage_state(temp_db, task.id, "development", "in_progress", work_attempt_count=1)
+
+    sessions = SessionManager(temp_db)
+    parent = sessions.register(
+        external_id="phantom-parent",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    child = sessions.register(
+        external_id="phantom-child",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        parent_session_id=parent.id,
+    )
+    task_manager.claim_task(task.id, session_id=child.id)
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="work",
+        task_id=task.id,
+        run_id="run-phantom",
+    )
+    run_manager.start(run.id)
+    TaskDispatchMutexManager(temp_db).acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="spawn_agent",
+        ttl_seconds=300,
+        run_id=run.id,
+    )
+
+    with patch("gobby.build.controls.kill_agent", new=AsyncMock(return_value={"success": True})):
+        result = await build_stop_target(
+            f"#{task.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+        )
+
+    updated = task_manager.get_task(task.id)
+    assert updated.claimed_by_session_id is None
+    assert updated.assignee is None
+    assert TaskDispatchMutexManager(temp_db).get_mutex(task.id) is None
+    assert stage_row(temp_db, task.id, "development")["state"] == "ready"
+    assert result.claims_released == 1
+    assert result.mutexes_cleared >= 1
+    assert result.stages_reset == 1
+    assert lifecycle_events(temp_db, task.id)[-1]["reason"] == "build_stop"
+
+
+@pytest.mark.asyncio
 async def test_stop_prevents_dispatcher_respawn_on_next_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -250,6 +327,76 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
     assert LocalCloneManager(temp_db).get(clone.id) is None
     assert artifacts.clone_path is None
     assert artifacts.clone_id is None
+
+
+@pytest.mark.asyncio
+async def test_clean_force_resets_runtime_state_without_artifacts(
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_clean_target
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+    from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
+
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Clean phantom state",
+        category="code",
+        task_type="task",
+    )
+    initialize_manifest(temp_db, task.id, [spec("development", 0)])
+    set_stage_state(temp_db, task.id, "development", "in_progress")
+
+    sessions = SessionManager(temp_db)
+    parent = sessions.register(
+        external_id="clean-parent",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    child = sessions.register(
+        external_id="clean-child",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        parent_session_id=parent.id,
+    )
+    task_manager.claim_task(task.id, session_id=child.id)
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id=parent.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="work",
+        task_id=task.id,
+        run_id="run-clean-phantom",
+    )
+    run_manager.start(run.id)
+    TaskDispatchMutexManager(temp_db).acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="spawn_agent",
+        ttl_seconds=300,
+        run_id=run.id,
+    )
+
+    with patch("gobby.build.controls.kill_agent", new=AsyncMock(return_value={"success": True})):
+        result = await build_clean_target(
+            f"#{task.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+            force=True,
+            yes=True,
+        )
+
+    assert task_manager.get_task(task.id).claimed_by_session_id is None
+    assert TaskDispatchMutexManager(temp_db).get_mutex(task.id) is None
+    assert result.claims_released == 1
+    assert result.mutexes_cleared >= 1
+    assert result.stages_reset == 1
 
 
 @pytest.mark.asyncio

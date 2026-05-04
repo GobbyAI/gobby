@@ -76,6 +76,14 @@ class TmuxConfig(BaseModel):
             "considered initialized."
         ),
     )
+    registration_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description=(
+            "Seconds to wait after tmux live-pane verification for the spawned runtime "
+            "to register its child session."
+        ),
+    )
     auto_enter_approval_prompts: bool = Field(
         default=True,
         description="Automatically send Enter for spawned-agent approval prompts.",

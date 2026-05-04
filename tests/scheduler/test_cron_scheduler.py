@@ -264,6 +264,70 @@ async def test_run_now(
 
 
 @pytest.mark.asyncio
+async def test_run_now_executes_in_empty_session_context(
+    cron_storage: CronJobStorage,
+    config: CronConfig,
+    temp_db: LocalDatabase,
+    sample_project,
+) -> None:
+    """Manual cron ticks must not inherit the caller session context."""
+    from gobby.mcp_proxy.tools.cron import create_cron_registry
+    from gobby.storage.sessions import SessionManager
+    from gobby.utils.project_context import get_project_context
+    from gobby.utils.session_context import get_current_session_id, session_context_for_test
+    from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+
+    executor = CronExecutor(storage=cron_storage)
+    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    seen: dict[str, object] = {}
+
+    async def dispatch_tick_handler(job) -> str:
+        current_session = get_current_session_id()
+        seen["session_id"] = current_session
+        project_ctx = get_project_context()
+        seen["project_id"] = project_ctx.get("id") if project_ctx else None
+        if current_session:
+            SessionVariableManager(temp_db).set_variable(
+                current_session,
+                "_agent_type",
+                "backend-developer",
+            )
+        return "tick"
+
+    executor.register_handler("dispatch.tick", dispatch_tick_handler)
+    job = cron_storage.create_job(
+        project_id=sample_project["id"],
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+    )
+    caller = SessionManager(temp_db).register(
+        external_id="cron-caller",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    registry = create_cron_registry(cron_storage, scheduler)
+    run_cron_job = registry.get_tool("run_cron_job")
+
+    with session_context_for_test(caller.id):
+        result = await run_cron_job(job.id)
+
+    if scheduler._active_tasks:
+        await asyncio.gather(*list(scheduler._active_tasks), return_exceptions=True)
+
+    assert result["success"] is True
+    assert seen == {"session_id": None, "project_id": sample_project["id"]}
+    caller_vars = SessionVariableManager(temp_db).get_variables(caller.id)
+    assert "_agent_type" not in caller_vars
+    assert (
+        WorkflowInstanceManager(temp_db).get_instance(caller.id, "backend-developer-steps") is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_now_nonexistent_job(scheduler: CronScheduler) -> None:
     """run_now returns None for non-existent job."""
     result = await scheduler.run_now("cj-nonexistent")

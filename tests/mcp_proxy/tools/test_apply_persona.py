@@ -133,7 +133,7 @@ class TestBuildPersonaChanges:
 
         assert changes["_skill_format"] == "compact"
 
-    def test_step_workflow_creates_instance(self, db: LocalDatabase) -> None:
+    def test_step_workflow_not_created_for_caller_persona(self, db: LocalDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
         from gobby.workflows.definitions import WorkflowStep
 
@@ -162,12 +162,46 @@ class TestBuildPersonaChanges:
             db=db,
         )
 
-        assert changes["_step_workflow_name"] == "stepper-steps"
-        assert changes["step_workflow_complete"] is False
+        assert "_step_workflow_name" not in changes
+        assert "step_workflow_complete" not in changes
 
-        # Verify the instance was persisted
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
+        instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
+        assert instance is None
+
+    def test_step_workflow_creates_instance_for_spawned_session(self, db: LocalDatabase) -> None:
+        from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
+        from gobby.workflows.definitions import WorkflowStep
+        from gobby.workflows.state_manager import WorkflowInstanceManager
+
+        db.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj-2", "test-project-2", "/tmp/test"),
+        )
+        session_id = "sess-spawned-step-test"
+        db.execute(
+            "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, "ext-2", "proj-2", "machine-1", "test", "active"),
+        )
+
+        agent = AgentDefinitionBody(
+            name="stepper",
+            steps=[
+                WorkflowStep(name="plan", instructions="Plan the work"),
+                WorkflowStep(name="execute", instructions="Do the work"),
+            ],
+        )
+        changes, _, _ = build_persona_changes(
+            agent_body=agent,
+            session_id=session_id,
+            db=db,
+            is_spawned=True,
+        )
+
+        assert changes["_step_workflow_name"] == "stepper-steps"
+        assert changes["step_workflow_complete"] is False
         instance = WorkflowInstanceManager(db).get_instance(session_id, "stepper-steps")
         assert instance is not None
         assert instance.workflow_name == "stepper-steps"

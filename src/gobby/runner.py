@@ -117,6 +117,12 @@ def install_dispatcher_cron_row(db: DatabaseProtocol, *, project_id: str) -> Cro
 
     reconciled = storage.reconcile_system_job_definition(
         existing.id,
+        description=DISPATCHER_CRON_DESCRIPTION,
+        schedule_type="interval",
+        cron_expr=None,
+        interval_seconds=DISPATCHER_CRON_INTERVAL_SECONDS,
+        run_at=None,
+        timezone="UTC",
         action_type="handler",
         action_config=DISPATCHER_CRON_ACTION_CONFIG,
     )

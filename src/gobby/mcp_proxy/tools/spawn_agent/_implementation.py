@@ -20,6 +20,8 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
+from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
@@ -131,6 +133,62 @@ def _initial_step_state_for_spawn(
     current_step = _advance_initial_step(agent_body, current_step, step_variables)
 
     return current_step, step_variables
+
+
+def _tmux_config_for_spawn(
+    daemon_config: Any | None,
+    *,
+    socket_name: str | None,
+    socket_path: str | None,
+) -> TmuxConfig:
+    config = getattr(daemon_config, "tmux", None)
+    if not isinstance(config, TmuxConfig):
+        config = TmuxConfig()
+    if socket_name is not None or socket_path is not None:
+        config = config.model_copy(
+            update={
+                "socket_name": config.socket_name if socket_name is None else socket_name,
+                "socket_path": socket_path,
+            }
+        )
+    return config
+
+
+async def _wait_for_agent_registration(
+    run_storage: Any,
+    run_id: str,
+    *,
+    timeout_seconds: float,
+) -> bool:
+    """Wait for SessionStart to move a spawned terminal run out of pending."""
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        run = run_storage.get(run_id)
+        status = getattr(run, "status", None)
+        if status == "running":
+            return True
+        if status in {"success", "error", "timeout", "cancelled"}:
+            return False
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(0.25, remaining))
+
+
+async def _kill_tmux_session(
+    session_name: str,
+    *,
+    config: TmuxConfig,
+) -> None:
+    manager = TmuxSessionManager(config)
+    if not manager.is_available():
+        return
+    try:
+        await manager.kill_session(session_name)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to kill unregistered tmux session %s: %s", session_name, exc)
 
 
 async def spawn_agent_impl(
@@ -572,7 +630,10 @@ async def spawn_agent_impl(
     if not isinstance(tmux_socket_path, str):
         tmux_socket_path = None
 
-    if spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name:
+    tmux_spawn = bool(
+        spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
+    )
+    if tmux_spawn and tmux_session_name:
         alive = await _check_tmux_session_alive(
             tmux_session_name,
             socket_name=tmux_socket_name,
@@ -582,6 +643,24 @@ async def spawn_agent_impl(
             spawn_result.success = False
             spawn_result.status = "failed"
             spawn_result.error = f"tmux session '{tmux_session_name}' failed live-pane verification"
+            tmux_spawn = False
+
+    if tmux_spawn and tmux_session_name:
+        tmux_config = _tmux_config_for_spawn(
+            daemon_config,
+            socket_name=tmux_socket_name,
+            socket_path=tmux_socket_path,
+        )
+        registered = await _wait_for_agent_registration(
+            runner.run_storage,
+            run_id,
+            timeout_seconds=tmux_config.registration_timeout_seconds,
+        )
+        if not registered:
+            await _kill_tmux_session(tmux_session_name, config=tmux_config)
+            spawn_result.success = False
+            spawn_result.status = "failed"
+            spawn_result.error = "agent_did_not_register"
 
     # 12. Update DB and handle post-spawn setup based on spawn result
     if spawn_result.success and spawn_result.child_session_id is not None:
@@ -602,15 +681,11 @@ async def spawn_agent_impl(
         except Exception as e:
             logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
 
-        # Flip agent_runs.status from 'pending' to 'running' now that we have a
-        # live PID. Don't wait for the child session's SessionStart hook —
-        # SessionCoordinator.start_agent_run stays idempotent (returns False
-        # when status is no longer 'pending') so a later hook-driven call is a
-        # safe no-op. See hooks/session_coordinator.py:313.
-        try:
-            runner.run_storage.start(run_id)
-        except Exception as e:
-            logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
+        if not tmux_spawn:
+            try:
+                runner.run_storage.start(run_id)
+            except Exception as e:
+                logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
 
         # Fire agent_started event for WebSocket broadcasting
         try:

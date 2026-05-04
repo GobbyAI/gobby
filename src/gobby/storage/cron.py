@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -367,8 +368,14 @@ class CronJobStorage:
         *,
         action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
         action_config: dict[str, Any],
+        description: str | None | _Unset = UNSET,
+        schedule_type: Literal["cron", "interval", "once"] | _Unset = UNSET,
+        cron_expr: str | None | _Unset = UNSET,
+        interval_seconds: int | None | _Unset = UNSET,
+        run_at: str | None | _Unset = UNSET,
+        timezone: str | _Unset = UNSET,
     ) -> CronJob | None:
-        """Repair bundled action fields on an existing system cron job."""
+        """Repair bundled definition fields on an existing system cron job."""
         job = self.get_job(job_id)
         if job is None:
             return None
@@ -377,15 +384,33 @@ class CronJobStorage:
                 f"Cron row {job_id} is non-system; reconcile_system_job_definition "
                 "is reserved for gobby-managed system cron rows."
             )
-        if job.action_type == action_type and job.action_config == action_config:
+
+        fields: dict[str, Any] = {}
+        desired: dict[str, Any] = {
+            "action_type": action_type,
+            "action_config": action_config,
+        }
+        optional = {
+            "description": description,
+            "schedule_type": schedule_type,
+            "cron_expr": cron_expr,
+            "interval_seconds": interval_seconds,
+            "run_at": run_at,
+            "timezone": timezone,
+        }
+        desired.update({key: value for key, value in optional.items() if value is not UNSET})
+        for key, value in desired.items():
+            if getattr(job, key) != value:
+                fields[key] = value
+
+        if not fields:
             return job
 
-        return self._update_job_fields(
-            job_id,
-            action_type=action_type,
-            action_config=action_config,
-            updated_at=_utc_now_iso(),
-        )
+        candidate = replace(job, **fields)
+        next_run = compute_next_run(candidate) if candidate.enabled else None
+        fields["next_run_at"] = next_run.isoformat() if next_run else None
+        fields["updated_at"] = _utc_now_iso()
+        return self._update_job_fields(job_id, **fields)
 
     def delete_job(self, job_id: str) -> bool:
         """Delete a cron job and its runs."""

@@ -116,7 +116,18 @@ def _parse_stage_insertion(value: str) -> StageInsertion:
 
 
 def _build_result_json(result: BuildResult) -> dict[str, Any]:
-    return asdict(result)
+    payload = asdict(result)
+    dispatcher_tick = payload.get("dispatcher_tick")
+    if (
+        isinstance(dispatcher_tick, dict)
+        and dispatcher_tick.get("reason") == "dispatcher_cron_disabled"
+    ):
+        payload["dispatcher_cron_disabled"] = True
+        payload["message"] = (
+            "dispatcher_cron_disabled: dispatcher cron is disabled. "
+            "Run `gobby build resume` to re-enable build automation."
+        )
+    return payload
 
 
 def _result_json(result: BuildControlResult | BuildTargetControlResult) -> dict[str, Any]:

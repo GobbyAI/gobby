@@ -193,35 +193,13 @@ def test_build_stop_cli_accepts_task_ref() -> None:
     assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
 
 
-def test_unbuild_cli_stops_task_ref() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+def test_unbuild_cli_is_not_registered() -> None:
     from gobby.cli import cli
 
-    control_result = BuildTargetControlResult(
-        action="stop",
-        project_id="project-1",
-        root_task_id="task-1",
-        affected_tasks=[
-            BuildTaskSummary("task-1", "#1", "Task", "task"),
-        ],
-        automation_updated=1,
-    )
+    result = CliRunner().invoke(cli, ["unbuild", "#1"])
 
-    with (
-        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build.LocalDatabase") as db_cls,
-        patch("gobby.cli.build.run_migrations"),
-        patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
-        patch("gobby.cli.build.build_stop_target", new=AsyncMock()) as stop_target,
-    ):
-        result = CliRunner().invoke(cli, ["unbuild", "#1"])
-
-    assert result.exit_code == 0
-    assert "Build stop: task-scoped" in result.output
-    run.assert_called_once()
-    call = stop_target.call_args
-    assert call.args[0] == "#1"
-    assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
+    assert result.exit_code != 0
+    assert "No such command 'unbuild'" in result.output
 
 
 def test_build_clean_cli_requires_task_ref() -> None:
