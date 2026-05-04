@@ -1564,7 +1564,7 @@ class TestWorktreeGitManagerBranchCoverage:
         assert status.has_uncommitted_changes is False
 
 
-@patch("gobby.worktrees.git.subprocess.run")
+@patch("gobby.worktrees.git._runner.subprocess.run")
 class TestWorktreeGitManagerGetDefaultBranch:
     """Tests for get_default_branch method."""
 
