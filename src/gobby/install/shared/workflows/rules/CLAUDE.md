@@ -1,6 +1,6 @@
 # Rule Templates Reference
 
-This directory contains 16 bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing DB rows are never overwritten; drift is detected via hash comparison. See `../CLAUDE.md` for the template vs active enforcement distinction.
+This directory contains bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing installed bundled rows are refreshed when template content changes while preserving the user's enabled toggle. Rules under `deprecated/` are excluded from sync, and existing bundled rows whose templates were removed are soft-deleted as orphans. See `../CLAUDE.md` for the template vs active enforcement distinction.
 
 ## Rule Groups
 

@@ -48,7 +48,7 @@ class TestToolHygieneSync:
         rules = manager.list_all(workflow_type="rule")
         rule_names = {r.name for r in rules}
 
-        assert "block-escaped-quotes" in rule_names
+        assert "block-escaped-quotes" not in rule_names
         assert "require-uv" in rule_names
         assert "track-pending-memory-review" in rule_names
 
@@ -58,7 +58,7 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"block-escaped-quotes", "require-uv", "track-pending-memory-review"}:
+            if row.name in {"require-uv", "track-pending-memory-review"}:
                 body = json.loads(row.definition_json)
                 assert body.get("group") == "tool-hygiene", f"{row.name} missing group"
 
@@ -68,33 +68,34 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"block-escaped-quotes", "require-uv", "track-pending-memory-review"}:
+            if row.name in {"require-uv", "track-pending-memory-review"}:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 effect_types = {e.type for e in body.resolved_effects}
                 assert effect_types <= {"block", "set_variable", "rewrite_input", "inject_context"}
 
+    def test_deprecated_block_escaped_quotes_rule_is_orphaned(self, db, manager) -> None:
+        """Bundled sync soft-deletes the retired block-escaped-quotes rule."""
+        body = RuleDefinitionBody(
+            event="before_tool",
+            effects=[RuleEffect(type="block", reason="retired rule")],
+            group="tool-hygiene",
+        )
+        manager.create(
+            name="block-escaped-quotes",
+            definition_json=body.model_dump_json(),
+            workflow_type="rule",
+            enabled=True,
+            priority=20,
+            tags=["tool-hygiene", "gobby"],
+            source="installed",
+        )
 
-class TestBlockEscapedQuotesRule:
-    """Verify block-escaped-quotes uses the grouped rule schema."""
-
-    def test_event_and_effect(self, db, manager) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("block-escaped-quotes")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_tool"
-        assert body.effects[0].type == "block"
-
-    def test_reason_mentions_escaped_quotes(self, db, manager) -> None:
-        _sync_bundled(db)
-
-        row = manager.get_by_name("block-escaped-quotes")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.effects[0].reason is not None
-        assert "escaped quotes" in body.effects[0].reason.lower()
+        assert manager.get_by_name("block-escaped-quotes") is None
+        deleted = manager.get_by_name("block-escaped-quotes", include_deleted=True)
+        assert deleted is not None
+        assert deleted.deleted_at is not None
 
 
 REQUIRE_UV_REASON = "Bare python/pip is not permitted in this repo. Use uv instead."
