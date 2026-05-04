@@ -67,8 +67,7 @@ export function useTTSPlayback({
 
     if (!resumePromiseRef.current || resumeContextRef.current !== ctx) {
       resumeContextRef.current = ctx
-      let resumePromise: Promise<AudioContext | null>
-      resumePromise = ctx.resume()
+      const resumePromise: Promise<AudioContext | null> = ctx.resume()
         .then(() => (ctx.state === 'running' ? ctx : null))
         .catch((err) => {
           console.error('Voice: Failed to resume AudioContext:', err)
