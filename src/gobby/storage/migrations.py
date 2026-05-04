@@ -420,6 +420,15 @@ def _apply_config_store_cleanup(db: LocalDatabase) -> None:
         )
 
 
+def _apply_dispatch_mutex_run_id_index(db: LocalDatabase) -> None:
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_dispatch_mutex_run_id
+            ON task_dispatch_mutex(run_id)
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         240,
@@ -433,6 +442,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (245, "Add unique linked GitHub issue task index", _apply_github_issue_task_link_index),
     (246, "Add generic stage dispatch target columns", _apply_stage_dispatch_schema),
     (247, "Add managed native binary update state", _apply_bin_update_state_schema),
+    (248, "Add dispatch mutex run id lookup index", _apply_dispatch_mutex_run_id_index),
 ]
 
 

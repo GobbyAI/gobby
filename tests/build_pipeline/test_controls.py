@@ -280,3 +280,19 @@ async def test_restart_dry_run_reports_restart_without_mutating_task(
     assert result.action == "restart"
     assert result.dry_run is True
     assert task_manager.get_task(task.id).allow_automation is True
+
+
+def test_default_branch_dir_name_uses_untitled_for_empty_slug(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.build.controls import _default_branch_dir_name
+
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="!!!",
+        category="code",
+        task_type="task",
+    )
+
+    assert _default_branch_dir_name(task) == f"task-{task.seq_num}-untitled"

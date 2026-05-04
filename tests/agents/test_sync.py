@@ -424,7 +424,8 @@ class TestSyncBundledAgents:
         names = [r.name for r in rows]
         # Check for agents from the new-format bundled definitions
         assert "default" in names
-        assert "developer" in names
+        assert "backend-developer" in names
+        assert "frontend-developer" in names
         assert "qa-reviewer" in names
         assert all(
             n in names
@@ -440,4 +441,5 @@ class TestSyncBundledAgents:
         )
         assert "requirements-analyst" not in names
         assert "conductor" not in names
+        assert "developer" not in names
         assert "pipeline-worker" not in names

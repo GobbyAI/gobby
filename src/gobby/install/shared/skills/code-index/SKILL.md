@@ -9,7 +9,7 @@ metadata:
 
 # Code Index (gcode)
 
-This project is indexed. Use `gcode` via Bash for fast code search and navigation — saves 90%+ tokens vs reading entire files.
+This project is indexed. Use `gcode` via the shell for fast code search and navigation — saves 90%+ tokens vs reading entire files.
 
 ## Search
 
@@ -22,7 +22,7 @@ Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use
 
 ## Retrieval
 
-- `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than Read)
+- `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than reading the whole file)
 - `gcode symbol <id>` — retrieve just the source you need (O(1) via byte offsets)
 - `gcode symbols <id1> <id2> ...` — batch-retrieve multiple symbols
 

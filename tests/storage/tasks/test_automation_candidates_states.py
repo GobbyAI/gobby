@@ -4,6 +4,7 @@ import pytest
 
 from gobby.storage.tasks._crud import list_automation_candidates
 from gobby.storage.tasks._models import Isolation
+from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
     initialize_manifest,
@@ -36,8 +37,7 @@ def test_list_automation_candidates_includes_stage_actionable_states(
     sample_project,
 ) -> None:
     actionable = {
-        state: _task_at_stage(temp_db, sample_project, state)
-        for state in ("ready", "in_progress", "needs_review", "review_approved")
+        state: _task_at_stage(temp_db, sample_project, state) for state in ACTIVE_STAGE_STATES
     }
 
     candidate_ids = {

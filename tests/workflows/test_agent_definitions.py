@@ -139,7 +139,6 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
 @pytest.mark.parametrize(
     ("agent_name", "tool_words"),
     [
-        ("developer", {"pytest", "ruff", "uv", "npm", "playwright"}),
         ("frontend-developer", {"npm", "pnpm", "yarn", "playwright", "vite", "eslint"}),
         ("backend-developer", {"pytest", "mypy", "ruff", "sqlite3", "uv", "poetry"}),
     ],

@@ -233,3 +233,24 @@ def test_pipeline_cancelled_escalates_stage_and_releases_mutex(temp_db, sample_p
     assert stage.state == "ready"
     assert manager.get_task(task.id).is_escalated is True
     assert storage.get_mutex(task.id) is None
+
+
+def test_pipeline_failed_illegal_transition_is_ignored_after_mutex_release(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.hooks.event_handlers import _dispatch
+
+    manager, task, storage = _stage_pipeline_task(
+        temp_db,
+        sample_project,
+        requested="ready",
+    )
+
+    result = _dispatch.on_pipeline_failed(
+        {"execution_id": "pe-1", "error": "boom"}, db=temp_db, storage=storage
+    )
+
+    assert result is None
+    assert manager.stage_states.get(task.id, "expansion").state == "ready"
+    assert storage.get_mutex(task.id) is None

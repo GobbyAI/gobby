@@ -281,8 +281,8 @@ class GeminiWebChatBackend:
         self._display_name = display_name
         self._sandbox_config = sandbox_config
         self._start_timeout_seconds = start_timeout_seconds
-        # Gemini CLI's ACP bootstrap currently hangs on macOS when launched with
-        # the daemon's full-process Seatbelt flags. Keep daemon-owned ACP
+        # Gemini CLI ACP bootstrap currently hangs on macOS when launched with
+        # daemon-wide Seatbelt flags. Keep daemon-owned ACP
         # startup unsandboxed and let Gemini's own tool sandboxing handle tool
         # execution inside interactive sessions.
         self._client = client or GeminiACPClient(

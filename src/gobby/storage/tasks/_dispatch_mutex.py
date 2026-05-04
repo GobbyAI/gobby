@@ -67,6 +67,12 @@ class TaskDispatchMutexManager:
                     ON task_dispatch_mutex (lease_until, run_id)
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_dispatch_mutex_run_id
+                    ON task_dispatch_mutex (run_id)
+                """
+            )
 
     def get_mutex(self, task_id: str) -> DispatchMutex | None:
         row = self.db.fetchone(

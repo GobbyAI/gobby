@@ -703,7 +703,7 @@ def _workflow_mcp_inventory(
 
 
 class _WorkflowMCPInventory:
-    """Combined internal/external MCP inventory for workflow semantic checks."""
+    """Combined internal and external MCP inventory for workflow semantic checks."""
 
     def __init__(
         self,

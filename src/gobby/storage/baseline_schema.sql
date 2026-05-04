@@ -410,6 +410,7 @@ CREATE TABLE task_dispatch_mutex (
 );
 
 CREATE INDEX idx_dispatch_mutex_scan ON task_dispatch_mutex(lease_until, run_id);
+CREATE INDEX idx_dispatch_mutex_run_id ON task_dispatch_mutex(run_id);
 
 CREATE TABLE task_lifecycle_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

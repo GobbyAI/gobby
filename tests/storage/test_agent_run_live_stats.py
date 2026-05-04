@@ -5,6 +5,7 @@ import pytest
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -107,6 +108,44 @@ def test_active_read_methods_use_child_session_stats(
         assert read_run is not None, method
         assert read_run.tool_calls_count == 130, method
         assert read_run.turns_used == 78, method
+
+
+def test_list_active_filters_by_task_ids_in_sql(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict,
+    temp_db: LocalDatabase,
+) -> None:
+    """Task-scoped active-run lookup should only return matching task IDs."""
+    parent_id = _register_session(session_manager, sample_project, "parent-filter")
+    task_manager = LocalTaskManager(temp_db)
+    included_task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Included",
+    )
+    excluded_task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Excluded",
+    )
+    included = agent_manager.create(
+        parent_session_id=parent_id,
+        provider="claude",
+        prompt="included",
+        task_id=included_task.id,
+    )
+    excluded = agent_manager.create(
+        parent_session_id=parent_id,
+        provider="claude",
+        prompt="excluded",
+        task_id=excluded_task.id,
+    )
+    agent_manager.start(included.id)
+    agent_manager.start(excluded.id)
+
+    runs = agent_manager.list_active(task_ids=[included_task.id])
+
+    assert [run.id for run in runs] == [included.id]
+    assert agent_manager.list_active(task_ids=[]) == []
 
 
 def test_active_run_without_child_session_uses_parent_session_stats(

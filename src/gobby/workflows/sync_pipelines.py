@@ -15,7 +15,7 @@ import yaml
 from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ def iter_bundled_pipeline_files(pipelines_path: Path) -> list[Path]:
     return root_files + pipeline_files
 
 
-def _is_sync_managed_bundled_pipeline(existing: Any) -> bool:
+def _is_sync_managed_bundled_pipeline(existing: WorkflowDefinitionRow) -> bool:
     """Return whether an existing row is safe for bundled pipeline sync to own."""
     return (
         existing.project_id is None
@@ -53,7 +53,7 @@ def _is_sync_managed_bundled_pipeline(existing: Any) -> bool:
 
 
 def _build_pipeline_update_fields(
-    existing: Any,
+    existing: WorkflowDefinitionRow,
     *,
     definition_json: str,
     description: str,

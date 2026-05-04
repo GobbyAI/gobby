@@ -8,8 +8,6 @@ The adversary writes only into the planning task's description (via
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import yaml
 
@@ -18,19 +16,10 @@ from gobby.workflows.definitions import AgentDefinitionBody
 pytestmark = pytest.mark.unit
 
 
-def _repo_root() -> Path:
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "pyproject.toml").exists():
-            return parent
-    raise AssertionError("repo root not found from test file path")
-
-
-ADVERSARY_PATH = _repo_root() / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
-
-
 @pytest.fixture(scope="module")
-def agent() -> AgentDefinitionBody:
-    with ADVERSARY_PATH.open() as f:
+def agent(repo_root) -> AgentDefinitionBody:
+    adversary_path = repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
+    with adversary_path.open() as f:
         data = yaml.safe_load(f)
     return AgentDefinitionBody.model_validate(data)
 

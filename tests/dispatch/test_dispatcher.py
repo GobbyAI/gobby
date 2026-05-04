@@ -1,10 +1,10 @@
 """Dispatcher heartbeat scanner tests."""
 
 import asyncio
+import logging
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -518,9 +518,7 @@ async def test_start_pipeline_action_links_execution_id(
     assert mutex.action_kind == "stage-pipeline:expansion"
 
 
-def test_dispatcher_run_heartbeat_cold_imports() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-
+def test_dispatcher_run_heartbeat_cold_imports(repo_root) -> None:
     result = subprocess.run(
         [
             sys.executable,
@@ -535,6 +533,32 @@ def test_dispatcher_run_heartbeat_cold_imports() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "run_heartbeat"
+
+
+def test_dispatch_inputs_invalid_json_logs_debug(
+    caplog: pytest.LogCaptureFixture,
+    enable_log_propagation: None,
+) -> None:
+    from gobby.dispatch import rules
+
+    registry_entry = SimpleNamespace(
+        id="registry-1",
+        stage_name="expansion",
+        dispatch_inputs_json='{"invalid"',
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.dispatch.rules"):
+        assert rules._dispatch_inputs(registry_entry) == {}
+
+    records = [
+        record
+        for record in caplog.records
+        if record.message == "Invalid stage registry dispatch_inputs_json; ignoring"
+    ]
+    assert len(records) == 1
+    assert records[0].registry_entry == {"id": "registry-1", "stage_name": "expansion"}
+    assert records[0].raw_dispatch_inputs_json == '{"invalid"'
+    assert "Expecting" in records[0].error
 
 
 def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_project) -> None:

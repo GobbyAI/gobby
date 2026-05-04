@@ -21,6 +21,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -1268,12 +1269,7 @@ class TestClaimedTaskReconciliation:
         task_manager.list_tasks.assert_called_once()
         call_kwargs = task_manager.list_tasks.call_args.kwargs
         assert call_kwargs["claimed_by_session_id"] == "sess-1"
-        assert set(call_kwargs["current_stage_state"]) == {
-            "ready",
-            "in_progress",
-            "needs_review",
-            "review_approved",
-        }
+        assert set(call_kwargs["current_stage_state"]) == set(ACTIVE_STAGE_STATES)
 
     def test_reconcile_rebuilds_with_no_seq_num(self) -> None:
         """DB task without seq_num should use truncated UUID as ref."""

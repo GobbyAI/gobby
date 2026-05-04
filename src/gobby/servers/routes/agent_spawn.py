@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, field_validator
 
-from gobby.agents.launcher_session import get_or_create_launcher_session
+from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.storage.task_dependencies import TaskDependencyManager
@@ -290,7 +290,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             return AgentSpawnResponse(success=False, error="Agent runner unavailable")
 
         # Get parent session for spawning
-        parent_session_id = get_or_create_launcher_session(
+        parent_session_id = await aget_or_create_launcher_session(
             server.services.session_manager,
             effective_project_id,
             "web_launcher",

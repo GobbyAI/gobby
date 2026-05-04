@@ -315,7 +315,7 @@ class TestInitSubsystems:
     async def test_provider_model_discovery_runs_in_background_without_startup_warning(
         self, caplog
     ) -> None:
-        async def slow_refresh(**_kwargs):
+        async def slow_refresh(**_kwargs: object) -> None:
             await asyncio.sleep(10)
 
         provider_catalog = SimpleNamespace(refresh=AsyncMock(side_effect=slow_refresh))

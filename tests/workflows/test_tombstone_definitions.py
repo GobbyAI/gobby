@@ -1,4 +1,4 @@
-"""Tests for retired workflow and agent tombstone definitions."""
+"""Tests for retired workflow and agent deprecated definitions."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def test_no_external_conductor_imports_remain() -> None:
 
 
 @pytest.mark.parametrize("name", RETIRED_PIPELINES)
-def test_retired_pipeline_yaml_is_disabled_tombstone(name: str) -> None:
+def test_retired_pipeline_yaml_is_disabled_deprecated_definition(name: str) -> None:
     active_path = PIPELINES_DIR / f"{name}.yaml"
     deprecated_path = DEPRECATED_PIPELINES_DIR / f"{name}.yaml"
     assert not active_path.exists(), f"retired pipeline remains active: {active_path}"
@@ -83,7 +83,7 @@ def test_retired_pipeline_yaml_is_disabled_tombstone(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)
-def test_retired_agent_yaml_is_disabled_tombstone(name: str) -> None:
+def test_retired_agent_yaml_is_disabled_deprecated_definition(name: str) -> None:
     active_path = AGENTS_DIR / f"{name}.yaml"
     deprecated_path = DEPRECATED_AGENTS_DIR / f"{name}.yaml"
     assert not active_path.exists(), f"retired agent remains active: {active_path}"

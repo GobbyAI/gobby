@@ -352,7 +352,7 @@ def create_spawn_agent_registry(
     )
     async def dispatch_batch(
         suggestions: list[dict[str, Any]],
-        agent: str = "developer",
+        agent: str = "backend-developer",
         worktree_id: str | None = None,
         clone_id: str | None = None,
         isolation: Literal["none", "worktree", "clone"] | None = None,
@@ -369,7 +369,7 @@ def create_spawn_agent_registry(
 
         Args:
             suggestions: Task briefs from suggest_next_task output
-            agent: Agent definition name (default: "developer")
+            agent: Agent definition name (default: "backend-developer")
             worktree_id: Shared worktree ID for all agents
             clone_id: Existing clone ID for all agents
             isolation: Isolation mode (none/worktree/clone)

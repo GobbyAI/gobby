@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -18,19 +17,9 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _find_repo_root(start: Path) -> Path:
-    for path in (start, *start.parents):
-        if (path / "pyproject.toml").is_file():
-            return path
-    raise RuntimeError(f"Could not find repo root from {start}")
-
-
-REPO_ROOT = _find_repo_root(Path(__file__).resolve())
-AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
-
-
-def _bundled_agent_body(name: str) -> AgentDefinitionBody:
-    data = yaml.safe_load((AGENTS_DIR / f"{name}.yaml").read_text())
+def _bundled_agent_body(name: str, repo_root) -> AgentDefinitionBody:
+    agents_dir = repo_root / "src/gobby/install/shared/workflows/agents"
+    data = yaml.safe_load((agents_dir / f"{name}.yaml").read_text())
     return AgentDefinitionBody.model_validate(data)
 
 
@@ -341,6 +330,7 @@ class TestSpawnAgentStepVariables:
         *,
         db,
         mock_runner,
+        repo_root,
         agent_name: str,
         additional_skills: list[str] | None = None,
     ) -> tuple[dict[str, Any], LocalTaskManager, Task, WorkflowInstance | None]:
@@ -381,7 +371,7 @@ class TestSpawnAgentStepVariables:
             session_manager=session_manager,
             db=db,
         )
-        agent_body = _bundled_agent_body(agent_name)
+        agent_body = _bundled_agent_body(agent_name, repo_root)
 
         with (
             patch(
@@ -431,16 +421,18 @@ class TestSpawnAgentStepVariables:
         return result, task_manager, task, instance
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("agent_name", ["developer", "backend-developer", "frontend-developer"])
+    @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_without_additional_skills_starts_at_implement(
         self,
         db,
         mock_runner,
+        repo_root,
         agent_name: str,
     ) -> None:
         result, task_manager, task, instance = await self._spawn_bundled_developer_agent(
             db=db,
             mock_runner=mock_runner,
+            repo_root=repo_root,
             agent_name=agent_name,
         )
 
@@ -453,16 +445,18 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["additional_skills_loaded"] is True
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("agent_name", ["developer", "backend-developer", "frontend-developer"])
+    @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_with_required_skill_waits_for_skill_load(
         self,
         db,
         mock_runner,
+        repo_root,
         agent_name: str,
     ) -> None:
         result, _task_manager, _task, instance = await self._spawn_bundled_developer_agent(
             db=db,
             mock_runner=mock_runner,
+            repo_root=repo_root,
             agent_name=agent_name,
             additional_skills=["code-index"],
         )
@@ -538,7 +532,7 @@ class TestDispatchBatchIsolationParity:
                 "dispatch_batch",
                 {
                     "suggestions": suggestions,
-                    "agent": "developer",
+                    "agent": "backend-developer",
                     "clone_id": "clone-abc",
                     "isolation": "clone",
                     "branch_name": "feat-9981",
@@ -602,7 +596,7 @@ class TestDispatchBatchIsolationParity:
                 "dispatch_batch",
                 {
                     "suggestions": suggestions,
-                    "agent": "developer",
+                    "agent": "backend-developer",
                     "parent_session_id": "parent-789",
                 },
             )

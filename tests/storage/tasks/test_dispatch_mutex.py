@@ -153,6 +153,15 @@ def test_attach_run_id_links_run_to_lease(temp_db, sample_project) -> None:
     assert manager.get_mutex(task.id) is None
 
 
+def test_ensure_table_creates_run_id_index(temp_db) -> None:
+    manager = _manager_class()(temp_db)
+
+    manager.ensure_table()
+
+    indexes = {row["name"] for row in temp_db.fetchall("PRAGMA index_list('task_dispatch_mutex')")}
+    assert "idx_dispatch_mutex_run_id" in indexes
+
+
 def test_sweep_expired(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     stale = task_manager.create_task(project_id=sample_project["id"], title="Stale")

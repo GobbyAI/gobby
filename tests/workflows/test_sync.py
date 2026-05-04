@@ -199,7 +199,7 @@ rules:
 """
         )
 
-        with patch("gobby.workflows.sync_rules.get_bundled_rules_path", return_value=rules_dir):
+        with patch("gobby.workflows.sync_rules.get_bundled_rules_paths", return_value=[rules_dir]):
             sync_bundled_rules(db)
 
             row = manager.get_by_name("bundled-rule")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
@@ -16,6 +17,8 @@ from gobby.dispatch.actions import (
     StartStageAction,
 )
 from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+logger = logging.getLogger(__name__)
 
 Rule = Callable[[object, object], Action | None]
 
@@ -411,12 +414,44 @@ def _dispatch_inputs(registry_entry: object | None) -> dict[str, object]:
     if isinstance(raw, dict):
         return cast(dict[str, object], raw)
     if not isinstance(raw, str):
+        _log_invalid_dispatch_inputs(registry_entry, raw, TypeError("expected str or dict"))
         return {}
     try:
         parsed = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _log_invalid_dispatch_inputs(registry_entry, raw, exc)
         return {}
-    return cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
+    if not isinstance(parsed, dict):
+        _log_invalid_dispatch_inputs(registry_entry, raw, TypeError("expected JSON object"))
+        return {}
+    return cast(dict[str, object], parsed)
+
+
+def _log_invalid_dispatch_inputs(
+    registry_entry: object | None,
+    raw: object,
+    exc: Exception,
+) -> None:
+    logger.debug(
+        "Invalid stage registry dispatch_inputs_json; ignoring",
+        extra={
+            "registry_entry": _registry_entry_identity(registry_entry),
+            "raw_dispatch_inputs_json": raw,
+            "error": str(exc),
+        },
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+
+
+def _registry_entry_identity(registry_entry: object | None) -> object | None:
+    if registry_entry is None:
+        return None
+    identity: dict[str, object] = {}
+    for field_name in ("id", "name", "stage_name"):
+        value = _field(registry_entry, field_name)
+        if value:
+            identity[field_name] = value
+    return identity or repr(registry_entry)
 
 
 def _spawn_required_stage_agent(

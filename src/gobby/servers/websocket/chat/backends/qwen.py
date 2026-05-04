@@ -17,6 +17,8 @@ from gobby.servers.websocket.chat.local_openai_warmup import (
 )
 
 _QWEN_TOOL_NAME_ADAPTER = QwenAdapter()
+# Qwen's ACP backend can spend extra time warming the local OpenAI-compatible model.
+_QWEN_BACKEND_START_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass
@@ -53,7 +55,7 @@ class QwenWebChatBackend(GeminiWebChatBackend):
             provider="qwen",
             display_name="Qwen",
             sandbox_config=sandbox_config,
-            start_timeout_seconds=60.0,
+            start_timeout_seconds=_QWEN_BACKEND_START_TIMEOUT_SECONDS,
         )
 
     async def attach_session(

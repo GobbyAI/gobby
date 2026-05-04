@@ -61,14 +61,20 @@ def test_in_flight_agents_unaffected(monkeypatch: pytest.MonkeyPatch, temp_db) -
 async def test_kick_no_op_when_dispatcher_disabled() -> None:
     from gobby.build.service import _kick_dispatcher_tick
 
-    assert await _kick_dispatcher_tick(dispatcher_enabled=False) == 0
+    summary = await _kick_dispatcher_tick(dispatcher_enabled=False)
+
+    assert summary.ticks == 0
+    assert summary.reason == "dispatcher_cron_disabled"
 
 
 @pytest.mark.asyncio
 async def test_kick_fires_when_dispatcher_enabled() -> None:
     from gobby.build.service import _kick_dispatcher_tick
 
-    assert await _kick_dispatcher_tick(dispatcher_enabled=True) == 1
+    summary = await _kick_dispatcher_tick(dispatcher_enabled=True)
+
+    assert summary.ticks == 0
+    assert summary.reason == "database_missing"
 
 
 def test_no_task_flag_exposed() -> None:

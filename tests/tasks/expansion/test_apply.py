@@ -342,3 +342,7 @@ def test_apply_ignores_closed_obsolete_historical_output(temp_db, sample_project
     reapplied = service.apply_run(second.id, session_id=None)
 
     assert "leaf-2" in reapplied.task_id_map
+    for task_id in applied.created_task_ids:
+        old_task = service.task_manager.get_task(task_id)
+        assert old_task.closed_at is not None
+        assert old_task.closed_reason == "obsolete"

@@ -158,7 +158,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 project_id=project_id,
                 services=server.services,
             )
-            return result.to_dict()
+            return _result_json(result)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

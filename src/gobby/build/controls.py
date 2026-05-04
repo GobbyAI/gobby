@@ -307,12 +307,7 @@ def _task_summaries(tasks: list[Task]) -> list[BuildTaskSummary]:
 
 
 def _active_agents(db: DatabaseProtocol, task_ids: list[str]) -> list[AgentRun]:
-    task_id_set = set(task_ids)
-    return [
-        run
-        for run in LocalAgentRunManager(db).list_active(limit=1000)
-        if run.task_id in task_id_set
-    ]
+    return LocalAgentRunManager(db).list_active(task_ids=task_ids, limit=1000)
 
 
 def _agent_summaries(agents: list[AgentRun]) -> list[BuildAgentSummary]:
@@ -568,7 +563,8 @@ def _detect_orphan_artifacts(
 def _default_branch_dir_name(task: Task) -> str:
     slug = task.title.lower().replace(" ", "-")
     slug = "".join(c for c in slug if c.isalnum() or c == "-")
-    return f"task-{task.seq_num}-{slug[:40]}"
+    branch_slug = slug[:40] or "untitled"
+    return f"task-{task.seq_num}-{branch_slug}"
 
 
 def _delete_artifacts(

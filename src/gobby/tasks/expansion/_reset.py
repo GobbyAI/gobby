@@ -133,16 +133,9 @@ def _target_ids_block_apply(self: Any, target_ids: set[str]) -> bool:
     for task_id in target_ids:
         if not _is_closed_obsolete_task(self, task_id):
             return True
+    children_by_parent = _child_rows_by_parent(self, target_ids)
     for task_id in target_ids:
-        outside_children = self.db.fetchall(
-            """
-            SELECT id
-              FROM tasks
-             WHERE parent_task_id = ?
-            """,
-            (task_id,),
-        )
-        for child in outside_children:
+        for child in children_by_parent.get(task_id, []):
             child_id = child["id"]
             if child_id not in target_ids and not _is_closed_obsolete_task(self, child_id):
                 return True
@@ -153,6 +146,9 @@ def _is_closed_obsolete_task(self: Any, task_id: str) -> bool:
     try:
         task = self.task_manager.get_task(task_id)
     except ValueError:
+        # Expansion-run metadata can outlive generated tasks after a previous
+        # reset. Treat missing rows as active blockers outside the known target
+        # set so apply does not silently overwrite unrelated descendants.
         return False
     return task.closed_at is not None and task.closed_reason == "obsolete"
 
@@ -176,6 +172,7 @@ def _ancestor_ids_between(self: Any, task_id: str, parent_task_id: str) -> set[s
 
 def _validate_reset_targets(self: Any, target_ids: set[str]) -> None:
     problems: list[str] = []
+    children_by_parent = _child_rows_by_parent(self, target_ids)
     for task_id in sorted(target_ids):
         task = self.task_manager.get_task(task_id)
         ref = _task_ref(task)
@@ -200,20 +197,31 @@ def _validate_reset_targets(self: Any, target_ids: set[str]) -> None:
             problems.append(f"{ref} has delivery state")
         if _has_progressed_stage_state(self, task.id):
             problems.append(f"{ref} has progressed stage state")
-        outside_children = self.db.fetchall(
-            """
-            SELECT id, seq_num
-              FROM tasks
-             WHERE parent_task_id = ?
-            """,
-            (task.id,),
-        )
-        for child in outside_children:
+        for child in children_by_parent.get(task.id, []):
             if child["id"] not in target_ids:
                 child_ref = f"#{child['seq_num']}" if child["seq_num"] else child["id"]
                 problems.append(f"{ref} has non-expansion child {child_ref}")
     if problems:
         raise ValueError("Cannot reset expansion output: " + "; ".join(problems))
+
+
+def _child_rows_by_parent(self: Any, parent_ids: set[str]) -> dict[str, list[Any]]:
+    if not parent_ids:
+        return {}
+    ordered_parent_ids = sorted(parent_ids)
+    placeholders = ", ".join("?" for _ in ordered_parent_ids)
+    rows = self.db.fetchall(
+        f"""
+        SELECT id, seq_num, parent_task_id
+          FROM tasks
+         WHERE parent_task_id IN ({placeholders})
+        """,  # nosec B608 - placeholders are generated for a bound ID list.
+        tuple(ordered_parent_ids),
+    )
+    children: dict[str, list[Any]] = {parent_id: [] for parent_id in ordered_parent_ids}
+    for row in rows:
+        children.setdefault(row["parent_task_id"], []).append(row)
+    return children
 
 
 def _has_progressed_stage_state(self: Any, task_id: str) -> bool:

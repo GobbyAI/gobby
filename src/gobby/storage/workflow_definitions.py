@@ -13,7 +13,7 @@ from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
 
-DefinitionSource = Literal["installed", "agent", "project", "custom"]
+DefinitionSource = Literal["installed", "template", "agent", "project", "custom"]
 
 
 def compute_definition_hash(definition_json: str) -> str:

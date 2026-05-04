@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
+import { useMemo, useRef, useState, useCallback, useEffect, useLayoutEffect } from 'react'
 import { Tree, TreeApi, NodeRendererProps } from 'react-arborist'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
@@ -37,15 +37,18 @@ const CTX_MENU_CLS =
   'z-[1000] min-w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]'
 const CTX_ITEM_CLS =
   'block w-full cursor-pointer rounded border-none bg-transparent px-2.5 py-1.5 text-left font-[var(--font-sans)] text-[length:calc(var(--font-size-base)*0.72)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
-const CTX_MENU_WIDTH = 220
-const CTX_MENU_HEIGHT = 44
+const DEFAULT_CTX_MENU_SIZE = { width: 220, height: 44 }
 const CTX_MENU_MARGIN = 8
 
-function clampContextMenuPosition(x: number, y: number) {
+function clampContextMenuPosition(
+  x: number,
+  y: number,
+  size: { width: number; height: number } = DEFAULT_CTX_MENU_SIZE
+) {
   if (typeof window === 'undefined') return { x, y }
   return {
-    x: Math.max(CTX_MENU_MARGIN, Math.min(x, window.innerWidth - CTX_MENU_WIDTH - CTX_MENU_MARGIN)),
-    y: Math.max(CTX_MENU_MARGIN, Math.min(y, window.innerHeight - CTX_MENU_HEIGHT - CTX_MENU_MARGIN)),
+    x: Math.max(CTX_MENU_MARGIN, Math.min(x, window.innerWidth - size.width - CTX_MENU_MARGIN)),
+    y: Math.max(CTX_MENU_MARGIN, Math.min(y, window.innerHeight - size.height - CTX_MENU_MARGIN)),
   }
 }
 
@@ -90,33 +93,52 @@ interface TaskNodeProps extends NodeRendererProps<TreeNode> {
 
 function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: TaskNodeProps) {
   const task = node.data.task
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const [ctxMenuAnchor, setCtxMenuAnchor] = useState<{ x: number; y: number } | null>(null)
+  const [ctxMenuSize, setCtxMenuSize] = useState(DEFAULT_CTX_MENU_SIZE)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const ctxMenuPosition = useMemo(
+    () => (
+      ctxMenuAnchor
+        ? clampContextMenuPosition(ctxMenuAnchor.x, ctxMenuAnchor.y, ctxMenuSize)
+        : null
+    ),
+    [ctxMenuAnchor, ctxMenuSize]
+  )
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     if (!onSubtreeKanban || !node.isInternal) return
     e.preventDefault()
     e.stopPropagation()
-    setCtxMenu(clampContextMenuPosition(e.clientX, e.clientY))
-  }, [node.isInternal, onSubtreeKanban, setCtxMenu])
+    setCtxMenuAnchor({ x: e.clientX, y: e.clientY })
+  }, [node.isInternal, onSubtreeKanban])
 
   const handleSubtreeKanban = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    setCtxMenu(null)
+    setCtxMenuAnchor(null)
     onSubtreeKanban?.(task.id)
   }, [onSubtreeKanban, task.id])
 
+  useLayoutEffect(() => {
+    if (!ctxMenuAnchor) return
+    const rect = menuRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setCtxMenuSize(prev => {
+      if (prev.width === rect.width && prev.height === rect.height) return prev
+      return { width: rect.width, height: rect.height }
+    })
+  }, [ctxMenuAnchor])
+
   useEffect(() => {
-    if (!ctxMenu) return
+    if (!ctxMenuAnchor) return
     requestAnimationFrame(() => {
       menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
     })
-  }, [ctxMenu])
+  }, [ctxMenuAnchor])
 
   const handleMenuKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault()
-      setCtxMenu(null)
+      setCtxMenuAnchor(null)
       return
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
@@ -162,15 +184,15 @@ function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: Task
       <PriorityBadge priority={task.priority} />
       <TaskStatusStrip task={task} compact />
 
-      {ctxMenu && (
+      {ctxMenuPosition && (
         <>
-          <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenu(null)} />
+          <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenuAnchor(null)} />
           <div
             ref={menuRef}
             className={CTX_MENU_CLS}
             role="menu"
             aria-label="Task actions"
-            style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
+            style={{ position: 'fixed', left: ctxMenuPosition.x, top: ctxMenuPosition.y }}
             onKeyDown={handleMenuKeyDown}
           >
             <button

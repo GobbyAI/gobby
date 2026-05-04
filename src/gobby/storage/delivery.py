@@ -221,9 +221,11 @@ class TaskDeliveryStateManager:
     def _clean_unit_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         cleaned: dict[str, Any] = {}
         for column, value in fields.items():
-            if column not in UNIT_COLUMNS or value is None:
+            if column not in UNIT_COLUMNS:
                 continue
-            if column == "pr_required":
+            if value is None:
+                cleaned[column] = None
+            elif column == "pr_required":
                 cleaned[column] = 1 if bool(value) else 0
             elif column in UNIT_JSON_COLUMNS:
                 cleaned[column] = _encode_json(value)

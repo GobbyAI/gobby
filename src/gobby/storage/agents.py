@@ -798,10 +798,24 @@ class LocalAgentRunManager:
             limit=limit,
         )
 
-    def list_active(self, limit: int = 100) -> list[AgentRun]:
+    def list_active(
+        self,
+        limit: int = 100,
+        *,
+        task_ids: Sequence[str] | None = None,
+    ) -> list[AgentRun]:
         """List all active (running or pending) agent runs."""
+        params: list[object] = []
+        where_clause = "WHERE ar.status IN ('running', 'pending')"
+        if task_ids is not None:
+            if not task_ids:
+                return []
+            placeholders = ", ".join("?" for _ in task_ids)
+            where_clause += f" AND ar.task_id IN ({placeholders})"
+            params.extend(task_ids)
         return self._fetch_runs_with_live_stats(
-            "WHERE ar.status IN ('running', 'pending')",
+            where_clause,
+            params,
             order_by="ORDER BY ar.started_at ASC",
             limit=limit,
         )

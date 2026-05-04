@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody
 
 __all__ = ["get_bundled_agents_path", "sync_bundled_agents"]
@@ -49,7 +49,7 @@ def _is_deprecated_bundled_agent(definition_json: str, enabled: bool) -> bool:
     return isinstance(parsed, dict) and parsed.get("deprecated") is True
 
 
-def _is_sync_managed_bundled_agent(existing: Any) -> bool:
+def _is_sync_managed_bundled_agent(existing: WorkflowDefinitionRow) -> bool:
     """Return whether an existing row is safe for bundled agent sync to own."""
     return (
         existing.project_id is None
@@ -59,7 +59,7 @@ def _is_sync_managed_bundled_agent(existing: Any) -> bool:
 
 
 def _build_agent_update_fields(
-    existing: Any,
+    existing: WorkflowDefinitionRow,
     *,
     body: AgentDefinitionBody,
     body_json: str,

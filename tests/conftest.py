@@ -51,6 +51,12 @@ def temp_dir() -> Iterator[Path]:
         yield Path(tmpdir)
 
 
+@pytest.fixture(scope="session")
+def repo_root() -> Path:
+    """Return the repository root for tests that inspect checked-in files."""
+    return Path(__file__).resolve().parents[1]
+
+
 @pytest.fixture
 def enable_log_propagation() -> Iterator[None]:
     """Enable log propagation for caplog tests.

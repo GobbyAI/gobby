@@ -105,6 +105,20 @@ def test_delivery_campaign_upsert_preserves_null_updates(
     assert manager.get_state(task.id)["campaign"]["last_error"] is None
 
 
+def test_delivery_unit_upsert_preserves_null_updates(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    manager = TaskDeliveryStateManager(temp_db)
+
+    manager.record_unit(task.id, unit_key="main", last_error="blocked")
+    updated = manager.record_unit(task.id, unit_key="main", last_error=None)
+
+    assert updated["last_error"] is None
+    assert manager.get_state(task.id)["units"][0]["last_error"] is None
+
+
 def test_delivery_json_decode_returns_none_for_malformed_json(
     temp_db: Any,
     sample_project: dict[str, Any],

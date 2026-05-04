@@ -192,20 +192,26 @@ def _handle_stage_pipeline_terminal(
         except IllegalStageTransitionError:
             return None
     if status == "cancelled":
+        try:
+            return manager.fail_stage(
+                mutex.task_id,
+                stage_name,
+                reason="pipeline_cancelled",
+                needs_human=True,
+                by_session_id=None,
+            )
+        except IllegalStageTransitionError:
+            return None
+    reason = _event_value(event, "error") or _event_value(event, "reason") or "pipeline_failed"
+    try:
         return manager.fail_stage(
             mutex.task_id,
             stage_name,
-            reason="pipeline_cancelled",
-            needs_human=True,
+            reason=str(reason),
             by_session_id=None,
         )
-    reason = _event_value(event, "error") or _event_value(event, "reason") or "pipeline_failed"
-    return manager.fail_stage(
-        mutex.task_id,
-        stage_name,
-        reason=str(reason),
-        by_session_id=None,
-    )
+    except IllegalStageTransitionError:
+        return None
 
 
 def _current_stage_for_task(manager: StageStatesManager, task_id: str) -> Any | None:
@@ -298,7 +304,10 @@ def _fail_stage(
             to_status="open",
             side_effects=IncrementExpansionAttemptsSideEffect(task_id),
         )
-    return manager.fail_stage(task_id, stage_name, reason=reason, by_session_id=None)
+    try:
+        return manager.fail_stage(task_id, stage_name, reason=reason, by_session_id=None)
+    except IllegalStageTransitionError:
+        return None
 
 
 def _release_run_mutex(run_id: str, *, storage: TaskDispatchMutexManager | None) -> int:

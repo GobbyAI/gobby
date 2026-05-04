@@ -40,7 +40,6 @@ __all__ = [
     "StageState",
     "StageState5",
     "StageStatesManager",
-    "_close_task_in_txn",
 ]
 
 
