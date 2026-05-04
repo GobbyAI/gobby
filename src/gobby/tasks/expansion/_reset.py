@@ -152,7 +152,7 @@ def _target_ids_block_apply(self: Any, target_ids: set[str]) -> bool:
 def _is_closed_obsolete_task(self: Any, task_id: str) -> bool:
     try:
         task = self.task_manager.get_task(task_id)
-    except Exception:
+    except ValueError:
         return False
     return task.closed_at is not None and task.closed_reason == "obsolete"
 

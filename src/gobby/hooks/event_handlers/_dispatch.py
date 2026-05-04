@@ -9,7 +9,11 @@ from typing import Any, cast
 from gobby.dispatch.actions import Action, AdvanceLifecycleAction, EscalateAction
 from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.tasks import TaskDispatchMutexManager, TaskLifecycleEventManager
+from gobby.storage.tasks import (
+    IllegalStageTransitionError,
+    TaskDispatchMutexManager,
+    TaskLifecycleEventManager,
+)
 from gobby.storage.tasks._stage_states import StageStatesManager
 
 
@@ -181,9 +185,12 @@ def _handle_stage_pipeline_terminal(
     if stage is None or stage.stage_name != stage_name or stage.state != "in_progress":
         return None
     if status == "completed":
-        if stage.review_policy == "required":
-            return manager.submit_for_review(mutex.task_id, stage_name, by_session_id=None)
-        return manager.complete_stage(mutex.task_id, stage_name, by_session_id=None)
+        try:
+            if stage.review_policy == "required":
+                return manager.submit_for_review(mutex.task_id, stage_name, by_session_id=None)
+            return manager.complete_stage(mutex.task_id, stage_name, by_session_id=None)
+        except IllegalStageTransitionError:
+            return None
     if status == "cancelled":
         return manager.fail_stage(
             mutex.task_id,
@@ -245,6 +252,7 @@ def advance_lifecycle(
     side_effects: object | None = None,
 ) -> AdvanceLifecycleAction:
     """Build the legacy lifecycle action used when no DB-backed stage manager is available."""
+    # Kept for API compatibility with older dispatch side-effect hooks.
     _ = side_effects
     return AdvanceLifecycleAction(
         task_id=task_id,
@@ -269,7 +277,10 @@ def _complete_stage(
             to_lifecycle="in_development",
             to_status="open",
         )
-    return manager.complete_stage(task_id, stage_name, by_session_id=None)
+    try:
+        return manager.complete_stage(task_id, stage_name, by_session_id=None)
+    except IllegalStageTransitionError:
+        return None
 
 
 def _fail_stage(

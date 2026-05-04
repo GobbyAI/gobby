@@ -45,6 +45,7 @@ import {
   renderBadges,
   matchesSearch,
   entryTimestamp,
+  parseTimestamp,
 } from "./SessionsTab.helpers";
 
 interface SessionsTabProps {
@@ -62,9 +63,7 @@ interface SessionsTabProps {
 }
 
 function sessionTime(value: string | null | undefined): number {
-  if (!value) return 0;
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseTimestamp(value);
 }
 
 function FilterEmptyState({

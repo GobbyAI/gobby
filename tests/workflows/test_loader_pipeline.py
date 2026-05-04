@@ -5,6 +5,7 @@ LocalWorkflowDefinitionManager rather than written to YAML files.
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,14 @@ def loader(db: LocalDatabase) -> WorkflowLoader:
     return WorkflowLoader(db=db)
 
 
+@pytest.fixture(scope="module")
+def bundled_workflow_payload() -> Callable[[Path], dict[str, object]]:
+    def load(path: Path) -> dict[str, object]:
+        return json.loads(json.dumps(yaml.safe_load(path.read_text())))
+
+    return load
+
+
 class TestLoadPipeline:
     """Tests for load_pipeline method."""
 
@@ -97,8 +106,9 @@ class TestLoadPipeline:
         self,
         path: Path,
         step_id: str,
+        bundled_workflow_payload: Callable[[Path], dict[str, object]],
     ) -> None:
-        payload = json.loads(json.dumps(yaml.safe_load(path.read_text())))
+        payload = bundled_workflow_payload(path)
         pipeline = PipelineDefinition.model_validate(payload)
         step = next(item for item in pipeline.steps if item.id == step_id)
 
@@ -106,9 +116,12 @@ class TestLoadPipeline:
         assert step.mcp is not None
         assert step.mcp.arguments["agent"] == "${{ inputs.agent }}"
 
-    def test_qa_dispatch_targets_enabled_reviewer_agent(self) -> None:
+    def test_qa_dispatch_targets_enabled_reviewer_agent(
+        self,
+        bundled_workflow_payload: Callable[[Path], dict[str, object]],
+    ) -> None:
         path = Path("src/gobby/install/shared/workflows/qa.yaml")
-        payload = json.loads(json.dumps(yaml.safe_load(path.read_text())))
+        payload = bundled_workflow_payload(path)
         pipeline = PipelineDefinition.model_validate(payload)
         step = next(item for item in pipeline.steps if item.id == "spawn_qa_reviewer")
 

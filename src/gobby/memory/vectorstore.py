@@ -94,6 +94,7 @@ class VectorStore:
                 await self._initialize_locked()
             except Exception as exc:
                 self._raise_if_recoverable(exc)
+                await self.close()
                 raise
             self._reset_retry()
 

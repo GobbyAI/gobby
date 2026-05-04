@@ -18,7 +18,7 @@ This plan adds a parallel UX track that reuses every existing rail — `/gobby p
 
 Replace the existing Step 1a binary (adversarial Y/N) with a single 2×2 menu:
 
-```
+```text
 Step 1a — Track and review:
   1) engineering, plain
   2) engineering, adversarial

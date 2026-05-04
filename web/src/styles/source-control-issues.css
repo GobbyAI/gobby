@@ -32,12 +32,12 @@
   border-radius: 0.75rem;
   font-size: var(--text-2xs);
   font-weight: 500;
-  border: 0.0625rem solid;
+  border: 1px solid;
   white-space: nowrap;
 }
 
 .sc-issues__detail {
-  border-top: 0.0625rem solid var(--border);
+  border-top: 1px solid var(--border);
   padding-top: 1rem;
   max-height: 18.75rem;
   overflow-y: auto;
@@ -59,7 +59,7 @@
 
 .sc-issues__detail-close {
   background: none;
-  border: 0.0625rem solid var(--border);
+  border: 1px solid var(--border);
   color: var(--text-secondary);
   padding: 0.125rem 0.5rem;
   border-radius: 0.25rem;

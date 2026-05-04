@@ -68,6 +68,14 @@ class TmuxConfig(BaseModel):
         ge=30,
         description="Seconds before an uninitialized agent is killed as a provider failure.",
     )
+    init_activity_grace_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "Seconds of session activity allowed during initialization before the agent is "
+            "considered initialized."
+        ),
+    )
     auto_enter_approval_prompts: bool = Field(
         default=True,
         description="Automatically send Enter for spawned-agent approval prompts.",

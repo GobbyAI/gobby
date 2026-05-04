@@ -25,7 +25,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       <form onSubmit={handleSubmit} style={styles.card}>
         <div style={styles.logoRow}>
           <img src="/logo.png" alt="Gobby" style={styles.logo} />
-          <h1 className="m-0 text-[length:var(--text-3xl)] font-[var(--font-weight-bold)] text-[var(--text-primary)]">Gobby</h1>
+          <h1 style={styles.title}>Gobby</h1>
         </div>
         <p style={styles.subtitle}>Sign in to continue</p>
 
@@ -109,6 +109,12 @@ const styles: Record<string, React.CSSProperties> = {
   logo: {
     width: 36,
     height: 36,
+  },
+  title: {
+    margin: 0,
+    color: 'var(--text-primary)',
+    fontSize: 'var(--text-3xl)',
+    fontWeight: 'var(--font-weight-bold)',
   },
   subtitle: {
     margin: 0,

@@ -167,7 +167,9 @@ class AgentHealthMonitor:
                 created = parse_stored_datetime(session.created_at)
                 if updated is None or created is None:
                     continue
-                if (updated - created).total_seconds() > 5.0:
+                if (
+                    updated - created
+                ).total_seconds() > self._tmux_config.init_activity_grace_seconds:
                     continue
 
                 logger.warning(
@@ -205,7 +207,11 @@ class AgentHealthMonitor:
         for run in runs:
             try:
                 tmux_name = run.tmux_session_name
-                assert tmux_name is not None
+                if tmux_name is None:
+                    logger.warning(
+                        "Skipping provider stall check for run %s: missing tmux name", run.id
+                    )
+                    continue
 
                 pane_output = await self._tmux.capture_pane(tmux_name, lines=8)
                 classification = self._stall_classifier.classify(

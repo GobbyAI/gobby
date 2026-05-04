@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from gobby.utils.machine_id import get_machine_id
 
 
+class LauncherSession(Protocol):
+    id: object
+
+
+class LauncherSessionManager(Protocol):
+    def list(self, *, project_id: str, source: str) -> list[LauncherSession]: ...
+
+    def register(
+        self,
+        *,
+        external_id: str,
+        machine_id: str,
+        source: str,
+        project_id: str,
+        title: str,
+        agent_depth: int,
+    ) -> LauncherSession: ...
+
+
 def get_or_create_launcher_session(
-    session_manager: object,
+    session_manager: LauncherSessionManager,
     project_id: str,
     source: str,
     title: str,

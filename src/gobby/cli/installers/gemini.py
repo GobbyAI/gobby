@@ -315,7 +315,12 @@ def uninstall_gemini(project_path: Path) -> dict[str, Any]:
 
     # Remove Gobby-owned policy TOML
     gemini_home = Path.home() / ".gemini"
-    result["policy_removed"] = _uninstall_gemini_policy(gemini_home)
+    try:
+        result["policy_removed"] = _uninstall_gemini_policy(gemini_home)
+    except OSError as exc:
+        result["policy_removed"] = False
+        result["policy_error"] = str(exc)
+        logger.warning("Failed to remove Gemini policy file: %s", exc)
 
     result["success"] = True
     return result
@@ -382,7 +387,6 @@ def _uninstall_gemini_policy(gemini_home: Path) -> bool:
     backup files — those stay for forensic reasons.
     """
     policy_file = gemini_home / "policies" / POLICY_FILENAME
-    if not policy_file.exists():
-        return False
-    policy_file.unlink()
-    return True
+    existed = policy_file.exists()
+    policy_file.unlink(missing_ok=True)
+    return existed

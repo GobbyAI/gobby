@@ -67,6 +67,13 @@ def test_start_pipeline_action_shape() -> None:
         "pipeline_name",
         "dispatch_inputs",
     )
+    assert cls.__slots__ == (
+        "task_id",
+        "task_ref",
+        "stage_name",
+        "pipeline_name",
+        "dispatch_inputs",
+    )
 
     action = cls(
         task_id="task-1",

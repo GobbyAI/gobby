@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, cast
 
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.tasks._artifacts import TaskArtifactManager
+from gobby.storage.tasks._artifacts import TaskArtifactConstraintError, TaskArtifactManager
 from gobby.storage.tasks._artifacts import set_artifacts_atomic as _set_artifacts_atomic
+
+if TYPE_CHECKING:
+    from gobby.agents.runner import AgentRunner
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +50,9 @@ async def spawn_agent(
     if missing:
         raise DispatchSpawnUnavailable(f"services_missing:{','.join(missing)}")
 
-    task_manager = cast(Any, required["task_manager"])
-    session_manager = cast(Any, required["session_manager"])
-    runner = cast(Any, required["agent_runner"])
+    task_manager = cast("LocalTaskManager", required["task_manager"])
+    session_manager = cast("SessionManager", required["session_manager"])
+    runner = cast("AgentRunner", required["agent_runner"])
     task = task_manager.get_task(action.task_id)
     if task is None:
         raise DispatchSpawnFailed(f"task_not_found:{action.task_ref}")
@@ -160,7 +166,7 @@ def _persist_spawn_artifacts(
     if fields:
         try:
             _set_artifacts_atomic(db, task_id, **fields)
-        except Exception:
+        except (TaskArtifactConstraintError, ValueError, sqlite3.DatabaseError):
             logger.warning("Failed to persist dispatcher spawn artifacts", exc_info=True)
 
 

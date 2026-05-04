@@ -118,7 +118,10 @@ class StageManifestSpec:
 def _coerce_artifact_refs(value: str | None) -> dict[str, str] | None:
     if not value:
         return None
-    decoded = json.loads(value)
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return None
     if not isinstance(decoded, dict):
         return None
     return {str(key): str(item) for key, item in decoded.items()}

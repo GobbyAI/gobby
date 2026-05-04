@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConfiguration } from '../hooks/useConfiguration'
 import type { PromptInfo, PromptDetail } from '../hooks/useConfiguration'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
+import { requestDaemonRestart } from '../lib/api'
 import { cn } from '../lib/utils'
 import {
   CONTENT_CLS,
@@ -79,21 +80,6 @@ import { SecretsTab } from './ConfigurationPage.SecretsTab'
 import { TemplateTab } from './ConfigurationPage.TemplateTab'
 
 type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
-const RESTART_TIMEOUT_MS = 10000
-
-async function requestDaemonRestart(): Promise<Response> {
-  const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), RESTART_TIMEOUT_MS)
-  try {
-    return await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, {
-      method: 'POST',
-      credentials: 'include',
-      signal: controller.signal,
-    })
-  } finally {
-    window.clearTimeout(timeout)
-  }
-}
 
 interface ConfigFormTabProps {
   schema: Record<string, unknown> | null

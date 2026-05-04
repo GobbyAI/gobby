@@ -730,6 +730,12 @@ class _WorkflowMCPInventory:
             logger.warning(
                 "Internal workflow MCP tools override external server keys: %s",
                 ", ".join(collisions),
+                extra={
+                    "collision_count": len(collisions),
+                    "collisions": collisions,
+                    "external_count": len(tools),
+                    "internal_count": len(internal_tools),
+                },
             )
         tools.update(internal_tools)
         return tools

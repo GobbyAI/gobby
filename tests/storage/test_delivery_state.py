@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 
-from gobby.storage.delivery import TaskDeliveryStateManager
+from gobby.storage.delivery import DeliveryStateError, TaskDeliveryStateManager
 from tests.storage.tasks._stage_test_helpers import create_task
 
 pytestmark = pytest.mark.unit
 
 
-def test_delivery_state_records_campaign_and_units(temp_db, sample_project) -> None:
+def test_delivery_state_records_campaign_and_units(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     manager = TaskDeliveryStateManager(temp_db)
 
@@ -68,7 +75,10 @@ def test_delivery_state_records_campaign_and_units(temp_db, sample_project) -> N
     ]
 
 
-def test_delivery_unit_upsert_preserves_one_unit_per_key(temp_db, sample_project) -> None:
+def test_delivery_unit_upsert_preserves_one_unit_per_key(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     manager = TaskDeliveryStateManager(temp_db)
 
@@ -81,7 +91,10 @@ def test_delivery_unit_upsert_preserves_one_unit_per_key(temp_db, sample_project
     assert state["units"][0]["pr_state"] == "direct_merge"
 
 
-def test_delivery_campaign_upsert_preserves_null_updates(temp_db, sample_project) -> None:
+def test_delivery_campaign_upsert_preserves_null_updates(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     manager = TaskDeliveryStateManager(temp_db)
 
@@ -92,7 +105,10 @@ def test_delivery_campaign_upsert_preserves_null_updates(temp_db, sample_project
     assert manager.get_state(task.id)["campaign"]["last_error"] is None
 
 
-def test_delivery_json_decode_returns_none_for_malformed_json(temp_db, sample_project) -> None:
+def test_delivery_json_decode_returns_none_for_malformed_json(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     manager = TaskDeliveryStateManager(temp_db)
     manager.record_campaign(task.id, structured_pr_verdict={"verdict": "approve"})
@@ -104,3 +120,16 @@ def test_delivery_json_decode_returns_none_for_malformed_json(temp_db, sample_pr
     state = manager.get_state(task.id)
 
     assert state["campaign"]["structured_pr_verdict"] is None
+
+
+def test_delivery_campaign_raises_typed_error_when_requery_fails() -> None:
+    def execute(sql: str, params: tuple[object, ...]) -> SimpleNamespace | None:
+        if "SELECT task_id, state, merge_strategy" not in sql:
+            return None
+        return SimpleNamespace(fetchone=lambda: None)
+
+    db = SimpleNamespace(transaction=lambda: nullcontext(SimpleNamespace(execute=execute)))
+    manager = TaskDeliveryStateManager(db)
+
+    with pytest.raises(DeliveryStateError, match="Failed to record delivery campaign"):
+        manager.record_campaign("task-1", state="merged")

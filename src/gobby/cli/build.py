@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import asdict
 from typing import cast
 
@@ -27,6 +28,8 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
 from .utils import resolve_project_ref
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_project_id() -> str:
@@ -147,7 +150,7 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
 def _result_from_payload(payload: dict[str, object]) -> BuildResult:
     tick_payload = payload.get("dispatcher_tick")
     dispatcher_tick = (
-        DispatcherTickSummary(**tick_payload)
+        _dispatcher_tick_from_payload(tick_payload)
         if isinstance(tick_payload, dict)
         else DispatcherTickSummary(ticks=_payload_int(payload.get("tick_dispatched")))
     )
@@ -167,8 +170,24 @@ def _payload_int(value: object, default: int = 0) -> int:
     if isinstance(value, int):
         return value
     if isinstance(value, str):
-        return int(value)
+        try:
+            return int(value)
+        except ValueError:
+            return default
     return default
+
+
+def _dispatcher_tick_from_payload(payload: dict[object, object]) -> DispatcherTickSummary:
+    reason = payload.get("reason")
+    cap_reached = payload.get("cap_reached")
+    return DispatcherTickSummary(
+        ticks=_payload_int(payload.get("ticks")),
+        scanned=_payload_int(payload.get("scanned")),
+        executed=_payload_int(payload.get("executed")),
+        skipped=_payload_int(payload.get("skipped")),
+        cap_reached=cap_reached if isinstance(cap_reached, bool) else False,
+        reason=reason if isinstance(reason, str) else None,
+    )
 
 
 def _payload_string_list(value: object) -> list[str]:
@@ -202,6 +221,7 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
     except click.ClickException:
         raise
     except Exception:
+        logger.debug("Daemon build request failed; falling back to local build", exc_info=True)
         return None
 
 

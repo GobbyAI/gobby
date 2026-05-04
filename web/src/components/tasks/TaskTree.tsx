@@ -127,6 +127,7 @@ function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: Task
     >
       {node.isInternal ? (
         <button
+          type="button"
           className={TOGGLE_CLS}
           onClick={e => { e.stopPropagation(); node.toggle() }}
         >

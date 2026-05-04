@@ -77,7 +77,10 @@ class IdleCheckHandler:
 
         run = latest_run
         tmux_name = run.tmux_session_name
-        assert tmux_name is not None
+        if tmux_name is None:
+            logger.warning("Skipping idle check for run %s: missing tmux name", run.id)
+            self._idle_detector.reset_idle(run.id)
+            return 0
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
         session_stale = False
@@ -102,6 +105,8 @@ class IdleCheckHandler:
         pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
         if pane_output is None:
             if session_stale:
+                # Keep evaluating stale sessions even when tmux capture is unavailable.
+                # The idle detector can still reprompt or fail based on elapsed session activity.
                 pass
             else:
                 return 0
@@ -123,7 +128,7 @@ class IdleCheckHandler:
                 f"Agent {run.id} still idle after "
                 f"{self._tmux_config.max_reprompt_attempts} reprompts — failing"
             )
-            self._log_recent_codex_response_items(
+            await self._log_recent_codex_response_items(
                 run,
                 reason="failing after max idle reprompts",
             )
@@ -136,7 +141,7 @@ class IdleCheckHandler:
             self._tmux_config.max_reprompt_attempts,
         ):
             logger.info(f"Reprompting idle agent {run.id}")
-            self._log_recent_codex_response_items(
+            await self._log_recent_codex_response_items(
                 run,
                 reason="reprompting apparently idle agent",
             )
@@ -158,36 +163,39 @@ class IdleCheckHandler:
         )
 
     @staticmethod
-    def _read_recent_codex_response_items(
+    async def _read_recent_codex_response_items(
         transcript_path: str,
         *,
         limit: int = 8,
     ) -> list[dict[str, object]]:
-        items: deque[dict[str, object]] = deque(maxlen=limit)
-        with open(transcript_path, encoding="utf-8") as handle:
-            for line_num, raw_line in enumerate(handle, start=1):
-                if not raw_line.strip():
-                    continue
-                try:
-                    data = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(data, dict) or data.get("type") != "response_item":
-                    continue
-                payload = data.get("payload")
-                if not isinstance(payload, dict):
-                    continue
-                items.append(
-                    {
-                        "line_num": line_num,
-                        "timestamp": data.get("timestamp"),
-                        "payload_type": payload.get("type"),
-                        "raw": data,
-                    }
-                )
-        return list(items)
+        def _read() -> list[dict[str, object]]:
+            items: deque[dict[str, object]] = deque(maxlen=limit)
+            with open(transcript_path, encoding="utf-8") as handle:
+                for line_num, raw_line in enumerate(handle, start=1):
+                    if not raw_line.strip():
+                        continue
+                    try:
+                        data = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(data, dict) or data.get("type") != "response_item":
+                        continue
+                    payload = data.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    items.append(
+                        {
+                            "line_num": line_num,
+                            "timestamp": data.get("timestamp"),
+                            "payload_type": payload.get("type"),
+                            "raw": data,
+                        }
+                    )
+            return list(items)
 
-    def _log_recent_codex_response_items(self, run: AgentRun, *, reason: str) -> None:
+        return await asyncio.to_thread(_read)
+
+    async def _log_recent_codex_response_items(self, run: AgentRun, *, reason: str) -> None:
         session_manager = self._get_session_manager()
         if session_manager is None:
             return
@@ -197,7 +205,7 @@ class IdleCheckHandler:
             return
 
         try:
-            session = session_manager.get(session_id)
+            session = await asyncio.to_thread(session_manager.get, session_id)
         except Exception as exc:
             logger.warning(
                 "Failed to load session %s for Codex idle diagnostics on run %s: %s",
@@ -221,7 +229,7 @@ class IdleCheckHandler:
             return
 
         try:
-            items = self._read_recent_codex_response_items(transcript_path)
+            items = await self._read_recent_codex_response_items(transcript_path)
         except OSError as exc:
             logger.warning(
                 "Failed to read Codex transcript for idle diagnostic on run %s (%s): %s",

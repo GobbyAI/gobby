@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -15,6 +16,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _task_failure_threshold_from_env() -> int:
+    raw = os.environ.get("GOBBY_TASK_FAILURE_THRESHOLD", "3")
+    try:
+        threshold = int(raw)
+    except ValueError as exc:
+        raise ValueError("GOBBY_TASK_FAILURE_THRESHOLD must be a positive integer") from exc
+    if threshold < 1:
+        raise ValueError("GOBBY_TASK_FAILURE_THRESHOLD must be a positive integer")
+    return threshold
+
+
+TASK_FAILURE_THRESHOLD = _task_failure_threshold_from_env()
+
+
 class TaskRecoveryHandler:
     """Handles task ownership recovery for failed or cancelled agent runs."""
 
@@ -23,10 +38,14 @@ class TaskRecoveryHandler:
         task_manager: LocalTaskManager | None,
         agent_run_manager: LocalAgentRunManager,
         stall_classifier: StallClassifier,
+        failure_threshold: int = TASK_FAILURE_THRESHOLD,
     ) -> None:
+        if failure_threshold < 1:
+            raise ValueError("failure_threshold must be a positive integer")
         self._task_manager = task_manager
         self._agent_run_manager = agent_run_manager
         self._stall_classifier = stall_classifier
+        self._failure_threshold = failure_threshold
 
     async def resolve_claimed_task_for_run(self, db_run: AgentRun) -> tuple[str, Task] | None:
         """Resolve the task still owned by this run, if any."""
@@ -108,7 +127,7 @@ class TaskRecoveryHandler:
             if not is_provider:
                 failure_count += 1
 
-            if not is_provider and failure_count >= 3:
+            if not is_provider and failure_count >= self._failure_threshold:
                 await asyncio.to_thread(
                     self._task_manager.release_task_claim,
                     task_id,

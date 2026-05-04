@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.tasks import LocalTaskManager, Task
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 pytestmark = pytest.mark.unit
 
@@ -158,7 +164,13 @@ def test_expansion_rule_does_not_refire_after_handler_advances(
     assert advances == [("task-1", "in_development", "open")]
 
 
-def _stage_pipeline_task(temp_db, sample_project, *, review_policy: str = "required"):
+def _stage_pipeline_task(
+    temp_db: DatabaseProtocol,
+    sample_project: dict[str, Any],
+    *,
+    review_policy: str = "required",
+    requested: str = "in_progress",
+) -> tuple[LocalTaskManager, Task, TaskDispatchMutexManager]:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
     from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
@@ -170,7 +182,7 @@ def _stage_pipeline_task(temp_db, sample_project, *, review_policy: str = "requi
         (review_policy,),
     )
     initialize_manifest(temp_db, task.id, [spec("expansion", 0)])
-    set_stage_state(temp_db, task.id, "expansion", "in_progress")
+    set_stage_state(temp_db, task.id, "expansion", requested)
     storage = TaskDispatchMutexManager(temp_db)
     storage.ensure_table()
     storage.acquire_mutex(task.id, holder="dispatcher", kind="heartbeat", ttl_seconds=30)

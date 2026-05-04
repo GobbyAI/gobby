@@ -24,11 +24,29 @@ pytestmark = pytest.mark.unit
 
 def _context() -> SimpleNamespace:
     executed: list[tuple[str, tuple[object, ...]]] = []
+
+    def execute(sql: str, params: tuple[object, ...]) -> SimpleNamespace | None:
+        executed.append((sql, params))
+        if "SELECT task_id, state, merge_strategy" not in sql:
+            return None
+        return SimpleNamespace(
+            fetchone=lambda: {
+                "task_id": params[0],
+                "state": None,
+                "merge_strategy": None,
+                "structured_pr_verdict": None,
+                "pr_report_ref": None,
+                "merge_sha": None,
+                "merge_report_ref": None,
+                "last_error": None,
+                "created_at": None,
+                "updated_at": None,
+            }
+        )
+
     db = SimpleNamespace(
         executed=executed,
-        transaction=lambda: nullcontext(
-            SimpleNamespace(execute=lambda sql, params: executed.append((sql, params)))
-        ),
+        transaction=lambda: nullcontext(SimpleNamespace(execute=execute)),
     )
     stage_states = SimpleNamespace(
         complete_stage=Mock(return_value=SimpleNamespace(stage_name="merge", state="done")),

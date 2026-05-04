@@ -220,6 +220,10 @@ class StageRegistryLoader:
             raise StageRegistryLoadError(f"Stage {name} dispatch_target must be a string")
         if dispatch_type == "pipeline" and not dispatch_target:
             raise StageRegistryLoadError(f"Stage {name} dispatch_target is required")
+        if dispatch_type == "agent" and not (dispatch_target or default_agent):
+            raise StageRegistryLoadError(
+                f"Stage {name} dispatch_target or default_agent is required"
+            )
 
         dispatch_inputs = raw_stage.get("dispatch_inputs")
         if dispatch_inputs is not None and not isinstance(dispatch_inputs, dict):

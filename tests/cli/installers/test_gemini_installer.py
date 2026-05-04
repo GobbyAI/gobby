@@ -115,6 +115,41 @@ class TestInstallGemini:
             assert settings["general"]["enableHooks"] is True
             assert "hooks" in settings
 
+    def test_install_gemini_policy_oserror_is_nonfatal(
+        self,
+        project_path: Path,
+        mock_install_dir: Path,
+        mock_shared_content: dict,
+        mock_cli_content: dict,
+        temp_dir: Path,
+    ) -> None:
+        """Policy write failure does not fail the installer."""
+        with (
+            patch("gobby.cli.installers.gemini.get_install_dir", return_value=mock_install_dir),
+            patch(
+                "gobby.cli.installers.gemini.install_shared_content",
+                return_value=mock_shared_content,
+            ),
+            patch("gobby.cli.installers.gemini.install_cli_content", return_value=mock_cli_content),
+            patch(
+                "gobby.cli.installers.gemini.install_router_skills_as_gemini_skills",
+                return_value=["gobby/", "g/"],
+            ),
+            patch(
+                "gobby.cli.installers.gemini.configure_mcp_server_json",
+                return_value={"success": True, "added": True},
+            ),
+            patch(
+                "gobby.cli.installers.gemini._install_gemini_policy",
+                side_effect=OSError("read-only policy dir"),
+            ),
+            patch.object(Path, "home", return_value=temp_dir),
+        ):
+            result = install_gemini(project_path, mode="project")
+
+        assert result["success"] is True
+        assert result["policy_installed"] is False
+
     def test_install_gemini_missing_dispatcher(self, project_path: Path, temp_dir: Path) -> None:
         """Test installation fails when dispatcher is missing."""
         install_dir = temp_dir / "install"

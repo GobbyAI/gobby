@@ -71,6 +71,10 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
     unattended = request_data.unattended
     if request_data.yolo is not None and not unattended:
         unattended = request_data.yolo
+    try:
+        add_stages = [_parse_stage_insertion(value) for value in request_data.add_stages]
+    except ValueError as exc:
+        raise ValueError(f"Invalid stage insertion: {exc}") from exc
     return BuildOptions(
         profile=request_data.profile,
         skip_stages=request_data.skip_stages,
@@ -78,7 +82,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         unattended=unattended,
         composer_yolo=request_data.composer_yolo,
         stages=request_data.stages,
-        add_stages=[_parse_stage_insertion(value) for value in request_data.add_stages],
+        add_stages=add_stages,
         stage_caps=[
             BuildStageCapOverride(
                 stage_name=item.stage_name,

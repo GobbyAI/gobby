@@ -20,7 +20,7 @@ class SpawnAgentAction:
     reasoning_effort: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StartPipelineAction:
     """Start a configured pipeline for a task stage."""
 

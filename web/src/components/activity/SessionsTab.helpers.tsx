@@ -153,7 +153,11 @@ export function matchesSearch(session: GobbySession, search: string): boolean {
 
 export function entryTimestamp(entry: WatchingSessionEntry): number {
   const raw = entry.updatedAt ?? entry.startedAt ?? null;
-  if (!raw) return 0;
-  const parsed = new Date(raw).getTime();
+  return parseTimestamp(raw);
+}
+
+export function parseTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 }

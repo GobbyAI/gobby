@@ -58,6 +58,7 @@ _PROTECTED_PUSH_MARKERS = (
     "pre-receive hook declined",
     "gh006",
 )
+_PROTECTION_PROBE_TIMEOUT_SECONDS = 30
 
 
 def _parse_github_remote(remote_url: str) -> tuple[str, str] | None:
@@ -165,7 +166,7 @@ async def _push_dry_run_probe(
             command,
             cwd=repo_path,
             # Keep protection probing bounded; GitHub auth/network stalls should degrade.
-            timeout=30,
+            timeout=_PROTECTION_PROBE_TIMEOUT_SECONDS,
         )
         returncode = result.returncode
         output = f"{result.stdout}\n{result.stderr}"
@@ -177,7 +178,7 @@ async def _push_dry_run_probe(
             capture_output=True,
             text=True,
             # Match the WorktreeGitManager probe timeout for direct subprocess fallback.
-            timeout=30,
+            timeout=_PROTECTION_PROBE_TIMEOUT_SECONDS,
             check=False,
         )
         returncode = proc.returncode

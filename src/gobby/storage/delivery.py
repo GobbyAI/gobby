@@ -16,6 +16,11 @@ from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
 
+
+class DeliveryStateError(RuntimeError):
+    """Raised when delivery state storage cannot verify a write."""
+
+
 CAMPAIGN_COLUMNS = frozenset(
     {
         "state",
@@ -104,7 +109,7 @@ class TaskDeliveryStateManager:
                 """,  # nosec B608 - columns are filtered against static allowlists.
                 tuple(values[column] for column in columns),
             )
-            row = conn.execute(
+            result = conn.execute(
                 """
                 SELECT task_id, state, merge_strategy, structured_pr_verdict,
                        pr_report_ref, merge_sha, merge_report_ref, last_error,
@@ -113,9 +118,10 @@ class TaskDeliveryStateManager:
                  WHERE task_id = ?
                 """,
                 (task_id,),
-            ).fetchone()
+            )
+            row = result.fetchone() if result is not None else None
         if row is None:
-            raise RuntimeError(f"Failed to record delivery campaign for task {task_id}")
+            raise DeliveryStateError(f"Failed to record delivery campaign for task {task_id}")
         return self._campaign_view(dict(row))
 
     def record_unit(

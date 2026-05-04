@@ -2,22 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._models import Task
-from gobby.storage.tasks._stage_types import StageState
-
-
-def _coerce_artifact_refs(value: str | None) -> dict[str, str] | None:
-    if not value:
-        return None
-    decoded = json.loads(value)
-    if not isinstance(decoded, dict):
-        return None
-    return {str(key): str(item) for key, item in decoded.items()}
+from gobby.storage.tasks._stage_types import StageState, _coerce_artifact_refs
 
 
 def _state_from_row(row: Any) -> StageState:

@@ -843,3 +843,8 @@ body {
   pointer-events: none;
   transition: opacity 0.2s;
 }
+
+.workflow-trace-icon {
+  margin-right: 6px;
+  vertical-align: middle;
+}

@@ -37,6 +37,7 @@ class TestTmuxConfig:
         assert config.config_file is None
         assert config.session_prefix == "gobby"
         assert config.history_limit == 10000
+        assert config.init_activity_grace_seconds == 5.0
 
     def test_custom_values(self) -> None:
         config = TmuxConfig(
@@ -47,6 +48,7 @@ class TestTmuxConfig:
             config_file="/tmp/tmux.conf",
             session_prefix="myprefix",
             history_limit=5000,
+            init_activity_grace_seconds=7.5,
         )
         assert config.enabled is False
         assert config.command == "/usr/local/bin/tmux"
@@ -55,6 +57,7 @@ class TestTmuxConfig:
         assert config.config_file == "/tmp/tmux.conf"
         assert config.session_prefix == "myprefix"
         assert config.history_limit == 5000
+        assert config.init_activity_grace_seconds == 7.5
 
     def test_wsl_distribution_default(self) -> None:
         config = TmuxConfig()
@@ -67,6 +70,10 @@ class TestTmuxConfig:
     def test_history_limit_minimum(self) -> None:
         with pytest.raises(ValueError, match="greater than or equal to 100"):
             TmuxConfig(history_limit=50)
+
+    def test_init_activity_grace_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="greater than 0"):
+            TmuxConfig(init_activity_grace_seconds=0)
 
     def test_re_export_matches_canonical(self) -> None:
         """agents/tmux/config.py re-exports the same class from config/tmux.py."""

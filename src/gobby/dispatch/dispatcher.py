@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import logging
+import sqlite3
 import uuid
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
@@ -164,6 +165,9 @@ async def run_heartbeat(
                 services=services,
             )
             result = HeartbeatResult(result.scanned, result.executed + 1, result.skipped)
+        except (TypeError, AttributeError, sqlite3.DatabaseError):
+            mutex.release()
+            raise
         except Exception as exc:
             logger.exception("Dispatcher heartbeat candidate failed: task_id=%s", candidate.id)
             try:
@@ -662,7 +666,7 @@ def _create_stage_pipeline_execution(
         )
         if cursor.rowcount < 1:
             raise RuntimeError(f"dispatch mutex missing before attaching {execution_id}")
-    mutex._run_id = execution_id
+    mutex.mark_attached_run_id(execution_id)
     return execution_id
 
 
@@ -723,7 +727,14 @@ def _handle_spawn_failure(
                 by_session_id="dispatcher",
             )
         except Exception:
-            logger.debug("Failed to roll back stage after dispatch spawn failure", exc_info=True)
+            logger.warning(
+                "Failed to roll back stage after dispatch spawn failure: "
+                "task_id=%s stage_name=%s by_session_id=%s",
+                action.task_id,
+                stage_name,
+                "dispatcher",
+                exc_info=True,
+            )
     if failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
         escalate_task(
             db=db,

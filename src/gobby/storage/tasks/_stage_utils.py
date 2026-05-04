@@ -95,29 +95,22 @@ def _cascade_close_descendants(
     closed_in_session_id: str | None,
     commit_sha: str | None,
 ) -> None:
-    rows = conn.execute(
+    conn.execute(
         """
         WITH RECURSIVE subtree(id) AS (
             SELECT id FROM tasks WHERE parent_task_id = ?
             UNION ALL
             SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent_task_id = subtree.id
         )
-        SELECT id FROM subtree
+        UPDATE tasks
+           SET closed_at = ?,
+               closed_reason = 'merged',
+               closed_in_session_id = ?,
+               closed_commit_sha = ?,
+               assignee = NULL,
+               claimed_by_session_id = NULL,
+               updated_at = ?
+         WHERE id IN (SELECT id FROM subtree)
         """,
-        (task_id,),
-    ).fetchall()
-    for row in rows:
-        conn.execute(
-            """
-            UPDATE tasks
-               SET closed_at = ?,
-                   closed_reason = 'merged',
-                   closed_in_session_id = ?,
-                   closed_commit_sha = ?,
-                   assignee = NULL,
-                   claimed_by_session_id = NULL,
-                   updated_at = ?
-             WHERE id = ?
-            """,
-            (closed_at, closed_in_session_id, commit_sha, closed_at, row["id"]),
-        )
+        (task_id, closed_at, closed_in_session_id, commit_sha, closed_at),
+    )

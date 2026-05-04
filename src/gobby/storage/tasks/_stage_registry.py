@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -217,6 +218,13 @@ class StageRegistryManager:
             raise ValueError("dispatch_target is required for pipeline dispatch")
         if entry.dispatch_type == "agent" and not (entry.dispatch_target or entry.default_agent):
             raise ValueError("dispatch_target or default_agent is required for agent dispatch")
+        if entry.dispatch_inputs_json:
+            try:
+                dispatch_inputs = json.loads(entry.dispatch_inputs_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError("dispatch_inputs_json must be valid JSON") from exc
+            if not isinstance(dispatch_inputs, dict):
+                raise ValueError("dispatch_inputs_json must be a JSON object")
         if entry.review_policy != "none" and not entry.reviewer_agent and entry.name != "pr":
             raise ValueError(
                 f"reviewer_agent is required for stage '{entry.name}' with review policy"

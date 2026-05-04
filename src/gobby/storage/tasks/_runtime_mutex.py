@@ -91,6 +91,13 @@ class RuntimeDispatchMutex:
             raise RuntimeDispatchMutexError(msg)
         self._run_id = run_id
 
+    def mark_attached_run_id(self, run_id: str) -> None:
+        """Record a run id already attached by a surrounding storage transaction."""
+        if not self.acquired:
+            msg = "cannot mark run id without an active dispatch mutex"
+            raise RuntimeDispatchMutexError(msg)
+        self._run_id = run_id
+
     def release(self) -> bool:
         """Release this context's lease if it is still held by this holder."""
         if not self._acquired or self._released:

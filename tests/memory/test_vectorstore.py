@@ -86,6 +86,7 @@ async def test_initialize_idempotent(tmp_path) -> None:
     await store.close()
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_operation_lazily_initializes(tmp_path) -> None:
     """Async operations should initialize Qdrant on first use."""

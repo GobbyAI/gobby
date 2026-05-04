@@ -247,9 +247,11 @@ class MemoryManager:
             self._embeddings_available = True
         except Exception as e:
             if self._embeddings_available is None:
-                # First failure — log once, then suppress
+                # Record the availability flip the first time embeddings fail.
                 logger.warning(f"Embedding failed for {memory_id}: {e}")
                 self._embeddings_available = False
+            else:
+                logger.warning(f"Embedding failed for {memory_id}: {e}")
             return
 
         try:
@@ -258,7 +260,7 @@ class MemoryManager:
             if is_recoverable_vector_store_error(e):
                 self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
             else:
-                self._log_vector_store_failure(f"VectorStore upsert failed for {memory_id}", e)
+                logger.warning("VectorStore upsert failed for %s: %s", memory_id, e)
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""

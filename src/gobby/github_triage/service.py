@@ -458,9 +458,7 @@ class GitHubIssueTriageService:
                     github_issue_number=issue.issue_number,
                     github_repo=issue.repo,
                 )
-        except sqlite3.IntegrityError as exc:
-            if "github_issue" not in str(exc) and "idx_tasks_github_issue_link" not in str(exc):
-                raise
+        except sqlite3.IntegrityError:
             existing = self.db.fetchone(
                 "SELECT id FROM tasks WHERE project_id = ? AND github_repo = ? "
                 "AND github_issue_number = ? LIMIT 1",

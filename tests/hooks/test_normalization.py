@@ -302,6 +302,11 @@ class TestToolOutputNormalization:
         result = normalize_mcp_fields(data)
         assert result["tool_output"] == {"result": {"success": True, "skill": {"name": "brevity"}}}
 
+    def test_tool_output_envelope_ignores_non_dict_json_output_payload(self) -> None:
+        data = {"tool_output": {"output": '["not", "an", "object"]'}}
+        result = normalize_mcp_fields(data)
+        assert result["tool_output"] == {"output": '["not", "an", "object"]'}
+
     def test_string_tool_output_non_json_left_as_string(self) -> None:
         """Non-JSON tool output (e.g. plain text) should remain a string."""
         data = {"tool_response": "Error: file not found"}

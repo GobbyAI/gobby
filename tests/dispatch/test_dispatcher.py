@@ -110,6 +110,17 @@ class _FakePipelineExecutor:
         return SimpleNamespace(id=kwargs["execution_id"], status="completed")
 
 
+async def _wait_for_executor_calls(
+    executor: _FakePipelineExecutor,
+) -> list[dict[str, object]]:
+    async def _poll() -> list[dict[str, object]]:
+        while not executor.calls:
+            await asyncio.sleep(0)
+        return executor.calls
+
+    return await asyncio.wait_for(_poll(), timeout=1)
+
+
 def _pipeline_action(task_id: str) -> StartPipelineAction:
     return StartPipelineAction(
         task_id=task_id,
@@ -655,13 +666,10 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
-    for _ in range(5):
-        if executor.calls:
-            break
-        await asyncio.sleep(0.01)
+    calls = await _wait_for_executor_calls(executor)
 
-    assert executor.calls[0]["inputs"] == {"task_id": task.id}
-    assert executor.calls[0]["session_id"] == "session-1"
+    assert calls[0]["inputs"] == {"task_id": task.id}
+    assert calls[0]["session_id"] == "session-1"
 
 
 async def test_expansion_terminal_event_releases_lease_via_handlers(
@@ -702,9 +710,9 @@ async def test_execution_id_attaches_before_background_pipeline_start(
     monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
-    await asyncio.sleep(0)
+    calls = await _wait_for_executor_calls(executor)
 
-    execution_id = executor.calls[0]["execution_id"]
+    execution_id = calls[0]["execution_id"]
     assert storage.get_mutex(task.id).run_id == execution_id
 
 
@@ -732,9 +740,9 @@ async def test_pipeline_terminal_handler_releases_lease(
     monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
-    await asyncio.sleep(0)
+    calls = await _wait_for_executor_calls(executor)
     _dispatch.on_pipeline_failed(
-        {"execution_id": executor.calls[0]["execution_id"], "error": "boom"},
+        {"execution_id": calls[0]["execution_id"], "error": "boom"},
         db=temp_db,
         storage=storage,
     )
