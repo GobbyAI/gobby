@@ -511,6 +511,10 @@ def _unwrap_mcp_tool_output(tool_output: Any) -> Any:
         if nested_content is not None:
             return nested_content
 
+    parsed_output = _parse_json_object(tool_output.get("output"))
+    if parsed_output is not None:
+        return _unwrap_mcp_tool_output(parsed_output)
+
     return tool_output
 
 

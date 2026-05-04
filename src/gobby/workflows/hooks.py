@@ -17,6 +17,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_TOOL_CONTEXT_REHYDRATION_SOURCES = frozenset(
+    {
+        SessionSource.CLAUDE,
+        SessionSource.CODEX,
+        SessionSource.GEMINI,
+        SessionSource.QWEN,
+        SessionSource.DROID,
+    }
+)
+
 
 def _is_turn_start_event(event_type: HookEventType | str) -> bool:
     value = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
@@ -233,7 +243,7 @@ class WorkflowHookHandler:
     def _sync_tool_context(self, event: HookEvent, session_id: str) -> None:
         """Maintain BEFORE/AFTER tool parity for rule evaluation."""
         if (
-            event.source not in (SessionSource.CLAUDE, SessionSource.CODEX)
+            event.source not in _TOOL_CONTEXT_REHYDRATION_SOURCES
             or not session_id
             or not isinstance(event.data, dict)
         ):

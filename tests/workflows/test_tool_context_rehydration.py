@@ -60,11 +60,15 @@ def handler(db: LocalDatabase) -> WorkflowHookHandler:
     return WorkflowHookHandler(rule_engine=RuleEngine(db))
 
 
-def _event(event_type: HookEventType, data: dict[str, Any]) -> HookEvent:
+def _event(
+    event_type: HookEventType,
+    data: dict[str, Any],
+    source: SessionSource = SessionSource.CLAUDE,
+) -> HookEvent:
     return HookEvent(
         event_type=event_type,
         session_id=EXTERNAL_SESSION_ID,
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data,
         metadata={"_platform_session_id": PLATFORM_SESSION_ID},
@@ -98,14 +102,19 @@ def _call_arguments(mcp_tool: str) -> dict[str, Any]:
         ("update_task", {"server_name": "gobby-tasks", "tool_name": "update_task"}),
     ],
 )
+@pytest.mark.parametrize(
+    "source",
+    [SessionSource.CLAUDE, SessionSource.GEMINI, SessionSource.QWEN, SessionSource.DROID],
+)
 @pytest.mark.asyncio
-async def test_claude_after_tool_rehydrates_schema_lookup_context(
+async def test_cli_after_tool_rehydrates_schema_lookup_context(
     handler: WorkflowHookHandler,
     db: LocalDatabase,
     mcp_tool: str,
     schema_input: dict[str, Any],
+    source: SessionSource,
 ) -> None:
-    """Claude PostToolUse can omit tool_input; schema lookup still unlocks the tool."""
+    """CLI AFTER_TOOL events can omit tool_input; schema lookup still unlocks the tool."""
     session_vars = SessionVariableManager(db)
     session_vars.merge_variables(PLATFORM_SESSION_ID, {"listed_servers": ["gobby-tasks"]})
 
@@ -119,6 +128,7 @@ async def test_claude_after_tool_rehydrates_schema_lookup_context(
             "tool_use_id": f"schema-{mcp_tool}",
             "call_id": f"call-{mcp_tool}",
         },
+        source=source,
     )
     before_response = await handler._evaluate_rules(before_event)
     assert before_response.decision == "allow"
@@ -129,6 +139,7 @@ async def test_claude_after_tool_rehydrates_schema_lookup_context(
             "tool_use_id": f"schema-{mcp_tool}",
             "tool_response": '{"success": true}',
         },
+        source=source,
     )
     after_response = await handler._evaluate_rules(after_event)
 
@@ -139,7 +150,7 @@ async def test_claude_after_tool_rehydrates_schema_lookup_context(
     assert after_event.data["mcp_tool"] == "get_tool_schema"
     assert after_event.data["call_id"] == f"call-{mcp_tool}"
     assert after_event.metadata["_tool_context_rehydrated"] is True
-    assert after_event.metadata["_tool_context_rehydrated_source"] == "claude"
+    assert after_event.metadata["_tool_context_rehydrated_source"] == source.value
 
     unlocked_tools = session_vars.get_variables(PLATFORM_SESSION_ID).get("unlocked_tools", [])
     assert f"gobby-tasks:{mcp_tool}" in unlocked_tools
@@ -155,6 +166,7 @@ async def test_claude_after_tool_rehydrates_schema_lookup_context(
                 "arguments": _call_arguments(mcp_tool),
             },
         },
+        source=source,
     )
     call_response = await handler._evaluate_rules(call_event)
     assert call_response.decision == "allow"
