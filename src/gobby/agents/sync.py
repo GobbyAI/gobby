@@ -2,7 +2,8 @@
 
 Single-row model: templates live on disk only. The DB holds installed rows
 directly. Installed rows are overwritten when the template changes
-(preserving the user's enabled toggle). Soft-deleted rows are not restored.
+(preserving the user's enabled toggle). Soft-deleted rows are restored only
+when a managed bundled definition reappears with different content.
 """
 
 import logging
@@ -36,6 +37,44 @@ def _is_legacy_discovery_placeholder(name: str, definition_json: str, enabled: b
     return "PLACEHOLDER" in definition_json or "placeholder_agent:" in definition_json
 
 
+def _is_deprecated_bundled_agent(definition_json: str, enabled: bool) -> bool:
+    """Return True for old disabled tombstone definitions that became active again."""
+    if enabled:
+        return False
+    return '"deprecated":true' in definition_json or '"deprecated": true' in definition_json
+
+
+def _is_sync_managed_bundled_agent(existing: Any) -> bool:
+    """Return whether an existing row is safe for bundled agent sync to own."""
+    return (
+        existing.project_id is None
+        and existing.source in {"installed", "template"}
+        and "gobby" in (existing.tags or [])
+    )
+
+
+def _build_agent_update_fields(
+    existing: Any,
+    *,
+    body: AgentDefinitionBody,
+    body_json: str,
+    force_enable: bool = False,
+    restore: bool = False,
+) -> dict[str, Any]:
+    """Build changed fields for a managed bundled agent row."""
+    fields: dict[str, Any] = {}
+    if existing.definition_json != body_json:
+        fields["definition_json"] = body_json
+        fields["description"] = body.description
+    if existing.source != "installed":
+        fields["source"] = "installed"
+        fields["tags"] = ["gobby"]
+        fields["enabled"] = body.enabled
+    elif force_enable or restore:
+        fields["enabled"] = body.enabled
+    return fields
+
+
 def get_bundled_agents_path() -> Path:
     """Get the path to bundled agents directory.
 
@@ -53,7 +92,7 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
     Creates installed rows directly from template files. Installed rows are
     overwritten when the template changes (preserving the user's enabled toggle,
     except for legacy disabled discovery placeholders that are upgraded to real
-    enabled agents). Soft-deleted rows are not restored.
+    enabled agents, and old bundled tombstones that become active again).
 
     Args:
         db: Database connection
@@ -109,6 +148,22 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                     continue
 
                 if existing.deleted_at is not None:
+                    if (
+                        _is_sync_managed_bundled_agent(existing)
+                        and existing.definition_json != body_json
+                    ):
+                        manager.restore(existing.id)
+                        manager.update(
+                            existing.id,
+                            **_build_agent_update_fields(
+                                existing,
+                                body=body,
+                                body_json=body_json,
+                                restore=True,
+                            ),
+                        )
+                        result["updated"] += 1
+                        continue
                     result["skipped"] += 1
                     continue
 
@@ -116,27 +171,26 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                     name,
                     existing.definition_json,
                     existing.enabled,
+                ) or _is_deprecated_bundled_agent(
+                    existing.definition_json,
+                    existing.enabled,
                 )
-                if existing.source == "installed" and (
-                    existing.definition_json != body_json or force_enable
-                ):
-                    update_fields: dict[str, Any] = {
-                        "definition_json": body_json,
-                        "description": body.description,
-                    }
-                    if force_enable:
-                        update_fields["enabled"] = body.enabled
-                    manager.update(
-                        existing.id,
-                        **update_fields,
+                if _is_sync_managed_bundled_agent(existing):
+                    update_fields = _build_agent_update_fields(
+                        existing,
+                        body=body,
+                        body_json=body_json,
+                        force_enable=force_enable,
                     )
-                    result["updated"] += 1
-                    logger.debug(
-                        "Updated bundled agent definition %s (%s); installed definition_json changed",
-                        existing.id,
-                        existing.description or body.description,
-                    )
-                    continue
+                    if update_fields:
+                        manager.update(existing.id, **update_fields)
+                        result["updated"] += 1
+                        logger.debug(
+                            "Updated bundled agent definition %s (%s)",
+                            existing.id,
+                            existing.description or body.description,
+                        )
+                        continue
 
                 result["skipped"] += 1
                 continue

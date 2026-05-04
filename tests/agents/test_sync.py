@@ -1,5 +1,6 @@
 """Tests for sync_bundled_agents."""
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -188,6 +189,100 @@ class TestSyncBundledAgents:
         assert row.enabled is False
 
     @pytest.mark.unit
+    def test_sync_updates_legacy_template_agent_row(self, tmp_path: Path) -> None:
+        """Old gobby template rows should become installed bundled rows."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "developer.yaml").write_text(
+            "name: developer\n"
+            "description: Active developer\n"
+            "enabled: true\n"
+            "provider: codex\n"
+            "mode: interactive\n"
+            "instructions: Build features\n"
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        mgr.create(
+            name="developer",
+            definition_json=json.dumps(
+                {
+                    "name": "developer",
+                    "description": "Deprecated developer",
+                    "enabled": False,
+                    "deprecated": True,
+                    "provider": "codex",
+                    "mode": "interactive",
+                    "instructions": "Deprecated",
+                }
+            ),
+            workflow_type="agent",
+            source="template",
+            enabled=False,
+            tags=["gobby"],
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        row = mgr.get_by_name("developer")
+        assert row is not None
+        assert row.source == "installed"
+        assert row.enabled is True
+        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+        assert body.enabled is True
+
+    @pytest.mark.unit
+    def test_sync_restores_reintroduced_bundled_agent(self, tmp_path: Path) -> None:
+        """A changed bundled agent can return after a prior bundled orphan delete."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "developer.yaml").write_text(
+            "name: developer\n"
+            "description: Active developer\n"
+            "enabled: true\n"
+            "provider: codex\n"
+            "mode: interactive\n"
+            "instructions: Build features\n"
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        row = mgr.create(
+            name="developer",
+            definition_json=json.dumps(
+                {
+                    "name": "developer",
+                    "description": "Deprecated developer",
+                    "enabled": False,
+                    "deprecated": True,
+                    "provider": "codex",
+                    "mode": "interactive",
+                    "instructions": "Deprecated",
+                }
+            ),
+            workflow_type="agent",
+            source="installed",
+            enabled=False,
+            tags=["gobby"],
+        )
+        mgr.delete(row.id)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        restored = mgr.get_by_name("developer")
+        assert restored is not None
+        assert restored.enabled is True
+        body = AgentDefinitionBody.model_validate_json(restored.definition_json)
+        assert body.description == "Active developer"
+
+    @pytest.mark.unit
     def test_sync_multiple_agents(self, tmp_path: Path) -> None:
         """Test syncing multiple agent files."""
         db = _setup_db(tmp_path)
@@ -329,6 +424,7 @@ class TestSyncBundledAgents:
         names = [r.name for r in rows]
         # Check for agents from the new-format bundled definitions
         assert "default" in names
+        assert "developer" in names
         assert "qa-reviewer" in names
         assert all(
             n in names

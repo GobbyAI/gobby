@@ -106,6 +106,15 @@ class TestLoadPipeline:
         assert step.mcp is not None
         assert step.mcp.arguments["agent"] == "${{ inputs.agent }}"
 
+    def test_qa_dispatch_targets_enabled_reviewer_agent(self) -> None:
+        path = Path("src/gobby/install/shared/workflows/qa.yaml")
+        payload = json.loads(json.dumps(yaml.safe_load(path.read_text())))
+        pipeline = PipelineDefinition.model_validate(payload)
+        step = next(item for item in pipeline.steps if item.id == "spawn_qa_reviewer")
+
+        assert step.mcp is not None
+        assert step.mcp.arguments["agent"] == "qa-reviewer"
+
     @pytest.mark.asyncio
     async def test_load_pipeline_not_found(self, loader) -> None:
         """Test loading non-existent pipeline returns None."""

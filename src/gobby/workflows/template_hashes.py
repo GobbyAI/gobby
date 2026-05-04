@@ -94,7 +94,9 @@ class TemplateHashCache:
         """Load pipeline templates, replicating sync_pipelines.py serialization."""
         if not pipelines_dir.exists():
             return
-        for yaml_path in sorted(pipelines_dir.glob("*.yaml")):
+        from gobby.workflows.sync_pipelines import iter_bundled_pipeline_files
+
+        for yaml_path in iter_bundled_pipeline_files(pipelines_dir):
             try:
                 data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
