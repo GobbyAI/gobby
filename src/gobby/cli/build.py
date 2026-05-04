@@ -11,6 +11,7 @@ from gobby.build import (
     BuildControlResult,
     BuildOptions,
     BuildResult,
+    DispatcherTickSummary,
     StageInsertion,
     build,
     build_resume,
@@ -100,7 +101,103 @@ def _echo_build_result(result: BuildResult) -> None:
     click.echo(f"Lifecycle: {result.initial_lifecycle}")
     if result.applied_stages_skipped:
         click.echo(f"Skipped stages: {', '.join(result.applied_stages_skipped)}")
-    click.echo(f"Dispatcher tick: {result.tick_dispatched}")
+    tick = result.dispatcher_tick
+    line = (
+        f"Dispatcher tick: scanned={tick.scanned} executed={tick.executed} skipped={tick.skipped}"
+    )
+    if tick.cap_reached:
+        line = f"{line} cap_reached"
+    elif tick.reason:
+        line = f"{line} reason={tick.reason}"
+    click.echo(line)
+
+
+def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
+    return {
+        "input_ref": input_ref,
+        "profile": opts.profile,
+        "skip_stages": opts.skip_stages,
+        "stages": opts.stages,
+        "add_stages": [
+            (f"{item.stage_name}@{item.position}" if item.position is not None else item.stage_name)
+            for item in opts.add_stages
+        ],
+        "isolation": opts.isolation,
+        "unattended": opts.unattended,
+        "composer_yolo": opts.composer_yolo,
+        "stage_caps": [
+            {
+                "stage_name": cap.stage_name,
+                "max_work_attempts": cap.max_work_attempts,
+                "max_review_rounds": cap.max_review_rounds,
+            }
+            for cap in opts.stage_caps
+        ],
+        "target_branch": opts.target_branch,
+        "agent": opts.assigned_agent,
+        "reset_expansion_output": opts.reset_expansion_output,
+    }
+
+
+def _result_from_payload(payload: dict[str, object]) -> BuildResult:
+    tick_payload = payload.get("dispatcher_tick")
+    dispatcher_tick = (
+        DispatcherTickSummary(**tick_payload)
+        if isinstance(tick_payload, dict)
+        else DispatcherTickSummary(ticks=_payload_int(payload.get("tick_dispatched")))
+    )
+    manifest = payload.get("manifest")
+    return BuildResult(
+        task_id=str(payload["task_id"]),
+        created=bool(payload["created"]),
+        initial_lifecycle=str(payload["initial_lifecycle"]),
+        applied_stages_skipped=_payload_string_list(payload.get("applied_stages_skipped")),
+        tick_dispatched=_payload_int(payload.get("tick_dispatched"), dispatcher_tick.ticks),
+        dispatcher_tick=dispatcher_tick,
+        manifest=manifest if isinstance(manifest, list) else None,
+    )
+
+
+def _payload_int(value: object, default: int = 0) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value)
+    return default
+
+
+def _payload_string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return []
+
+
+def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
+    try:
+        from gobby.config.app import load_config
+        from gobby.utils.daemon_client import DaemonClient
+
+        config = load_config()
+        client = DaemonClient(port=config.daemon_port, timeout=5.0)
+        is_healthy, _ = client.check_health()
+        if not is_healthy:
+            return None
+        response = client.call_http_api(
+            "/api/build",
+            method="POST",
+            json_data=_build_payload(opts, input_ref),
+            timeout=300.0,
+        )
+        if response.status_code == 200:
+            return _result_from_payload(response.json())
+        if response.status_code == 400:
+            detail = response.json().get("detail", response.text)
+            raise click.ClickException(str(detail))
+        return None
+    except click.ClickException:
+        raise
+    except Exception:
+        return None
 
 
 def _echo_build_control_result(result: BuildControlResult) -> None:
@@ -202,13 +299,15 @@ def build_command(
         reset_expansion_output=reset_expansion_output,
     )
     project_id = resolve_project_id()
-    db = _open_database()
-    try:
-        result = asyncio.run(build(input_ref, opts, db=db, project_id=project_id))
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
+    result = _try_daemon_build(input_ref, opts)
+    if result is None:
+        db = _open_database()
+        try:
+            result = asyncio.run(build(input_ref, opts, db=db, project_id=project_id))
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        finally:
+            db.close()
 
     _echo_build_result(result)
 

@@ -38,7 +38,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
 
 
 def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
-    from gobby.build.service import BuildResult
+    from gobby.build.service import BuildResult, DispatcherTickSummary
     from gobby.cli import cli
 
     plan_file = tmp_path / "plan.md"
@@ -49,12 +49,14 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
         initial_lifecycle="test_arch",
         applied_stages_skipped=["plan_review", "qa"],
         tick_dispatched=2,
+        dispatcher_tick=DispatcherTickSummary(ticks=2, scanned=4, executed=2, skipped=1),
     )
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.cli.build.LocalDatabase") as db_cls,
         patch("gobby.cli.build.run_migrations") as run_migrations,
+        patch("gobby.cli.build._try_daemon_build", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=build_result) as run,
         patch("gobby.cli.build.build", new=AsyncMock()) as build,
     ):
@@ -90,6 +92,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "task-1" in result.output
     assert "test_arch" in result.output
+    assert "Dispatcher tick: scanned=4 executed=2 skipped=1" in result.output
     run_migrations.assert_called_once_with(db_cls.return_value)
     run.assert_called_once()
     call = build.call_args
@@ -112,7 +115,10 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"
     assert opts.reset_expansion_output is True
-    assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
+    assert call.kwargs == {
+        "db": db_cls.return_value,
+        "project_id": "project-1",
+    }
 
 
 def test_build_cli_without_input_invokes_interactive_build_skill() -> None:

@@ -6,6 +6,7 @@ import warnings
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.app_context import get_app_context
 from gobby.build.service import BuildOptions, build
 from gobby.config.build import StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -78,6 +79,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             opts,
             db=ctx.task_manager.db,
             project_id=resolved_project_id,
+            services=get_app_context(),
         )
         return asdict(result)
 

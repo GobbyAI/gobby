@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from gobby.build import BuildOptions, BuildResult, build
+from gobby.build import BuildOptions, BuildResult, StageInsertion, build
 from gobby.config.build import Isolation
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
@@ -31,6 +31,8 @@ class BuildRequest(BaseModel):
     input_ref: str
     profile: str | None = None
     skip_stages: list[str] = Field(default_factory=list)
+    stages: list[str] | None = None
+    add_stages: list[str] = Field(default_factory=list)
     isolation: Isolation = "worktree"
     unattended: bool = False
     composer_yolo: bool = False
@@ -53,6 +55,8 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         isolation=request_data.isolation,
         unattended=unattended,
         composer_yolo=request_data.composer_yolo,
+        stages=request_data.stages,
+        add_stages=[_parse_stage_insertion(value) for value in request_data.add_stages],
         stage_caps=[
             BuildStageCapOverride(
                 stage_name=item.stage_name,
@@ -66,6 +70,12 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         clones_dir=clones_dir,
         reset_expansion_output=request_data.reset_expansion_output,
     )
+
+
+def _parse_stage_insertion(value: str) -> StageInsertion:
+    stage_name, separator, position_text = value.partition("@")
+    position = int(position_text) if separator else None
+    return StageInsertion(stage_name=stage_name, position=position)
 
 
 def _build_result_json(result: BuildResult) -> dict[str, Any]:
@@ -86,6 +96,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 _build_options(request_data),
                 db=server.services.database,
                 project_id=project_id,
+                services=server.services,
             )
             return _build_result_json(result)
         except ValueError as e:

@@ -29,7 +29,7 @@ def _client() -> TestClient:
 
 
 def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
-    from gobby.build.service import BuildResult
+    from gobby.build.service import BuildResult, DispatcherTickSummary
 
     build_result = BuildResult(
         task_id="task-1",
@@ -37,6 +37,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
         initial_lifecycle="plan_review",
         applied_stages_skipped=["pr"],
         tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(ticks=0, scanned=0, executed=0, skipped=0),
     )
 
     with patch(
@@ -66,6 +67,14 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
         "initial_lifecycle": "plan_review",
         "applied_stages_skipped": ["pr"],
         "tick_dispatched": 0,
+        "dispatcher_tick": {
+            "ticks": 0,
+            "scanned": 0,
+            "executed": 0,
+            "skipped": 0,
+            "cap_reached": False,
+            "reason": None,
+        },
         "manifest": None,
     }
     call = build.call_args
@@ -83,6 +92,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.target_branch == "main"
     assert opts.assigned_agent == "backend-developer"
     assert call.kwargs["project_id"] == "project-1"
+    assert call.kwargs["services"] is not None
 
 
 def test_buildrequest_unattended_and_composer_yolo() -> None:

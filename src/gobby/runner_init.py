@@ -877,6 +877,8 @@ def init_servers(runner: GobbyRunner) -> None:
     )
 
     set_app_context(services)
+    if runner.cron_scheduler and getattr(runner.cron_scheduler, "executor", None):
+        runner.cron_scheduler.executor.services = services
 
     if runner.communications_manager:
         from gobby.communications.reactions import ReactionHandler

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, field_validator
 
+from gobby.agents.launcher_session import get_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.storage.task_dependencies import TaskDependencyManager
@@ -183,34 +183,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
     """Create agent spawn router with endpoints bound to server instance."""
     router = APIRouter(prefix="/api/agents", tags=["agent-spawn"])
 
-    async def _get_or_create_launcher_session(project_id: str) -> str:
-        """Get or create a persistent web_launcher session for HTTP-initiated spawns."""
-        sm = server.services.session_manager
-        # Look for existing launcher session
-        sessions = sm.list(project_id=project_id)
-        for s in sessions:
-            if getattr(s, "source", None) == "web_launcher":
-                return s.id
-
-        # Create a new one
-        session_id = str(uuid.uuid4())
-        from gobby.utils.machine_id import get_machine_id
-
-        sm.register(
-            external_id=f"web-launcher-{project_id[:8]}",
-            machine_id=get_machine_id() or "web",
-            source="web_launcher",
-            project_id=project_id,
-            title="Web Launcher",
-            agent_depth=0,
-        )
-        # Fetch the just-created session to get its DB id
-        sessions = sm.list(project_id=project_id)
-        for s in sessions:
-            if getattr(s, "source", None) == "web_launcher":
-                return s.id
-        return session_id
-
     async def _do_spawn(
         req: AgentSpawnRequest, project_id: str | None = None
     ) -> AgentSpawnResponse:
@@ -318,7 +290,12 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             return AgentSpawnResponse(success=False, error="Agent runner unavailable")
 
         # Get parent session for spawning
-        parent_session_id = await _get_or_create_launcher_session(effective_project_id)
+        parent_session_id = get_or_create_launcher_session(
+            server.services.session_manager,
+            effective_project_id,
+            "web_launcher",
+            "Web Launcher",
+        )
 
         # Load agent definition
         from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent

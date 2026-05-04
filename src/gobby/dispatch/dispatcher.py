@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import uuid
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
@@ -27,6 +28,12 @@ from gobby.dispatch.mutex import (
     DispatchMutexUnavailableError,
     RuntimeDispatchMutex,
     RuntimeStageSnapshotState,
+)
+from gobby.dispatch.spawn import (
+    MAX_DISPATCH_SPAWN_ATTEMPTS,
+    DispatchSpawnFailed,
+    DispatchSpawnUnavailable,
+    spawn_agent,
 )
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
@@ -52,6 +59,8 @@ from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
+
+logger = logging.getLogger(__name__)
 
 MAX_ACTIVE_AGENTS = 10
 DISPATCH_HOLDER = "dispatcher"
@@ -154,9 +163,20 @@ async def run_heartbeat(
                 services=services,
             )
             result = HeartbeatResult(result.scanned, result.executed + 1, result.skipped)
-        except Exception:
+        except Exception as exc:
+            logger.exception("Dispatcher heartbeat candidate failed: task_id=%s", candidate.id)
+            try:
+                append_audit_marker(
+                    resolved_db,
+                    candidate.id,
+                    "Dispatch failed",
+                    str(exc),
+                )
+            except Exception:
+                logger.debug("Failed to append dispatch failure audit marker", exc_info=True)
             mutex.release()
-            raise
+            result = _skipped(result)
+            continue
 
     return result
 
@@ -405,6 +425,28 @@ async def _execute_action(
     return result
 
 
+async def _execute_spawn_action(
+    action: SpawnAgentAction,
+    *,
+    mutex: RuntimeDispatchMutex,
+    db: DatabaseProtocol,
+    context: object | None,
+    services: object | None,
+) -> str | None:
+    try:
+        raw_run_id: object = spawn_agent(action, db=db, context=context, services=services)
+        if inspect.isawaitable(raw_run_id):
+            raw_run_id = await cast(Awaitable[str | None], raw_run_id)
+    except (DispatchSpawnUnavailable, DispatchSpawnFailed) as exc:
+        _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error=str(exc))
+        return None
+    if raw_run_id:
+        mutex.attach(str(raw_run_id))
+        return str(raw_run_id)
+    _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
+    return None
+
+
 def execute_action(
     action: Action,
     *,
@@ -415,12 +457,13 @@ def execute_action(
 ) -> object | None:
     """Execute one dispatcher action under an acquired lease."""
     if isinstance(action, SpawnAgentAction):
-        run_id = spawn_agent(action, db=db, services=services)
-        if inspect.isawaitable(run_id):
-            raise RuntimeError("async spawn_agent requires monkeypatching _execute_action")
-        if run_id:
-            mutex.attach(str(run_id))
-        return run_id
+        return _execute_spawn_action(
+            action,
+            mutex=mutex,
+            db=db,
+            context=context,
+            services=services,
+        )
 
     if isinstance(action, StartPipelineAction):
         return _start_pipeline_action(
@@ -581,7 +624,7 @@ def _create_stage_pipeline_execution(
     execution_id = generate_prefixed_id("pe")
     session_id = getattr(services, "triggering_session_id", None)
     try:
-        definition_json = pipeline.model_dump_json()
+        definition_json = cast(Any, pipeline).model_dump_json()
     except Exception:
         definition_json = json.dumps(
             {"name": action.pipeline_name, "error": "serialization failed"}
@@ -656,15 +699,37 @@ def count_active_agents(db: DatabaseProtocol | None, project_id: str | None = No
     return int(row["count"]) if row else 0
 
 
-def spawn_agent(
+def _handle_spawn_failure(
     action: SpawnAgentAction,
     *,
-    db: DatabaseProtocol | None = None,
-    services: object | None = None,
-) -> str:
-    """Spawn an agent and return its run id; external wiring can monkeypatch this boundary."""
-    _ = action, db, services
-    return str(uuid.uuid4())
+    mutex: RuntimeDispatchMutex,
+    db: DatabaseProtocol,
+    context: object | None,
+    error: str,
+) -> None:
+    append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
+    task = get_task(db, action.task_id)
+    failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
+    update_task(db, action.task_id, dispatch_failure_count=failure_count)
+    stage = _field(context, "current_stage")
+    stage_name = _stage_name(stage)
+    if stage_name and _field(stage, "state") == "in_progress":
+        try:
+            _stage_states_manager(db=db, services=getattr(context, "services", None)).fail_stage(
+                action.task_id,
+                stage_name,
+                reason="dispatch_spawn_failed",
+                by_session_id="dispatcher",
+            )
+        except Exception:
+            logger.debug("Failed to roll back stage after dispatch spawn failure", exc_info=True)
+    if failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
+        escalate_task(
+            db=db,
+            task_id=action.task_id,
+            reason=f"dispatch_spawn_max_attempts:{error}",
+        )
+    mutex.release()
 
 
 def allocate_expansion_run_id() -> str:

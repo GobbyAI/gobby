@@ -28,10 +28,12 @@ class CronExecutor:
         storage: CronJobStorage,
         agent_runner: Any | None = None,
         pipeline_executor: PipelineExecutor | None = None,
+        services: object | None = None,
     ):
         self.storage = storage
         self.agent_runner = agent_runner
         self.pipeline_executor = pipeline_executor
+        self.services = services
         self._handlers: dict[str, CronHandler] = {}
 
     def register_handler(self, name: str, handler: CronHandler) -> None:
@@ -302,6 +304,7 @@ class CronExecutor:
             project_id=config.get("project_id", job.project_id),
             startup=bool(config.get("startup", False)),
             max_active_agents=config.get("max_active_agents"),
+            services=self.services,
         )
         return (
             "Dispatcher heartbeat completed: "

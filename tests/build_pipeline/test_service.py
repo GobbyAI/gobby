@@ -319,6 +319,67 @@ async def test_build_leaf_forces_none_isolation_and_sets_agent(
 
 
 @pytest.mark.asyncio
+async def test_build_leaf_with_services_creates_agent_run_by_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from types import SimpleNamespace
+
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.build.service import build
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    leaf = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Solo leaf with dispatch",
+        category="code",
+        task_type="task",
+    )
+
+    async def fake_spawn_agent_impl(**kwargs):
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=kwargs["parent_session_id"],
+            provider="codex",
+            prompt=kwargs["prompt"],
+            agent_name=kwargs["agent_lookup_name"],
+            task_id=leaf.id,
+            run_id="run-build-leaf",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "none"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await build(
+        f"#{leaf.seq_num}",
+        _options(profile="quick", isolation="none", assigned_agent="backend-developer"),
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    run = LocalAgentRunManager(temp_db).get("run-build-leaf")
+    assert run is not None
+    assert run.agent_name == "backend-developer"
+    assert run.task_id == leaf.id
+    assert result.dispatcher_tick.ticks >= 2
+    assert result.dispatcher_tick.executed >= 2
+
+
+@pytest.mark.asyncio
 async def test_build_leaf_rejects_non_automated_category(
     temp_db,
     sample_project,

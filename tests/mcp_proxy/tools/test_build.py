@@ -71,7 +71,7 @@ def test_unattended_with_composer_yolo_distinct_fields(temp_db) -> None:
 
 @pytest.mark.asyncio
 async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp_db) -> None:
-    from gobby.build.service import BuildResult
+    from gobby.build.service import BuildResult, DispatcherTickSummary
 
     registry = _registry(temp_db)
     build_task = registry.get_tool("build_task")
@@ -81,6 +81,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
         initial_lifecycle="in_development",
         applied_stages_skipped=["qa"],
         tick_dispatched=1,
+        dispatcher_tick=DispatcherTickSummary(ticks=1, scanned=3, executed=1, skipped=0),
     )
 
     with patch(
@@ -106,6 +107,14 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
         "initial_lifecycle": "in_development",
         "applied_stages_skipped": ["qa"],
         "tick_dispatched": 1,
+        "dispatcher_tick": {
+            "ticks": 1,
+            "scanned": 3,
+            "executed": 1,
+            "skipped": 0,
+            "cap_reached": False,
+            "reason": None,
+        },
         "manifest": None,
     }
     call = build.call_args
@@ -125,3 +134,4 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     assert opts.reset_expansion_output is True
     assert call.kwargs["db"] is temp_db
     assert call.kwargs["project_id"] == "project-1"
+    assert "services" in call.kwargs

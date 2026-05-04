@@ -47,6 +47,18 @@ class BuildOptions:
 
 
 @dataclass
+class DispatcherTickSummary:
+    """Structured dispatcher heartbeat summary returned by build entry points."""
+
+    ticks: int = 0
+    scanned: int = 0
+    executed: int = 0
+    skipped: int = 0
+    cap_reached: bool = False
+    reason: str | None = None
+
+
+@dataclass
 class BuildResult:
     """Summary returned by build service surfaces."""
 
@@ -55,6 +67,7 @@ class BuildResult:
     initial_lifecycle: str
     applied_stages_skipped: list[str]
     tick_dispatched: int
+    dispatcher_tick: DispatcherTickSummary = field(default_factory=DispatcherTickSummary)
     manifest: list[dict[str, str | int | None]] | None = None
 
     @property
@@ -142,6 +155,7 @@ async def build(
     *,
     db: DatabaseProtocol,
     project_id: str,
+    services: object | None = None,
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
 
@@ -162,16 +176,31 @@ async def build(
     if input_kind == "plan_file":
         assert isinstance(task_or_plan, Path)
         return await _build_plan_file(
-            task_manager, task_or_plan, opts, skip_stages, project_id, target_branch
+            task_manager,
+            task_or_plan,
+            opts,
+            skip_stages,
+            project_id,
+            target_branch,
+            services,
         )
 
     assert isinstance(task_or_plan, Task)
     task = task_or_plan
     _prepare_task_ref_expansion_output(task_manager, task, opts)
     if input_kind == "leaf":
-        return await _build_leaf(task_manager, task, opts, skip_stages, db, project_id)
+        return await _build_leaf(task_manager, task, opts, skip_stages, db, project_id, services)
 
-    return await _build_epic(task_manager, task, opts, skip_stages, target_branch, db, project_id)
+    return await _build_epic(
+        task_manager,
+        task,
+        opts,
+        skip_stages,
+        target_branch,
+        db,
+        project_id,
+        services,
+    )
 
 
 async def _build_plan_file(
@@ -181,6 +210,7 @@ async def _build_plan_file(
     skip_stages: list[str],
     project_id: str,
     target_branch: str | None,
+    services: object | None,
 ) -> BuildResult:
     task = task_manager.create_task(
         project_id=project_id,
@@ -204,12 +234,14 @@ async def _build_plan_file(
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
+    tick = await _kick_dispatcher_tick(task_manager.db, project_id, services=services)
     return BuildResult(
         task_id=task.id,
         created=True,
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
-        tick_dispatched=await _kick_dispatcher_tick(task_manager.db, project_id),
+        tick_dispatched=tick.ticks,
+        dispatcher_tick=tick,
         manifest=_specs_payload(specs),
     )
 
@@ -221,6 +253,7 @@ async def _build_leaf(
     skip_stages: list[str],
     db: DatabaseProtocol,
     project_id: str,
+    services: object | None,
 ) -> BuildResult:
     if opts.isolation != "none":
         raise ValueError("isolation requires an epic; leaf builds must use isolation none")
@@ -240,12 +273,14 @@ async def _build_leaf(
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
+    tick = await _kick_dispatcher_tick(db, project_id, services=services)
     return BuildResult(
         task_id=task.id,
         created=False,
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
-        tick_dispatched=await _kick_dispatcher_tick(db, project_id),
+        tick_dispatched=tick.ticks,
+        dispatcher_tick=tick,
         manifest=_specs_payload(specs),
     )
 
@@ -258,6 +293,7 @@ async def _build_epic(
     target_branch: str | None,
     db: DatabaseProtocol,
     project_id: str,
+    services: object | None,
 ) -> BuildResult:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
     _validate_epic_isolation_artifacts(opts.isolation, artifacts)
@@ -276,12 +312,14 @@ async def _build_epic(
     _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
+    tick = await _kick_dispatcher_tick(db, project_id, services=services)
     return BuildResult(
         task_id=task.id,
         created=False,
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
-        tick_dispatched=await _kick_dispatcher_tick(db, project_id),
+        tick_dispatched=tick.ticks,
+        dispatcher_tick=tick,
         manifest=_specs_payload(specs),
     )
 
@@ -669,8 +707,9 @@ async def _kick_dispatcher_tick(
     project_id: str | None = None,
     *,
     dispatcher_enabled: bool | None = None,
-) -> int:
-    """Fire one dispatcher heartbeat when the bundled cron row is enabled."""
+    services: object | None = None,
+) -> DispatcherTickSummary:
+    """Fire a bounded dispatcher heartbeat burst when the bundled cron row is enabled."""
     if dispatcher_enabled is None:
         if db is None or project_id is None:
             dispatcher_enabled = True
@@ -683,15 +722,27 @@ async def _kick_dispatcher_tick(
             "dispatcher_tick_skipped",
             extra={"project_id": project_id, "reason": "dispatcher_cron_disabled"},
         )
-        return 0
+        return DispatcherTickSummary(reason="dispatcher_cron_disabled")
 
     if db is None:
-        return 1
+        return DispatcherTickSummary(ticks=1, reason="database_missing")
 
     from gobby.dispatch.dispatcher import run_heartbeat
 
-    await run_heartbeat(db=db, project_id=project_id)
-    return 1
+    summary = DispatcherTickSummary()
+    for _ in range(3):
+        result = await run_heartbeat(db=db, project_id=project_id, services=services)
+        summary = DispatcherTickSummary(
+            ticks=summary.ticks + 1,
+            scanned=summary.scanned + result.scanned,
+            executed=summary.executed + result.executed,
+            skipped=summary.skipped + result.skipped,
+            cap_reached=summary.cap_reached or result.cap_reached,
+            reason="cap_reached" if result.cap_reached else summary.reason,
+        )
+        if result.executed == 0 or result.cap_reached:
+            break
+    return summary
 
 
 def _record_project_build_event(
@@ -748,6 +799,7 @@ def _looks_like_task_ref(input_ref: str) -> bool:
 __all__ = [
     "AUTOMATED_LEAF_CATEGORIES",
     "BuildControlResult",
+    "DispatcherTickSummary",
     "BuildLifecycleEvent",
     "BuildOptions",
     "BuildResult",
