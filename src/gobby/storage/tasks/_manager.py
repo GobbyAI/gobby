@@ -36,7 +36,7 @@ from gobby.storage.tasks._crud import (
     get_task as _get_task,
 )
 from gobby.storage.tasks._crud import (
-    update_task as _update_task,
+    update_task_metadata as _update_task_metadata,
 )
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle import (
@@ -91,9 +91,9 @@ from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
 from gobby.storage.tasks._search import TaskFTS5Searcher
+from gobby.storage.tasks._stage_manifest import init_stage_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
-from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.storage.tasks._transitions import (
     approve_review as _approve_review,
 )
@@ -138,60 +138,6 @@ __all__ = [
     "order_tasks_hierarchically",
     "LocalTaskManager",
 ]
-
-
-def _stage_cap_value(stage_name: str, field_name: str, value: object) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"stage_caps.{stage_name}.{field_name} must be an integer >= 1")
-    return value
-
-
-def _stage_cap_overrides(
-    stage_caps: Sequence[Mapping[str, object]] | None,
-) -> dict[str, tuple[int | None, int | None]]:
-    overrides: dict[str, tuple[int | None, int | None]] = {}
-    for item in stage_caps or ():
-        raw_stage_name = item.get("stage_name")
-        if not isinstance(raw_stage_name, str) or not raw_stage_name.strip():
-            raise ValueError("stage_caps entries require a non-empty stage_name")
-        stage_name = raw_stage_name.strip()
-        overrides[stage_name] = (
-            _stage_cap_value(stage_name, "max_work_attempts", item.get("max_work_attempts")),
-            _stage_cap_value(stage_name, "max_review_rounds", item.get("max_review_rounds")),
-        )
-    return overrides
-
-
-def _stage_manifest_specs(
-    default_stages: Iterable[tuple[str, int]],
-    stage_caps: Sequence[Mapping[str, object]] | None,
-    stages_override: Sequence[str] | None = None,
-) -> list[StageManifestSpec]:
-    cap_by_stage = _stage_cap_overrides(stage_caps)
-    if stages_override is not None:
-        default_stages = [
-            (stage_name, position) for position, stage_name in enumerate(stages_override)
-        ]
-    specs: list[StageManifestSpec] = []
-    seen_names: set[str] = set()
-    for stage_name, position in default_stages:
-        seen_names.add(stage_name)
-        work_cap, review_cap = cap_by_stage.get(stage_name, (None, None))
-        specs.append(
-            StageManifestSpec(
-                stage_name=stage_name,
-                position=position,
-                max_work_attempts=work_cap,
-                max_review_rounds=review_cap,
-            )
-        )
-
-    unknown_caps = sorted(set(cap_by_stage) - seen_names)
-    if unknown_caps:
-        raise ValueError(f"stage_caps target stage not in task manifest: {unknown_caps[0]}")
-    return specs
 
 
 class LocalTaskManager:
@@ -308,22 +254,15 @@ class LocalTaskManager:
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
         )
-        if stages_override is not None:
-            for stage_name in stages_override:
-                if self.stages_registry.get(stage_name) is None:
-                    raise ValueError(f"Unknown stage '{stage_name}'")
-            default_stages = [
-                (stage_name, position) for position, stage_name in enumerate(stages_override)
-            ]
-        else:
-            default_stages = self.stages_registry.list_default_stages(task_type)
-        specs = _stage_manifest_specs(default_stages, stage_caps)
-        if specs:
-            self.stage_states.initialize_manifest(
-                task_id,
-                specs,
-                by_session_id=created_in_session_id,
-            )
+        init_stage_manifest_for_task(
+            self.stages_registry,
+            self.stage_states,
+            task_id,
+            task_type=task_type,
+            stage_caps=stage_caps,
+            stages_override=stages_override,
+            by_session_id=created_in_session_id,
+        )
         self._notify_listeners()
         return self.get_task(task_id)
 
@@ -418,43 +357,7 @@ class LocalTaskManager:
         Stage and ownership mutations must go through the dedicated task
         transition methods so claim/session state stays coherent.
         """
-        legacy_stage_key = "lifecycle_" + "stage"
-        legacy_state_fields = sorted({"status", "lifecycle", legacy_stage_key} & set(kwargs))
-        blocked_fields = [
-            field_name
-            for field_name, value in (
-                ("assignee", assignee),
-                ("claimed_by_session_id", claimed_by_session_id),
-                ("closed_reason", closed_reason),
-                ("closed_at", closed_at),
-                ("closed_in_session_id", closed_in_session_id),
-                ("closed_commit_sha", closed_commit_sha),
-                ("escalated_at", escalated_at),
-                ("escalation_reason", escalation_reason),
-            )
-            if value is not UNSET
-        ]
-        if legacy_state_fields or blocked_fields:
-            blocked_display = ", ".join([*legacy_state_fields, *blocked_fields])
-            if legacy_state_fields and not blocked_fields:
-                field_class = "legacy state fields"
-                transition_hint = (
-                    "Use start_stage, submit_for_review, approve_review, reject_review, "
-                    "fail_stage, close_task, reopen_task, or escalate_task instead."
-                )
-            else:
-                field_class = "stage or ownership fields"
-                transition_hint = (
-                    "Use claim_task, release_task_claim, start_stage, submit_for_review, "
-                    "approve_review, reject_review, fail_stage, escalate_task, "
-                    "de_escalate_task, close_task, or reopen_task instead."
-                )
-            raise ValueError(
-                f"LocalTaskManager.update_task does not allow {field_class}. "
-                f"{transition_hint} Blocked fields: {blocked_display}"
-            )
-
-        parent_changed = _update_task(
+        parent_changed = _update_task_metadata(
             self.db,
             task_id=task_id,
             title=title,
@@ -489,6 +392,7 @@ class LocalTaskManager:
             isolation=isolation,
             assigned_agent=assigned_agent,
             additional_skills=additional_skills,
+            **kwargs,
         )
 
         # If parent_task_id was changed, update path_cache for this task and all descendants
@@ -738,43 +642,13 @@ class LocalTaskManager:
         return result
 
     def link_commit(self, task_id: str, commit_sha: str, cwd: str | Path | None = None) -> Task:
-        """Link a commit SHA to a task.
-
-        Adds the commit SHA to the task's commits array if not already present.
-        The SHA is normalized to dynamic short format for consistency.
-
-        Args:
-            task_id: The task ID to link the commit to.
-            commit_sha: The git commit SHA to link (short or full).
-            cwd: Working directory for git operations (defaults to current directory).
-
-        Returns:
-            Updated Task object.
-
-        Raises:
-            ValueError: If task not found or SHA cannot be resolved.
-        """
+        """Add ``commit_sha`` to the task's commits array (normalized to short SHA)."""
         if _link_commit(self.db, task_id, commit_sha, cwd):
             self._notify_listeners()
         return self.get_task(task_id)
 
     def unlink_commit(self, task_id: str, commit_sha: str, cwd: str | Path | None = None) -> Task:
-        """Unlink a commit SHA from a task.
-
-        Removes the commit SHA from the task's commits array if present.
-        Uses normalized SHA for exact matching.
-
-        Args:
-            task_id: The task ID to unlink the commit from.
-            commit_sha: The git commit SHA to unlink (short or full).
-            cwd: Working directory for git operations (defaults to current directory).
-
-        Returns:
-            Updated Task object.
-
-        Raises:
-            ValueError: If task not found.
-        """
+        """Remove ``commit_sha`` from the task's commits array if present."""
         if _unlink_commit(self.db, task_id, commit_sha, cwd):
             self._notify_listeners()
         return self.get_task(task_id)

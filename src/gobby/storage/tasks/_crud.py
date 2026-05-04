@@ -646,3 +646,126 @@ def update_task(
 
     # Return whether parent_task_id was changed (caller should update path cache)
     return parent_task_id is not UNSET
+
+
+def update_task_metadata(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    title: MaybeUnset[str | None] = UNSET,
+    description: MaybeUnset[str | None] = UNSET,
+    priority: MaybeUnset[int | None] = UNSET,
+    task_type: MaybeUnset[str | None] = UNSET,
+    assignee: MaybeUnset[str | None] = UNSET,
+    claimed_by_session_id: MaybeUnset[str | None] = UNSET,
+    labels: MaybeUnset[list[str] | None] = UNSET,
+    parent_task_id: MaybeUnset[str | None] = UNSET,
+    closed_reason: MaybeUnset[str | None] = UNSET,
+    closed_at: MaybeUnset[str | None] = UNSET,
+    closed_in_session_id: MaybeUnset[str | None] = UNSET,
+    closed_commit_sha: MaybeUnset[str | None] = UNSET,
+    validation_status: MaybeUnset[str | None] = UNSET,
+    validation_feedback: MaybeUnset[str | None] = UNSET,
+    category: MaybeUnset[str | None] = UNSET,
+    validation_criteria: MaybeUnset[str | None] = UNSET,
+    validation_fail_count: MaybeUnset[int | None] = UNSET,
+    dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalation_reason: MaybeUnset[str | None] = UNSET,
+    github_issue_number: MaybeUnset[int | None] = UNSET,
+    github_pr_number: MaybeUnset[int | None] = UNSET,
+    github_repo: MaybeUnset[str | None] = UNSET,
+    linear_issue_id: MaybeUnset[str | None] = UNSET,
+    linear_team_id: MaybeUnset[str | None] = UNSET,
+    validation_override_reason: MaybeUnset[str | None] = UNSET,
+    allow_automation: MaybeUnset[bool | None] = UNSET,
+    unattended: MaybeUnset[bool | None] = UNSET,
+    yolo: MaybeUnset[bool | None] = UNSET,
+    isolation: MaybeUnset[Isolation | str | None] = UNSET,
+    assigned_agent: MaybeUnset[str | None] = UNSET,
+    additional_skills: MaybeUnset[list[str] | None] = UNSET,
+    **kwargs: Any,
+) -> bool:
+    """Validate a metadata-only update and dispatch to ``update_task``.
+
+    LocalTaskManager.update_task delegates here so claim/session and
+    lifecycle state cannot be mutated through the generic update surface.
+    Stage and ownership transitions must use the dedicated transition
+    helpers instead.
+
+    Returns the same ``parent_changed`` flag as ``update_task``.
+    Raises ``ValueError`` if any legacy state field or stage/ownership
+    field is supplied.
+    """
+    legacy_stage_key = "lifecycle_" + "stage"
+    legacy_state_fields = sorted({"status", "lifecycle", legacy_stage_key} & set(kwargs))
+    blocked_fields = [
+        field_name
+        for field_name, value in (
+            ("assignee", assignee),
+            ("claimed_by_session_id", claimed_by_session_id),
+            ("closed_reason", closed_reason),
+            ("closed_at", closed_at),
+            ("closed_in_session_id", closed_in_session_id),
+            ("closed_commit_sha", closed_commit_sha),
+            ("escalated_at", escalated_at),
+            ("escalation_reason", escalation_reason),
+        )
+        if value is not UNSET
+    ]
+    if legacy_state_fields or blocked_fields:
+        blocked_display = ", ".join([*legacy_state_fields, *blocked_fields])
+        if legacy_state_fields and not blocked_fields:
+            field_class = "legacy state fields"
+            transition_hint = (
+                "Use start_stage, submit_for_review, approve_review, reject_review, "
+                "fail_stage, close_task, reopen_task, or escalate_task instead."
+            )
+        else:
+            field_class = "stage or ownership fields"
+            transition_hint = (
+                "Use claim_task, release_task_claim, start_stage, submit_for_review, "
+                "approve_review, reject_review, fail_stage, escalate_task, "
+                "de_escalate_task, close_task, or reopen_task instead."
+            )
+        raise ValueError(
+            f"LocalTaskManager.update_task does not allow {field_class}. "
+            f"{transition_hint} Blocked fields: {blocked_display}"
+        )
+
+    return update_task(
+        db,
+        task_id=task_id,
+        title=title,
+        description=description,
+        priority=priority,
+        task_type=task_type,
+        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
+        labels=labels,
+        parent_task_id=parent_task_id,
+        closed_reason=closed_reason,
+        closed_at=closed_at,
+        closed_in_session_id=closed_in_session_id,
+        closed_commit_sha=closed_commit_sha,
+        validation_status=validation_status,
+        validation_feedback=validation_feedback,
+        category=category,
+        validation_criteria=validation_criteria,
+        validation_fail_count=validation_fail_count,
+        dispatch_failure_count=dispatch_failure_count,
+        escalated_at=escalated_at,
+        escalation_reason=escalation_reason,
+        github_issue_number=github_issue_number,
+        github_pr_number=github_pr_number,
+        github_repo=github_repo,
+        linear_issue_id=linear_issue_id,
+        linear_team_id=linear_team_id,
+        validation_override_reason=validation_override_reason,
+        allow_automation=allow_automation,
+        unattended=unattended,
+        yolo=yolo,
+        isolation=isolation,
+        assigned_agent=assigned_agent,
+        additional_skills=additional_skills,
+    )
