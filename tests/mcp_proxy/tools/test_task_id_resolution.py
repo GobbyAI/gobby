@@ -41,7 +41,6 @@ def sample_task_uuid():
         id=task_id,
         project_id="proj-1",
         title="Test Task",
-        status="open",
         priority=2,
         task_type="task",
         created_at="2024-01-01T00:00:00Z",

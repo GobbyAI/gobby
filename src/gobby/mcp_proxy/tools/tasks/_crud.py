@@ -422,6 +422,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         start_date: str | None = None,
         due_date: str | None = None,
         allow_automation: bool | None = None,
+        assigned_agent: str | None = None,
+        additional_skills: list[str] | None = None,
     ) -> dict[str, Any]:
         """Update task fields."""
         # Resolve task reference (supports #N, path, UUID formats)
@@ -493,6 +495,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["due_date"] = due_date
         if allow_automation is not None:
             kwargs["allow_automation"] = allow_automation
+        if assigned_agent is not None:
+            kwargs["assigned_agent"] = assigned_agent
+        if additional_skills is not None:
+            kwargs["additional_skills"] = additional_skills
 
         task = ctx.task_manager.update_task(resolved_id, **kwargs)
         if not task:
@@ -578,6 +584,17 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "allow_automation": {
                     "type": "boolean",
                     "description": "Enable or disable dispatcher automation for this task.",
+                    "default": None,
+                },
+                "assigned_agent": {
+                    "type": "string",
+                    "description": "Agent name to assign this task to (e.g. 'backend-developer'). Routes leaf work in dispatch.",
+                    "default": None,
+                },
+                "additional_skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['tech-writer']).",
                     "default": None,
                 },
             },
