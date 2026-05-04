@@ -24,7 +24,7 @@ from gobby.plans.parser import (
     parse_plan,
     resolve_plan_id,
 )
-from gobby.storage.tasks import TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 
 EmitOutcome = Literal[
     "fresh",

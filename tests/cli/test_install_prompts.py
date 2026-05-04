@@ -322,6 +322,7 @@ class TestInstallCommandSharedStores:
                 claude_flag=False,
                 gemini_flag=False,
                 codex_flag=True,
+                droid_flag=False,
                 qwen_flag=False,
                 hooks_flag=False,
                 all_flag=False,

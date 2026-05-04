@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -75,11 +76,12 @@ def _write_codex_transcript(path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def test_read_recent_codex_response_items_keeps_tail(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_read_recent_codex_response_items_keeps_tail(tmp_path: Path) -> None:
     transcript_path = tmp_path / "rollout.jsonl"
     _write_codex_transcript(transcript_path)
 
-    items = AgentLifecycleMonitor._read_recent_codex_response_items(str(transcript_path), limit=1)
+    items = await IdleCheckHandler._read_recent_codex_response_items(str(transcript_path), limit=1)
 
     assert len(items) == 1
     assert items[0]["payload_type"] == "custom_tool_call"
@@ -133,7 +135,7 @@ async def test_idle_reprompt_logs_codex_response_items(
     with (
         patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
         patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
-        patch("gobby.agents.lifecycle_monitor.logger.warning") as mock_warning,
+        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()
 
@@ -194,7 +196,7 @@ async def test_idle_failure_logs_codex_response_items(
     with (
         patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
         patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
-        patch("gobby.agents.lifecycle_monitor.logger.warning") as mock_warning,
+        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()
 

@@ -10,8 +10,11 @@ pytestmark = pytest.mark.unit
 
 
 def test_complete_dev_only_run_via_complete_stage() -> None:
-    source = source_text("src/gobby/tasks/expansion/_apply.py")
+    apply_source = source_text("src/gobby/tasks/expansion/_apply.py")
+    reset_source = source_text("src/gobby/tasks/expansion/_reset.py")
 
-    assert "complete_stage(" in source
-    assert "UPDATE tasks SET lifecycle = 'in_development'" not in source
-    assert "_skipped_stages" not in source
+    assert "_complete_parent_expansion_stage_if_current(" in apply_source
+    assert "complete_stage(" in reset_source
+    assert "UPDATE tasks SET lifecycle = 'in_development'" not in apply_source
+    assert "UPDATE tasks SET lifecycle = 'in_development'" not in reset_source
+    assert "_skipped_stages" not in apply_source

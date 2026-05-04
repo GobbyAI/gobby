@@ -35,10 +35,10 @@ def test_ready_projection_uses_current_stage_state(temp_db, sample_project) -> N
     in_progress = _task_at_stage(temp_db, sample_project, "In progress", "in_progress")
     needs_review = _task_at_stage(temp_db, sample_project, "Needs review", "needs_review")
     done = _task_at_stage(temp_db, sample_project, "Done", "done")
-    no_manifest = create_task(
+    auto_manifest = create_task(
         temp_db,
         sample_project,
-        title="No manifest",
+        title="Auto manifest",
         category="test",
         task_type="task",
     )
@@ -48,7 +48,7 @@ def test_ready_projection_uses_current_stage_state(temp_db, sample_project) -> N
     assert {ready.id, in_progress.id} <= ready_ids
     assert needs_review.id not in ready_ids
     assert done.id not in ready_ids
-    assert no_manifest.id not in ready_ids
+    assert auto_manifest.id in ready_ids
     assert manager.count_ready_tasks(project_id=sample_project["id"]) == len(ready_ids)
 
 

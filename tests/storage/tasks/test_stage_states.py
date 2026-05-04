@@ -126,7 +126,10 @@ def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) 
         manager.complete_stage(task.id, "development", by_session_id="dev-session")
 
     err = exc_info.value
-    assert err.args == ("development", "in_progress", "complete_stage", "required")
+    assert str(err) == (
+        "Stage 'development' in state 'in_progress' cannot complete_stage "
+        "under review_policy=required"
+    )
     assert err.stage_name == "development"
     assert err.current_state == "in_progress"
     assert err.attempted_transition == "complete_stage"

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -24,14 +23,8 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 
-def _context() -> SimpleNamespace:
-    executed: list[tuple[str, tuple[object, ...]]] = []
-    db = SimpleNamespace(
-        executed=executed,
-        transaction=lambda: nullcontext(
-            SimpleNamespace(execute=lambda sql, params: executed.append((sql, params)))
-        ),
-    )
+def _context(temp_db, sample_project) -> SimpleNamespace:
+    task = create_task(temp_db, sample_project, task_type="feature")
     stage_states = SimpleNamespace(
         approve_review=Mock(return_value=SimpleNamespace(stage_name="pr", state="review_approved")),
         reject_review=Mock(return_value=SimpleNamespace(stage_name="pr", state="ready")),
@@ -40,11 +33,12 @@ def _context() -> SimpleNamespace:
     )
     return SimpleNamespace(
         task_manager=SimpleNamespace(
-            db=db,
+            db=temp_db,
             stage_states=stage_states,
-            get_task=Mock(return_value=SimpleNamespace(id="task-1")),
-            escalate_task=Mock(return_value=SimpleNamespace(id="task-1")),
+            get_task=Mock(return_value=SimpleNamespace(id=task.id)),
+            escalate_task=Mock(return_value=SimpleNamespace(id=task.id)),
         ),
+        task_id=task.id,
         resolve_session_id=lambda session_ref: session_ref,
     )
 
@@ -92,12 +86,16 @@ def _pr_task_in_review(
     return task
 
 
-def test_approved_calls_approve_review_no_advance(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_approved_calls_approve_review_no_advance(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
     _patch_stage_view(monkeypatch)
-    ctx = _context()
+    ctx = _context(temp_db, sample_project)
 
     result = _record_pr_verdict(ctx)(
-        task_id="task-1",
+        task_id=ctx.task_id,
         verdict="approve",
         findings="looks good",
         report_ref="pr-review.md",
@@ -105,7 +103,7 @@ def test_approved_calls_approve_review_no_advance(monkeypatch: pytest.MonkeyPatc
 
     assert result["stage"] == {"stage_name": "pr", "state": "review_approved"}
     ctx.task_manager.stage_states.approve_review.assert_called_once_with(
-        "task-1",
+        ctx.task_id,
         "pr",
         by_session_id=None,
         notes="looks good",
@@ -113,46 +111,57 @@ def test_approved_calls_approve_review_no_advance(monkeypatch: pytest.MonkeyPatc
     ctx.task_manager.stage_states.complete_stage.assert_not_called()
 
 
-def test_approved_writes_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_approved_writes_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
     _patch_stage_view(monkeypatch)
-    ctx = _context()
+    ctx = _context(temp_db, sample_project)
 
     _record_pr_verdict(ctx)(
-        task_id="task-1",
+        task_id=ctx.task_id,
         verdict="approve",
         findings="looks good",
         report_ref="pr-review.md",
     )
 
-    sql, params = ctx.task_manager.db.executed[0]
-    payload = json.loads(params[3])
-    assert "task_delivery_campaigns" in sql
-    assert "structured_pr_verdict" in sql
-    assert "pr_report_ref" in sql
+    row = temp_db.fetchone(
+        """
+        SELECT structured_pr_verdict, pr_report_ref
+        FROM task_delivery_campaigns
+        WHERE task_id = ?
+        """,
+        (ctx.task_id,),
+    )
+    assert row is not None
+    payload = json.loads(row["structured_pr_verdict"])
     assert payload == {
         "verdict": "approve",
         "findings": "looks good",
         "report_ref": "pr-review.md",
     }
-    assert params[4] == "pr-review.md"
+    assert row["pr_report_ref"] == "pr-review.md"
 
 
 def _assert_reject_review_for_verdict(
     monkeypatch: pytest.MonkeyPatch,
     verdict: str,
+    temp_db,
+    sample_project,
 ) -> None:
     _patch_stage_view(monkeypatch)
-    ctx = _context()
+    ctx = _context(temp_db, sample_project)
 
     result = _record_pr_verdict(ctx)(
-        task_id="task-1",
+        task_id=ctx.task_id,
         verdict=verdict,
         findings="missing test evidence",
     )
 
     assert result["stage"] == {"stage_name": "pr", "state": "ready"}
     ctx.task_manager.stage_states.reject_review.assert_called_once_with(
-        "task-1",
+        ctx.task_id,
         "pr",
         reason="missing test evidence",
         by_session_id=None,
@@ -162,23 +171,29 @@ def _assert_reject_review_for_verdict(
     ctx.task_manager.stage_states.complete_stage.assert_not_called()
 
 
-def test_rejected_calls_reject_review(monkeypatch: pytest.MonkeyPatch) -> None:
-    _assert_reject_review_for_verdict(monkeypatch, "request_changes")
+def test_rejected_calls_reject_review(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    _assert_reject_review_for_verdict(monkeypatch, "request_changes", temp_db, sample_project)
 
 
-def test_needs_discussion_escalates(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_needs_discussion_escalates(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
     _patch_stage_view(monkeypatch)
-    ctx = _context()
+    ctx = _context(temp_db, sample_project)
 
     result = _record_pr_verdict(ctx)(
-        task_id="task-1",
+        task_id=ctx.task_id,
         verdict="needs_discussion",
         findings="human decision required",
     )
 
     assert result["escalated"] is True
     ctx.task_manager.escalate_task.assert_called_once_with(
-        "task-1",
+        ctx.task_id,
         reason="needs_human:pr_delivery:human decision required",
     )
     ctx.task_manager.stage_states.approve_review.assert_not_called()

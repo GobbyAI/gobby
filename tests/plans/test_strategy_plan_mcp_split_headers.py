@@ -22,7 +22,7 @@ register_contract_tests(
         ),
     },
     required_text={
-        ".gobby/plans/task-13482-stage-manifest-cutover.md": (
+        ".gobby/plans/completed/task-13482-stage-manifest-cutover.md": (
             "gobby-tasks-ops",
             "gobby-tasks",
         )

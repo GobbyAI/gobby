@@ -119,6 +119,42 @@ def test_delivery_unit_upsert_preserves_null_updates(
     assert manager.get_state(task.id)["units"][0]["last_error"] is None
 
 
+def test_delivery_unit_omits_null_local_update_attempts(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    manager = TaskDeliveryStateManager(temp_db)
+
+    updated = manager.record_unit(
+        task.id,
+        unit_key="main",
+        pr_state="open",
+        local_update_attempts=None,
+    )
+
+    assert updated["local_update_attempts"] == 0
+    assert manager.get_state(task.id)["units"][0]["local_update_attempts"] == 0
+
+
+def test_delivery_unit_omits_null_target_branch(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    manager = TaskDeliveryStateManager(temp_db)
+
+    updated = manager.record_unit(
+        task.id,
+        unit_key="main",
+        pr_state="open",
+        target_branch=None,
+    )
+
+    assert updated["target_branch"] == "main"
+    assert manager.get_state(task.id)["units"][0]["target_branch"] == "main"
+
+
 def test_delivery_json_decode_returns_none_for_malformed_json(
     temp_db: Any,
     sample_project: dict[str, Any],

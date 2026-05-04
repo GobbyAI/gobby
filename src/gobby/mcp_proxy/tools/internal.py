@@ -267,19 +267,36 @@ class InternalToolRegistry:
             ValueError: If tool not found
             Exception: If tool execution fails
         """
+        tool, coerced_arguments = self._prepare_call(name, arguments)
+
+        # Call the function (handle both sync and async)
+        if inspect.iscoroutinefunction(tool.func):
+            return await tool.func(**coerced_arguments)
+        return tool.func(**coerced_arguments)
+
+    def call_sync(
+        self, name: str, arguments: dict[str, Any], context: dict[str, Any] | None = None
+    ) -> Any:
+        """Call a synchronous tool by name with the same argument handling as call()."""
+        tool, coerced_arguments = self._prepare_call(name, arguments)
+        if inspect.iscoroutinefunction(tool.func):
+            raise TypeError(f"Tool '{name}' on '{self.name}' is async; use call()")
+        return tool.func(**coerced_arguments)
+
+    def _prepare_call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> tuple[InternalTool, dict[str, Any]]:
         tool = self._tools.get(name)
         if not tool:
             available = ", ".join(self._tools.keys())
             raise ValueError(f"Tool '{name}' not found on '{self.name}'. Available: {available}")
 
-        # Coerce string arguments to declared schema types
         coerced_arguments = self._coerce_arguments(arguments, tool.input_schema)
-
-        # Inspect signature for kwarg filtering
         sig = inspect.signature(tool.func)
         params = sig.parameters
 
-        # Strip unknown kwargs (unless function accepts **kwargs)
         has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
         if not has_var_keyword:
             accepted = {
@@ -290,10 +307,7 @@ class InternalToolRegistry:
             }
             coerced_arguments = {k: v for k, v in coerced_arguments.items() if k in accepted}
 
-        # Call the function (handle both sync and async)
-        if inspect.iscoroutinefunction(tool.func):
-            return await tool.func(**coerced_arguments)
-        return tool.func(**coerced_arguments)
+        return tool, coerced_arguments
 
     @staticmethod
     def _generate_brief(tool: InternalTool, max_len: int = 100) -> str:

@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
-from gobby.storage.tasks import TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 
 ParseMode = Literal["draft", "expansion", "strict"]
 logger = logging.getLogger(__name__)

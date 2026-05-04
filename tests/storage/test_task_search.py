@@ -5,6 +5,7 @@ import pytest
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager
+from tests.storage.tasks._stage_test_helpers import set_stage_state
 
 pytestmark = pytest.mark.unit
 
@@ -92,28 +93,28 @@ class TestTaskSearch:
         titles = [task.title for task, score in results]
         assert any("authentication" in t.lower() for t in titles)
 
-    def test_search_with_status_filter(self, db_with_tasks) -> None:
-        """Test search with status filter."""
+    def test_search_with_current_stage_state_filter(self, db_with_tasks) -> None:
+        """Test search with current stage state filter."""
         db, manager, project_id = db_with_tasks
 
-        # All tasks are "open" by default
+        # All default task manifests start with development ready.
         results = manager.search_tasks(
             "authentication",
             project_id=project_id,
-            status="open",
+            current_stage_state="ready",
         )
         assert len(results) > 0
 
-        # No tasks are "closed"
+        # No tasks are review-approved until their current stage is advanced.
         results = manager.search_tasks(
             "authentication",
             project_id=project_id,
-            status="closed",
+            current_stage_state="review_approved",
         )
         assert len(results) == 0
 
-    def test_search_status_filter_uses_canonical_projection(self, db_with_tasks) -> None:
-        """Status filtering should follow canonical fields, not stale raw status."""
+    def test_search_current_stage_state_filter_uses_stage_manifest(self, db_with_tasks) -> None:
+        """Stage-state filtering should follow the current stage manifest row."""
         db, manager, project_id = db_with_tasks
 
         task = manager.create_task(
@@ -121,40 +122,30 @@ class TestTaskSearch:
             title="Authentication review gate",
             description="Authentication task waiting on approval",
         )
-        db.execute(
-            """
-            UPDATE tasks
-            SET status = 'open',
-                lifecycle_stage = 'review_approved',
-                escalated_at = NULL,
-                closed_at = NULL
-            WHERE id = ?
-            """,
-            (task.id,),
-        )
+        set_stage_state(db, task.id, "development", "review_approved")
 
         approved = manager.search_tasks(
             "Authentication review gate",
             project_id=project_id,
-            status="review_approved",
+            current_stage_state="review_approved",
         )
-        open_results = manager.search_tasks(
+        ready_results = manager.search_tasks(
             "Authentication review gate",
             project_id=project_id,
-            status="open",
+            current_stage_state="ready",
         )
 
         assert any(found.id == task.id for found, _ in approved)
-        assert all(found.id != task.id for found, _ in open_results)
+        assert all(found.id != task.id for found, _ in ready_results)
 
-    def test_search_with_status_list(self, db_with_tasks) -> None:
-        """Test search with list of statuses."""
+    def test_search_with_current_stage_state_list(self, db_with_tasks) -> None:
+        """Test search with list of current stage states."""
         db, manager, project_id = db_with_tasks
 
         results = manager.search_tasks(
             "user",
             project_id=project_id,
-            status=["open", "in_progress"],
+            current_stage_state=["ready", "in_progress"],
         )
         assert len(results) > 0
 

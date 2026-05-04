@@ -18,8 +18,9 @@ from gobby.plans.parser import (
     strip_section_dependencies,
 )
 from gobby.prompts.models import parse_frontmatter
-from gobby.storage.tasks import TDD_ELIGIBLE_CATEGORIES, Task
+from gobby.storage.tasks import Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 
 _TDD_CATEGORIES = TDD_ELIGIBLE_CATEGORIES
 AUTOMATED_LEAF_CATEGORIES = frozenset(

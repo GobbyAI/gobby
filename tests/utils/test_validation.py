@@ -174,10 +174,10 @@ class TestCheckInvalidProjects:
         task_manager.db.execute("PRAGMA foreign_keys = OFF")
         task_manager.db.execute(
             """
-            INSERT INTO tasks (id, title, task_type, status, project_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
             """,
-            ("orphan-task", "Orphan Task", "task", "open", "nonexistent-project"),
+            ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
         )
         task_manager.db.execute("PRAGMA foreign_keys = ON")
 
@@ -343,10 +343,10 @@ class TestValidateAll:
         # Create task with invalid project
         task_manager.db.execute(
             """
-            INSERT INTO tasks (id, title, task_type, status, project_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
             """,
-            ("orphan-task", "Orphan Task", "task", "open", "nonexistent-project"),
+            ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
         )
 
         # Create orphan dependency (depends_on doesn't exist)

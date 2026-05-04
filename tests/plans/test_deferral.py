@@ -61,8 +61,8 @@ def _deferral(*, reason: str = "covered elsewhere", owner: str = "owner") -> Def
     )
 
 
-def _task(*, status: str = "open", criteria: str = "Validate src/deferred.py") -> dict:
-    return {"status": status, "validation_criteria": criteria}
+def _task(*, state: str = "ready", criteria: str = "Validate src/deferred.py") -> dict:
+    return {"state": state, "validation_criteria": criteria}
 
 
 def _validate(deferral: Deferral, store: TaskStoreProtocol) -> DeferralValidationResult:
@@ -94,7 +94,7 @@ def test_validate_task_missing() -> None:
 
 
 def test_validate_task_closed() -> None:
-    store = FakeStore(tasks={DEFERRED_TASK_REF: _task(status="closed")})
+    store = FakeStore(tasks={DEFERRED_TASK_REF: _task(state="closed")})
 
     result = _validate(_deferral(), store)
 
@@ -189,11 +189,11 @@ def test_validate_cited_parent_without_out_of_scope_label_rejected() -> None:
     assert result.status == "missing_dependency_or_cited_parent"
 
 
-def test_validate_cited_parent_non_open_status_rejected() -> None:
+def test_validate_cited_parent_non_active_state_rejected() -> None:
     store = FakeStore(
         tasks={
             DEFERRED_TASK_REF: _task(),
-            "#parent": _task(status="blocked", criteria="Parent task"),
+            "#parent": _task(state="blocked", criteria="Parent task"),
         },
         labels={
             DEFERRED_TASK_REF: [PROVENANCE_LABEL, "cited-parent:#parent"],

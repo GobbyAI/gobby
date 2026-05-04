@@ -223,6 +223,8 @@ class TaskDeliveryStateManager:
         for column, value in fields.items():
             if column not in UNIT_COLUMNS:
                 continue
+            if column in {"local_update_attempts", "target_branch"} and value is None:
+                continue
             if value is None:
                 cleaned[column] = None
             elif column == "pr_required":

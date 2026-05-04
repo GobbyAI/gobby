@@ -57,6 +57,7 @@ def _current_stage_display(state: dict[str, Any]) -> str:
 )
 @click.option("--blocked", is_flag=True, help="Show only canonically blocked tasks")
 @click.option("--closed", "closed_only", is_flag=True, help="Show only canonically closed tasks")
+@click.option("--escalated", is_flag=True, help="Show only canonically escalated tasks")
 @click.option("--limit", "-l", default=50, help="Max tasks to show")
 @click.option(
     "--group",
@@ -80,6 +81,7 @@ def list_tasks(
     ready: bool,
     blocked: bool,
     closed_only: bool,
+    escalated: bool,
     limit: int,
     group_by: str | None,
     json_format: bool,
@@ -97,14 +99,14 @@ def list_tasks(
         click.echo("Error: --state requires --stage.", err=True)
         return
 
-    if active and closed_only:
-        click.echo("Error: --active and --closed are mutually exclusive.", err=True)
+    if sum(bool(flag) for flag in (active, closed_only, escalated)) > 1:
+        click.echo("Error: --active, --closed, and --escalated are mutually exclusive.", err=True)
         return
 
-    if (ready or blocked) and any((active, claimed, unclaimed, closed_only, stage_name)):
+    if (ready or blocked) and any((active, claimed, unclaimed, closed_only, escalated, stage_name)):
         click.echo(
             "Error: --ready/--blocked cannot be combined with --active, --claimed, "
-            "--unclaimed, --closed, or --stage.",
+            "--unclaimed, --closed, --escalated, or --stage.",
             err=True,
         )
         return
@@ -118,7 +120,7 @@ def list_tasks(
     closed_filter: bool | None = None
     if closed_only:
         closed_filter = True
-    elif active:
+    elif active or escalated:
         closed_filter = False
 
     project_id = resolve_project_ref(project_ref)
@@ -148,8 +150,12 @@ def list_tasks(
             assignee=assignee,
             claimed=claimed_filter,
             closed=closed_filter,
-            limit=10000 if stage_name else limit,
+            limit=10000 if stage_name or escalated else limit,
         )
+        if escalated:
+            tasks_list = [
+                task for task in tasks_list if serialize_task_state(task)["is_escalated"]
+            ][:limit]
         tasks_list = filter_tasks_by_stage(
             manager,
             tasks_list,
@@ -159,6 +165,8 @@ def list_tasks(
         )[:limit]
         if closed_filter:
             label = "closed tasks"
+        elif escalated:
+            label = "escalated tasks"
         elif claimed_filter is True:
             label = "claimed tasks"
         elif claimed_filter is False:
@@ -182,7 +190,14 @@ def list_tasks(
     # For filtered views, include ancestors for proper tree hierarchy
     primary_ids: set[str] | None = None
     display_tasks = tasks_list
-    if ready or blocked or stage_name or claimed_filter is not None or closed_filter is not None:
+    if (
+        ready
+        or blocked
+        or stage_name
+        or escalated
+        or claimed_filter is not None
+        or closed_filter is not None
+    ):
         display_tasks, primary_ids = collect_ancestors(tasks_list, manager)
 
     # Sort for proper tree display order

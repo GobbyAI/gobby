@@ -290,17 +290,18 @@ def sync_from_main(
         if sync_result.returncode != 0:
             # Check if there are conflicts
             if "CONFLICT" in sync_result.stdout or "CONFLICT" in sync_result.stderr:
-                abort_result = runner._run_git(
-                    [strategy, "--abort"],
-                    cwd=worktree_path,
-                    timeout=30,
-                )
-                aborted = abort_result.returncode == 0
-                abort_detail = (
-                    "; aborted"
-                    if aborted
-                    else f"; abort failed: {abort_result.stderr.strip() or abort_result.stdout.strip()}"
-                )
+                try:
+                    abort_result = runner._run_git(
+                        [strategy, "--abort"],
+                        cwd=worktree_path,
+                        timeout=30,
+                    )
+                    aborted = abort_result.returncode == 0
+                    abort_error = abort_result.stderr.strip() or abort_result.stdout.strip()
+                except Exception as e:
+                    aborted = False
+                    abort_error = str(e)
+                abort_detail = "; aborted" if aborted else f"; abort failed: {abort_error}"
                 return GitOperationResult(
                     success=False,
                     message=f"Sync failed due to conflicts{abort_detail}",

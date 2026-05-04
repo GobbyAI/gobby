@@ -234,6 +234,7 @@ class PipelineHeartbeat:
                         task.id,
                         current_stage.stage_name,
                     )
+                    await asyncio.to_thread(task_manager.release_task_claim, task.id)
                     logger.info(
                         "Heartbeat: submitted stale task %s (#%s) for review",
                         task.id,
@@ -246,6 +247,7 @@ class PipelineHeartbeat:
                         task.id,
                         current_stage.stage_name,
                     )
+                    await asyncio.to_thread(task_manager.release_task_claim, task.id)
                     logger.warning(
                         "Heartbeat: failed stale task %s (#%s) for retry",
                         task.id,

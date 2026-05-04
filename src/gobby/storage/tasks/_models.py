@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES  # noqa: F401
 from gobby.tasks.state_semantics import serialize_task_state
 
 # Priority name to numeric value mapping
@@ -31,9 +32,6 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
         "manual",  # Manual functional testing (observe output)
     }
 )
-
-# Categories whose manifest entries may opt into deterministic TDD wrapping.
-TDD_ELIGIBLE_CATEGORIES: frozenset[str] = frozenset({"code", "config"})
 
 # Valid task types exposed across storage, CLI, HTTP, and MCP creation surfaces.
 TASK_TYPE_CHOICES: tuple[str, ...] = (

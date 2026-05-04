@@ -267,8 +267,8 @@ class TestListTasks:
         response = client.get("/api/tasks")
         data = response.json()
         assert "stats" in data
-        # At least one open task
-        assert data["stats"].get("open", 0) >= 1
+        # At least one ready task
+        assert data["stats"].get("ready", 0) >= 1
 
 
 # ---------------------------------------------------------------------------

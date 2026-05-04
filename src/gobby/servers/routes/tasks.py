@@ -5,29 +5,21 @@ Provides CRUD, list, stage-transition, and dependency endpoints for the task sys
 """
 
 import logging
-import uuid
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from gobby.storage.task_dependencies import (
-    DependencyCycleError,
-    TaskDependencyManager,
-)
+from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
+from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
+from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
 from gobby.storage.tasks._models import (
     TASK_TYPE_CHOICES,
     VALID_CATEGORIES,
     TaskNotFoundError,
     validate_task_type,
 )
-from gobby.storage.tasks._stage_types import (
-    IllegalManifestMutationError,
-    IllegalStageTransitionError,
-    StageManifestSpec,
-    StageState,
-)
+from gobby.storage.tasks._stage_types import StageState
 from gobby.storage.tasks._stage_views import stage_state_view
 
 if TYPE_CHECKING:
@@ -152,82 +144,6 @@ class TaskDeEscalateRequest(BaseModel):
     reset_validation: bool = Field(default=False, description="Also reset validation fail count")
 
 
-class TaskCommentCreateRequest(BaseModel):
-    """Request body for creating a comment."""
-
-    body: str = Field(..., description="Comment body (markdown)")
-    author: str = Field(..., description="Author ID (session or user)")
-    author_type: str = Field(default="session", description="Author type: session, agent, human")
-    parent_comment_id: str | None = Field(
-        default=None, description="Parent comment ID for threading"
-    )
-
-
-class DependencyAddRequest(BaseModel):
-    """Request body for adding a dependency."""
-
-    depends_on: str = Field(..., description="Task ID that must complete first")
-    dep_type: Literal["blocks", "related", "discovered-from"] = Field(
-        default="blocks", description="Dependency type"
-    )
-
-
-class StagePatchRequest(BaseModel):
-    """Request body for mutating a task stage row."""
-
-    action: Literal[
-        "start",
-        "submit_for_review",
-        "approve_review",
-        "reject_review",
-        "complete",
-        "fail",
-        "add",
-        "remove",
-    ]
-    notes: str | None = None
-    reason: str | None = None
-    needs_human: bool = False
-    commit_sha: str | None = None
-    artifact_updates: dict[str, str] | None = None
-    validation_override_reason: str | None = None
-    position: int | None = None
-
-
-class StageStateView(BaseModel):
-    """HTTP projection for a task stage row."""
-
-    task_id: str
-    stage_name: str
-    position: int
-    state: Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
-    review_policy: Literal["none", "required", "optional"]
-    reviewer_agent: str | None
-    entered_at: str | None
-    entered_by_session_id: str | None
-    completed_at: str | None
-    completed_by_session_id: str | None
-    completed_commit_sha: str | None
-    work_attempt_count: int
-    review_round_count: int
-    max_work_attempts: int | None
-    max_review_rounds: int | None
-    artifact_refs: dict[str, str] | None
-    notes: str | None
-    updated_at: str
-
-
-class TaskStagesResponse(BaseModel):
-    task_id: str
-    stages: list[StageStateView]
-
-
-class TaskStageResponse(BaseModel):
-    task_id: str
-    stage: StageStateView | None = None
-    stages: list[StageStateView] | None = None
-
-
 # =============================================================================
 # Router
 # =============================================================================
@@ -295,26 +211,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
         return grouped
 
-    def _transition_error_payload(error: IllegalStageTransitionError) -> dict[str, Any]:
-        return {
-            "error": "illegal_stage_transition",
-            "stage_name": error.stage_name,
-            "current_state": error.current_state,
-            "attempted_transition": error.attempted_transition,
-            "review_policy": error.review_policy,
-        }
-
-    def _mutation_error_payload(error: IllegalManifestMutationError) -> dict[str, Any]:
-        return {
-            "error": "illegal_manifest_mutation",
-            "task_id": error.task_id,
-            "target_stage_name": error.target_stage_name,
-            "target_position": error.target_position,
-            "current_stage_name": error.current_stage_name,
-            "current_stage_state": error.current_stage_state,
-            "mutation": error.mutation,
-            "reason": error.reason,
-        }
+    register_task_stage_routes(
+        router,
+        server,
+        resolve_task=_resolve_task,
+        broadcast_task=_broadcast_task,
+        stage_view=_stage_view,
+    )
 
     # -----------------------------------------------------------------
     # List / Stats
@@ -405,119 +308,6 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 "limit": limit,
                 "offset": offset,
             }
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.get("/{task_id}/stages", response_model=TaskStagesResponse)
-    async def get_task_stages(task_id: str) -> dict[str, Any]:
-        """Get the denormalized stage manifest for a task."""
-        try:
-            task = _resolve_task(task_id)
-            return {
-                "task_id": task.id,
-                "stages": [
-                    _stage_view(row)
-                    for row in server.task_manager.stage_states.list_for_task(task.id)
-                ],
-            }
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-
-    @router.patch("/{task_id}/stages/{stage_name}", response_model=TaskStageResponse)
-    async def patch_task_stage(
-        task_id: str,
-        stage_name: str,
-        request_data: StagePatchRequest,
-    ) -> Any:
-        """Apply a stage transition or structural manifest mutation."""
-        try:
-            task = _resolve_task(task_id)
-            manager = server.task_manager.stage_states
-            if request_data.action == "start":
-                stage_row = manager.start_stage(
-                    task.id, stage_name, by_session_id=None, notes=request_data.notes
-                )
-                event = "stage_changed"
-            elif request_data.action == "submit_for_review":
-                stage_row = manager.submit_for_review(
-                    task.id, stage_name, by_session_id=None, notes=request_data.notes
-                )
-                event = "stage_changed"
-            elif request_data.action == "approve_review":
-                stage_row = manager.approve_review(
-                    task.id, stage_name, by_session_id=None, notes=request_data.notes
-                )
-                event = "stage_changed"
-            elif request_data.action == "reject_review":
-                if request_data.reason is None:
-                    raise ValueError("reason is required for reject_review")
-                stage_row = manager.reject_review(
-                    task.id,
-                    stage_name,
-                    reason=request_data.reason,
-                    by_session_id=None,
-                    notes=request_data.notes,
-                )
-                event = "stage_changed"
-            elif request_data.action == "complete":
-                stage_row = manager.complete_stage(
-                    task.id,
-                    stage_name,
-                    by_session_id=None,
-                    commit_sha=request_data.commit_sha,
-                    artifact_updates=request_data.artifact_updates,
-                    validation_override_reason=request_data.validation_override_reason,
-                )
-                event = "stage_changed"
-            elif request_data.action == "fail":
-                if request_data.reason is None:
-                    raise ValueError("reason is required for fail")
-                stage_row = manager.fail_stage(
-                    task.id,
-                    stage_name,
-                    reason=request_data.reason,
-                    needs_human=request_data.needs_human,
-                    by_session_id=None,
-                )
-                event = "stage_changed"
-            elif request_data.action == "add":
-                if request_data.position is None:
-                    raise ValueError("position is required for add")
-                stage_row = manager.add_stage(
-                    task.id,
-                    StageManifestSpec(stage_name=stage_name, position=request_data.position),
-                    by_session_id=None,
-                )
-                event = "stage_manifest_changed"
-            else:
-                manager.remove_stage(task.id, stage_name, by_session_id=None)
-                stage_row = None
-                event = "stage_manifest_changed"
-
-            response = {
-                "task_id": task.id,
-                "stage": _stage_view(stage_row) if stage_row else None,
-                "stages": [
-                    _stage_view(row)
-                    for row in server.task_manager.stage_states.list_for_task(task.id)
-                ],
-            }
-            await _broadcast_task(
-                event,
-                {
-                    "id": task.id,
-                    "stage_name": stage_name,
-                    "state": stage_row.state if stage_row else None,
-                    "stages": response["stages"],
-                },
-            )
-            return response
-        except IllegalStageTransitionError as e:
-            return JSONResponse(status_code=422, content=_transition_error_payload(e))
-        except IllegalManifestMutationError as e:
-            return JSONResponse(status_code=422, content=_mutation_error_payload(e))
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -763,136 +553,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # -----------------------------------------------------------------
-    # Comments
-    # -----------------------------------------------------------------
-
-    @router.get("/{task_id}/comments")
-    async def list_comments(
-        task_id: str,
-        limit: int = Query(50, ge=1, le=500),
-        offset: int = Query(0, ge=0),
-    ) -> Any:
-        """List comments for a task, threaded."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-
-            total_row = server.task_manager.db.fetchone(
-                "SELECT COUNT(*) as total FROM task_comments WHERE task_id = ?",
-                (resolved_id,),
-            )
-            total = total_row["total"] if total_row else 0
-
-            rows = server.task_manager.db.fetchall(
-                """SELECT id, task_id, parent_comment_id, author, author_type, body,
-                          created_at, updated_at
-                   FROM task_comments
-                   WHERE task_id = ?
-                   ORDER BY created_at ASC
-                   LIMIT ? OFFSET ?""",
-                (resolved_id, limit, offset),
-            )
-            comments = [dict(row) for row in rows]
-            return {"comments": comments, "count": len(comments), "total": total}
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/comments")
-    async def create_comment(task_id: str, request_data: TaskCommentCreateRequest) -> Any:
-        """Add a comment to a task."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-
-            comment_id = str(uuid.uuid4())
-            server.task_manager.db.execute(
-                """INSERT INTO task_comments (id, task_id, parent_comment_id, author, author_type, body)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    comment_id,
-                    resolved_id,
-                    request_data.parent_comment_id,
-                    request_data.author,
-                    request_data.author_type,
-                    request_data.body,
-                ),
-            )
-
-            row = server.task_manager.db.fetchone(
-                "SELECT * FROM task_comments WHERE id = ?", (comment_id,)
-            )
-            result = dict(row) if row else {"id": comment_id}
-            task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-            await _broadcast_task("task_comment_added", {**result, "task_ref": task_ref})
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.delete("/{task_id}/comments/{comment_id}")
-    async def delete_comment(task_id: str, comment_id: str) -> Any:
-        """Delete a comment."""
-        try:
-            task = _resolve_task(task_id)
-            server.task_manager.db.execute(
-                "DELETE FROM task_comments WHERE id = ? AND task_id = ?",
-                (comment_id, task.id),
-            )
-            return {"deleted": True}
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    # -----------------------------------------------------------------
-    # Dependencies
-    # -----------------------------------------------------------------
-
-    @router.get("/{task_id}/dependencies")
-    async def get_dependency_tree(
-        task_id: str,
-        direction: Literal["blockers", "blocking", "both"] = Query(
-            "both", description="Tree direction"
-        ),
-    ) -> Any:
-        """Get the dependency tree for a task."""
-        try:
-            task = _resolve_task(task_id)
-            dep_manager = TaskDependencyManager(server.task_manager.db)
-            return dep_manager.get_dependency_tree(task.id, direction=direction)
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-
-    @router.post("/{task_id}/dependencies", status_code=201)
-    async def add_dependency(task_id: str, request_data: DependencyAddRequest) -> Any:
-        """Add a dependency to a task."""
-        try:
-            task = _resolve_task(task_id)
-            blocker = _resolve_task(request_data.depends_on, project_id=task.project_id)
-            dep_manager = TaskDependencyManager(server.task_manager.db)
-            dep = dep_manager.add_dependency(task.id, blocker.id, dep_type=request_data.dep_type)
-            return dep.to_dict()
-        except DependencyCycleError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.delete("/{task_id}/dependencies/{depends_on_id}")
-    async def remove_dependency(task_id: str, depends_on_id: str) -> dict[str, Any]:
-        """Remove a dependency from a task."""
-        try:
-            task = _resolve_task(task_id)
-            blocker = _resolve_task(depends_on_id, project_id=task.project_id)
-            dep_manager = TaskDependencyManager(server.task_manager.db)
-            removed = dep_manager.remove_dependency(task.id, blocker.id)
-            if not removed:
-                raise HTTPException(status_code=404, detail="Dependency not found")
-            return {"removed": True, "task_id": task.id, "depends_on": blocker.id}
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+    register_task_comment_routes(
+        router,
+        server,
+        resolve_task=_resolve_task,
+        broadcast_task=_broadcast_task,
+    )
+    register_task_dependency_routes(router, server, resolve_task=_resolve_task)
 
     return router

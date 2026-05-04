@@ -219,6 +219,7 @@ class GitHubIssueIndexer:
             VectorStoreUnavailableError,
             ResponseHandlingException,
             httpx.TransportError,
+            RuntimeError,
             OSError,
         ):
             logger.warning(

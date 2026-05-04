@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.workflows.interactive_workflow_helpers import has_spawn_agent_step, load_workflow
+from tests.workflows.interactive_workflow_helpers import load_workflow
 
 pytestmark = pytest.mark.unit
 
@@ -15,5 +15,6 @@ def test_developer_agent_wired() -> None:
     workflow = load_workflow(WORKFLOW_PATH)
 
     assert workflow["name"] == "dev"
-    assert has_spawn_agent_step(workflow, "developer")
+    assert workflow["inputs"]["agent"]["default"] == "backend-developer"
+    assert workflow["steps"][0]["mcp"]["arguments"]["agent"] == "${{ inputs.agent }}"
     assert "task_id" in workflow.get("inputs", {})

@@ -254,7 +254,8 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
         "report",
         "terminate",
     ]
-    # Contract: orchestrator runs on codex (cheap routing-only LLM) and never
-    # gets isolation (it dispatches workers; doesn't edit code itself).
-    assert data["provider"] == "codex"
+    # Contract: orchestrator runs on Claude Opus and never gets isolation (it
+    # dispatches workers; doesn't edit code itself).
+    assert data["provider"] == "claude"
+    assert data["model"] == "opus"
     assert data["isolation"] == "none"

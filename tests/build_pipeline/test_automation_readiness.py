@@ -71,7 +71,7 @@ async def test_build_readiness_cascades_manifests_and_current_stage_projection(
     subtree = [task_manager.get_task(epic.id), *[task_manager.get_task(leaf.id) for leaf in leaves]]
     assert result.created is False
     assert result.manifest is not None
-    assert result.tick_dispatched == 1
+    assert result.tick_dispatched == len(subtree)
     for task in subtree:
         assert task.allow_automation is True
         assert task.unattended is True

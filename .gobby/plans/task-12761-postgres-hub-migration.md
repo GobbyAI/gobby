@@ -1304,14 +1304,14 @@ def postgres_db(
         yield db
     finally:
         _reset_schema(os.environ["DATABASE_URL"], postgres_schema, postgres_canonical_seed)
-	```
+```
 
-	`tests/fixtures/postgres.py` does not exist yet. When this deliverable is
-	implemented, the bookkeeping and seed-bearing table sets must live under
-	`src/gobby/storage/...` as shared storage/importer constants, then be imported
-	by both `tests/fixtures/postgres.py` and the SQLite-to-Postgres
-	importer/validator. Do not let the fixture grow its own divergent copy of
-	those sets.
+`tests/fixtures/postgres.py` does not exist yet. When this deliverable is
+implemented, the bookkeeping and seed-bearing table sets must live under
+`src/gobby/storage/...` as shared storage/importer constants, then be imported
+by both `tests/fixtures/postgres.py` and the SQLite-to-Postgres
+importer/validator. Do not let the fixture grow its own divergent copy of
+those sets.
 
 `tests/fixtures/postgres.py` does not exist yet in the current codebase. When the fixture/importer work lands, keep the bookkeeping and seed-bearing table sets in shared storage code under `src/gobby/storage/...` and import them from the fixture, importer, and validator instead of duplicating local constants in the test fixture.
 

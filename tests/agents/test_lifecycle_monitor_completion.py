@@ -39,7 +39,7 @@ class TestCompletedRunIdleGuard:
             patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock) as mock_capture,
             patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
         ):
-            handled = await monitor._handle_idle_check(stale_run)
+            handled = await monitor._idle_check_handler._handle_idle_check(stale_run)
 
         assert handled == 0
         mock_capture.assert_not_awaited()
