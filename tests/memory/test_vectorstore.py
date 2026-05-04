@@ -18,6 +18,8 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
 )
 
+pytestmark = pytest.mark.unit
+
 # Deterministic UUIDs for test reproducibility
 MEM_1 = str(uuid.uuid5(uuid.NAMESPACE_DNS, "mem-1"))
 MEM_2 = str(uuid.uuid5(uuid.NAMESPACE_DNS, "mem-2"))

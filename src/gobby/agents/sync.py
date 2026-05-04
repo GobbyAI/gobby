@@ -6,6 +6,7 @@ directly. Installed rows are overwritten when the template changes
 when a managed bundled definition reappears with different content.
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,11 @@ def _is_deprecated_bundled_agent(definition_json: str, enabled: bool) -> bool:
     """Return True for old disabled tombstone definitions that became active again."""
     if enabled:
         return False
-    return '"deprecated":true' in definition_json or '"deprecated": true' in definition_json
+    try:
+        parsed = json.loads(definition_json)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(parsed, dict) and parsed.get("deprecated") is True
 
 
 def _is_sync_managed_bundled_agent(existing: Any) -> bool:
@@ -152,16 +157,17 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                         _is_sync_managed_bundled_agent(existing)
                         and existing.definition_json != body_json
                     ):
-                        manager.restore(existing.id)
-                        manager.update(
-                            existing.id,
-                            **_build_agent_update_fields(
-                                existing,
-                                body=body,
-                                body_json=body_json,
-                                restore=True,
-                            ),
-                        )
+                        with db.transaction():
+                            manager.restore(existing.id)
+                            manager.update(
+                                existing.id,
+                                **_build_agent_update_fields(
+                                    existing,
+                                    body=body,
+                                    body_json=body_json,
+                                    restore=True,
+                                ),
+                            )
                         result["updated"] += 1
                         continue
                     result["skipped"] += 1

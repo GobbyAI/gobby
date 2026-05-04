@@ -2190,7 +2190,7 @@ class TestCleanupAgentFdClose:
             )
             monitor.register_master_fd("run-fd-test", r_fd)
 
-            await monitor._cleanup_agent(run, error="test cleanup", is_success=True)
+            await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
 
             # fd should be closed — closing again should raise
             with pytest.raises(OSError):
@@ -2217,4 +2217,4 @@ class TestCleanupAgentFdClose:
         )
 
         # Should not raise
-        await monitor._cleanup_agent(run, error="test cleanup", is_success=True)
+        await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)

@@ -22,7 +22,6 @@
   --bg-primary: oklch(15% 0.005 125);
   --bg-secondary: oklch(19% 0.006 125);
   --bg-tertiary: oklch(23% 0.007 125);
-  --code-bg: oklch(13% 0.003 125);
 
   --text-primary: oklch(92% 0.004 125);
   --text-secondary: oklch(68% 0.005 125);
@@ -186,7 +185,6 @@
   --bg-primary: oklch(99% 0.002 125);
   --bg-secondary: oklch(96% 0.004 125);
   --bg-tertiary: oklch(92% 0.006 125);
-  --code-bg: oklch(94% 0.005 125);
 
   --text-primary: oklch(20% 0.005 125);
   --text-secondary: oklch(40% 0.005 125);

@@ -62,10 +62,6 @@ interface SessionsTabProps {
   onSwapSession?: (target: SwappedSessionTarget) => void;
 }
 
-function sessionTime(value: string | null | undefined): number {
-  return parseTimestamp(value);
-}
-
 function FilterEmptyState({
   message,
   hasActiveFilters,
@@ -271,7 +267,7 @@ export const SessionsTab = memo(function SessionsTab({
         .filter((session) => !HIDDEN_SOURCES.has(session.source))
         .filter((session) => matchesSearch(session, search))
         .filter((session) => matchesSessionsFilters(session, filters, now))
-        .sort((a, b) => sessionTime(b.updated_at) - sessionTime(a.updated_at));
+        .sort((a, b) => parseTimestamp(b.updated_at) - parseTimestamp(a.updated_at));
     },
     [chatSessionId, expiringIds, search, sessions, filters],
   );

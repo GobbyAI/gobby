@@ -1,5 +1,7 @@
 """Tests for shared MCP field normalization."""
 
+import json
+
 import pytest
 
 from gobby.hooks.normalization import normalize_mcp_fields, normalize_tool_fields
@@ -306,6 +308,17 @@ class TestToolOutputNormalization:
         data = {"tool_output": {"output": '["not", "an", "object"]'}}
         result = normalize_mcp_fields(data)
         assert result["tool_output"] == {"output": '["not", "an", "object"]'}
+
+    def test_tool_output_unwrap_stops_at_max_depth(self) -> None:
+        output: dict[str, object] = {"status": "deep"}
+        for _ in range(12):
+            output = {"output": json.dumps(output)}
+        data = {"tool_output": output}
+
+        result = normalize_mcp_fields(data)
+
+        assert isinstance(result["tool_output"], dict)
+        assert "output" in result["tool_output"]
 
     def test_string_tool_output_non_json_left_as_string(self) -> None:
         """Non-JSON tool output (e.g. plain text) should remain a string."""

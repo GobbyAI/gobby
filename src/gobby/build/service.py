@@ -725,7 +725,7 @@ async def _kick_dispatcher_tick(
         return DispatcherTickSummary(reason="dispatcher_cron_disabled")
 
     if db is None:
-        return DispatcherTickSummary(ticks=1, reason="database_missing")
+        return DispatcherTickSummary(ticks=0, reason="database_missing")
 
     from gobby.dispatch.dispatcher import run_heartbeat
 

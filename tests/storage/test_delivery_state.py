@@ -123,6 +123,8 @@ def test_delivery_json_decode_returns_none_for_malformed_json(
 
 
 def test_delivery_campaign_raises_typed_error_when_requery_fails() -> None:
+    # This fake DB models the post-write requery returning no row, which should
+    # be surfaced as a typed storage verification failure.
     def execute(sql: str, params: tuple[object, ...]) -> SimpleNamespace | None:
         if "SELECT task_id, state, merge_strategy" not in sql:
             return None

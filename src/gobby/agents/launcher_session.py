@@ -35,9 +35,8 @@ def get_or_create_launcher_session(
     """Return a persistent top-level launcher session id for a project/source pair."""
     sessions = session_manager.list(project_id=project_id, source=source)
     for session in sessions:
-        session_id = getattr(session, "id", None)
-        if isinstance(session_id, str):
-            return session_id
+        if isinstance(session.id, str):
+            return session.id
 
     created = session_manager.register(
         external_id=f"{source}-{project_id[:8]}",

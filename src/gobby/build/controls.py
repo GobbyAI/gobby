@@ -239,7 +239,7 @@ async def build_restart_target(
         db=db,
         project_id=project_id,
         dry_run=False,
-        force=True if force else False,
+        force=force,
         yes=True,
         services=services,
     )
@@ -506,7 +506,8 @@ def _append_artifact(
 ) -> None:
     if not path:
         return
-    key = (family, str(Path(path).expanduser()))
+    expanded_path = Path(path).expanduser()
+    key = (family, str(expanded_path))
     if key in seen:
         return
     seen.add(key)
@@ -514,10 +515,10 @@ def _append_artifact(
         BuildArtifactSummary(
             family=family,
             task_id=task_id,
-            path=str(Path(path).expanduser()),
+            path=str(expanded_path),
             artifact_id=artifact_id,
             source=source,
-            exists=Path(path).expanduser().exists(),
+            exists=expanded_path.exists(),
         )
     )
 

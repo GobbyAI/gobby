@@ -13,6 +13,7 @@ pytestmark = pytest.mark.unit
 
 
 def _find_repo_root(start: Path) -> Path:
+    # Walk upward lazily so this test stays relocatable under copied worktrees.
     for candidate in (start, *start.parents):
         if (candidate / "pyproject.toml").exists() or (candidate / ".git").exists():
             return candidate

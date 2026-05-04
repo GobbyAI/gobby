@@ -104,21 +104,22 @@ class _FakePipelineExecutor:
     def __init__(self) -> None:
         self.loader = _FakePipelineLoader()
         self.calls: list[dict[str, object]] = []
+        self.called = asyncio.Event()
 
     async def execute(self, **kwargs):
-        self.calls.append(kwargs)
+        self.record_call(kwargs)
         return SimpleNamespace(id=kwargs["execution_id"], status="completed")
+
+    def record_call(self, call: dict[str, object]) -> None:
+        self.calls.append(call)
+        self.called.set()
 
 
 async def _wait_for_executor_calls(
     executor: _FakePipelineExecutor,
 ) -> list[dict[str, object]]:
-    async def _poll() -> list[dict[str, object]]:
-        while not executor.calls:
-            await asyncio.sleep(0)
-        return executor.calls
-
-    return await asyncio.wait_for(_poll(), timeout=1)
+    await asyncio.wait_for(executor.called.wait(), timeout=1)
+    return executor.calls
 
 
 def _pipeline_action(task_id: str) -> StartPipelineAction:
@@ -319,8 +320,10 @@ async def test_spawn_action_uses_services_and_records_agent_run(
         agent_slug="backend-developer",
         prompt="go",
     )
+    spawn_kwargs: dict[str, object] = {}
 
     async def fake_spawn_agent_impl(**kwargs):
+        spawn_kwargs.update(kwargs)
         run = LocalAgentRunManager(temp_db).create(
             parent_session_id=kwargs["parent_session_id"],
             provider="codex",
@@ -354,6 +357,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert result.executed == 1
     assert run.agent_name == "backend-developer"
     assert run.task_id == task.id
+    assert spawn_kwargs["task_id"] == task.id
     assert launcher.source == "dispatcher_launcher"
     assert storage.get_mutex(task.id).run_id == "run-services"
 
@@ -655,7 +659,7 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     )
 
     async def record_background(*args, **kwargs):
-        executor.calls.append(
+        executor.record_call(
             {
                 "inputs": args[2],
                 "execution_id": args[4],
@@ -705,7 +709,7 @@ async def test_execution_id_attaches_before_background_pipeline_start(
     )
 
     async def record_background(*args, **kwargs):
-        executor.calls.append({"execution_id": args[4]})
+        executor.record_call({"execution_id": args[4]})
 
     monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
 
@@ -735,7 +739,7 @@ async def test_pipeline_terminal_handler_releases_lease(
     )
 
     async def record_background(*args, **kwargs):
-        executor.calls.append({"execution_id": args[4]})
+        executor.record_call({"execution_id": args[4]})
 
     monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
 

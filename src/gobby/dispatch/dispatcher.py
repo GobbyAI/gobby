@@ -67,6 +67,11 @@ logger = logging.getLogger(__name__)
 MAX_ACTIVE_AGENTS = 10
 DISPATCH_HOLDER = "dispatcher"
 DISPATCH_TTL_SECONDS = 600
+_PIPELINE_ATTACH_DATABASE_ERRORS = (
+    sqlite3.IntegrityError,
+    sqlite3.OperationalError,
+    sqlite3.DatabaseError,
+)
 
 
 @dataclass(frozen=True)
@@ -554,8 +559,21 @@ async def _start_pipeline_action(
             db=db,
             services=services,
         )
-    except Exception as exc:
+    except _PIPELINE_ATTACH_DATABASE_ERRORS as exc:
+        return _escalate_pipeline_dispatch(
+            action, mutex, db, f"pipeline_attach_failed:database:{exc}"
+        )
+    except RuntimeError as exc:
         return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_attach_failed:{exc}")
+    except Exception as exc:
+        logger.exception(
+            "Unexpected pipeline attach failure for task %s pipeline %s",
+            action.task_id,
+            action.pipeline_name,
+        )
+        return _escalate_pipeline_dispatch(
+            action, mutex, db, f"pipeline_attach_failed:unexpected:{exc}"
+        )
     task = asyncio.create_task(
         _execute_pipeline_background(
             executor,

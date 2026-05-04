@@ -288,7 +288,13 @@ def _load_variables(raw: Any) -> dict[str, Any]:
         return {}
     try:
         parsed = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        preview = raw[:80].replace("\n", "\\n")
+        logger.warning(
+            "Corrupt compact_self continuation variables JSON ignored: %s; preview=%r",
+            exc,
+            preview,
+        )
         return {}
     return parsed if isinstance(parsed, dict) else {}
 

@@ -157,7 +157,23 @@ class TaskDeliveryStateManager:
                 """,  # nosec B608 - columns are filtered against static allowlists.
                 tuple(values[column] for column in columns),
             )
-        return self._unit_view({"task_id": task_id, "unit_key": effective_unit_key, **cleaned})
+            result = conn.execute(
+                """
+                SELECT id, task_id, unit_key, worktree_id, repo, source_branch,
+                       target_branch, pr_required, protection_json, pr_url,
+                       github_pr_number, gate_snapshot_json, pr_state,
+                       local_update_attempts, last_error, created_at, updated_at
+                  FROM task_delivery_units
+                 WHERE task_id = ? AND unit_key = ?
+                """,
+                (task_id, effective_unit_key),
+            )
+            row = result.fetchone() if result is not None else None
+        if row is None:
+            raise DeliveryStateError(
+                f"Failed to record delivery unit {effective_unit_key} for task {task_id}"
+            )
+        return self._unit_view(dict(row))
 
     def get_state(self, task_id: str) -> dict[str, Any]:
         """Return the campaign row plus all unit rows for a task."""

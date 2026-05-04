@@ -488,7 +488,14 @@ def _extract_mcp_content_object(content: Any) -> dict[str, Any] | None:
     return None
 
 
-def _unwrap_mcp_tool_output(tool_output: Any) -> Any:
+def _unwrap_mcp_tool_output(
+    tool_output: Any,
+    *,
+    _depth: int = 0,
+    _max_depth: int = 8,
+) -> Any:
+    if _depth >= _max_depth:
+        return tool_output
     if not isinstance(tool_output, dict):
         return tool_output
 
@@ -513,7 +520,11 @@ def _unwrap_mcp_tool_output(tool_output: Any) -> Any:
 
     parsed_output = _parse_json_object(tool_output.get("output"))
     if parsed_output is not None:
-        return _unwrap_mcp_tool_output(parsed_output)
+        return _unwrap_mcp_tool_output(
+            parsed_output,
+            _depth=_depth + 1,
+            _max_depth=_max_depth,
+        )
 
     return tool_output
 

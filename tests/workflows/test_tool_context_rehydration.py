@@ -104,6 +104,8 @@ def _call_arguments(mcp_tool: str) -> dict[str, Any]:
 )
 @pytest.mark.parametrize(
     "source",
+    # CODEX keeps dedicated coverage below because its tool transcript shape
+    # differs from the shared CLI adapter path exercised here.
     [SessionSource.CLAUDE, SessionSource.GEMINI, SessionSource.QWEN, SessionSource.DROID],
 )
 @pytest.mark.asyncio

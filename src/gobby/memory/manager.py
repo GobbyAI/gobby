@@ -709,6 +709,8 @@ class MemoryManager:
 
                 # Handle Qdrant results (or fallback to empty)
                 if isinstance(qdrant_result, BaseException):
+                    if isinstance(qdrant_result, asyncio.CancelledError):
+                        raise qdrant_result
                     if is_recoverable_vector_store_error(qdrant_result):
                         self._log_vector_store_failure(
                             "Qdrant search unavailable; falling back to non-vector results",
@@ -786,6 +788,8 @@ class MemoryManager:
                 )
 
                 if isinstance(qdrant_result, BaseException):
+                    if isinstance(qdrant_result, asyncio.CancelledError):
+                        raise qdrant_result
                     if is_recoverable_vector_store_error(qdrant_result):
                         self._log_vector_store_failure(
                             "Qdrant search unavailable; falling back to FTS5 results",

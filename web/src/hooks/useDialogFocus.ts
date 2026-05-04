@@ -12,7 +12,7 @@ const FOCUSABLE_SELECTOR = [
 interface UseDialogFocusOptions {
   ref: RefObject<HTMLElement | null>
   isOpen: boolean
-  onClose: () => void
+  onClose: () => void | Promise<void>
   trap?: boolean
 }
 
@@ -24,15 +24,15 @@ function isFocusableVisible(el: HTMLElement): boolean {
 }
 
 export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogFocusOptions): void {
-  const dialogRef = useRef(ref)
+  const onCloseRef = useRef(onClose)
 
   useEffect(() => {
-    dialogRef.current = ref
-  }, [ref])
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     if (!isOpen) return
-    const node = dialogRef.current.current
+    const node = ref.current
     if (!node) return
 
     const previouslyFocused = document.activeElement as HTMLElement | null
@@ -54,7 +54,7 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onClose()
+        void onCloseRef.current()
         return
       }
       if (!trap || e.key !== 'Tab') return
@@ -88,5 +88,5 @@ export function useDialogFocus({ ref, isOpen, onClose, trap = true }: UseDialogF
         previouslyFocused.focus()
       }
     }
-  }, [isOpen, onClose, trap])
+  }, [isOpen, ref, trap])
 }

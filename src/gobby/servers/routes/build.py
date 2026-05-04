@@ -100,7 +100,18 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
 
 def _parse_stage_insertion(value: str) -> StageInsertion:
     stage_name, separator, position_text = value.partition("@")
-    position = int(position_text) if separator else None
+    stage_name = stage_name.strip()
+    if not stage_name:
+        raise ValueError("stage name is required")
+    position = None
+    if separator:
+        position_text = position_text.strip()
+        if not position_text:
+            raise ValueError("stage insertion position is required")
+        try:
+            position = int(position_text)
+        except ValueError as exc:
+            raise ValueError("stage insertion position must be an integer") from exc
     return StageInsertion(stage_name=stage_name, position=position)
 
 

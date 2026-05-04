@@ -3,9 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from gobby.agents.loop_tracker import LoopTracker
+    from gobby.agents.prompt_detector import PromptDetector
+    from gobby.agents.stall_classifier import StallClassifier
+    from gobby.agents.task_recovery import TaskRecoveryHandler
+    from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.storage.agents import (
@@ -15,11 +21,6 @@ if TYPE_CHECKING:
     )
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.sessions import SessionManager
-    from gobby.agents.loop_tracker import LoopTracker
-    from gobby.agents.prompt_detector import PromptDetector
-    from gobby.agents.stall_classifier import StallClassifier
-    from gobby.agents.task_recovery import TaskRecoveryHandler
-    from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -153,11 +154,15 @@ class AgentCleanupHandler:
     async def cleanup_agent(
         self,
         run: AgentRun,
-        error: str,
+        terminal_payload: str,
         is_success: bool = False,
         is_timeout: bool = False,
     ) -> None:
-        """Full cleanup chain for an agent that needs cleanup."""
+        """Full cleanup chain for an agent that needs cleanup.
+
+        ``terminal_payload`` is stored as the success result or the failure/
+        timeout error, depending on the terminal transition.
+        """
         terminal_run = run
         transitioned = False
 
@@ -166,7 +171,7 @@ class AgentCleanupHandler:
                 updated = await asyncio.to_thread(
                     self._agent_run_manager.complete,
                     run.id,
-                    result=error,
+                    result=terminal_payload,
                 )
                 if updated is not None:
                     terminal_run = updated
@@ -175,22 +180,30 @@ class AgentCleanupHandler:
                 updated = await asyncio.to_thread(
                     self._agent_run_manager.timeout,
                     run.id,
-                    error=error,
+                    error=terminal_payload,
                 )
                 if updated is not None:
                     terminal_run = updated
                     transitioned = True
-                    logger.info(f"Marked agent run {run.id} as timed out: {error}")
+                    logger.info(
+                        "Marked agent run %s as timed out: %s",
+                        run.id,
+                        terminal_payload,
+                    )
             else:
                 updated = await asyncio.to_thread(
                     self._agent_run_manager.fail,
                     run.id,
-                    error=error,
+                    error=terminal_payload,
                 )
                 if updated is not None:
                     terminal_run = updated
                     transitioned = True
-                    logger.info(f"Marked agent run {run.id} as failed: {error}")
+                    logger.info(
+                        "Marked agent run %s as failed: %s",
+                        run.id,
+                        terminal_payload,
+                    )
 
         if transitioned:
             if not is_success:
@@ -201,7 +214,8 @@ class AgentCleanupHandler:
             if is_success:
                 result_data: dict[str, str] = {"status": "completed"}
             else:
-                result_data = {"status": "error", "error": error}
+                result_data = {"status": "error", "error": terminal_payload}
+
             await self.notify_terminal_completion(
                 run.id,
                 result=result_data,

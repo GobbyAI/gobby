@@ -268,6 +268,9 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     setSidebarView('form')
     fetchWorkflows({ include_deleted: true })
   }, [fetchWorkflows, sidebarView, confirm])
+  const closeEditor = useCallback(() => {
+    void handleEditorClose()
+  }, [handleEditorClose])
 
   return (
     <>
@@ -415,7 +418,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
       {/* Pipeline editor sidebar */}
       <SidebarPanel
         isOpen={!!editingWorkflow}
-        onClose={handleEditorClose}
+        onClose={closeEditor}
         title={editingWorkflow?.name || 'Pipeline'}
         width={560}
         headerContent={
@@ -438,7 +441,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
         }
         footer={
           <>
-            <button className="pipeline-editor-btn" onClick={handleEditorClose} type="button">Cancel</button>
+            <button className="pipeline-editor-btn" onClick={closeEditor} type="button">Cancel</button>
             <button
               className="pipeline-editor-btn pipeline-editor-btn--primary"
               onClick={sidebarView === 'yaml' ? handleYamlSave : () => editorRef.current?.save()}
@@ -462,7 +465,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
           <PipelineEditor
             ref={editorRef}
             pipeline={editingWorkflow}
-            onBack={handleEditorClose}
+            onBack={closeEditor}
             updateWorkflow={updateWorkflow}
             onExport={() => handleExport(editingWorkflow)}
             inSidebar

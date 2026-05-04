@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConfiguration } from '../hooks/useConfiguration'
 import type { PromptInfo, PromptDetail } from '../hooks/useConfiguration'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
-import { requestDaemonRestart } from '../lib/api'
+import { useDaemonRestart } from '../hooks/useDaemonRestart'
 import { cn } from '../lib/utils'
 import {
   CONTENT_CLS,
@@ -95,7 +95,7 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
   const [localValues, setLocalValues] = useState<Record<string, unknown>>(initialValues)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
-  const [showRestart, setShowRestart] = useState(false)
+  const { showRestart, restartError, markRestartRequired, restartDaemon } = useDaemonRestart()
 
   useEffect(() => {
     setLocalValues(initialValues)
@@ -124,7 +124,7 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
     const result = await onSave(localValues)
     setSaving(false)
     if (result.ok) {
-      setShowRestart(true)
+      markRestartRequired()
     } else {
       setErrors(result.errors || ['Save failed'])
     }
@@ -133,19 +133,7 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
   const handleReset = async () => {
     if (!confirm('Reset all configuration to defaults? This cannot be undone.')) return
     const ok = await onReset()
-    if (ok) setShowRestart(true)
-  }
-
-  const handleRestart = async () => {
-    setErrors([])
-    try {
-      const res = await requestDaemonRestart()
-      if (!res.ok) throw new Error(`Restart failed: ${res.status}`)
-      setShowRestart(false)
-    } catch (err) {
-      console.error('Failed to restart daemon:', err)
-      setErrors(['Failed to restart daemon'])
-    }
+    if (ok) markRestartRequired()
   }
 
   if (!schema) return <div className={LOADING_CLS}>Loading schema...</div>
@@ -178,15 +166,20 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
       {showRestart && (
         <div className={RESTART_BANNER_CLS}>
           <span>Configuration saved. Restart the daemon to apply changes.</span>
-          <button type="button" className={RESTART_BTN_CLS} onClick={handleRestart}>
+          <button
+            type="button"
+            className={RESTART_BTN_CLS}
+            onClick={() => { void restartDaemon() }}
+          >
             Restart Now
           </button>
         </div>
       )}
       <div className={FORM_CLS}>
-        {errors.length > 0 && (
+        {(errors.length > 0 || restartError) && (
           <div className={ERRORS_CLS}>
             {errors.map((e, i) => <div key={i}>{e}</div>)}
+            {restartError && <div>{restartError}</div>}
           </div>
         )}
 

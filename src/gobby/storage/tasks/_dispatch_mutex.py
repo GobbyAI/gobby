@@ -184,6 +184,10 @@ def get_mutex(db: DatabaseProtocol, task_id: str) -> DispatchMutex | None:
     return TaskDispatchMutexManager(db).get_mutex(task_id)
 
 
+def get_mutex_by_run_id(db: DatabaseProtocol, run_id: str) -> DispatchMutex | None:
+    return TaskDispatchMutexManager(db).get_mutex_by_run_id(run_id)
+
+
 def acquire_mutex(
     db: DatabaseProtocol,
     task_id: str,

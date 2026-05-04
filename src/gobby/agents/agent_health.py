@@ -54,7 +54,6 @@ class AgentHealthMonitor:
         for run in runs:
             try:
                 reason: str | None = None
-                is_success = False
                 is_timeout = False
 
                 if run.timeout_seconds and run.started_at:
@@ -93,7 +92,7 @@ class AgentHealthMonitor:
                     continue
 
                 pane_snapshot = ""
-                if run.tmux_session_name and not is_success:
+                if run.tmux_session_name:
                     try:
                         pane_snapshot = (
                             await self._tmux.capture_pane(run.tmux_session_name, lines=50) or ""
@@ -123,8 +122,7 @@ class AgentHealthMonitor:
 
                 await self._cleanup_handler.cleanup_agent(
                     run,
-                    error=error_msg,
-                    is_success=is_success,
+                    terminal_payload=error_msg,
                     is_timeout=is_timeout,
                 )
                 cleaned += 1
@@ -188,7 +186,7 @@ class AgentHealthMonitor:
                     f"Provider connection timed out: agent never initialized "
                     f"after {age:.0f}s (provider={run.provider})"
                 )
-                await self._cleanup_handler.cleanup_agent(run, error=error_msg, is_success=False)
+                await self._cleanup_handler.cleanup_agent(run, terminal_payload=error_msg)
                 killed += 1
 
             except Exception as e:
@@ -221,22 +219,21 @@ class AgentHealthMonitor:
 
                 if classification.status == StallStatus.PROVIDER_STALL:
                     logger.warning(
-                        f"Provider stall confirmed for agent {run.id}: "
-                        f"{classification.reason} "
-                        f"(consecutive={classification.consecutive_hits}) — killing agent",
+                        "Provider stall confirmed for agent %s: %s "
+                        "(consecutive=%s) - killing agent",
+                        run.id,
+                        classification.reason,
+                        classification.consecutive_hits,
                     )
 
-                    if run.tmux_session_name:
-                        await self._tmux.kill_session(run.tmux_session_name)
+                    await self._tmux.kill_session(tmux_name)
 
                     error_msg = (
                         f"Provider stall: {classification.reason} "
                         f"(provider={run.provider}, "
                         f"consecutive_hits={classification.consecutive_hits})"
                     )
-                    await self._cleanup_handler.cleanup_agent(
-                        run, error=error_msg, is_success=False
-                    )
+                    await self._cleanup_handler.cleanup_agent(run, terminal_payload=error_msg)
                     stalled += 1
             except Exception as e:
                 logger.warning(f"Error checking provider stall for agent {run.id}: {e}")

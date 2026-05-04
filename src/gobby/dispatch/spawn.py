@@ -53,7 +53,10 @@ async def spawn_agent(
     task_manager = cast("LocalTaskManager", required["task_manager"])
     session_manager = cast("SessionManager", required["session_manager"])
     runner = cast("AgentRunner", required["agent_runner"])
-    task = task_manager.get_task(action.task_id)
+    try:
+        task = task_manager.get_task(action.task_id)
+    except ValueError as err:
+        raise DispatchSpawnFailed(f"task_not_found:{action.task_id}") from err
     if task is None:
         raise DispatchSpawnFailed(f"task_not_found:{action.task_ref}")
 
@@ -106,7 +109,7 @@ async def spawn_agent(
         runner=runner,
         agent_body=agent_body,
         agent_lookup_name=action.agent_slug,
-        task_id=action.task_ref,
+        task_id=action.task_id,
         task_manager=task_manager,
         isolation=getattr(task, "isolation", None),
         branch_name=None,

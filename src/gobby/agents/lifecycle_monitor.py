@@ -18,7 +18,7 @@ from gobby.agents.agent_health import AgentHealthMonitor
 from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
-from gobby.agents.kill import kill_agent  # Re-imported for tests
+from gobby.agents.kill import kill_agent as kill_agent  # Re-imported for tests
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
@@ -287,7 +287,8 @@ class AgentLifecycleMonitor:
 
         threshold = self._loop_tracker.threshold
         await self._cleanup_handler.cleanup_agent(
-            run, error=f"doom loop: dismissed loop prompt {threshold}+ times", is_success=False
+            run,
+            terminal_payload=f"doom loop: dismissed loop prompt {threshold}+ times",
         )
 
     async def _resolve_agent_cwd(self, run: AgentRun) -> str | None:

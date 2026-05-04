@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Issue, IssueDetail } from '../../hooks/useSourceControl'
 import { StatusBadge } from './StatusBadge'
 import { GitHubUnavailable } from './GitHubUnavailable'
+import { issueLabelStyle } from './githubLabelStyles'
 
 interface Props {
   issues: Issue[]
@@ -106,8 +107,7 @@ export function IssuesView({ issues, githubAvailable, fetchIssues, fetchIssueDet
                         <span
                           key={lbl.name}
                           className="sc-issues__label"
-                          // Vendor passthrough: lbl.color is the user-chosen GitHub label hex; bg/border use 12.5%/25% alpha derivations of it.
-                          style={{ backgroundColor: lbl.color ? `#${lbl.color}20` : undefined, color: lbl.color ? `#${lbl.color}` : undefined, borderColor: lbl.color ? `#${lbl.color}40` : undefined }}
+                          style={issueLabelStyle(lbl.color)}
                         >
                           {lbl.name}
                         </span>

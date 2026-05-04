@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { PullRequest } from '../../hooks/useSourceControl'
 import { StatusBadge } from './StatusBadge'
+import { pullRequestLabelStyle } from './githubLabelStyles'
 
 interface Props {
   prNumber: number
@@ -75,8 +76,7 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
                   <span
                     key={l.name}
                     className="sc-pr-detail__label"
-                    // Vendor passthrough: l.color is the user-chosen GitHub label hex; preserved literally to honor repo identity.
-                    style={{ borderColor: `#${l.color}` }}
+                    style={pullRequestLabelStyle(l.color)}
                   >
                     {l.name}
                   </span>

@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _task_failure_threshold_from_env() -> int:
+def get_task_failure_threshold() -> int:
+    """Return the configured task failure escalation threshold."""
     raw = os.environ.get("GOBBY_TASK_FAILURE_THRESHOLD", "3")
     try:
         threshold = int(raw)
@@ -27,9 +28,6 @@ def _task_failure_threshold_from_env() -> int:
     return threshold
 
 
-TASK_FAILURE_THRESHOLD = _task_failure_threshold_from_env()
-
-
 class TaskRecoveryHandler:
     """Handles task ownership recovery for failed or cancelled agent runs."""
 
@@ -38,8 +36,11 @@ class TaskRecoveryHandler:
         task_manager: LocalTaskManager | None,
         agent_run_manager: LocalAgentRunManager,
         stall_classifier: StallClassifier,
-        failure_threshold: int = TASK_FAILURE_THRESHOLD,
+        failure_threshold: int | None = None,
     ) -> None:
+        failure_threshold = (
+            get_task_failure_threshold() if failure_threshold is None else failure_threshold
+        )
         if failure_threshold < 1:
             raise ValueError("failure_threshold must be a positive integer")
         self._task_manager = task_manager
@@ -147,9 +148,13 @@ class TaskRecoveryHandler:
                 task_id,
                 dispatch_failure_count=failure_count,
             )
-            logger.info(f"Recovered task {task_ref} to open after agent {db_run.id} failed")
+            logger.info(
+                "Recovered task %s to open after agent %s failed",
+                task_ref,
+                db_run.id,
+            )
         except Exception as e:
-            logger.warning(f"Failed to recover task for agent {db_run.id}: {e}")
+            logger.warning("Failed to recover task for agent %s: %s", db_run.id, e)
 
     async def recover_task_from_failed_agent(self, run_id: str) -> None:
         """Recover task ownership after a failed agent run."""

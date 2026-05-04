@@ -1105,7 +1105,8 @@ class TestUninstallGeminiEdgeCases:
         ):
             mock_time.time.return_value = 1234567890
 
-            # Mock rmdir to raise an exception
+            # Uninstall should be best-effort: a hooks-dir rmdir OSError
+            # must not roll back settings cleanup or report failure.
             original_rmdir = Path.rmdir
 
             def mock_rmdir(self):

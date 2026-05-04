@@ -37,6 +37,17 @@ const CTX_MENU_CLS =
   'z-[1000] min-w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]'
 const CTX_ITEM_CLS =
   'block w-full cursor-pointer rounded border-none bg-transparent px-2.5 py-1.5 text-left font-[var(--font-sans)] text-[length:calc(var(--font-size-base)*0.72)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+const CTX_MENU_WIDTH = 220
+const CTX_MENU_HEIGHT = 44
+const CTX_MENU_MARGIN = 8
+
+function clampContextMenuPosition(x: number, y: number) {
+  if (typeof window === 'undefined') return { x, y }
+  return {
+    x: Math.max(CTX_MENU_MARGIN, Math.min(x, window.innerWidth - CTX_MENU_WIDTH - CTX_MENU_MARGIN)),
+    y: Math.max(CTX_MENU_MARGIN, Math.min(y, window.innerHeight - CTX_MENU_HEIGHT - CTX_MENU_MARGIN)),
+  }
+}
 
 function buildTree(tasks: GobbyTask[], hideClosed: boolean): TreeNode[] {
   const filtered = hideClosed ? tasks.filter(t => getTaskDisplayState(t) !== 'closed') : tasks
@@ -86,8 +97,14 @@ function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: Task
     if (!onSubtreeKanban || !node.isInternal) return
     e.preventDefault()
     e.stopPropagation()
-    setCtxMenu({ x: e.clientX, y: e.clientY })
+    setCtxMenu(clampContextMenuPosition(e.clientX, e.clientY))
   }, [node.isInternal, onSubtreeKanban, setCtxMenu])
+
+  const handleSubtreeKanban = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setCtxMenu(null)
+    onSubtreeKanban?.(task.id)
+  }, [onSubtreeKanban, task.id])
 
   useEffect(() => {
     if (!ctxMenu) return
@@ -160,11 +177,7 @@ function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: Task
               type="button"
               className={CTX_ITEM_CLS}
               role="menuitem"
-              onClick={e => {
-                e.stopPropagation()
-                setCtxMenu(null)
-                onSubtreeKanban!(task.id)
-              }}
+              onClick={handleSubtreeKanban}
             >
               {'▦'} View subtree in Kanban
             </button>

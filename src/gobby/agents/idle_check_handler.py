@@ -103,13 +103,8 @@ class IdleCheckHandler:
                     pass
 
         pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
-        if pane_output is None:
-            if session_stale:
-                # Keep evaluating stale sessions even when tmux capture is unavailable.
-                # The idle detector can still reprompt or fail based on elapsed session activity.
-                pass
-            else:
-                return 0
+        if pane_output is None and not session_stale:
+            return 0
 
         if pane_output is not None:
             status = self._idle_detector.detect(pane_output)
@@ -158,9 +153,7 @@ class IdleCheckHandler:
             await self._tmux.kill_session(run.tmux_session_name)
 
         self._idle_detector.clear_state(run.id)
-        await self._cleanup_handler.cleanup_agent(
-            run, error=f"Agent idle: {reason}", is_success=False
-        )
+        await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")
 
     @staticmethod
     async def _read_recent_codex_response_items(

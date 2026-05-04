@@ -212,7 +212,13 @@ class GitHubIssueIndexer:
             )
         except Exception:
             logger.warning(
-                "GitHub issue vector duplicate search failed; continuing without candidates",
+                "GitHub issue vector duplicate search failed for %s; continuing without candidates",
+                issue.issue_key,
+                extra={
+                    "project_id": issue.project_id,
+                    "repo": issue.repo,
+                    "issue_number": issue.issue_number,
+                },
                 exc_info=True,
             )
             return []

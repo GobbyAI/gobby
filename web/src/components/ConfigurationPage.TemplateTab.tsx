@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
-import { requestDaemonRestart } from '../lib/api'
+import { useDaemonRestart } from '../hooks/useDaemonRestart'
 import { cn } from '../lib/utils'
 import {
   RESTART_BANNER_CLS,
@@ -23,7 +23,7 @@ export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
   const [localContent, setLocalContent] = useState(content)
   const [errors, setErrors] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
-  const [showRestart, setShowRestart] = useState(false)
+  const { showRestart, restartError, markRestartRequired, restartDaemon } = useDaemonRestart()
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -40,23 +40,9 @@ export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
     const result = await onSave(localContent)
     setSaving(false)
     if (result.ok) {
-      setShowRestart(true)
+      markRestartRequired()
     } else {
       setErrors(result.errors || ['Save failed'])
-    }
-  }
-
-  const handleRestart = async () => {
-    setErrors([])
-    try {
-      const res = await requestDaemonRestart()
-      if (!res.ok) {
-        throw new Error(`Restart failed: ${res.status}`)
-      }
-      setShowRestart(false)
-    } catch (err) {
-      console.error('Failed to restart daemon:', err)
-      setErrors(['Failed to restart daemon'])
     }
   }
 
@@ -65,7 +51,11 @@ export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
       {showRestart && (
         <div className={RESTART_BANNER_CLS}>
           <span>Configuration saved to database. Restart the daemon to apply changes.</span>
-          <button type="button" className={RESTART_BTN_CLS} onClick={handleRestart}>
+          <button
+            type="button"
+            className={RESTART_BTN_CLS}
+            onClick={() => { void restartDaemon() }}
+          >
             Restart Now
           </button>
         </div>
@@ -81,6 +71,7 @@ export function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
       <div className={YAML_FOOTER_CLS}>
         <div className={YAML_ERRORS_CLS}>
           {errors.map((e, i) => <span key={i}>{e}</span>)}
+          {restartError && <span>{restartError}</span>}
         </div>
         <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)} onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save Template'}

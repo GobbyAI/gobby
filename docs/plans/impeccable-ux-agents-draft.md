@@ -116,7 +116,7 @@ Add two builders to the `PROMPT_BUILDERS` dict:
 - `docs/contracts/plan-coverage.md` (lines 62-63 + the section that describes each kind's semantics) — document the five new kinds and their predicates.
 - `src/gobby/plans/manifest_emitter.py` — audit for any whitelist that would reject new kinds; relax if needed.
 
-**No DB migration.** `artifact_kind` is stored as a string field on `AcceptanceItem` and parsed from markdown each time (`parser.py:84`). Enum extension is additive; existing engineering plans keep validating.
+**No DB migration.** `artifact_kind` is stored as a string field on `AcceptanceItem` and parsed from Markdown each time (`parser.py:84`). Enum extension is additive; existing engineering plans keep validating.
 
 ### 8. Chrome DevTools MCP wiring
 

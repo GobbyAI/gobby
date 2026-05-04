@@ -100,6 +100,36 @@ class SpawnResult:
     tmux_socket_path: str | None = None  # Explicit tmux socket path, if configured
 
 
+def _session_manager_validation_error(
+    request: SpawnRequest,
+    provider_name: str,
+) -> SpawnResult | None:
+    manager = request.session_manager
+    if manager is None:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error=f"session_manager is required for {provider_name} spawn",
+        )
+
+    has_storage_db = getattr(getattr(manager, "_storage", None), "db", None) is not None
+    required_methods = ("create_child_session", "update_terminal_pickup_metadata")
+    if has_storage_db and all(
+        callable(getattr(manager, method, None)) for method in required_methods
+    ):
+        return None
+
+    return SpawnResult(
+        success=False,
+        run_id=request.run_id,
+        child_session_id=None,
+        status="failed",
+        error=f"valid session_manager is required for {provider_name} spawn",
+    )
+
+
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """
     Unified spawn dispatch — all agents spawn via tmux.
@@ -133,14 +163,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     2. Pass initial_variables for workflow activation (e.g., assigned_task_id)
     3. Set up environment variables for session matching
     """
-    if request.session_manager is None:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=None,
-            status="failed",
-            error="session_manager is required for Claude spawn",
-        )
+    if validation_error := _session_manager_validation_error(request, "Claude"):
+        return validation_error
 
     # Prepare spawn context (creates child session, builds env vars)
     spawn_context = prepare_terminal_spawn(
@@ -262,14 +286,8 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
     This avoids the preflight+resume approach which failed because Gemini
     doesn't persist sessions when terminated.
     """
-    if request.session_manager is None:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=None,
-            status="failed",
-            error="session_manager is required for Gemini spawn",
-        )
+    if validation_error := _session_manager_validation_error(request, "Gemini"):
+        return validation_error
 
     # Prepare spawn context (creates child session, builds env vars)
     spawn_context = prepare_terminal_spawn(
@@ -386,14 +404,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     This avoids the preflight+resume approach which failed because Qwen
     doesn't persist sessions when terminated.
     """
-    if request.session_manager is None:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=None,
-            status="failed",
-            error="session_manager is required for Qwen spawn",
-        )
+    if validation_error := _session_manager_validation_error(request, "Qwen"):
+        return validation_error
 
     spawn_context = prepare_terminal_spawn(
         session_manager=cast("ChildSessionManager", request.session_manager),
@@ -501,14 +513,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     via `gobby install --codex`; the SessionStart hook is now the source of truth
     for the native session id.
     """
-    if request.session_manager is None:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=None,
-            status="failed",
-            error="session_manager is required for Codex spawn",
-        )
+    if validation_error := _session_manager_validation_error(request, "Codex"):
+        return validation_error
 
     spawn_context = prepare_terminal_spawn(
         session_manager=cast("ChildSessionManager", request.session_manager),
@@ -595,14 +601,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
 async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     """Spawn Droid agent in terminal with direct hook/env-based session linkage."""
-    if request.session_manager is None:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=None,
-            status="failed",
-            error="session_manager is required for Droid spawn",
-        )
+    if validation_error := _session_manager_validation_error(request, "Droid"):
+        return validation_error
     if shutil.which("droid") is None:
         return SpawnResult(
             success=False,

@@ -106,7 +106,9 @@ async def test_find_duplicates_is_project_scoped_and_skips_self() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_duplicates_warns_and_degrades_when_vector_search_fails(caplog) -> None:
+async def test_find_duplicates_warns_and_degrades_when_vector_search_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     vector_store = AsyncMock()
     vector_store.search_with_payload.side_effect = RuntimeError("qdrant unavailable")
     embed_fn = AsyncMock(return_value=[0.1, 0.2])
@@ -116,3 +118,4 @@ async def test_find_duplicates_warns_and_degrades_when_vector_search_fails(caplo
 
     assert duplicates == []
     assert "vector duplicate search failed" in caplog.text
+    assert "owner/repo#42" in caplog.text

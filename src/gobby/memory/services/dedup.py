@@ -181,7 +181,7 @@ class DedupService:
             if is_recoverable_vector_store_error(e):
                 self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
             else:
-                self._log_vector_store_failure(f"VectorStore upsert failed for {memory_id}", e)
+                logger.warning("VectorStore upsert failed for %s: %s", memory_id, e)
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""

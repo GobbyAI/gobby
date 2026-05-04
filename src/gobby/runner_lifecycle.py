@@ -512,8 +512,6 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                 tracker.complete("Vector store initialized")
         except Exception as e:
             logger.warning(f"VectorStore initialization failed; lazy retry will continue: {e}")
-            if tracker:
-                tracker.error("Vector store", str(e))
 
     # Start Message Processor
     if runner.message_processor:
