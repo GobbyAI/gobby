@@ -14,11 +14,11 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 ## Search
 
 - `gcode search "query"` — hybrid search: FTS + semantic + graph boost (best for fuzzy or natural-language queries)
-- `gcode search-symbol "name"` — exact-first symbol lookup with deterministic ranking (use when you already know most of the name)
+- `gcode search-symbol "name"` — exact-first symbol/name lookup with deterministic ranking (when you know most of the name)
 - `gcode search-text "query"` — FTS5 search on symbol names, signatures, and docstrings
-- `gcode search-content "query"` — full-text search across file bodies (source, comments, config files, CSS, SQL)
+- `gcode search-content "query"` — FTS5 search across file content chunks (source, comments, CSS, SQL, config files)
 
-All four accept `--kind <kind>` (`function`, `class`, `method`, …), `--language <lang>` (`rust`, `python`, `css`, …), `--path <glob>` (e.g. `"src/**/*.rs"`), `--limit N`, and `--offset N`. They compose.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Search commands accept `--language <lang>`, `--path <glob>`, `--limit N`, and `--offset N` for scoped or paginated results.
 
 ## Retrieval
 
