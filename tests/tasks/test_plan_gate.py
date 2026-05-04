@@ -285,7 +285,7 @@ def test_draft_parse_failure_logs_and_skips_consumer_sweep(
     plan = _write_clean_plan(tmp_path / "clean.md")
     manager = _make_task_manager_with_artifact(str(plan))
     monkeypatch.setattr(
-        "gobby.tasks.expansion._compile.validate_plan_file",
+        "gobby.tasks.expansion._validate.validate_plan_file",
         lambda *_args, **_kwargs: {"valid": True},
     )
     monkeypatch.setattr(

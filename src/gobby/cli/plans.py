@@ -16,7 +16,7 @@ from gobby.plans.parser import PlanParseError, parse_plan
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
-from gobby.tasks.expansion._compile import validate_plan_file
+from gobby.tasks.expansion._validate import validate_plan_file
 
 from .utils import resolve_project_ref
 

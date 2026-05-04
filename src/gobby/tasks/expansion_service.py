@@ -13,7 +13,7 @@ from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.expansion import _apply, _compile, _reset
+from gobby.tasks.expansion import _apply, _compile, _contract, _reset, _validate
 from gobby.tasks.expansion._common import (
     AUTOMATED_LEAF_CATEGORIES,
     _contract_single_task_id,
@@ -52,20 +52,20 @@ class ExpansionService:
         self.prompt_loader = PromptLoader(db=self.db)
         self._agent_definition_cache: dict[str | None, list[dict[str, Any]]] = {}
 
-    validate_plan_file = _compile.validate_plan_file
-    compile_plan_to_spec = _compile.compile_plan_to_spec
-    _validate_contract_manifest = _compile._validate_contract_manifest
-    _contract_deferrals = _compile._contract_deferrals
-    _ensure_contract_phase = _compile._ensure_contract_phase
-    _build_contract_phase_sandwich_task = _compile._build_contract_phase_sandwich_task
-    _build_contract_entry_work_task = _compile._build_contract_entry_work_task
-    _contract_phase_index = _compile._contract_phase_index
-    _parse_contract_plan = _compile._parse_contract_plan
+    validate_plan_file = _validate.validate_plan_file
+    compile_plan_to_spec = _contract.compile_plan_to_spec
+    _validate_contract_manifest = _contract._validate_contract_manifest
+    _contract_deferrals = _contract._contract_deferrals
+    _ensure_contract_phase = _contract._ensure_contract_phase
+    _build_contract_phase_sandwich_task = _contract._build_contract_phase_sandwich_task
+    _build_contract_entry_work_task = _contract._build_contract_entry_work_task
+    _contract_phase_index = _contract._contract_phase_index
+    _parse_contract_plan = _contract._parse_contract_plan
     compile_run = _compile.compile_run
     compile_and_apply_run = _compile.compile_and_apply_run
     normalize_compiled_spec = _compile.normalize_compiled_spec
     _list_agent_definitions_for_selection = _compile._list_agent_definitions_for_selection
-    validate_compiled_spec = _compile.validate_compiled_spec
+    validate_compiled_spec = _validate.validate_compiled_spec
     _generate_raw_spec = _compile._generate_raw_spec
     _invoke_llm_compile = _compile._invoke_llm_compile
     _build_prompt_context = _compile._build_prompt_context
@@ -74,7 +74,6 @@ class ExpansionService:
     _resolve_repo_path = _compile._resolve_repo_path
     _get_verification_commands = _compile._get_verification_commands
     _build_file_context = _compile._build_file_context
-    _dedupe_dependencies = _compile._dedupe_dependencies
 
     _complete_dev_only_run = _apply._complete_dev_only_run
     apply_run = _apply.apply_run

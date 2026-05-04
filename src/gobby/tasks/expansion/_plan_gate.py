@@ -63,7 +63,7 @@ def validate_plan_for_agent_spawn(
 
     from gobby.plans.consumer_sweep import run_consumer_sweep
     from gobby.plans.parser import PlanParseError, parse_plan
-    from gobby.tasks.expansion._compile import validate_plan_file
+    from gobby.tasks.expansion._validate import validate_plan_file
 
     result = validate_plan_file(None, plan_path)
     if result.get("valid"):

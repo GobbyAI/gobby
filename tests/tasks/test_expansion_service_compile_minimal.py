@@ -41,7 +41,7 @@ Implement the first behavior.
 ## P2 Phase 2
 `kind: framing`
 
-### 2.1 Follow-up [category: docs] (depends: 1.1)
+### 2.1 Follow-up [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Document the behavior.
@@ -78,7 +78,7 @@ original_acceptance_items:
   tdd: true
   source_section: "1.1"
 - title: "Follow-up"
-  category: docs
+  category: code
   task_type: task
   depends_on:
     - "1.1"
@@ -324,7 +324,8 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
     applied = service.apply_run(run.id, session_id=None)
 
     created_task_ids = applied.created_task_ids or []
-    assert len(created_task_ids) == 6
+    # 2 phase parent tasks + 6 leaf tasks (3 per phase: TEST + IMPL + REF).
+    assert len(created_task_ids) == 8
     created = [service.task_manager.get_task(task_id) for task_id in created_task_ids]
     assert all(task is not None for task in created)
     titles = [task.title for task in created if task is not None]

@@ -229,7 +229,7 @@ def create_plan_registry(
 
     def validate_plan(plan_file: str) -> dict[str, Any]:
         from gobby.storage.tasks import LocalTaskManager
-        from gobby.tasks.expansion._compile import validate_plan_file as _validate
+        from gobby.tasks.expansion._validate import validate_plan_file as _validate
 
         plan_path = Path(plan_file)
         if not plan_path.is_absolute():

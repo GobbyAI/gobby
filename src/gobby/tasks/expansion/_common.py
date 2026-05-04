@@ -384,3 +384,16 @@ def _render_template(template_str: str, context: dict[str, Any]) -> str:
     env = Environment(autoescape=False, undefined=StrictUndefined)
     env.filters["default"] = lambda value, default="": default if value is None else value
     return str(env.from_string(template_str).render(**context))
+
+
+def _dedupe_dependencies(dependencies: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Deduplicate dependency edges while preserving order."""
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for edge in dependencies:
+        key = (edge["task_id"], edge["depends_on"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({"task_id": edge["task_id"], "depends_on": edge["depends_on"]})
+    return deduped
