@@ -101,7 +101,7 @@ export function AgentStatusBar({
         {canAttach && (
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-accent btn-sm"
             onClick={onAttach}
           >
             <LinkIcon />
@@ -111,7 +111,7 @@ export function AgentStatusBar({
         {canResume && (
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-accent btn-sm"
             onClick={onResume}
           >
             <PlayIcon />
@@ -121,7 +121,7 @@ export function AgentStatusBar({
         {canDetach && (
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-accent btn-sm"
             onClick={onDetach}
           >
             <UnlinkIcon />
@@ -130,7 +130,7 @@ export function AgentStatusBar({
         )}
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="btn btn-accent btn-sm"
           onClick={onNewChat}
           disabled={!onNewChat}
         >
