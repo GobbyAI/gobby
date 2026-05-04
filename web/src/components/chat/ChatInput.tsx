@@ -247,6 +247,9 @@ export function ChatInput({
     const filesToSend = attachmentsDisabled ? [] : queuedFiles
     const hasFiles = filesToSend.length > 0
     if ((trimmed || hasFiles) && !disabled) {
+      if (ttsEnabled) {
+        prepareTTSPlayback?.()
+      }
       onSend(trimmed, hasFiles ? filesToSend : undefined, {
         reasoningEffort: currentReasoning,
         ttsEnabled,
@@ -263,6 +266,7 @@ export function ChatInput({
     input,
     onScrollToBottom,
     onSend,
+    prepareTTSPlayback,
     queuedFiles,
     ttsEnabled,
   ])

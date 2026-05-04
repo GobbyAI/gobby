@@ -256,13 +256,28 @@ describe('ChatInput', () => {
     })
   })
 
-  it('includes enabled TTS intent when sending a message', async () => {
-    const onSend = vi.fn()
-    render(<ChatInput {...defaultProps} onSend={onSend} ttsEnabled={true} />)
+  it('prepares playback before sending with enabled TTS intent', async () => {
+    const callOrder: string[] = []
+    const prepareTTSPlayback = vi.fn(() => {
+      callOrder.push('prepare')
+    })
+    const onSend = vi.fn(() => {
+      callOrder.push('send')
+    })
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        ttsEnabled={true}
+        prepareTTSPlayback={prepareTTSPlayback}
+      />,
+    )
 
     await userEvent.type(screen.getByRole('textbox'), 'Speak this')
     await userEvent.keyboard('{Enter}')
 
+    expect(callOrder).toEqual(['prepare', 'send'])
+    expect(prepareTTSPlayback).toHaveBeenCalledTimes(1)
     expect(onSend).toHaveBeenCalledWith('Speak this', undefined, {
       reasoningEffort: 'auto',
       ttsEnabled: true,

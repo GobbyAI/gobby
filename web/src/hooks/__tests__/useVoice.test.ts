@@ -27,6 +27,18 @@ interface StartedSource {
 }
 
 let startedSources: StartedSource[] = []
+let mockAudioContextInitialState: AudioContextState = 'running'
+let deferredAudioContextResume: { promise: Promise<void>; resolve: () => void } | null = null
+let audioContextResumeCalls = 0
+
+function deferAudioContextResume() {
+  let resolve!: () => void
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve
+  })
+  deferredAudioContextResume = { promise, resolve }
+  return deferredAudioContextResume
+}
 
 vi.mock('@ricky0123/vad-web', () => ({
   MicVAD: {
@@ -40,7 +52,7 @@ vi.mock('@ricky0123/vad-web', () => ({
 
 class MockAudioContext {
   sampleRate = 48_000
-  state: AudioContextState = 'running'
+  state: AudioContextState = mockAudioContextInitialState
   destination = {}
   audioWorklet = {
     addModule: vi.fn(async () => {}),
@@ -49,14 +61,24 @@ class MockAudioContext {
   constructor(_opts?: AudioContextOptions) {}
 
   resume() {
+    audioContextResumeCalls += 1
+    const markRunning = () => {
+      this.state = 'running'
+    }
+    if (deferredAudioContextResume) {
+      return deferredAudioContextResume.promise.then(markRunning)
+    }
+    markRunning()
     return Promise.resolve()
   }
 
   suspend() {
+    this.state = 'suspended'
     return Promise.resolve()
   }
 
   close() {
+    this.state = 'closed'
     return Promise.resolve()
   }
 
@@ -128,6 +150,9 @@ describe('useVoice', () => {
     lastVADConfig = null
     lastWorkletNode = null
     startedSources = []
+    mockAudioContextInitialState = 'running'
+    deferredAudioContextResume = null
+    audioContextResumeCalls = 0
 
     wsRef = {
       current: {
@@ -360,6 +385,56 @@ describe('useVoice', () => {
       return Math.round(sample * 32768)
     })
     expect(playedMarkers).toEqual(Array.from({ length: 51 }, (_, index) => index + 1))
+  })
+
+  it('waits for a suspended AudioContext before starting queued TTS chunks', async () => {
+    mockAudioContextInitialState = 'suspended'
+    const resume = deferAudioContextResume()
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-tts',
+      0,
+      { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    act(() => {
+      result.current.prepareTTSPlayback()
+      for (const marker of [1, 2]) {
+        result.current.handleVoiceMessage({
+          type: 'tts_audio',
+          sample_rate: 24_000,
+          format: 'pcm_s16le',
+          chunk_index: marker,
+        })
+        result.current.handleBinaryMessage(pcmChunk(marker))
+      }
+    })
+
+    expect(audioContextResumeCalls).toBe(1)
+    expect(startedSources).toHaveLength(0)
+
+    await act(async () => {
+      resume.resolve()
+      await resume.promise
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(startedSources).toHaveLength(1)
+    })
+    expect(Math.round((startedSources[0].buffer?.getChannelData(0)[0] ?? 0) * 32768)).toBe(1)
+
+    act(() => {
+      startedSources[0].onended?.(new Event('ended'))
+    })
+
+    expect(startedSources).toHaveLength(2)
+    const playedMarkers = startedSources.map((source) => {
+      const sample = source.buffer?.getChannelData(0)[0] ?? 0
+      return Math.round(sample * 32768)
+    })
+    expect(playedMarkers).toEqual([1, 2])
   })
 
   it('stops TTS and cancels recording on conversation switch', async () => {
