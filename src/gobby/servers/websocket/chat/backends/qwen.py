@@ -53,6 +53,7 @@ class QwenWebChatBackend(GeminiWebChatBackend):
             provider="qwen",
             display_name="Qwen",
             sandbox_config=sandbox_config,
+            start_timeout_seconds=60.0,
         )
 
     async def attach_session(

@@ -722,7 +722,7 @@ class GeminiACPClient:
 
                 exited_after_eof = False
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                    await asyncio.wait_for(process.wait(), timeout=15.0)
                     exited_after_eof = True
                 except TimeoutError:
                     pass
@@ -730,7 +730,7 @@ class GeminiACPClient:
                 if not exited_after_eof and process.returncode is None:
                     process.terminate()
                     try:
-                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                        await asyncio.wait_for(process.wait(), timeout=15.0)
                     except TimeoutError:
                         logger.warning(
                             "%s ACP process did not exit after terminate; killing "

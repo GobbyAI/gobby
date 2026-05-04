@@ -657,7 +657,7 @@ class TestStop:
         proc.stdin.close.assert_called_once()
         proc.terminate.assert_not_called()
         proc.kill.assert_not_called()
-        assert wait_for_timeouts == [2.0]
+        assert wait_for_timeouts == [15.0]
 
     @pytest.mark.asyncio
     async def test_stop_eof_timeout_escalates_to_terminate(self) -> None:
@@ -683,7 +683,7 @@ class TestStop:
         proc.stdin.close.assert_called_once()
         proc.terminate.assert_called_once()
         proc.kill.assert_not_called()
-        assert wait_for_timeouts == [2.0, 5.0]
+        assert wait_for_timeouts == [15.0, 15.0]
 
     @pytest.mark.asyncio
     async def test_stop_terminate_timeout_escalates_to_kill_and_logs_context(self) -> None:
@@ -712,7 +712,7 @@ class TestStop:
         proc.stdin.close.assert_called_once()
         proc.terminate.assert_called_once()
         proc.kill.assert_called_once()
-        assert wait_for_timeouts == [2.0, 5.0]
+        assert wait_for_timeouts == [15.0, 15.0]
         warning.assert_called_once()
         message = warning.call_args.args[0] % warning.call_args.args[1:]
         assert "provider=gemini" in message

@@ -275,10 +275,12 @@ class GeminiWebChatBackend:
         provider: str = "gemini",
         display_name: str = "Gemini",
         sandbox_config: SandboxConfig | None = None,
+        start_timeout_seconds: float = _BACKEND_START_TIMEOUT_SECONDS,
     ) -> None:
         self.provider = provider
         self._display_name = display_name
         self._sandbox_config = sandbox_config
+        self._start_timeout_seconds = start_timeout_seconds
         # Gemini CLI's ACP bootstrap currently hangs on macOS when launched with
         # the daemon's full-process Seatbelt flags. Keep daemon-owned ACP
         # startup unsandboxed and let Gemini's own tool sandboxing handle tool
@@ -302,14 +304,14 @@ class GeminiWebChatBackend:
                     auto_session=False,
                     model=self._default_model,
                 ),
-                timeout=_BACKEND_START_TIMEOUT_SECONDS,
+                timeout=self._start_timeout_seconds,
             )
         except Exception as exc:
             startup_error = _error_message(exc)
             if isinstance(exc, TimeoutError) and startup_error == "TimeoutError":
                 startup_error = (
                     f"Timed out starting {self._display_name} ACP backend after "
-                    f"{_BACKEND_START_TIMEOUT_SECONDS:.1f}s"
+                    f"{self._start_timeout_seconds:.1f}s"
                 )
             try:
                 await self._client.stop()
