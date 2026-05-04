@@ -1,24 +1,6 @@
 import React from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { CODE_CHROME_VARS } from './codeTheme'
 
-const customTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: CODE_CHROME_VARS.bgBlock,
-    margin: '0.75rem 0',
-    padding: '1rem',
-    borderRadius: '0.5rem',
-    fontSize: '0.9em',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-  },
-}
+import { CodeBlock } from './CodeBlock'
 
 interface CodeProps {
   children?: React.ReactNode
@@ -54,25 +36,15 @@ export function MarkdownCodeBlock({ children, className, ...props }: CodeProps) 
           </button>
         </div>
       )}
-      <SyntaxHighlighter
-        style={customTheme}
+      <CodeBlock
         language={language || 'text'}
-        PreTag="div"
-        showLineNumbers
-        lineNumberStyle={{
-          minWidth: '2.5em',
-          paddingRight: '1em',
-          textAlign: 'right',
-          userSelect: 'none',
-          color: CODE_CHROME_VARS.gutterText,
-        }}
         customStyle={{
           margin: language ? '0' : '0.75rem 0',
           borderRadius: language ? '0 0 0.5rem 0.5rem' : '0.5rem',
         }}
       >
         {codeString}
-      </SyntaxHighlighter>
+      </CodeBlock>
     </div>
   )
 }

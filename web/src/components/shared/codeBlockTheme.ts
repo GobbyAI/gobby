@@ -39,8 +39,26 @@ export const CODE_CHROME_VARS = {
   activeLineBg: 'var(--code-active-line-bg)',
 } as const
 
-// Custom theme matching the app — shared between FilesTab and FilesPage
-export const codeTheme = {
+/**
+ * Canonical line-number gutter style for view-only code blocks. File
+ * viewers (FilesTab, FilesPage) override `minWidth` to `3em` via the
+ * `lineNumberMinWidth` prop on `CodeBlock` to fit 4-digit line numbers.
+ */
+export const lineNumberStyle = {
+  minWidth: '2.5em',
+  paddingRight: '1em',
+  textAlign: 'right' as const,
+  userSelect: 'none' as const,
+  color: 'var(--text-muted)',
+}
+
+/**
+ * Canonical Prism theme for view-only code blocks. Built on `oneDark`
+ * but with brand-tinted background and the project's monospace stack.
+ * Tool-result and tool-arg blocks pass `customStyle` overrides for
+ * denser padding/font; the line-number gutter style is shared.
+ */
+export const codeBlockTheme = {
   ...oneDark,
   'pre[class*="language-"]': {
     ...oneDark['pre[class*="language-"]'],

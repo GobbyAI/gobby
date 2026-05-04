@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { CodeBlock } from '../shared/CodeBlock'
 import type { ToolCall, ToolResult } from '../../types/chat'
 import type { ArtifactType } from '../../types/artifacts'
 import { cn } from '../../lib/utils'
@@ -42,7 +42,7 @@ import {
 } from './ToolResultBlocks'
 import { ToolResultImage } from './ToolResultImage'
 import { InlineDiff } from './ToolCallCard.diff'
-import { highlighterTheme, lineNumberStyle, TOOL_ERROR_PRE_CLASS } from './ToolCallCard.styles'
+import { TOOL_ERROR_PRE_CLASS, TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
 
 interface ToolCallCardProps {
   toolCalls: ToolCall[]
@@ -75,17 +75,13 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
         <div className="text-muted-foreground mb-1 font-medium">
           Write <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <SyntaxHighlighter
-          style={highlighterTheme}
+        <CodeBlock
           language={language}
-          PreTag="div"
-          showLineNumbers
           startingLineNumber={1}
-          lineNumberStyle={lineNumberStyle}
-          customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+          customStyle={TOOL_RESULT_CUSTOM_STYLE}
         >
           {args.content as string}
-        </SyntaxHighlighter>
+        </CodeBlock>
       </div>
     )
   }
@@ -199,32 +195,17 @@ function ToolResultContent({ call }: { call: ToolCall }) {
               <span className="text-muted-foreground/60 ml-2">{lineCount} lines</span>
             )}
           </div>
-          <SyntaxHighlighter
-            style={highlighterTheme}
+          <CodeBlock
             language={language}
-            PreTag="div"
-            showLineNumbers
             startingLineNumber={parsed.startLine}
             wrapLongLines
-            lineNumberStyle={{
-              minWidth: '2.5em',
-              paddingRight: '1em',
-              textAlign: 'right',
-              userSelect: 'none',
-              color: 'var(--text-muted)',
-            }}
             customStyle={{
-              margin: 0,
+              ...TOOL_RESULT_CUSTOM_STYLE,
               borderRadius: 0,
-              maxHeight: '24rem',
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
             }}
           >
             {parsed.content}
-          </SyntaxHighlighter>
+          </CodeBlock>
         </div>
       )
     }
@@ -247,26 +228,14 @@ function ToolResultContent({ call }: { call: ToolCall }) {
             return (
               <div key={i}>
                 <div className="text-muted-foreground text-xs mb-1 font-mono">{group.filePath}</div>
-                <SyntaxHighlighter
-                  style={highlighterTheme}
+                <CodeBlock
                   language={lang}
-                  PreTag="div"
-                  showLineNumbers
                   startingLineNumber={startLine}
                   wrapLongLines
-                  lineNumberStyle={lineNumberStyle}
-                  customStyle={{
-                    margin: 0,
-                    borderRadius: '0.25rem',
-                    maxHeight: '24rem',
-                    overflowY: 'auto',
-                    overflowX: 'hidden',
-                    whiteSpace: 'pre-wrap',
-                    overflowWrap: 'anywhere',
-                  }}
+                  customStyle={TOOL_RESULT_CUSTOM_STYLE}
                 >
                   {content}
-                </SyntaxHighlighter>
+                </CodeBlock>
               </div>
             )
           })}

@@ -1,49 +1,15 @@
 import { useMemo } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 import { cn } from '../../lib/utils'
+import { CodeBlock } from '../shared/CodeBlock'
 import {
   type GsqzMetadata,
   parseGsqzWrapper,
   parseReadOutput,
 } from './ToolCallCard.helpers'
+import { TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
 
 const TOOL_RESULT_WRAP_CLASS = 'tool-result-wrap'
-
-const lineNumberStyle = {
-  minWidth: '2.5em',
-  paddingRight: '1em',
-  textAlign: 'right' as const,
-  userSelect: 'none' as const,
-  color: 'var(--text-muted)',
-}
-
-const highlighterTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: 'var(--code-bg)',
-    margin: '0',
-    padding: '0.75rem',
-    fontSize: '0.75rem',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-  },
-}
-
-const wrappedHighlighterStyle = {
-  margin: 0,
-  borderRadius: '0.25rem',
-  maxHeight: '24rem',
-  overflowY: 'auto' as const,
-  overflowX: 'hidden' as const,
-  whiteSpace: 'pre-wrap' as const,
-  overflowWrap: 'anywhere' as const,
-}
 
 export interface MetadataStripProps {
   meta: Record<string, unknown>
@@ -170,33 +136,28 @@ function LineNumberedBody({
   startingLineNumber: number
 }) {
   return (
-    <SyntaxHighlighter
-      style={highlighterTheme}
+    <CodeBlock
       language={language}
-      PreTag="div"
-      showLineNumbers
       startingLineNumber={startingLineNumber}
       wrapLongLines
-      lineNumberStyle={lineNumberStyle}
-      customStyle={wrappedHighlighterStyle}
+      customStyle={TOOL_RESULT_CUSTOM_STYLE}
     >
       {content}
-    </SyntaxHighlighter>
+    </CodeBlock>
   )
 }
 
 function PlainBody({ body, language }: { body: string; language?: string }) {
   return (
-    <SyntaxHighlighter
-      style={highlighterTheme}
+    <CodeBlock
       language={language ?? 'text'}
-      PreTag="div"
+      showLineNumbers={false}
       wrapLongLines
-      customStyle={wrappedHighlighterStyle}
+      customStyle={TOOL_RESULT_CUSTOM_STYLE}
       codeTagProps={{ className: TOOL_RESULT_WRAP_CLASS }}
     >
       {body}
-    </SyntaxHighlighter>
+    </CodeBlock>
   )
 }
 

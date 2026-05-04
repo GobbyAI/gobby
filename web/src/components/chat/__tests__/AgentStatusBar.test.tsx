@@ -66,9 +66,9 @@ describe('AgentStatusBar', () => {
 
     const attachButton = screen.getByRole('button', { name: 'Attach' })
     const resumeButton = screen.getByRole('button', { name: 'Resume' })
-    expect(attachButton).toHaveClass('btn', 'btn-secondary', 'btn-sm')
+    expect(attachButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
     expect(attachButton).not.toHaveClass('btn-primary')
-    expect(resumeButton).toHaveClass('btn', 'btn-secondary', 'btn-sm')
+    expect(resumeButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
     expect(resumeButton).not.toHaveClass('btn-primary')
     expect(screen.queryByText('#88')).toBeNull()
     expect(screen.queryByText('Observed Session')).toBeNull()
@@ -118,7 +118,7 @@ describe('AgentStatusBar', () => {
     const newChatButton = screen.getByRole('button', { name: /new chat/i })
     expect(newChatButton).toBeInTheDocument()
     expect(newChatButton).toBeEnabled()
-    expect(newChatButton).toHaveClass('btn', 'btn-secondary', 'btn-sm')
+    expect(newChatButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
 
     await userEvent.click(newChatButton)
     expect(onNewChat).toHaveBeenCalledTimes(1)

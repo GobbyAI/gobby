@@ -2,12 +2,11 @@ import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProper
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { CodeBlock } from '../shared/CodeBlock'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { markdownComponents } from '../shared/MarkdownComponents'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
-import { codeTheme } from '../shared/codeTheme'
 import {
   FOLDER_ICON_COLOR_VAR,
   getGitStatusColorVar,
@@ -486,18 +485,9 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
                 </ReactMarkdown>
               </div>
             ) : (
-              <SyntaxHighlighter
+              <CodeBlock
                 language={language}
-                style={codeTheme}
-                PreTag="div"
-                showLineNumbers
-                lineNumberStyle={{
-                  minWidth: '3em',
-                  paddingRight: '1em',
-                  textAlign: 'right',
-                  userSelect: 'none',
-                  color: 'var(--text-muted)',
-                }}
+                lineNumberMinWidth="3em"
                 customStyle={{
                   margin: 0,
                   borderRadius: 0,
@@ -505,7 +495,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
                 }}
               >
                 {fileContent ?? ''}
-              </SyntaxHighlighter>
+              </CodeBlock>
             )}
           </div>
         </div>

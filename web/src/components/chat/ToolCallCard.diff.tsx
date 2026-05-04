@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+
+import { CodeBlock } from '../shared/CodeBlock'
 import { computeLineDiff } from './ToolCallCard.helpers'
-import { highlighterTheme, lineNumberStyle } from './ToolCallCard.styles'
+import { TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
 
 export function InlineDiff({ oldStr, newStr, language }: { oldStr: string; newStr: string; language: string }) {
   const diff = useMemo(() => computeLineDiff(oldStr, newStr), [oldStr, newStr])
@@ -19,27 +20,24 @@ export function InlineDiff({ oldStr, newStr, language }: { oldStr: string; newSt
     return { style: { background: bg, display: 'block' } }
   }, [diff])
 
-  const diffLineNumberStyle = useCallback((lineNumber: number) => {
+  const lineNumberStyleFn = useCallback((lineNumber: number) => {
     const entry = diff[lineNumber - 1]
     const color = entry?.type === 'add' ? 'var(--color-success-foreground)'
                : entry?.type === 'remove' ? 'var(--color-error)'
                : 'var(--text-muted)'
-    return { ...lineNumberStyle, color }
+    return { color }
   }, [diff])
 
   return (
-    <SyntaxHighlighter
-      style={highlighterTheme}
+    <CodeBlock
       language={language}
-      PreTag="div"
-      showLineNumbers
       startingLineNumber={1}
       wrapLines
       lineProps={lineProps}
-      lineNumberStyle={diffLineNumberStyle}
-      customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+      lineNumberStyleFn={lineNumberStyleFn}
+      customStyle={TOOL_RESULT_CUSTOM_STYLE}
     >
       {content}
-    </SyntaxHighlighter>
+    </CodeBlock>
   )
 }

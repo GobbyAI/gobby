@@ -1,27 +1,19 @@
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-
-export const highlighterTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: 'var(--code-bg)',
-    margin: '0',
-    padding: '0.75rem',
-    fontSize: '0.75rem',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-  },
-}
-
-export const lineNumberStyle = {
-  minWidth: '2.5em',
-  paddingRight: '1em',
-  textAlign: 'right' as const,
-  userSelect: 'none' as const,
-  color: 'var(--text-muted)',
+/**
+ * Tool-result and tool-arg blocks pack denser than the canonical chat
+ * code block so a long Bash/grep run doesn't dominate the chat. Padding
+ * and font are tightened via `customStyle`; the gutter geometry comes
+ * from the shared `CodeBlock` component.
+ */
+export const TOOL_RESULT_CUSTOM_STYLE = {
+  margin: 0,
+  padding: '0.75rem',
+  fontSize: '0.75rem',
+  borderRadius: '0.25rem',
+  maxHeight: '24rem',
+  overflowY: 'auto' as const,
+  overflowX: 'hidden' as const,
+  whiteSpace: 'pre-wrap' as const,
+  overflowWrap: 'anywhere' as const,
 }
 
 export const TOOL_ERROR_PRE_CLASS =

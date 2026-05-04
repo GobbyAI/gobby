@@ -1,10 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { CodeBlock } from './shared/CodeBlock'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { markdownComponents } from './shared/MarkdownComponents'
-import { codeTheme, CODE_CHROME_VARS } from './shared/codeTheme'
 import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
 import { undo, redo } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
@@ -326,18 +325,9 @@ export function FilesPage({
         <div className={VIEWER_CLS}>
           {showDiff && diffContent !== null ? (
             <div className={CODE_VIEWER_CLS}>
-              <SyntaxHighlighter
-                style={codeTheme}
+              <CodeBlock
                 language="diff"
-                PreTag="div"
-                showLineNumbers
-                lineNumberStyle={{
-                  minWidth: '3em',
-                  paddingRight: '1em',
-                  textAlign: 'right',
-                  userSelect: 'none',
-                  color: CODE_CHROME_VARS.gutterText,
-                }}
+                lineNumberMinWidth="3em"
                 customStyle={{
                   margin: 0,
                   borderRadius: 0,
@@ -345,7 +335,7 @@ export function FilesPage({
                 }}
               >
                 {diffContent || '(no changes)'}
-              </SyntaxHighlighter>
+              </CodeBlock>
             </div>
           ) : activeFile ? (
             <FileContent
@@ -606,18 +596,9 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
 
   return (
     <div className={CODE_VIEWER_CLS}>
-      <SyntaxHighlighter
-        style={codeTheme}
+      <CodeBlock
         language={file.language}
-        PreTag="div"
-        showLineNumbers
-        lineNumberStyle={{
-          minWidth: '3em',
-          paddingRight: '1em',
-          textAlign: 'right',
-          userSelect: 'none',
-          color: CODE_CHROME_VARS.gutterText,
-        }}
+        lineNumberMinWidth="3em"
         customStyle={{
           margin: 0,
           borderRadius: 0,
@@ -625,7 +606,7 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
         }}
       >
         {file.content}
-      </SyntaxHighlighter>
+      </CodeBlock>
     </div>
   )
 }
