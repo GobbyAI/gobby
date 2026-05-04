@@ -17,6 +17,7 @@ def lock_worktree(
     Lock a worktree to prevent accidental pruning.
 
     Args:
+        runner: GitRunner used to execute the underlying git command
         worktree_path: Path to the worktree
         reason: Optional reason for locking
 
@@ -55,6 +56,7 @@ def unlock_worktree(runner: GitRunner, worktree_path: str | Path) -> GitOperatio
     Unlock a worktree.
 
     Args:
+        runner: GitRunner used to execute the underlying git command
         worktree_path: Path to the worktree
 
     Returns:

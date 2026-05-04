@@ -134,10 +134,10 @@ class TaskRecoveryHandler:
                     task_id,
                     dispatch_failure_count=0,
                     escalated_at=datetime.now(UTC).isoformat(),
-                    escalation_reason=f"Failed {failure_count} times across different agents",
+                    escalation_reason=f"Failed {failure_count} dispatch attempts",
                 )
                 logger.warning(
-                    "Task %s escalated: %s failures across different agents",
+                    "Task %s escalated after %s dispatch attempts",
                     task_ref,
                     failure_count,
                 )

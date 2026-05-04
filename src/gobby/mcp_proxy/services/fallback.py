@@ -7,18 +7,20 @@ using semantic similarity and success rate weighting.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.vectorstore import is_recoverable_vector_store_error
+from gobby.memory.vectorstore import (
+    VECTORSTORE_WARNING_INTERVAL_SECONDS,
+    is_recoverable_vector_store_error,
+    log_rate_limited_warning,
+)
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 
 logger = logging.getLogger(__name__)
-VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
 
 
 @dataclass
@@ -177,12 +179,12 @@ class ToolFallbackResolver:
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit known VectorStore availability warnings in fallback lookups."""
-        now = time.monotonic()
-        if now - self._last_vector_store_warning_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
-            logger.warning("%s: %s", message, error)
-            self._last_vector_store_warning_at = now
-        else:
-            logger.debug("%s: %s", message, error)
+        self._last_vector_store_warning_at = log_rate_limited_warning(
+            logger,
+            self._last_vector_store_warning_at,
+            message,
+            error,
+        )
 
     def _build_search_query(
         self,

@@ -603,8 +603,8 @@ def _delete_artifacts(
 
             if artifact.task_id is not None and not artifact.orphan:
                 task_manager.artifacts.clear_isolation_pair(artifact.task_id, artifact.family)
+            artifact.exists = False
             artifact.deleted = True
-            artifact.exists = path.exists()
         except Exception as exc:
             artifact.error = str(exc)
 

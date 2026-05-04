@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -26,7 +25,11 @@ from gobby.memory.services.maintenance import (
     get_stats as _get_stats,
 )
 from gobby.memory.services.search import SearchService
-from gobby.memory.vectorstore import is_recoverable_vector_store_error
+from gobby.memory.vectorstore import (
+    VECTORSTORE_WARNING_INTERVAL_SECONDS,
+    is_recoverable_vector_store_error,
+    log_rate_limited_warning,
+)
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.memories import LocalMemoryManager, Memory
 
@@ -44,7 +47,6 @@ DEFAULT_LIST_LIMIT = 50
 DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_GRAPH_LIMIT = 500
 MAX_REINDEX_LIMIT = 100_000
-VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
 
 
 class MemoryManager:
@@ -257,10 +259,13 @@ class MemoryManager:
             self._embeddings_available = True
         except Exception as e:
             if self._embeddings_available is None:
-                logger.warning(f"Embedding failed for {memory_id}: {e}")
+                logger.warning(
+                    f"Embedding failed for {memory_id}: {e}; "
+                    "suppressing further embedding warnings until provider recovers"
+                )
                 self._embeddings_available = False
             else:
-                logger.warning(f"Embedding failed for {memory_id}: {e}")
+                logger.debug(f"Embedding failed for {memory_id}: {e}")
             return
 
         try:
@@ -273,12 +278,12 @@ class MemoryManager:
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""
-        now = time.monotonic()
-        if now - self._last_vector_store_warning_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
-            logger.warning("%s: %s", message, error)
-            self._last_vector_store_warning_at = now
-        else:
-            logger.debug("%s: %s", message, error)
+        self._last_vector_store_warning_at = log_rate_limited_warning(
+            logger,
+            self._last_vector_store_warning_at,
+            message,
+            error,
+        )
 
     def _fire_background_dedup(
         self,

@@ -58,7 +58,7 @@ async def spawn_agent(
     except ValueError as err:
         raise DispatchSpawnFailed(f"task_not_found:{action.task_id}") from err
     if task is None:
-        raise DispatchSpawnFailed(f"task_not_found:{action.task_ref}")
+        raise DispatchSpawnFailed(f"task_not_found:{action.task_id}")
 
     project_id = str(getattr(task, "project_id", "") or _field(context, "project_id", ""))
     if not project_id:
@@ -170,7 +170,11 @@ def _persist_spawn_artifacts(
         try:
             _set_artifacts_atomic(db, task_id, **fields)
         except (TaskArtifactConstraintError, ValueError, sqlite3.DatabaseError):
-            logger.warning("Failed to persist dispatcher spawn artifacts", exc_info=True)
+            logger.error(
+                "Failed to persist dispatcher spawn artifacts",
+                extra={"task_id": task_id, "fields": fields},
+                exc_info=True,
+            )
 
 
 def _field(

@@ -40,6 +40,7 @@ def start_periodic_tasks(
         name="span-cleanup",
     )
 
+    runner._memory_reconcile_task = None
     if runner.memory_manager:
         runner._memory_reconcile_task = asyncio.create_task(
             loops["memory_reconcile_loop"](

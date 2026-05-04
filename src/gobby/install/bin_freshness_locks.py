@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import errno
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 try:
     import fcntl
@@ -26,7 +29,7 @@ class NativeBinFileLock:
         self._closed = False
 
     def release(self) -> None:
-        """Release the held lock."""
+        """Release the held lock. Idempotent and tolerant of stale fds."""
         if self._closed:
             return
         try:
@@ -35,8 +38,18 @@ class NativeBinFileLock:
             elif msvcrt is not None:  # pragma: no cover - Windows only
                 os.lseek(self._fd, 0, os.SEEK_SET)
                 msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+        except OSError as exc:
+            if exc.errno != errno.EBADF:
+                self._closed = True
+                raise
+            logger.debug("Lock fd already closed for %s; treating release as a no-op", self.path)
         finally:
-            os.close(self._fd)
+            try:
+                os.close(self._fd)
+            except OSError as exc:
+                if exc.errno != errno.EBADF:
+                    self._closed = True
+                    raise
             self._closed = True
 
     def __enter__(self) -> NativeBinFileLock:

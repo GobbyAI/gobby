@@ -35,7 +35,10 @@ class IllegalStageTransitionError(ValueError):
         self.current_state = current_state
         self.attempted_transition = attempted_transition
         self.review_policy = review_policy
-        super().__init__(stage_name, current_state, attempted_transition, review_policy)
+        super().__init__(
+            f"Stage '{stage_name}' in state '{current_state}' cannot "
+            f"{attempted_transition} under review_policy={review_policy}"
+        )
 
 
 class NoCurrentStageError(ValueError):
@@ -43,7 +46,7 @@ class NoCurrentStageError(ValueError):
 
     def __init__(self, task_id: str) -> None:
         self.task_id = task_id
-        super().__init__(task_id)
+        super().__init__(f"Task '{task_id}' has no current stage")
 
 
 class IllegalManifestMutationError(ValueError):

@@ -220,7 +220,9 @@ def _child_rows_by_parent(self: Any, parent_ids: set[str]) -> dict[str, list[Any
     )
     children: dict[str, list[Any]] = {parent_id: [] for parent_id in ordered_parent_ids}
     for row in rows:
-        children.setdefault(row["parent_task_id"], []).append(row)
+        # parent_task_id is constrained by the SQL `IN (...)` clause to a key
+        # in `ordered_parent_ids`, so the bucket is guaranteed to exist.
+        children[row["parent_task_id"]].append(row)
     return children
 
 

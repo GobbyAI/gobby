@@ -176,6 +176,11 @@ def delete_worktree(
             # not untracked files (.mypy_cache, .ruff_cache, __pycache__, etc).
             # Fall back to manual removal + prune when force is requested.
             if force and worktree_path.exists():
+                logger.warning(
+                    "git worktree remove failed for %s; falling back to shutil.rmtree + worktree prune. stderr=%s",
+                    worktree_path,
+                    result.stderr.strip(),
+                )
                 shutil.rmtree(worktree_path, ignore_errors=True)
                 runner._run_git(["worktree", "prune"], timeout=10)
                 if not worktree_path.exists():
@@ -285,9 +290,20 @@ def sync_from_main(
         if sync_result.returncode != 0:
             # Check if there are conflicts
             if "CONFLICT" in sync_result.stdout or "CONFLICT" in sync_result.stderr:
+                abort_result = runner._run_git(
+                    [strategy, "--abort"],
+                    cwd=worktree_path,
+                    timeout=30,
+                )
+                aborted = abort_result.returncode == 0
+                abort_detail = (
+                    "; aborted"
+                    if aborted
+                    else f"; abort failed: {abort_result.stderr.strip() or abort_result.stdout.strip()}"
+                )
                 return GitOperationResult(
                     success=False,
-                    message=f"Sync failed due to conflicts. Run 'git {strategy} --abort' to cancel.",
+                    message=f"Sync failed due to conflicts{abort_detail}",
                     error=sync_result.stderr or sync_result.stdout,
                 )
             return GitOperationResult(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.memories import LocalMemoryManager, Memory
@@ -29,7 +29,7 @@ class CrossrefService:
         *,
         storage: LocalMemoryManager,
         vector_store: VectorStore | None,
-        embed_fn: Callable[..., Any] | None,
+        embed_fn: Callable[..., Awaitable[Any]] | None,
         config: MemoryConfig,
     ) -> None:
         self._storage = storage

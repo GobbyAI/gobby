@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
@@ -45,6 +46,40 @@ CREATE TABLE IF NOT EXISTS bin_update_state (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
+
+
+_RECORD_COLUMNS = """
+            tool_name,
+            installed_version,
+            floor_version,
+            latest_version,
+            binary_path,
+            target,
+            last_status,
+            last_error,
+            checked_at,
+            installed_at,
+            source_url,
+            is_dev,
+            floor_drift"""
+
+
+def _row_to_record(row: sqlite3.Row) -> BinUpdateRecord:
+    return BinUpdateRecord(
+        tool_name=row["tool_name"],
+        installed_version=row["installed_version"],
+        floor_version=row["floor_version"],
+        latest_version=row["latest_version"],
+        binary_path=row["binary_path"],
+        target=row["target"],
+        last_status=row["last_status"],
+        last_error=row["last_error"],
+        checked_at=row["checked_at"],
+        installed_at=row["installed_at"],
+        source_url=row["source_url"],
+        is_dev=bool(row["is_dev"]),
+        floor_drift=bool(row["floor_drift"]),
+    )
 
 
 @dataclass(frozen=True)
@@ -146,20 +181,8 @@ class BinUpdateStateStore:
     def get(self, tool_name: str) -> BinUpdateRecord | None:
         """Return update state for one managed binary."""
         row = self.db.fetchone(
-            """
-            SELECT tool_name,
-                   installed_version,
-                   floor_version,
-                   latest_version,
-                   binary_path,
-                   target,
-                   last_status,
-                   last_error,
-                   checked_at,
-                   installed_at,
-                   source_url,
-                   is_dev,
-                   floor_drift
+            f"""
+            SELECT {_RECORD_COLUMNS}
               FROM bin_update_state
              WHERE tool_name = ?
             """,
@@ -167,32 +190,18 @@ class BinUpdateStateStore:
         )
         if row is None:
             return None
-        return BinUpdateRecord(
-            tool_name=row["tool_name"],
-            installed_version=row["installed_version"],
-            floor_version=row["floor_version"],
-            latest_version=row["latest_version"],
-            binary_path=row["binary_path"],
-            target=row["target"],
-            last_status=row["last_status"],
-            last_error=row["last_error"],
-            checked_at=row["checked_at"],
-            installed_at=row["installed_at"],
-            source_url=row["source_url"],
-            is_dev=bool(row["is_dev"]),
-            floor_drift=bool(row["floor_drift"]),
-        )
+        return _row_to_record(row)
 
     def list(self) -> list[BinUpdateRecord]:
         """Return all managed binary update states."""
         rows = self.db.fetchall(
-            """
-            SELECT tool_name
+            f"""
+            SELECT {_RECORD_COLUMNS}
               FROM bin_update_state
              ORDER BY tool_name
             """
         )
-        return [record for row in rows if (record := self.get(row["tool_name"])) is not None]
+        return [_row_to_record(row) for row in rows]
 
 
 __all__ = [

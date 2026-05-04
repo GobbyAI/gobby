@@ -116,17 +116,23 @@ def _session_manager_validation_error(
 
     has_storage_db = getattr(getattr(manager, "_storage", None), "db", None) is not None
     required_methods = ("create_child_session", "update_terminal_pickup_metadata")
-    if has_storage_db and all(
-        callable(getattr(manager, method, None)) for method in required_methods
-    ):
+    missing_methods = [
+        method for method in required_methods if not callable(getattr(manager, method, None))
+    ]
+    if has_storage_db and not missing_methods:
         return None
+
+    if not has_storage_db:
+        detail = "session_manager._storage.db is missing"
+    else:
+        detail = f"session_manager is missing methods: {', '.join(missing_methods)}"
 
     return SpawnResult(
         success=False,
         run_id=request.run_id,
         child_session_id=None,
         status="failed",
-        error=f"valid session_manager is required for {provider_name} spawn",
+        error=f"invalid session_manager for {provider_name} spawn — {detail}",
     )
 
 

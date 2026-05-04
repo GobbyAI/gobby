@@ -58,7 +58,7 @@ async def _connect_mcp_servers(runner: GobbyRunner, tracker: StartupTracker | No
         if tracker:
             tracker.complete("MCP servers connected")
     except TimeoutError:
-        logger.warning("MCP connection timed out")
+        logger.error("MCP connection timed out")
         if tracker:
             tracker.error("MCP servers", "connection timed out")
     except Exception as e:

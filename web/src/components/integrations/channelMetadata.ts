@@ -16,7 +16,7 @@ export const CHANNEL_COLOR_PAIRS: Record<ChannelType, ChannelColorPair> = {
 }
 
 export function getChannelColorVar(channel: ChannelType): string {
-  return CHANNEL_COLOR_PAIRS[channel] ? `var(--channel-${channel})` : 'var(--border)'
+  return `var(--channel-${channel})`
 }
 
 export const CHANNEL_DISPLAY_NAMES: Record<ChannelType, string> = {

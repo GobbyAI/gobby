@@ -23,6 +23,7 @@ from gobby.config.bin_freshness import BinFreshnessConfig
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
+    from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,11 @@ async def _sleep_until_next_bin_freshness_cycle(
 
 
 async def bin_freshness_loop(
-    db: Any,
+    db: DatabaseProtocol,
     config: BinFreshnessConfig,
     is_shutdown_requested: Callable[[], bool],
     *,
-    update_once: Callable[[Any, BinFreshnessConfig], list[Any]] | None = None,
+    update_once: Callable[[DatabaseProtocol, BinFreshnessConfig], list[Any]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     jitter: Callable[[float], float] | None = None,
 ) -> None:

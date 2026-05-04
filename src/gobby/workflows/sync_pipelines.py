@@ -78,10 +78,27 @@ def _build_pipeline_update_fields(
             }
         )
     if existing.source != "installed":
+        logger.debug(
+            "Migrating bundled pipeline to installed source",
+            extra={
+                "name": existing.name,
+                "from_source": existing.source,
+                "yaml_enabled": enabled,
+                "existing_enabled": existing.enabled,
+            },
+        )
         fields["source"] = "installed"
         fields["tags"] = ["gobby"]
         fields["enabled"] = enabled
     elif restore:
+        logger.debug(
+            "Restoring soft-deleted bundled pipeline; re-applying yaml enabled flag",
+            extra={
+                "name": existing.name,
+                "yaml_enabled": enabled,
+                "existing_enabled": existing.enabled,
+            },
+        )
         fields["enabled"] = enabled
     return fields
 
@@ -163,6 +180,15 @@ def sync_bundled_pipelines(db: DatabaseProtocol) -> dict[str, Any]:
 
             if existing is not None:
                 if existing.workflow_type != workflow_type:
+                    logger.debug(
+                        "Skipping bundled pipeline due to workflow_type conflict",
+                        extra={
+                            "name": existing.name,
+                            "id": existing.id,
+                            "existing_workflow_type": existing.workflow_type,
+                            "yaml_workflow_type": workflow_type,
+                        },
+                    )
                     result["skipped"] += 1
                     continue
 

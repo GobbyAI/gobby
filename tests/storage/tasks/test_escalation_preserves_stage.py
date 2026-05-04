@@ -14,6 +14,10 @@ def test_round_trip_preserves_row(temp_db, sample_project) -> None:
     task = manager.create_task(project_id=sample_project["id"], title="Preserve stage")
 
     temp_db.execute(
+        "DELETE FROM task_stage_states WHERE task_id = ?",
+        (task.id,),
+    )
+    temp_db.execute(
         """
         INSERT INTO task_stage_states (
             task_id, stage_name, position, state, review_policy, entered_at,

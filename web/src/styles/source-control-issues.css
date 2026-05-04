@@ -28,7 +28,7 @@
 
 .sc-issues__label {
   display: inline-block;
-  padding: 0.0625rem 0.375rem;
+  padding: 1px 0.375rem;
   border-radius: 0.75rem;
   font-size: var(--text-2xs);
   font-weight: 500;

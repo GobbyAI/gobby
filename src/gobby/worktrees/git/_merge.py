@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess  # nosec B404 # subprocess.TimeoutExpired re-raised from runner
 
 from gobby.worktrees.git._models import GitOperationResult
 from gobby.worktrees.git._runner import GitRunner
+
+logger = logging.getLogger(__name__)
 
 
 def merge_branch(
@@ -155,7 +158,14 @@ def merge_branch(
     finally:
         # Restore original branch if we checked out target
         if checked_out_target and original_branch and original_branch != target_branch:
-            runner._run_git(
-                ["checkout", original_branch],
-                timeout=30,
-            )
+            try:
+                runner._run_git(
+                    ["checkout", original_branch],
+                    timeout=30,
+                )
+            except Exception:
+                logger.error(
+                    "Failed to restore original branch %s after merge attempt",
+                    original_branch,
+                    exc_info=True,
+                )

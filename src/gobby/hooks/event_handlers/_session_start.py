@@ -463,6 +463,13 @@ class SessionStartMixin(EventHandlersBase):
                                             continue
 
                                     if task_obj is not None:
+                                        # legacy_status: backward-compat fallback for tasks
+                                        # written before stage manifests existed. If the
+                                        # row carries an active legacy `status`, treat it
+                                        # as hand-offable even when is_task_actionable()
+                                        # returns False. When `status` is absent (None),
+                                        # `None not in ACTIVE_STAGE_STATES` is True and
+                                        # the actionable check is the sole arbiter.
                                         legacy_status = getattr(task_obj, "status", None)
                                         if (
                                             not is_task_actionable(task_obj)

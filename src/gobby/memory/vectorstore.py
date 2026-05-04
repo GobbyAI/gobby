@@ -54,6 +54,30 @@ def is_recoverable_vector_store_error(error: BaseException) -> bool:
     return isinstance(error, httpx.TransportError)
 
 
+VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
+
+
+def log_rate_limited_warning(
+    target_logger: logging.Logger,
+    last_warned_at: float,
+    message: str,
+    error: BaseException,
+) -> float:
+    """Emit a rate-limited warning for transient VectorStore failures.
+
+    Returns the timestamp the caller should persist as the new
+    ``last_warned_at`` value. Callers that share a rate-limit window
+    (e.g., distinct services on the same VectorStore) can route their
+    warnings through this helper so the cadence is uniform.
+    """
+    now = time.monotonic()
+    if now - last_warned_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
+        target_logger.warning("%s: %s", message, error)
+        return now
+    target_logger.debug("%s: %s", message, error)
+    return last_warned_at
+
+
 class VectorStore:
     """Async wrapper around Qdrant for memory vector storage.
 
@@ -86,6 +110,11 @@ class VectorStore:
         self._init_lock = asyncio.Lock()
         self._retry_backoff_seconds = _INITIAL_RETRY_BACKOFF_SECONDS
         self._next_retry_at = 0.0
+
+    @property
+    def collection_name(self) -> str:
+        """Return the default collection name configured for this store."""
+        return self._collection_name
 
     async def initialize(self) -> None:
         """Create the Qdrant client and ensure the collection exists."""
@@ -174,7 +203,16 @@ class VectorStore:
         raise VectorStoreUnavailableError() from error
 
     def _mark_unavailable(self, error: BaseException) -> None:
+        client = self._client
         self._client = None
+        if client is not None:
+            try:
+                client.close()
+            except Exception as close_error:  # noqa: BLE001 - log and proceed
+                logger.warning(
+                    "Failed to close Qdrant client during mark_unavailable: %s",
+                    close_error,
+                )
         delay = self._retry_backoff_seconds
         self._next_retry_at = time.monotonic() + delay
         self._retry_backoff_seconds = min(delay * 2, _MAX_RETRY_BACKOFF_SECONDS)

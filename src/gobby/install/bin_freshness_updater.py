@@ -294,8 +294,8 @@ def _write_atomic_text(path: Path, value: str, *, mode: int) -> None:
             fileobj.write(value)
             fileobj.flush()
             os.fsync(fileobj.fileno())
+            os.fchmod(fileobj.fileno(), mode)
         os.replace(tmp_path, path)
-        os.chmod(path, mode)
     except Exception:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

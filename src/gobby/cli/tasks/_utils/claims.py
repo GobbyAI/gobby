@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sqlite3
 
 from gobby.storage.database import LocalDatabase
 
@@ -63,7 +64,7 @@ def get_claimed_task_ids() -> set[str]:
                 # Partial UUID prefix - find matching task
                 row = db.fetchone(
                     "SELECT id FROM tasks WHERE id LIKE ? AND project_id = ?",
-                    (f"%{ref}%", project_id),
+                    (f"{ref}%", project_id),
                 )
                 return row["id"] if row else None
 
@@ -86,6 +87,6 @@ def get_claimed_task_ids() -> set[str]:
             return claimed_ids
         finally:
             db.close()
-    except Exception as e:
+    except (sqlite3.Error, json.JSONDecodeError, KeyError) as e:
         logger.debug(f"Failed to get claimed task IDs: {e}")
         return set()

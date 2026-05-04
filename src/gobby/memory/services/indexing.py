@@ -153,7 +153,7 @@ class IndexingService:
                 if project_id:
                     await self._vector_store.delete(filters={"project_id": project_id})
                 else:
-                    await self._vector_store.delete_collection(self._vector_store._collection_name)
+                    await self._vector_store.delete_collection(self._vector_store.collection_name)
                 report["vectors_cleared"] = True
             except Exception as e:
                 logger.error(f"Failed to clear vectors: {e}")
@@ -166,9 +166,7 @@ class IndexingService:
                     self._storage.delete_project_crossrefs, project_id
                 )
             else:
-                deleted = await asyncio.to_thread(
-                    lambda: self._storage.db.execute("DELETE FROM memory_crossrefs").rowcount
-                )
+                deleted = await asyncio.to_thread(self._delete_all_memory_crossrefs)
             report["crossrefs_cleared"] = deleted
         except Exception as e:
             logger.error(f"Failed to clear crossrefs: {e}")
@@ -251,6 +249,10 @@ class IndexingService:
     async def invalidate_all(self, project_id: str | None = None) -> dict[str, Any]:
         """Clear all secondary indices for a project (or globally)."""
         return await self.clear_indices(project_id=project_id)
+
+    def _delete_all_memory_crossrefs(self) -> int:
+        """Delete every memory_crossrefs row and return the affected row count."""
+        return self._storage.db.execute("DELETE FROM memory_crossrefs").rowcount
 
     async def fetch_all_project_memories(self, project_id: str) -> list[Memory]:
         """Fetch all memories for a project using pagination."""

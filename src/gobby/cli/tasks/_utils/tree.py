@@ -4,7 +4,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 
 
 def collect_ancestors(
-    tasks: list[Task], task_manager: "LocalTaskManager"
+    tasks: list[Task], task_manager: LocalTaskManager
 ) -> tuple[list[Task], set[str]]:
     """Collect ancestor tasks to maintain tree hierarchy.
 
@@ -33,7 +33,7 @@ def collect_ancestors(
                 parent = task_manager.get_task(parent_id)
                 task_by_id[parent_id] = parent
                 parent_id = parent.parent_task_id
-            except (ValueError, Exception):
+            except ValueError:
                 break
 
     # Combine original tasks with ancestors
@@ -45,6 +45,31 @@ def collect_ancestors(
     return combined, original_ids
 
 
+def _group_children_by_parent(
+    tasks: list[Task],
+) -> tuple[dict[str, int], dict[str | None, list[Task]]]:
+    """Build (input_order, children_by_parent) maps used for tree traversal.
+
+    Treats parents that aren't in the supplied list as roots (parent_id=None).
+    Each parent's children are sorted by their position in `tasks` so the
+    storage layer's topological order is preserved.
+    """
+    task_by_id = {t.id: t for t in tasks}
+    input_order = {t.id: i for i, t in enumerate(tasks)}
+
+    children_by_parent: dict[str | None, list[Task]] = {}
+    for task in tasks:
+        parent_id = task.parent_task_id
+        if parent_id and parent_id not in task_by_id:
+            parent_id = None
+        children_by_parent.setdefault(parent_id, []).append(task)
+
+    for children in children_by_parent.values():
+        children.sort(key=lambda t: input_order.get(t.id, float("inf")))
+
+    return input_order, children_by_parent
+
+
 def sort_tasks_for_tree(tasks: list[Task]) -> list[Task]:
     """Sort tasks for tree display (parent before children, depth-first).
 
@@ -52,23 +77,7 @@ def sort_tasks_for_tree(tasks: list[Task]) -> list[Task]:
     Preserves the input order within each parent group (respecting
     topological sort from storage layer).
     """
-    task_by_id = {t.id: t for t in tasks}
-    # Preserve input order via index lookup
-    input_order = {t.id: i for i, t in enumerate(tasks)}
-
-    # Group children by parent
-    children_by_parent: dict[str | None, list[Task]] = {}
-    for task in tasks:
-        parent_id = task.parent_task_id
-        if parent_id and parent_id not in task_by_id:
-            parent_id = None
-        if parent_id not in children_by_parent:
-            children_by_parent[parent_id] = []
-        children_by_parent[parent_id].append(task)
-
-    # Sort children within each parent by input order (preserves topological sort)
-    for children in children_by_parent.values():
-        children.sort(key=lambda t: input_order.get(t.id, float("inf")))
+    _input_order, children_by_parent = _group_children_by_parent(tasks)
 
     # Build sorted list via depth-first traversal
     sorted_tasks: list[Task] = []
@@ -101,24 +110,9 @@ def compute_tree_prefixes(
         is_primary is True if task is in primary_ids (or primary_ids is None)
     """
     task_by_id = {t.id: t for t in tasks}
-    # Preserve input order via index lookup
-    input_order = {t.id: i for i, t in enumerate(tasks)}
+    _input_order, children_by_parent = _group_children_by_parent(tasks)
     if primary_ids is None:
         primary_ids = set(task_by_id.keys())
-
-    # Group children by parent
-    children_by_parent: dict[str | None, list[Task]] = {}
-    for task in tasks:
-        parent_id = task.parent_task_id
-        if parent_id and parent_id not in task_by_id:
-            parent_id = None
-        if parent_id not in children_by_parent:
-            children_by_parent[parent_id] = []
-        children_by_parent[parent_id].append(task)
-
-    # Sort children within each parent by input order (preserves topological sort)
-    for children in children_by_parent.values():
-        children.sort(key=lambda t: input_order.get(t.id, float("inf")))
 
     prefixes: dict[str, tuple[str, bool]] = {}
 

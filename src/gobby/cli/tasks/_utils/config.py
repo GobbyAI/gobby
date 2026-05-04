@@ -13,6 +13,8 @@ from gobby.sync.tasks import TaskSyncManager
 
 logger = logging.getLogger(__name__)
 
+TASKS_EXPORT_PATH = ".gobby/tasks.jsonl"
+
 
 def check_tasks_enabled() -> None:
     """Check if gobby-tasks is enabled, exit if not."""
@@ -21,14 +23,13 @@ def check_tasks_enabled() -> None:
         if not config.gobby_tasks.enabled:
             click.echo("Error: gobby-tasks is disabled in configuration", err=True)
             sys.exit(1)
-    except (FileNotFoundError, AttributeError, ImportError):
-        # Expected errors if config missing or invalid
-        # Fail open to allow CLI to work even if config is borked
-        pass
+    except (FileNotFoundError, AttributeError, ImportError) as e:
+        # Expected errors if config missing or invalid.
+        # Fail open to allow CLI to work even if config is borked.
+        logger.debug("check_tasks_enabled: skipping check due to %s", e)
     except Exception as e:
         # Unexpected errors handling config
         logger.warning(f"Error checking tasks config: {e}")
-        pass
 
 
 def get_task_manager() -> LocalTaskManager:
@@ -41,4 +42,4 @@ def get_task_manager() -> LocalTaskManager:
 def get_sync_manager() -> TaskSyncManager:
     """Get initialized sync manager."""
     manager = get_task_manager()
-    return TaskSyncManager(manager, export_path=".gobby/tasks.jsonl")
+    return TaskSyncManager(manager, export_path=TASKS_EXPORT_PATH)

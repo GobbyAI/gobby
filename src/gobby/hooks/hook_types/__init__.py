@@ -5,7 +5,7 @@ This module defines all Claude Code hook types and their associated input/output
 using Pydantic for validation. Each hook type has specific input and output schemas
 that ensure type safety and validation across the hook execution pipeline.
 
-Hook Types (27 total):
+Hook Types (28 total):
 1. session-start: Triggered when a Claude Code session starts
 2. session-end: Triggered when a session ends
 3. user-prompt-submit: Triggered before user prompt is submitted
@@ -20,19 +20,20 @@ Hook Types (27 total):
 12. subagent-stop: Triggered when a subagent stops
 13. task-created: Triggered when a task is created
 14. task-completed: Triggered when a task is completed
-15. notification: Triggered for system notifications
-16. instructions-loaded: Triggered when CLAUDE.md/rules content loads
-17. config-change: Triggered when Claude configuration changes
-18. cwd-changed: Triggered when the working directory changes
-19. file-changed: Triggered when a watched file changes
-20. worktree-create: Triggered when a worktree is being created
-21. worktree-remove: Triggered when a worktree is being removed
-22. elicitation: Triggered when an MCP server requests user input
-23. elicitation-result: Triggered after a user responds to an elicitation
-24. before-model: Triggered before model inference (Gemini)
-25. after-model: Triggered after model inference (Gemini)
-26. permission-request: Triggered when permission is requested (Claude)
-27. permission-denied: Triggered when auto mode denies a tool (Claude)
+15. teammate-idle: Triggered when a teammate agent goes idle
+16. notification: Triggered for system notifications
+17. instructions-loaded: Triggered when CLAUDE.md/rules content loads
+18. config-change: Triggered when Claude configuration changes
+19. cwd-changed: Triggered when the working directory changes
+20. file-changed: Triggered when a watched file changes
+21. worktree-create: Triggered when a worktree is being created
+22. worktree-remove: Triggered when a worktree is being removed
+23. elicitation: Triggered when an MCP server requests user input
+24. elicitation-result: Triggered after a user responds to an elicitation
+25. before-model: Triggered before model inference (Gemini)
+26. after-model: Triggered after model inference (Gemini)
+27. permission-request: Triggered when permission is requested (Claude)
+28. permission-denied: Triggered when auto mode denies a tool (Claude)
 
 Example:
     ```python

@@ -186,12 +186,21 @@ def setup_pipeline_event_broadcasting(
 
             payload = PipelineTerminalPayload(execution_id=execution_id, data=dict(kwargs))
             db = getattr(pipeline_executor, "db", None)
-            if event == "pipeline_completed":
-                await asyncio.to_thread(_dispatch.on_pipeline_completed, payload, db=db)
-            elif event == "pipeline_failed":
-                await asyncio.to_thread(_dispatch.on_pipeline_failed, payload, db=db)
-            else:
-                await asyncio.to_thread(_dispatch.on_pipeline_cancelled, payload, db=db)
+            try:
+                if event == "pipeline_completed":
+                    await asyncio.to_thread(_dispatch.on_pipeline_completed, payload, db=db)
+                elif event == "pipeline_failed":
+                    await asyncio.to_thread(_dispatch.on_pipeline_failed, payload, db=db)
+                else:
+                    await asyncio.to_thread(_dispatch.on_pipeline_cancelled, payload, db=db)
+            except Exception as exc:  # noqa: BLE001 - log and continue to broadcast
+                logger.warning(
+                    "Pipeline terminal dispatch handler raised for %s execution_id=%s: %s",
+                    event,
+                    execution_id,
+                    exc,
+                    exc_info=True,
+                )
         if websocket_server:
             await websocket_server.broadcast_pipeline_event(
                 event=event,

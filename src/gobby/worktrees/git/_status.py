@@ -62,13 +62,13 @@ def get_worktree_status(
                 if not line:
                     continue
                 index_status = line[0] if len(line) > 0 else " "
-                worktree_status = line[1] if len(line) > 1 else " "
+                worktree_column = line[1] if len(line) > 1 else " "
 
                 if index_status != " " and index_status != "?":
                     has_staged = True
-                if worktree_status != " " and worktree_status != "?":
+                if worktree_column != " " and worktree_column != "?":
                     has_uncommitted = True
-                if index_status == "?" or worktree_status == "?":
+                if index_status == "?" or worktree_column == "?":
                     has_untracked = True
 
         # Get ahead/behind count

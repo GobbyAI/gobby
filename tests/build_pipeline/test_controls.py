@@ -11,7 +11,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
@@ -23,7 +23,7 @@ def _set_project_repo(temp_db, project_id: str, tmp_path: Path) -> Path:
     return repo_path
 
 
-def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[object, list[object]]:
+def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[Task]]:
     epic = task_manager.create_task(
         project_id=project_id,
         title="Lifecycle controls",

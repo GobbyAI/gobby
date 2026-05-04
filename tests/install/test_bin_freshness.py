@@ -12,7 +12,7 @@ from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.install.bin_freshness_github import GithubAPIError, SourceUnavailableError
 from gobby.install.bin_freshness_inspector import inspect_managed_bin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
-from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset
+from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, managed_bin_specs
 from gobby.install.bin_freshness_updater import update_all_managed_bins, update_managed_bin
 from gobby.storage.bin_update_state import BinUpdateStateStore
 from gobby.storage.database import LocalDatabase
@@ -371,5 +371,5 @@ class TestBinUpdater:
             client=client,  # type: ignore[arg-type]
         )
 
-        assert len(records) == 4
+        assert len(records) == len(managed_bin_specs())
         assert {record.last_status for record in records} == {"failed"}

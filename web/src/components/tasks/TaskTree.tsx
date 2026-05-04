@@ -118,6 +118,13 @@ function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: Task
     onSubtreeKanban?.(task.id)
   }, [onSubtreeKanban, task.id])
 
+  const handleNodeActivate = useCallback(() => node.activate(), [node])
+  const handleToggle = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    node.toggle()
+  }, [node])
+  const handleBackdropClick = useCallback(() => setCtxMenuAnchor(null), [])
+
   useLayoutEffect(() => {
     if (!ctxMenuAnchor) return
     const rect = menuRef.current?.getBoundingClientRect()
@@ -161,14 +168,14 @@ function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: Task
       ref={dragHandle}
       style={style}
       className={node.isSelected ? `${NODE_CLS} ${NODE_SELECTED_CLS}` : NODE_CLS}
-      onClick={() => node.activate()}
+      onClick={handleNodeActivate}
       onContextMenu={handleContextMenu}
     >
       {node.isInternal ? (
         <button
           type="button"
           className={TOGGLE_CLS}
-          onClick={e => { e.stopPropagation(); node.toggle() }}
+          onClick={handleToggle}
         >
           {node.isOpen ? '▾' : '▸'}
         </button>
@@ -186,7 +193,7 @@ function TaskNode({ node, style, dragHandle, searchTerm, onSubtreeKanban }: Task
 
       {ctxMenuPosition && (
         <>
-          <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenuAnchor(null)} />
+          <div className={CTX_BACKDROP_CLS} onClick={handleBackdropClick} />
           <div
             ref={menuRef}
             className={CTX_MENU_CLS}

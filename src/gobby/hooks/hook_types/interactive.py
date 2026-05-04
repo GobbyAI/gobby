@@ -1,6 +1,6 @@
 """Interactive hook models: elicitation, model inference (Gemini), permissions (Claude)."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -26,7 +26,10 @@ class ElicitationInput(HookInput):
 class ElicitationOutput(HookOutput):
     """Output model for elicitation hook."""
 
-    action: str | None = Field(default=None, description="accept/decline/cancel decision")
+    action: Literal["accept", "decline", "cancel"] | None = Field(
+        default=None,
+        description="accept/decline/cancel decision",
+    )
     content: dict[str, Any] | None = Field(
         default=None,
         description="Form field values to submit for accept actions",

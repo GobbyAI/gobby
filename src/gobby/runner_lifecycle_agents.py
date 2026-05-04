@@ -45,24 +45,39 @@ def _cleanup_persisted_completion_subscribers(
         runner.completion_registry.cleanup(completion_id)
 
 
+_RUN_REPLAY_PAGE_SIZE = 500
+
+
 async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
     """Rehydrate completion events for active agent rows after daemon restart."""
     if runner.agent_runner is None or runner.completion_registry is None:
         return 0
 
     rehydrated = 0
-    for run in runner.agent_runner.run_storage.list_active(limit=1000):
-        if runner.completion_registry.is_registered(run.id):
-            continue
-        subscribers: list[str] = []
-        if runner.pipeline_execution_manager:
-            subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
-        runner.completion_registry.register(
-            run.id,
-            subscribers=subscribers,
-            continuation_prompt=getattr(run, "continuation_prompt", None),
-        )
-        rehydrated += 1
+    seen_ids: set[str] = set()
+    while True:
+        batch = runner.agent_runner.run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE)
+        if not batch:
+            break
+        new_in_batch = 0
+        for run in batch:
+            if run.id in seen_ids:
+                continue
+            seen_ids.add(run.id)
+            new_in_batch += 1
+            if runner.completion_registry.is_registered(run.id):
+                continue
+            subscribers: list[str] = []
+            if runner.pipeline_execution_manager:
+                subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
+            runner.completion_registry.register(
+                run.id,
+                subscribers=subscribers,
+                continuation_prompt=getattr(run, "continuation_prompt", None),
+            )
+            rehydrated += 1
+        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+            break
 
     return rehydrated
 
@@ -77,46 +92,59 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
         return 0
 
     replayed = 0
-    cancelled_runs = runner.agent_runner.run_storage.list_by_status("cancelled", limit=1000)
-    for run in cancelled_runs:
-        if getattr(run, "terminal_reason", None) != "daemon_restart":
-            continue
+    seen_ids: set[str] = set()
+    while True:
+        batch = runner.agent_runner.run_storage.list_by_status(
+            "cancelled", limit=_RUN_REPLAY_PAGE_SIZE
+        )
+        if not batch:
+            break
+        new_in_batch = 0
+        for run in batch:
+            if run.id in seen_ids:
+                continue
+            seen_ids.add(run.id)
+            new_in_batch += 1
+            if getattr(run, "terminal_reason", None) != "daemon_restart":
+                continue
 
-        subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
-        if not subscribers:
-            continue
+            subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
+            if not subscribers:
+                continue
 
-        if not runner.completion_registry.is_registered(run.id):
-            runner.completion_registry.register(
-                run.id,
-                subscribers=subscribers,
-                continuation_prompt=getattr(run, "continuation_prompt", None),
-            )
+            if not runner.completion_registry.is_registered(run.id):
+                runner.completion_registry.register(
+                    run.id,
+                    subscribers=subscribers,
+                    continuation_prompt=getattr(run, "continuation_prompt", None),
+                )
 
-        try:
-            await runner.completion_registry.notify(
-                run.id,
-                result={
-                    "status": "cancelled",
-                    "terminal_reason": "daemon_restart",
-                    "run_id": run.id,
-                    "completion_id": run.id,
-                },
-                message=(
-                    f"Agent {run.id} was interrupted by a daemon restart.\n"
-                    "Status: cancelled (daemon restarted)"
-                ),
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to replay daemon-restart cancellation for agent %s: %s",
-                run.id,
-                e,
-            )
-            continue
+            try:
+                await runner.completion_registry.notify(
+                    run.id,
+                    result={
+                        "status": "cancelled",
+                        "terminal_reason": "daemon_restart",
+                        "run_id": run.id,
+                        "completion_id": run.id,
+                    },
+                    message=(
+                        f"Agent {run.id} was interrupted by a daemon restart.\n"
+                        "Status: cancelled (daemon restarted)"
+                    ),
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to replay daemon-restart cancellation for agent %s: %s",
+                    run.id,
+                    e,
+                )
+                continue
 
-        _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
-        replayed += 1
+            _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
+            replayed += 1
+        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+            break
 
     return replayed
 

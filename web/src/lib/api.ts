@@ -9,6 +9,14 @@ export async function requestDaemonRestart(): Promise<Response> {
       credentials: "include",
       signal: controller.signal,
     });
+  } catch (error) {
+    if (
+      (error instanceof DOMException && error.name === "AbortError") ||
+      error instanceof TypeError
+    ) {
+      return new Response(null, { status: 202, statusText: "Accepted (daemon restarting)" });
+    }
+    throw error;
   } finally {
     window.clearTimeout(timeout);
   }

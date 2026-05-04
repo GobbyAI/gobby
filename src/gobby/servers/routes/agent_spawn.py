@@ -289,6 +289,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         if not runner:
             return AgentSpawnResponse(success=False, error="Agent runner unavailable")
 
+        if server.services.session_manager is None:
+            return AgentSpawnResponse(success=False, error="Session manager unavailable")
+
         # Get parent session for spawning
         parent_session_id = await aget_or_create_launcher_session(
             server.services.session_manager,

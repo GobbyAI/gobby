@@ -91,5 +91,5 @@ export function getSourceColorVar(source: string): string {
 export function getProviderColorVar(provider: string): string {
   return PROVIDER_COLOR_PAIRS[provider]
     ? `var(--provider-${provider})`
-    : "var(--text-muted)";
+    : "var(--provider-default)";
 }

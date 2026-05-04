@@ -10,6 +10,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import httpx
+from qdrant_client.http.exceptions import ResponseHandlingException
+
+from gobby.memory.vectorstore import VectorStoreUnavailableError
+
 GITHUB_ISSUE_COLLECTION = "gobby_github_issues"
 _POINT_NAMESPACE = uuid.UUID("75c10517-1a5d-4d31-a102-0e8694f09cc0")
 logger = logging.getLogger(__name__)
@@ -210,7 +215,12 @@ class GitHubIssueIndexer:
                 filters={"project_id": issue.project_id},
                 collection_name=GITHUB_ISSUE_COLLECTION,
             )
-        except Exception:
+        except (
+            VectorStoreUnavailableError,
+            ResponseHandlingException,
+            httpx.TransportError,
+            OSError,
+        ):
             logger.warning(
                 "GitHub issue vector duplicate search failed for %s; continuing without candidates",
                 issue.issue_key,
