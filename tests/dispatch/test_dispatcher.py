@@ -407,6 +407,50 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     assert LocalAgentRunManager(temp_db).get("run-services") is None
 
 
+async def test_unregistered_spawn_records_dispatch_failure_telemetry(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+
+    async def fake_spawn_agent_impl(**_kwargs):
+        return {"success": False, "error": "agent_did_not_register"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert updated.claimed_by_session_id is None
+    assert updated.dispatch_failure_count == 1
+    assert "### Dispatch spawn failed" in updated.description
+    assert "agent_did_not_register" in updated.description
+
+
 async def test_third_spawn_failure_escalates(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
