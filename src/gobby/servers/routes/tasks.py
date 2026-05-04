@@ -22,7 +22,7 @@ from gobby.storage.tasks._models import (
     TaskNotFoundError,
     validate_task_type,
 )
-from gobby.storage.tasks._stage_states import (
+from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
     IllegalStageTransitionError,
     StageManifestSpec,

@@ -16,10 +16,10 @@ from gobby.storage.tasks._models import (
     TaskClosedError,
 )
 from gobby.storage.tasks._stage_states import (
-    NoCurrentStageError,
     StageStatesManager,
-    _close_task_in_txn,
 )
+from gobby.storage.tasks._stage_types import NoCurrentStageError
+from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.tasks.state_semantics import is_task_closed
 
 

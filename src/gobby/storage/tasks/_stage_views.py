@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Any
 
 from gobby.storage.tasks._stage_registry import StageRegistryEntry
-from gobby.storage.tasks._stage_states import StageState
+from gobby.storage.tasks._stage_types import StageState
 
 _OPERATION_STATE_OMITS = frozenset(
     {

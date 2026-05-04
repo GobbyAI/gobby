@@ -52,7 +52,8 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
-from gobby.storage.tasks._stage_states import StageState, StageStatesManager
+from gobby.storage.tasks._stage_states import StageStatesManager
+from gobby.storage.tasks._stage_types import StageState
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.utils.id import generate_prefixed_id

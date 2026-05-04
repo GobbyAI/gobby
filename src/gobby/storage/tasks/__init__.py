@@ -70,12 +70,14 @@ from gobby.storage.tasks._stage_registry import (
     StageRegistryManager,
 )
 from gobby.storage.tasks._stage_states import (
+    StageStatesManager,
+)
+from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
     IllegalStageTransitionError,
     ManifestAlreadyInitializedError,
     StageManifestSpec,
     StageState,
-    StageStatesManager,
 )
 
 __all__ = [

@@ -26,7 +26,8 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
-from gobby.storage.tasks._stage_states import StageManifestSpec, StageStatesManager
+from gobby.storage.tasks._stage_states import StageStatesManager
+from gobby.storage.tasks._stage_types import StageManifestSpec
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
 from gobby.storage.delivery import TaskDeliveryStateManager
-from gobby.storage.tasks._stage_states import (
+from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
     StageManifestSpec,
     StageState,

@@ -92,7 +92,8 @@ from gobby.storage.tasks._queries import (
 )
 from gobby.storage.tasks._search import TaskFTS5Searcher
 from gobby.storage.tasks._stage_registry import StageRegistryManager
-from gobby.storage.tasks._stage_states import StageManifestSpec, StageStatesManager
+from gobby.storage.tasks._stage_states import StageStatesManager
+from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.storage.tasks._transitions import (
     approve_review as _approve_review,
 )

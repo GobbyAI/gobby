@@ -55,16 +55,20 @@ def test_compile_contract_plan_emits_tdd_leaves_by_phase(
     assert spec["deliverable_count"] == 6
     # Per-phase sandwich: phase-p1 = TEST + 1.1::impl + 1.2::impl + REF + 1.3a::single = 5
     # phase-p2 = TEST + 2.1::impl + 2.2::impl + REF = 4
-    # phase-p3 = TEST + 3.1::impl + REF = 3
-    assert len(spec["tasks"]) == 12
+    # phase-p3 = 3.1::single because category test is not TDD-eligible.
+    assert len(spec["tasks"]) == 10
     assert {phase["id"]: len(phase["task_ids"]) for phase in spec["phases"]} == {
         "phase-p1": 5,
         "phase-p2": 4,
-        "phase-p3": 3,
+        "phase-p3": 1,
     }
-    assert all(phase["tdd_sandwich_emitted"] is True for phase in spec["phases"])
+    assert {phase["id"]: phase["tdd_sandwich_emitted"] for phase in spec["phases"]} == {
+        "phase-p1": True,
+        "phase-p2": True,
+        "phase-p3": False,
+    }
 
-    # Each phase emits exactly one phase-level [TEST] and one [REF] task.
+    # Each TDD phase emits exactly one phase-level [TEST] and one [REF] task.
     test_titles_by_phase: dict[str, list[str]] = {}
     ref_titles_by_phase: dict[str, list[str]] = {}
     for task in spec["tasks"]:
@@ -75,12 +79,10 @@ def test_compile_contract_plan_emits_tdd_leaves_by_phase(
     assert {phase: len(titles) for phase, titles in test_titles_by_phase.items()} == {
         "phase-p1": 1,
         "phase-p2": 1,
-        "phase-p3": 1,
     }
     assert {phase: len(titles) for phase, titles in ref_titles_by_phase.items()} == {
         "phase-p1": 1,
         "phase-p2": 1,
-        "phase-p3": 1,
     }
 
 
@@ -118,7 +120,7 @@ def test_compile_contract_plan_emits_covers_labels_for_each_tdd_leaf(
     # 1.3a is non-TDD and emitted as a single task outside the sandwich).
     assert phase_label_unions["phase-p1"] == (expected_labels["1.1"] | expected_labels["1.2"])
     assert phase_label_unions["phase-p2"] == (expected_labels["2.1"] | expected_labels["2.2"])
-    assert phase_label_unions["phase-p3"] == expected_labels["3.1"]
+    assert "phase-p3" not in phase_label_unions
 
 
 def test_compile_contract_plan_translates_section_dependencies(
@@ -136,7 +138,6 @@ def test_compile_contract_plan_translates_section_dependencies(
 
     # Cross-phase chain: phase N+1's [TEST] depends on phase N's [REF].
     assert "phase-p1::__ref" in _deps_for(spec, "phase-p2::__test")
-    assert "phase-p2::__ref" in _deps_for(spec, "phase-p3::__test")
 
     # Cross-deliverable depends_on links IMPL/single → IMPL/single.
     # 1.3a (non-TDD) depends_on 1.2 → single depends on impl.
@@ -146,7 +147,7 @@ def test_compile_contract_plan_translates_section_dependencies(
     # 2.2 depends_on 1.2.
     assert "1.2::impl" in _deps_for(spec, "2.2::impl")
     # 3.1 depends_on both 2.1 and 2.2.
-    assert {"2.1::impl", "2.2::impl"} <= _deps_for(spec, "3.1::impl")
+    assert {"2.1::impl", "2.2::impl"} <= _deps_for(spec, "3.1::single")
 
 
 def test_compile_contract_plan_uses_manifest_agent_assignment(

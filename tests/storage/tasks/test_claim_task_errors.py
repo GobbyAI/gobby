@@ -10,8 +10,7 @@ from gobby.storage.tasks import (
     TaskAlreadyClaimedError,
     TaskClosedError,
 )
-from gobby.storage.tasks._crud import update_task
-from gobby.storage.tasks._transitions import claim_task
+from gobby.storage.tasks._transitions import claim_task, close_task
 
 pytestmark = pytest.mark.unit
 
@@ -21,7 +20,7 @@ def test_claim_task_raises_task_closed_error(temp_db, sample_project) -> None:
         sample_project["id"],
         title="Closed task",
     )
-    update_task(temp_db, task.id, status="closed")
+    close_task(temp_db, task.id, reason="test")
 
     with pytest.raises(TaskClosedError, match="task is closed"):
         claim_task(temp_db, task.id, "session-1")

@@ -131,6 +131,6 @@ Add an end-to-end regression around the full dispatch cycle.
   labels:
     - "covers:expansion-compile-regression:3.1:3.1.1"
   assigned_agent: backend-developer
-  tdd: true
+  tdd: false
   source_section: "3.1"
 ```

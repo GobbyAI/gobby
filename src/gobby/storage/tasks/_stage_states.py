@@ -6,251 +6,42 @@ import json
 import logging
 import sqlite3
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex, RuntimeStageSnapshotState
-from gobby.storage.tasks._stage_registry import (
-    ReviewPolicy,
-    StageRegistryEntry,
-    StageRegistryManager,
+from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
+from gobby.storage.tasks._stage_types import (
+    IllegalManifestMutationError,
+    IllegalStageTransitionError,
+    ManifestAlreadyInitializedError,
+    ManifestMutation,
+    ManifestMutationReason,
+    NoCurrentStageError,
+    StageManifestSpec,
+    StageState,
+    StageState5,
+    _coerce_artifact_refs,
 )
+from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
 
 logger = logging.getLogger(__name__)
 
-StageState5 = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
-ManifestMutation = Literal["add_stage", "remove_stage"]
-ManifestMutationReason = Literal[
-    "position_at_or_before_current",
-    "current_row_not_removable",
-    "done_row_not_removable",
-    "would_exhaust_terminal_position",
-    "stage_already_in_manifest",
-    "stage_not_in_manifest",
-    "manifest_exhausted",
+__all__ = [
+    "IllegalManifestMutationError",
+    "IllegalStageTransitionError",
+    "ManifestAlreadyInitializedError",
+    "ManifestMutation",
+    "ManifestMutationReason",
+    "NoCurrentStageError",
+    "StageManifestSpec",
+    "StageState",
+    "StageState5",
+    "StageStatesManager",
+    "_close_task_in_txn",
 ]
-
-
-class IllegalStageTransitionError(ValueError):
-    """Raised when a stage transition is rejected by policy or source state."""
-
-    def __init__(
-        self,
-        stage_name: str,
-        current_state: StageState5,
-        attempted_transition: str,
-        review_policy: ReviewPolicy,
-    ) -> None:
-        self.stage_name = stage_name
-        self.current_state = current_state
-        self.attempted_transition = attempted_transition
-        self.review_policy = review_policy
-        super().__init__(stage_name, current_state, attempted_transition, review_policy)
-
-
-class NoCurrentStageError(ValueError):
-    """Raised when a task manifest has no active stage row."""
-
-    def __init__(self, task_id: str) -> None:
-        self.task_id = task_id
-        super().__init__(task_id)
-
-
-class IllegalManifestMutationError(ValueError):
-    """Raised when a structural manifest mutation is rejected."""
-
-    def __init__(
-        self,
-        task_id: str,
-        target_stage_name: str,
-        target_position: int | None,
-        current_stage_name: str | None,
-        current_stage_state: StageState5 | None,
-        mutation: ManifestMutation,
-        reason: ManifestMutationReason,
-    ) -> None:
-        self.task_id = task_id
-        self.target_stage_name = target_stage_name
-        self.target_position = target_position
-        self.current_stage_name = current_stage_name
-        self.current_stage_state = current_stage_state
-        self.mutation = mutation
-        self.reason = reason
-        super().__init__(
-            task_id,
-            target_stage_name,
-            target_position,
-            current_stage_name,
-            current_stage_state,
-            mutation,
-            reason,
-        )
-
-
-class ManifestAlreadyInitializedError(ValueError):
-    """Raised when a task already has a different stage manifest."""
-
-
-@dataclass(frozen=True, slots=True)
-class StageState:
-    task_id: str
-    stage_name: str
-    position: int
-    state: StageState5
-    review_policy: ReviewPolicy
-    reviewer_agent: str | None
-    entered_at: str | None
-    entered_by_session_id: str | None
-    completed_at: str | None
-    completed_by_session_id: str | None
-    completed_commit_sha: str | None
-    work_attempt_count: int
-    review_round_count: int
-    max_work_attempts: int | None
-    max_review_rounds: int | None
-    artifact_refs: dict[str, str] | None
-    notes: str | None
-    updated_at: str
-
-
-@dataclass(frozen=True, slots=True)
-class StageManifestSpec:
-    stage_name: str
-    position: int
-    max_work_attempts: int | None = None
-    max_review_rounds: int | None = None
-
-    @classmethod
-    def from_position_tuple(cls, value: tuple[str, int]) -> StageManifestSpec:
-        return cls(stage_name=value[0], position=value[1])
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _coerce_artifact_refs(value: str | None) -> dict[str, str] | None:
-    if not value:
-        return None
-    decoded = json.loads(value)
-    if not isinstance(decoded, dict):
-        return None
-    return {str(key): str(item) for key, item in decoded.items()}
-
-
-def _close_task_in_txn(
-    conn: sqlite3.Connection,
-    task_id: str,
-    *,
-    db: DatabaseProtocol | None = None,
-    reason: str | None = None,
-    commit_sha: str | None = None,
-    closed_at: str | None = None,
-    closed_in_session_id: str | None = None,
-    force: bool = False,
-    cascade_descendants: bool = False,
-    validation_override_reason: str | None = None,
-) -> None:
-    """Close a task inside the caller's already-open transaction."""
-
-    if not force and not cascade_descendants:
-        open_children = conn.execute(
-            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND closed_at IS NULL",
-            (task_id,),
-        ).fetchall()
-        if open_children:
-            child_list = ", ".join(
-                f"{child['id']} ({child['title']})" for child in open_children[:3]
-            )
-            if len(open_children) > 3:
-                child_list += f" and {len(open_children) - 3} more"
-            raise ValueError(
-                f"Cannot close task {task_id}: has {len(open_children)} open child task(s): "
-                f"{child_list}"
-            )
-
-    if db is not None and bootstrap_ledger_path_for_task(db, task_id) is not None:
-        verify_bootstrap_ledger(db, task_id)
-
-    now = closed_at or _now()
-    persisted_session_id = (
-        closed_in_session_id if _session_exists(conn, closed_in_session_id) else None
-    )
-    conn.execute(
-        """
-        UPDATE tasks
-           SET closed_at = ?,
-               closed_reason = ?,
-               closed_in_session_id = ?,
-               closed_commit_sha = ?,
-               validation_override_reason = ?,
-               escalated_at = NULL,
-               escalation_reason = NULL,
-               is_escalated = 0,
-               assignee = NULL,
-               claimed_by_session_id = NULL,
-               updated_at = ?
-         WHERE id = ?
-        """,
-        (
-            now,
-            reason,
-            persisted_session_id,
-            commit_sha,
-            validation_override_reason,
-            now,
-            task_id,
-        ),
-    )
-    if cascade_descendants:
-        _cascade_close_descendants(conn, task_id, now, persisted_session_id, commit_sha)
-
-
-def _session_exists(conn: sqlite3.Connection, session_id: str | None) -> bool:
-    if not session_id:
-        return False
-    row = conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    return row is not None
-
-
-def _cascade_close_descendants(
-    conn: sqlite3.Connection,
-    task_id: str,
-    closed_at: str,
-    closed_in_session_id: str | None,
-    commit_sha: str | None,
-) -> None:
-    rows = conn.execute(
-        """
-        WITH RECURSIVE subtree(id) AS (
-            SELECT id FROM tasks WHERE parent_task_id = ?
-            UNION ALL
-            SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent_task_id = subtree.id
-        )
-        SELECT id FROM subtree
-        """,
-        (task_id,),
-    ).fetchall()
-    for row in rows:
-        conn.execute(
-            """
-            UPDATE tasks
-               SET closed_at = ?,
-                   closed_reason = 'merged',
-                   closed_in_session_id = ?,
-                   closed_commit_sha = ?,
-                   assignee = NULL,
-                   claimed_by_session_id = NULL,
-                   updated_at = ?
-             WHERE id = ?
-            """,
-            (closed_at, closed_in_session_id, commit_sha, closed_at, row["id"]),
-        )
 
 
 class StageStatesManager:

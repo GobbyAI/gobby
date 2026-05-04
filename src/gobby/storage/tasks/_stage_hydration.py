@@ -8,7 +8,7 @@ from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._models import Task
-from gobby.storage.tasks._stage_states import StageState
+from gobby.storage.tasks._stage_types import StageState
 
 
 def _coerce_artifact_refs(value: str | None) -> dict[str, str] | None:
