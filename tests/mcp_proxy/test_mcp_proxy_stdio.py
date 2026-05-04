@@ -34,8 +34,10 @@ class TestGetDaemonPid:
             ]
             assert get_daemon_pid() is None
 
-    def test_returns_pid_when_daemon_process_found(self) -> None:
+    def test_returns_pid_when_daemon_process_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test returns PID when valid daemon process found."""
+        # Disable the test-protect fence to exercise production-path behavior.
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
             # Matches logic: "gobby.cli.app" and "daemon" and "start"
             mock_iter.return_value = [
@@ -57,8 +59,9 @@ class TestGetDaemonPid:
             ]
             assert get_daemon_pid() == 12345
 
-    def test_ignores_current_process(self) -> None:
+    def test_ignores_current_process(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test ignores the current process even if it matches."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         current_pid = 777
         with patch("gobby.mcp_proxy.daemon_control.os.getpid", return_value=current_pid):
             with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
@@ -80,6 +83,61 @@ class TestGetDaemonPid:
                 mock_iter.return_value = [mock_proc_self, mock_proc_other]
 
                 assert get_daemon_pid() == 888
+
+    def test_test_protect_skips_processes_outside_gobby_home(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under GOBBY_TEST_PROTECT, processes whose cmdline does not reference
+        the current GOBBY_HOME / GOBBY_CONFIG_FILE are not returned — this is
+        the fence that prevents tests from discovering the production daemon.
+        """
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_HOME", "/tmp/gobby-e2e-isolated")
+        monkeypatch.delenv("GOBBY_CONFIG_FILE", raising=False)
+        with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
+            mock_iter.return_value = [
+                MagicMock(
+                    info={
+                        "pid": 12345,
+                        "name": "python",
+                        "cmdline": [
+                            "python",
+                            "-m",
+                            "gobby.runner",
+                            "--config",
+                            "/Users/someone/.gobby/config.yaml",
+                        ],
+                    }
+                ),
+            ]
+            assert get_daemon_pid() is None
+
+    def test_test_protect_returns_pid_inside_gobby_home(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under GOBBY_TEST_PROTECT, processes whose cmdline DOES reference the
+        current GOBBY_HOME are still returned — the fence must not break tests
+        that legitimately spawn an isolated daemon and look it up."""
+        isolated_home = "/tmp/gobby-e2e-isolated"
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_HOME", isolated_home)
+        with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
+            mock_iter.return_value = [
+                MagicMock(
+                    info={
+                        "pid": 12345,
+                        "name": "python",
+                        "cmdline": [
+                            "python",
+                            "-m",
+                            "gobby.runner",
+                            "--config",
+                            f"{isolated_home}/config.yaml",
+                        ],
+                    }
+                ),
+            ]
+            assert get_daemon_pid() == 12345
 
 
 class TestIsDaemonRunning:
@@ -203,8 +261,28 @@ class TestStopDaemonProcess:
     """Tests for stop_daemon_process function."""
 
     @pytest.mark.asyncio
-    async def test_returns_not_running_if_daemon_not_running(self):
+    async def test_skips_when_test_protect_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Under GOBBY_TEST_PROTECT, stop_daemon_process must short-circuit
+        BEFORE looking up a PID and BEFORE issuing any signal — this is the
+        guard that prevents the production daemon from being SIGTERMed when
+        a test path reaches mcp_proxy.daemon_control.
+        """
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345) as mock_pid:
+            with patch("gobby.mcp_proxy.daemon_control.os.kill") as mock_kill:
+                result = await stop_daemon_process()
+
+                assert result["success"] is True
+                assert result["skipped"] == "test_protect"
+                mock_pid.assert_not_called()
+                mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_not_running_if_daemon_not_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test returns not_running if daemon is not running."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=None):
             result = await stop_daemon_process()
 
@@ -212,8 +290,9 @@ class TestStopDaemonProcess:
             assert result["not_running"] is True
 
     @pytest.mark.asyncio
-    async def test_stops_daemon_successfully(self):
+    async def test_stops_daemon_successfully(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test successful daemon stop."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
 
             def kill_side_effect(pid, sig):
@@ -232,8 +311,9 @@ class TestStopDaemonProcess:
                     mock_kill.assert_any_call(12345, signal.SIGTERM)
 
     @pytest.mark.asyncio
-    async def test_handles_stop_failure_permission(self):
+    async def test_handles_stop_failure_permission(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test handles daemon stop failure due to permission."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
             with patch(
                 "gobby.mcp_proxy.daemon_control.os.kill", side_effect=PermissionError("Denied")
@@ -244,8 +324,9 @@ class TestStopDaemonProcess:
                 assert result["error"] == "Permission denied"
 
     @pytest.mark.asyncio
-    async def test_handles_stop_failure_not_found(self):
+    async def test_handles_stop_failure_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test handles daemon stop failure due to process lookup."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
             with patch(
                 "gobby.mcp_proxy.daemon_control.os.kill",

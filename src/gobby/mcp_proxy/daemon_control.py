@@ -24,8 +24,19 @@ async def check_daemon_http_health(port: int, timeout: float = 5.0) -> bool:
 
 
 def get_daemon_pid() -> int | None:
-    """Get PID of running daemon process."""
+    """Get PID of running daemon process.
+
+    Under GOBBY_TEST_PROTECT, only return a PID whose cmdline references
+    the current GOBBY_HOME / GOBBY_CONFIG_FILE — without this fence, this
+    helper does a system-wide psutil scan and would return the user's
+    production daemon PID, which any caller (e.g. stop_daemon_process)
+    would then SIGTERM.
+    """
     current_pid = os.getpid()
+    test_protect = os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes")
+    home_marker = os.environ.get("GOBBY_HOME") if test_protect else None
+    config_marker = os.environ.get("GOBBY_CONFIG_FILE") if test_protect else None
+
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             if proc.info["pid"] == current_pid:
@@ -40,6 +51,12 @@ def get_daemon_pid() -> int | None:
             if "gobby.runner" in cmdline_str or (
                 "gobby.cli" in cmdline_str and "daemon" in cmdline_str
             ):
+                if test_protect:
+                    in_home = home_marker is not None and home_marker in cmdline_str
+                    in_config = config_marker is not None and config_marker in cmdline_str
+                    if not (in_home or in_config):
+                        continue
+
                 from typing import cast
 
                 return cast(int, proc.info["pid"])
@@ -127,6 +144,14 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
 
 async def stop_daemon_process(pid: int | None = None) -> dict[str, Any]:
     """Stop running daemon."""
+    # SAFETY: never SIGTERM the production daemon during tests. Mirrors the
+    # guard in gobby.cli.utils.stop_daemon. Without it, this code path can
+    # reach the user's real daemon when a test (or test-spawned subprocess)
+    # invokes mcp_proxy.daemon_control without going through the CLI.
+    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+        logger.warning("stop_daemon_process called during test - skipping")
+        return {"success": True, "skipped": "test_protect"}
+
     if pid is None:
         pid = get_daemon_pid()
 

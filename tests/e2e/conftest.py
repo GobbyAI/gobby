@@ -103,11 +103,13 @@ def prepare_daemon_env(
     current_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{src_dir}:{current_pythonpath}" if current_pythonpath else str(src_dir)
 
-    # Remove test-process env vars so daemon uses its own isolated config/DB
-    # (protect_production_resources sets these for the test process, but we don't
-    # want the daemon subprocess to inherit them)
+    # Remove test-process-specific path overrides so the daemon uses its own
+    # isolated config/DB. GOBBY_TEST_PROTECT is intentionally preserved here:
+    # it is the safety guard that prevents stop_daemon / kill_all_gobby_daemons
+    # / stop_daemon_process / get_daemon_pid in the spawned daemon (and any
+    # subprocesses it forks: agents, hooks, helper CLIs) from reaching the
+    # user's real daemon via system-wide psutil discovery.
     env.pop("GOBBY_DATABASE_PATH", None)
-    env.pop("GOBBY_TEST_PROTECT", None)
     env.pop("GOBBY_CONFIG_FILE", None)
 
     # Disable any LLM providers to avoid external calls
