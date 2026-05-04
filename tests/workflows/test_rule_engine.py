@@ -2114,6 +2114,17 @@ class TestRuleEngineHelpers:
         assert engine._is_expression("a + b") is True
         assert engine._is_expression("x and y") is True
         assert engine._is_expression("x not y") is True
+        assert engine._is_expression("assistant_response_matches_any(['In summary'])") is True
+        assert (
+            engine._is_expression(
+                """
+                assistant_response_matches_any([
+                    'In summary',
+                ])
+                """
+            )
+            is True
+        )
 
     def test_is_expression_false(self) -> None:
         """Literal strings should not be detected as expressions."""

@@ -162,6 +162,14 @@ class TestHandleBeforeAgent:
         assert result.decision == "allow"
         assert result.context is not None
         assert "## Instructions" in result.context
+        assert "Think out loud" not in result.context
+        assert "Show your reasoning" not in result.context
+        behavior = default_agent.instructions.split("## Behavior", 1)[1].split("##", 1)[0]
+        bullets = [line.strip() for line in behavior.splitlines() if line.strip().startswith("- ")]
+        assert bullets[0] == "- Be concise — respect the reader's attention."
+        assert (
+            "You think hard, decide fast, and say only what matters." in default_agent.personality
+        )
         assert "<active_skills>" not in result.context
         assert "### brevity" not in result.context
         mock_merge.assert_called_once_with(

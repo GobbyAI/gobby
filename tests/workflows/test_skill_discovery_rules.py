@@ -19,7 +19,11 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.safe_evaluator import (
+    ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
+    SafeExpressionEvaluator,
+    build_condition_helpers,
+)
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -58,6 +62,15 @@ SKILL_DISCOVERY_RULES = {
     "inject-python-skill",
     "inject-rust-skill",
     "reset-skill-injection",
+}
+
+BREVITY_RULES = {
+    "opt-out-brevity",
+    "load-brevity-on-turn-start",
+    "inject-brevity-drift-feedback",
+    "remind-brevity-on-turn-start",
+    "detect-brevity-literal-drift",
+    "detect-brevity-contrastive-drift",
 }
 
 
@@ -193,6 +206,159 @@ class TestDiscoverSkillHubsOnTurnStart:
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables.get("skill_discovery_instructions_shown") is None
+
+
+# --- brevity rules ---
+
+
+class TestBrevityRules:
+    def _turn_variables(self, *, loaded: bool = True, disabled: bool = False) -> dict[str, Any]:
+        return {
+            "loaded_skills": ["brevity"] if loaded else [],
+            "brevity_disabled": disabled,
+            "skill_discovery_instructions_shown": True,
+            "memory_nudge_fired": True,
+            "servers_listed": True,
+        }
+
+    def test_brevity_rules_sync_and_old_first_turn_rule_is_orphaned(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        rule_names = {r.name for r in manager.list_all(workflow_type="rule")}
+
+        assert BREVITY_RULES.issubset(rule_names)
+        assert "inject-brevity-on-first-turn" not in rule_names
+
+    def test_reinforce_brevity_structure(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        load_row = manager.get_by_name("load-brevity-on-turn-start")
+        assert load_row is not None
+        load_body = RuleDefinitionBody.model_validate_json(load_row.definition_json)
+        assert load_body.event.value == "turn_start"
+        assert load_body.effects[0].type == "load_skill"
+        assert load_body.effects[0].skill == "brevity"
+        assert load_body.when == (
+            "not variables.get('brevity_disabled') and not skill_loaded('brevity')"
+        )
+
+        reminder_row = manager.get_by_name("remind-brevity-on-turn-start")
+        assert reminder_row is not None
+        reminder_body = RuleDefinitionBody.model_validate_json(reminder_row.definition_json)
+        assert reminder_body.event.value == "turn_start"
+        assert reminder_body.effects[0].type == "inject_context"
+
+    def test_detect_brevity_contrastive_rule_uses_allowed_regex_patterns(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("detect-brevity-contrastive-drift")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        definition = body.when or ""
+        for pattern in ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS:
+            assert pattern in definition
+
+    def test_brevity_session_variables_are_defined(self) -> None:
+        import yaml
+
+        from gobby.workflows.sync_rules import get_bundled_rules_path
+
+        vars_path = get_bundled_rules_path().parent / "variables" / "gobby-default-variables.yaml"
+        variables = yaml.safe_load(vars_path.read_text())["variables"]
+
+        assert variables["brevity_disabled"]["value"] is False
+        assert variables["brevity_last_violation"]["value"] == ""
+        assert variables["brevity_last_violation_rule"]["value"] == ""
+
+    @pytest.mark.asyncio
+    async def test_reinforcer_repeats_after_brevity_is_loaded(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._turn_variables(loaded=True)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "fix this"},
+        )
+
+        first = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        second = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert first.context is not None
+        assert second.context is not None
+        assert "Brevity reminder: answer first; keep context tight." in first.context
+        assert "Brevity reminder: answer first; keep context tight." in second.context
+
+    @pytest.mark.asyncio
+    async def test_opt_out_prompt_disables_and_suppresses_brevity_rules(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._turn_variables(loaded=False)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": " Normal Mode "},
+        )
+
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["brevity_disabled"] is True
+        assert response.context is None or "brevity" not in response.context.lower()
+
+    @pytest.mark.asyncio
+    async def test_brevity_drift_persists_then_clears_on_next_turn(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._turn_variables(loaded=True)
+        turn_end = HookEvent(
+            event_type=HookEventType.AFTER_AGENT,
+            session_id="test-session",
+            source=SessionSource.GEMINI,
+            timestamp=datetime.now(UTC),
+            data={"response": "In summary, the fix is applied."},
+        )
+
+        await engine.evaluate(turn_end, session_id="sess-1", variables=variables)
+
+        assert variables["brevity_last_violation"] == "In summary"
+        assert variables["brevity_last_violation_rule"] == "banned literal phrase"
+
+        turn_start = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "next"},
+        )
+
+        response = await engine.evaluate(turn_start, session_id="sess-1", variables=variables)
+
+        assert response.context is not None
+        assert "Brevity drift detected last turn" in response.context
+        assert "`In summary`" in response.context
+        assert variables["brevity_last_violation"] == ""
+        assert variables["brevity_last_violation_rule"] == ""
+
+    @pytest.mark.asyncio
+    async def test_opt_out_suppresses_drift_detection(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._turn_variables(loaded=True, disabled=True)
+        event = HookEvent(
+            event_type=HookEventType.AFTER_AGENT,
+            session_id="test-session",
+            source=SessionSource.GEMINI,
+            timestamp=datetime.now(UTC),
+            data={"response": "In summary, the fix is applied."},
+        )
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert "brevity_last_violation" not in variables
 
 
 # --- inject-python-skill structure ---

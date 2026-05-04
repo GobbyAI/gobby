@@ -336,12 +336,7 @@ class EffectsMixin:
             try:
                 evaluator = SafeExpressionEvaluator(
                     context=eval_context,
-                    allowed_funcs={
-                        "len": len,
-                        "str": str,
-                        "int": int,
-                        "bool": bool,
-                    },
+                    allowed_funcs=self._build_allowed_funcs(eval_context),
                 )
                 value = evaluator.evaluate_value(value)
             except Exception as e:
@@ -352,7 +347,9 @@ class EffectsMixin:
 
     def _is_expression(self, value: str) -> bool:
         """Heuristic: is this string an expression rather than a literal?"""
+        normalized = SafeExpressionEvaluator._normalize_expr(value)
         expression_indicators = (
+            "assistant_response_matches_any(",
             "variables.",
             "event.",
             "tool_input.",
@@ -364,7 +361,7 @@ class EffectsMixin:
             ".get(",
             "len(",
         )
-        return any(indicator in value for indicator in expression_indicators)
+        return any(indicator in normalized for indicator in expression_indicators)
 
     @staticmethod
     def _coerce_rendered_value(value: str) -> Any:

@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.safe_evaluator import (
+    ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
+    ASSISTANT_RESPONSE_SCAN_LIMIT,
+    SafeExpressionEvaluator,
+    build_condition_helpers,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -297,6 +303,90 @@ class TestSkillLoaded:
         ctx: dict[str, Any] = {"variables": {"loaded_skills": ["rust"]}}
         ev = _build_evaluator(ctx)
         assert ev.evaluate("skill_loaded('python')") is False
+
+
+# --- assistant_response_matches_any tests ---
+
+
+class TestAssistantResponseMatchesAny:
+    def _eval(
+        self,
+        data: dict[str, Any],
+        patterns: list[str] | None = None,
+    ) -> SafeExpressionEvaluator:
+        ctx = {
+            "variables": {},
+            "event": SimpleNamespace(data=data),
+            "patterns": patterns or [],
+        }
+        return _build_evaluator(ctx)
+
+    def test_empty_response_and_log_return_none(self) -> None:
+        ev = self._eval({"response": "", "log": ""})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") is None
+
+    def test_no_match_returns_none(self) -> None:
+        ev = self._eval({"response": "Fixed. Tests pass."})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") is None
+
+    def test_literal_match_returns_original_text(self) -> None:
+        ev = self._eval({"response": "In summary, fixed."})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") == "In summary"
+
+    def test_literal_match_is_case_insensitive(self) -> None:
+        ev = self._eval({"response": "in SUMMARY, fixed."})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") == "in SUMMARY"
+
+    def test_multiple_patterns_use_pattern_order(self) -> None:
+        ev = self._eval({"response": "Certainly fixed. In summary, done."})
+        assert (
+            ev.evaluate_value("assistant_response_matches_any(['In summary', 'Certainly'])")
+            == "In summary"
+        )
+
+    def test_log_fallback_matches_literal(self) -> None:
+        ev = self._eval({"response": "", "log": "Certainly fixed."})
+        assert ev.evaluate_value("assistant_response_matches_any(['Certainly'])") == "Certainly"
+
+    def test_regex_match_uses_bundled_patterns(self) -> None:
+        ev = self._eval(
+            {"response": "This is not a workaround, but a fix."},
+            list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS),
+        )
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") == (
+            "not a workaround, but a fix"
+        )
+
+    def test_regex_skips_non_bundled_patterns(self) -> None:
+        ev = self._eval({"response": "This is not a workaround, but a fix."}, [r"not .* but"])
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
+
+    def test_regex_scan_is_bounded(self) -> None:
+        response = "A" * (ASSISTANT_RESPONSE_SCAN_LIMIT + 20) + " not a hack, but a fix"
+        ev = self._eval({"response": response}, list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS))
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
+
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            ("This is not a shortcut, but a repair.", "not a shortcut, but a repair"),
+            (
+                "This is not a hack, not a shortcut, but a repair.",
+                "not a hack, not a shortcut, but a repair",
+            ),
+            ("Use the parser, not string slicing.", "Use the parser, not string slicing"),
+        ],
+    )
+    def test_contrastive_patterns_match_expected_forms(self, response: str, expected: str) -> None:
+        ev = self._eval({"response": response}, list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS))
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") == expected
+
+    def test_contrastive_patterns_skip_unrelated_not_usage(self) -> None:
+        ev = self._eval(
+            {"response": "Do not stop until verification completes."},
+            list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS),
+        )
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
 
 
 # --- Plugin conditions tests ---

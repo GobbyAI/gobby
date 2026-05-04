@@ -90,6 +90,15 @@ variables:
   skill_discovery_instructions_shown:
     value: false
     description: "True after skill hub discovery instructions have been shown once this session"
+  brevity_disabled:
+    value: false
+    description: "True after the user opts out of brevity reinforcement for the session"
+  brevity_last_violation:
+    value: ""
+    description: "Last assistant response fragment that violated brevity rules"
+  brevity_last_violation_rule:
+    value: ""
+    description: "Brevity rule violated by the last matched response fragment"
   _agent_context_injected:
     value: false
     description: "True after agent identity and instructions have been sent on first before_agent"

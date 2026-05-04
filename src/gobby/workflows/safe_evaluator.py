@@ -9,12 +9,46 @@ from __future__ import annotations
 import ast
 import logging
 import operator
+import re
 from collections.abc import Callable, Iterator
 from typing import Any
 
-__all__ = ["LazyBool", "SafeExpressionEvaluator", "build_condition_helpers"]
+__all__ = [
+    "ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS",
+    "ASSISTANT_RESPONSE_SCAN_LIMIT",
+    "LazyBool",
+    "SafeExpressionEvaluator",
+    "build_condition_helpers",
+]
 
 logger = logging.getLogger(__name__)
+
+ASSISTANT_RESPONSE_SCAN_LIMIT = 8000
+ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS = (
+    r"\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
+    r"\bnot\b\s+[^.!?\n,;:]{1,120}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
+    r"\b(?!not\b)[A-Z0-9][^.!?\n,;:]{1,120}?,\s*\bnot\b\s+[^.!?\n]{1,120}",
+)
+_ASSISTANT_RESPONSE_REGEX_ALLOWLIST = frozenset(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS)
+_ASSISTANT_RESPONSE_TEXT_KEYS = (
+    "response",
+    "assistant_response",
+    "assistant_response_text",
+    "prompt_response",
+    "last_assistant_message",
+    "last_assistant_content",
+    "output",
+    "message",
+    "content",
+    "log",
+)
+_NESTED_TEXT_KEYS = (
+    "text",
+    "content",
+    "message",
+    "response",
+    "output",
+)
 
 
 class LazyBool:
@@ -333,6 +367,48 @@ def _get_variables(context: dict[str, Any]) -> dict[str, Any]:
     return getattr(variables, "__dict__", {})
 
 
+def _coerce_response_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list | tuple):
+        return "\n".join(text for item in value if (text := _coerce_response_text(item).strip()))
+    if isinstance(value, dict):
+        parts = [
+            text
+            for key in _NESTED_TEXT_KEYS
+            if (text := _coerce_response_text(value.get(key)).strip())
+        ]
+        return "\n".join(parts)
+    return ""
+
+
+def _assistant_response_text(context: dict[str, Any]) -> str:
+    cached = context.get("_assistant_response_text_cache")
+    if isinstance(cached, str):
+        return cached
+
+    event = context.get("event")
+    data = getattr(event, "data", None)
+    if not isinstance(data, dict):
+        data = {}
+
+    text = ""
+    for key in _ASSISTANT_RESPONSE_TEXT_KEYS:
+        text = _coerce_response_text(data.get(key)).strip()
+        if text:
+            break
+
+    if not text:
+        variables = _get_variables(context)
+        for key in ("last_assistant_response", "last_assistant_message"):
+            text = _coerce_response_text(variables.get(key)).strip()
+            if text:
+                break
+
+    context["_assistant_response_text_cache"] = text
+    return text
+
+
 def build_condition_helpers(
     task_manager: Any = None,
     stop_registry: Any = None,
@@ -458,11 +534,47 @@ def build_condition_helpers(
         loaded_skills = variables.get("loaded_skills", [])
         return isinstance(loaded_skills, list) and name in loaded_skills
 
+    def _assistant_response_matches_any(
+        patterns: list[str],
+        regex: bool = False,
+    ) -> str | None:
+        """Return the first matched assistant response text fragment."""
+        if not isinstance(patterns, list | tuple):
+            return None
+
+        text = _assistant_response_text(ctx)
+        if not text:
+            return None
+        haystack = text[:ASSISTANT_RESPONSE_SCAN_LIMIT]
+
+        if not regex:
+            lowered = haystack.lower()
+            for pattern in patterns:
+                if not isinstance(pattern, str) or pattern == "":
+                    continue
+                index = lowered.find(pattern.lower())
+                if index >= 0:
+                    return haystack[index : index + len(pattern)]
+            return None
+
+        for pattern in patterns:
+            if not isinstance(pattern, str) or pattern not in _ASSISTANT_RESPONSE_REGEX_ALLOWLIST:
+                continue
+            try:
+                match = re.search(pattern, haystack, re.IGNORECASE)
+            except re.error:
+                logger.warning("Invalid bundled assistant response regex skipped: %s", pattern)
+                continue
+            if match:
+                return match.group(0)
+        return None
+
     funcs["mcp_called"] = _mcp_called
     funcs["mcp_result_is_null"] = _mcp_result_is_null
     funcs["mcp_failed"] = _mcp_failed
     funcs["mcp_result_has"] = _mcp_result_has
     funcs["skill_loaded"] = _skill_loaded
+    funcs["assistant_response_matches_any"] = _assistant_response_matches_any
 
     # --- Plugin conditions ---
 
