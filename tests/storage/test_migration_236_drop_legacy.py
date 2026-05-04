@@ -118,7 +118,13 @@ def test_post_port_grep_finds_no_state_sql_helpers_or_lifecycle_stage_in_runtime
             "src/gobby/mcp_proxy/tools/tasks/_crud.py",
             "src/gobby/mcp_proxy/tools/tasks/_search.py",
             "src/gobby/servers/routes/admin/_stats.py",
-            "src/gobby/cli/tasks/_utils.py",
+            "src/gobby/cli/tasks/_utils/cascade.py",
+            "src/gobby/cli/tasks/_utils/claims.py",
+            "src/gobby/cli/tasks/_utils/config.py",
+            "src/gobby/cli/tasks/_utils/listing.py",
+            "src/gobby/cli/tasks/_utils/rendering.py",
+            "src/gobby/cli/tasks/_utils/resolution.py",
+            "src/gobby/cli/tasks/_utils/tree.py",
         )
     )
     for forbidden in (

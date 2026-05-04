@@ -2572,7 +2572,7 @@ class TestTaskUtilsFunctions:
         mock_config = MagicMock()
         mock_config.gobby_tasks.enabled = False
 
-        with patch("gobby.cli.tasks._utils.load_config", return_value=mock_config):
+        with patch("gobby.cli.tasks._utils.config.load_config", return_value=mock_config):
             with pytest.raises(SystemExit) as exc_info:
                 check_tasks_enabled()
             assert exc_info.value.code == 1
@@ -2581,7 +2581,7 @@ class TestTaskUtilsFunctions:
         """Test check_tasks_enabled handles config errors gracefully."""
         from gobby.cli.tasks._utils import check_tasks_enabled
 
-        with patch("gobby.cli.tasks._utils.load_config", side_effect=FileNotFoundError):
+        with patch("gobby.cli.tasks._utils.config.load_config", side_effect=FileNotFoundError):
             # Should not raise, fail open
             check_tasks_enabled()
 
