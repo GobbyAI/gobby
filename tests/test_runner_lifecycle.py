@@ -263,6 +263,107 @@ class TestInitSubsystems:
             "error": "LM Studio server start failed: boom",
         } in tracker.errors
 
+    @pytest.mark.asyncio
+    async def test_qdrant_health_failure_keeps_vector_store(self) -> None:
+        vector_store = SimpleNamespace(
+            initialize=AsyncMock(side_effect=RuntimeError("qdrant down")),
+            ensure_collection=AsyncMock(),
+            count=AsyncMock(return_value=0),
+        )
+        runner = SimpleNamespace(
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(provider_model_catalog=None),
+            ),
+            mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
+            config=SimpleNamespace(
+                databases=SimpleNamespace(
+                    qdrant=SimpleNamespace(url="http://localhost:6333"),
+                    neo4j=SimpleNamespace(url=""),
+                ),
+                embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
+                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
+                telemetry=SimpleNamespace(log_file="/tmp/gobby.log"),
+                bind_host="localhost",
+            ),
+            memory_manager=None,
+            metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
+            vector_store=vector_store,
+            message_processor=None,
+            communications_manager=None,
+            lifecycle_manager=SimpleNamespace(start=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            code_indexer=None,
+            pipeline_executor=None,
+            pipeline_execution_manager=None,
+            workflow_loader=None,
+            completion_registry=None,
+            websocket_server=None,
+        )
+
+        with (
+            patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)),
+            patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager,
+        ):
+            mock_tmux_manager.return_value.health_check = AsyncMock()
+            await runner_lifecycle._init_subsystems(runner, AsyncMock())
+
+        assert runner.vector_store is vector_store
+        vector_store.initialize.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_provider_model_discovery_timeout_does_not_block_vector_init(self) -> None:
+        async def slow_refresh(**_kwargs):
+            await asyncio.sleep(10)
+
+        provider_catalog = SimpleNamespace(refresh=AsyncMock(side_effect=slow_refresh))
+        vector_store = SimpleNamespace(
+            initialize=AsyncMock(),
+            ensure_collection=AsyncMock(),
+            count=AsyncMock(return_value=1),
+        )
+        runner = SimpleNamespace(
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(provider_model_catalog=provider_catalog),
+                codex_client=MagicMock(),
+            ),
+            mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
+            config=SimpleNamespace(
+                databases=SimpleNamespace(
+                    qdrant=SimpleNamespace(url=""),
+                    neo4j=SimpleNamespace(url=""),
+                ),
+                embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
+                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
+                telemetry=SimpleNamespace(log_file="/tmp/gobby.log"),
+                bind_host="localhost",
+            ),
+            memory_manager=None,
+            metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
+            vector_store=vector_store,
+            message_processor=None,
+            communications_manager=None,
+            lifecycle_manager=SimpleNamespace(start=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            code_indexer=None,
+            pipeline_executor=None,
+            pipeline_execution_manager=None,
+            workflow_loader=None,
+            completion_registry=None,
+            websocket_server=None,
+        )
+
+        with (
+            patch.object(runner_lifecycle, "_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.01),
+            patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager,
+        ):
+            mock_tmux_manager.return_value.health_check = AsyncMock()
+            await runner_lifecycle._init_subsystems(runner, AsyncMock())
+
+        vector_store.initialize.assert_awaited_once()
+        vector_store.ensure_collection.assert_awaited_once()
+
 
 class TestRunGobbyFunction:
     """Tests for run_gobby async function."""

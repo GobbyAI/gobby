@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
-from gobby.memory.vectorstore import VectorStore
+from gobby.memory import vectorstore as vectorstore_module
+from gobby.memory.vectorstore import (
+    VectorStore,
+    VectorStoreUnavailableError,
+    is_recoverable_vector_store_error,
+)
 
 # Deterministic UUIDs for test reproducibility
 MEM_1 = str(uuid.uuid5(uuid.NAMESPACE_DNS, "mem-1"))
@@ -76,6 +84,110 @@ async def test_initialize_idempotent(tmp_path) -> None:
     assert await store.count() == 1
 
     await store.close()
+
+
+@pytest.mark.asyncio
+async def test_operation_lazily_initializes(tmp_path) -> None:
+    """Async operations should initialize Qdrant on first use."""
+    store = VectorStore(
+        path=str(tmp_path / "qdrant"),
+        collection_name="lazy_test",
+        embedding_dim=4,
+    )
+
+    await store.upsert(MEM_1, _make_embedding(1.0), {"content": "lazy"})
+
+    assert await store.count() == 1
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_lazy_init_backoff_suppresses_repeated_attempts(monkeypatch) -> None:
+    """Failed lazy init should not hammer Qdrant before the backoff expires."""
+    now = 1000.0
+    monkeypatch.setattr(vectorstore_module.time, "monotonic", lambda: now)
+
+    client = MagicMock()
+    client.collection_exists.side_effect = ResponseHandlingException(Exception("down"))
+
+    with patch("gobby.memory.vectorstore.QdrantClient", return_value=client) as qdrant_cls:
+        store = VectorStore(url="http://qdrant:6333", collection_name="retry_test")
+
+        with pytest.raises(VectorStoreUnavailableError, match="VectorStore not initialized"):
+            await store.count()
+
+        with pytest.raises(VectorStoreUnavailableError, match="VectorStore not initialized"):
+            await store.count()
+
+    assert qdrant_cls.call_count == 1
+    assert client.collection_exists.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_lazy_init_retries_after_backoff(monkeypatch) -> None:
+    """Lazy init should retry after elapsed backoff and reset retry state on success."""
+    now = 1000.0
+
+    def monotonic() -> float:
+        return now
+
+    monkeypatch.setattr(vectorstore_module.time, "monotonic", monotonic)
+
+    client = MagicMock()
+    client.collection_exists.side_effect = [
+        ResponseHandlingException(Exception("down")),
+        False,
+    ]
+    client.count.return_value = SimpleNamespace(count=7)
+
+    with patch("gobby.memory.vectorstore.QdrantClient", return_value=client):
+        store = VectorStore(url="http://qdrant:6333", collection_name="retry_test")
+
+        with pytest.raises(VectorStoreUnavailableError):
+            await store.count()
+
+        now += 5.1
+        assert await store.count() == 7
+
+    assert store._retry_backoff_seconds == 5.0
+    assert store._next_retry_at == 0.0
+    client.create_collection.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_transient_operation_error_resets_client(monkeypatch) -> None:
+    """Recoverable operation failures should drop the client for lazy re-init."""
+    now = 1000.0
+    monkeypatch.setattr(vectorstore_module.time, "monotonic", lambda: now)
+
+    store = VectorStore(collection_name="operation_test", embedding_dim=4)
+    client = MagicMock()
+    client.upsert.side_effect = httpx.ConnectError("qdrant down")
+    store._client = client
+
+    with pytest.raises(VectorStoreUnavailableError, match="VectorStore not initialized"):
+        await store.upsert(MEM_1, _make_embedding(1.0), {"content": "boom"})
+
+    assert store._client is None
+    assert store._next_retry_at == 1005.0
+
+
+def test_count_sync_returns_zero_when_uninitialized() -> None:
+    store = VectorStore(collection_name="sync_test")
+
+    assert store.count_sync() == 0
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ResponseHandlingException(Exception("down")),
+        UnexpectedResponse(503, "Service Unavailable", b"down", httpx.Headers()),
+        httpx.ConnectTimeout("timeout"),
+    ],
+)
+def test_recoverable_vector_store_errors(error: BaseException) -> None:
+    assert is_recoverable_vector_store_error(error) is True
 
 
 @pytest.mark.asyncio
@@ -279,9 +391,9 @@ async def test_get_collection_dimension_returns_none_on_client_error(caplog) -> 
     store = VectorStore(collection_name="test_memories", embedding_dim=4)
     client = MagicMock()
     client.get_collection.side_effect = RuntimeError("boom")
+    store._client = client
 
-    with patch.object(store, "_ensure_client", return_value=client):
-        dimension = await store.get_collection_dimension()
+    dimension = await store.get_collection_dimension()
 
     assert dimension is None
     assert "Failed to read Qdrant collection dimension" in caplog.text

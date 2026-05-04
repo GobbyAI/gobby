@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
+_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS = 5.0
 
 # ---------------------------------------------------------------------------
 # Startup progress tracking (module-level so the admin API can read it)
@@ -68,6 +69,21 @@ class StartupTracker:
 def get_startup_tracker() -> StartupTracker | None:
     """Return the current startup tracker (used by admin API)."""
     return _startup_tracker
+
+
+def _log_subsystem_init_result(task: asyncio.Task[None]) -> None:
+    """Log background subsystem initialization failures as soon as they happen."""
+    if task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+    if error is not None:
+        logger.error(
+            "Subsystem initialization failed",
+            exc_info=(type(error), error, error.__traceback__),
+        )
 
 
 async def _await_critical_stop_hook_grace_window() -> None:
@@ -315,7 +331,10 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
     provider_catalog = getattr(runner.http_server.services, "provider_model_catalog", None)
     if provider_catalog is not None:
         try:
-            status = await provider_catalog.refresh(codex_client=runner.http_server.codex_client)
+            status = await asyncio.wait_for(
+                provider_catalog.refresh(codex_client=runner.http_server.codex_client),
+                timeout=_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS,
+            )
             if tracker:
                 tracker.complete("Provider model catalogs updated")
                 for provider, info in status.items():
@@ -333,6 +352,16 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                             f"Provider models ({provider})",
                             error or "model discovery failed",
                         )
+        except TimeoutError:
+            logger.warning(
+                "Provider model discovery timed out after %.1fs",
+                _PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS,
+            )
+            if tracker:
+                tracker.error(
+                    "Provider models",
+                    f"timed out after {_PROVIDER_MODEL_DISCOVERY_TIMEOUT_SECONDS:.1f}s",
+                )
         except Exception as e:
             logger.warning(f"Provider model discovery failed: {e}")
             if tracker:
@@ -359,9 +388,9 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
 
         if not await is_qdrant_healthy(db_cfg.qdrant.url):
             logger.warning(
-                f"Qdrant configured but unreachable at {db_cfg.qdrant.url} — vector features disabled"
+                f"Qdrant configured but unreachable at {db_cfg.qdrant.url} — "
+                "vector features will retry lazily"
             )
-            runner.vector_store = None
             if tracker:
                 tracker.error("Qdrant", f"unreachable at {db_cfg.qdrant.url}")
         elif tracker:
@@ -458,7 +487,7 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
             if tracker:
                 tracker.complete("Vector store initialized")
         except Exception as e:
-            logger.error(f"VectorStore initialization failed: {e}")
+            logger.warning(f"VectorStore initialization failed; lazy retry will continue: {e}")
             if tracker:
                 tracker.error("Vector store", str(e))
 
@@ -826,6 +855,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
             _init_subsystems(runner, rebuild_vector_store),
             name="subsystem-init",
         )
+        runner._subsystem_init_task.add_done_callback(_log_subsystem_init_result)
 
         # Start periodic background tasks (lightweight, no blocking I/O)
         _start_periodic_tasks(

@@ -7,14 +7,18 @@ using semantic similarity and success rate weighting.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from gobby.memory.vectorstore import is_recoverable_vector_store_error
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 
 logger = logging.getLogger(__name__)
+VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
 
 
 @dataclass
@@ -81,6 +85,7 @@ class ToolFallbackResolver:
         self._similarity_weight = similarity_weight
         self._success_weight = success_weight
         self._min_similarity = min_similarity
+        self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
 
     async def find_alternatives(
         self,
@@ -126,7 +131,12 @@ class ToolFallbackResolver:
                 min_similarity=self._min_similarity,
             )
         except Exception as e:
-            logger.error(f"Semantic search failed in fallback resolver: {e}")
+            if is_recoverable_vector_store_error(e):
+                self._log_vector_store_failure(
+                    "Semantic fallback search unavailable while VectorStore recovers", e
+                )
+            else:
+                logger.error(f"Semantic search failed in fallback resolver: {e}")
             return []
 
         if not search_results:
@@ -164,6 +174,15 @@ class ToolFallbackResolver:
 
         logger.debug(f"Found {len(suggestions)} fallback suggestions for '{failed_tool_name}'")
         return suggestions
+
+    def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
+        """Rate-limit known VectorStore availability warnings in fallback lookups."""
+        now = time.monotonic()
+        if now - self._last_vector_store_warning_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
+            logger.warning("%s: %s", message, error)
+            self._last_vector_store_warning_at = now
+        else:
+            logger.debug("%s: %s", message, error)
 
     def _build_search_query(
         self,

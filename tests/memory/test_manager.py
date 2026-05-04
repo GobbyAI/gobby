@@ -585,6 +585,29 @@ class TestVectorStoreIntegration:
         mock_vs.upsert.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_vectorstore_unavailable_does_not_disable_embeddings(
+        self, db, memory_config
+    ) -> None:
+        """Transient VectorStore failures should not mark embeddings unavailable."""
+        from unittest.mock import AsyncMock
+
+        from gobby.memory.vectorstore import VectorStoreUnavailableError
+
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock(side_effect=VectorStoreUnavailableError())
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        manager = MemoryManager(
+            db=db, config=memory_config, vector_store=mock_vs, embed_fn=mock_embed
+        )
+
+        await manager._embed_and_upsert("id-1", "content")
+        await manager._embed_and_upsert("id-2", "content")
+
+        assert manager._embeddings_available is True
+        assert mock_embed.call_count == 2
+        assert mock_vs.upsert.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_create_memory_with_vectorstore(self, db, memory_config) -> None:
         """create_memory embeds content into VectorStore when available."""
         from unittest.mock import AsyncMock

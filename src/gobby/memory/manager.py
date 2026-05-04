@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -24,6 +25,7 @@ from gobby.memory.services.maintenance import (
 from gobby.memory.services.maintenance import (
     get_stats as _get_stats,
 )
+from gobby.memory.vectorstore import is_recoverable_vector_store_error
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.memories import LocalMemoryManager, Memory
 
@@ -42,6 +44,7 @@ DEFAULT_LIST_LIMIT = 50
 DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_GRAPH_LIMIT = 500
 MAX_REINDEX_LIMIT = 100_000
+VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
 
 
 class CrossrefRebuildError(RuntimeError):
@@ -113,6 +116,7 @@ class MemoryManager:
 
         # Track whether embeddings are known-unavailable (log once, skip thereafter)
         self._embeddings_available: bool | None = None
+        self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
 
         # DedupService: initialized when VectorStore + embed_fn available (no LLM needed)
         self._dedup_service: DedupService | None = None
@@ -240,14 +244,30 @@ class MemoryManager:
             return  # Known-unavailable, skip silently
         try:
             embedding = await self._embed_fn(content)
-            await self._vector_store.upsert(memory_id, embedding, payload or {})
             self._embeddings_available = True
         except Exception as e:
             if self._embeddings_available is None:
                 # First failure — log once, then suppress
-                logger.warning(f"VectorStore upsert failed for {memory_id}: {e}")
+                logger.warning(f"Embedding failed for {memory_id}: {e}")
                 self._embeddings_available = False
-            # Subsequent failures silently skipped
+            return
+
+        try:
+            await self._vector_store.upsert(memory_id, embedding, payload or {})
+        except Exception as e:
+            if is_recoverable_vector_store_error(e):
+                self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
+            else:
+                self._log_vector_store_failure(f"VectorStore upsert failed for {memory_id}", e)
+
+    def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
+        """Rate-limit noisy VectorStore availability warnings."""
+        now = time.monotonic()
+        if now - self._last_vector_store_warning_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
+            logger.warning("%s: %s", message, error)
+            self._last_vector_store_warning_at = now
+        else:
+            logger.debug("%s: %s", message, error)
 
     def _fire_background_dedup(
         self,
@@ -687,7 +707,13 @@ class MemoryManager:
 
                 # Handle Qdrant results (or fallback to empty)
                 if isinstance(qdrant_result, BaseException):
-                    logger.warning(f"Qdrant search failed: {qdrant_result}")
+                    if is_recoverable_vector_store_error(qdrant_result):
+                        self._log_vector_store_failure(
+                            "Qdrant search unavailable; falling back to non-vector results",
+                            qdrant_result,
+                        )
+                    else:
+                        logger.warning(f"Qdrant search failed: {qdrant_result}")
                     qdrant_results: list[tuple[str, float]] = []
                 else:
                     qdrant_results = qdrant_result
@@ -758,7 +784,13 @@ class MemoryManager:
                 )
 
                 if isinstance(qdrant_result, BaseException):
-                    logger.warning(f"Qdrant search failed: {qdrant_result}")
+                    if is_recoverable_vector_store_error(qdrant_result):
+                        self._log_vector_store_failure(
+                            "Qdrant search unavailable; falling back to FTS5 results",
+                            qdrant_result,
+                        )
+                    else:
+                        logger.warning(f"Qdrant search failed: {qdrant_result}")
                     qdrant_results = []
                 else:
                     qdrant_results = qdrant_result

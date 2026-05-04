@@ -9,9 +9,12 @@ Falls back to simple storage when VectorStore is unavailable.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from gobby.memory.vectorstore import is_recoverable_vector_store_error
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -22,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Similarity thresholds for dedup decisions
 NEAR_EXACT_THRESHOLD = 0.95  # Score above this → duplicate, skip
 SIMILAR_THRESHOLD = 0.85  # Score above this → update if new content is richer
+VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
 
 
 @dataclass
@@ -58,6 +62,7 @@ class DedupService:
         self.storage = storage
         self.embed_fn = embed_fn
         self._embeddings_available: bool | None = None
+        self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
 
     async def process(
         self,
@@ -109,7 +114,12 @@ class DedupService:
                 filters=filters,
             )
         except Exception as e:
-            logger.warning(f"Vector search failed, falling back to simple store: {e}")
+            if is_recoverable_vector_store_error(e):
+                self._log_vector_store_failure(
+                    "Vector search unavailable, falling back to simple store", e
+                )
+            else:
+                logger.warning(f"Vector search failed, falling back to simple store: {e}")
             return await self._fallback_store(
                 content, project_id, memory_type, tags, source_type, source_session_id
             )
@@ -151,6 +161,14 @@ class DedupService:
             return  # Known-unavailable, skip silently
         try:
             embedding = await self.embed_fn(content)
+            self._embeddings_available = True
+        except Exception as e:
+            if self._embeddings_available is None:
+                logger.warning(f"Embedding failed for {memory_id}: {e}")
+                self._embeddings_available = False
+            return
+
+        try:
             await self.vector_store.upsert(
                 memory_id=memory_id,
                 embedding=embedding,
@@ -159,11 +177,20 @@ class DedupService:
                     "project_id": project_id,
                 },
             )
-            self._embeddings_available = True
         except Exception as e:
-            if self._embeddings_available is None:
-                logger.warning(f"Embed/upsert failed for {memory_id}: {e}")
-                self._embeddings_available = False
+            if is_recoverable_vector_store_error(e):
+                self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
+            else:
+                self._log_vector_store_failure(f"VectorStore upsert failed for {memory_id}", e)
+
+    def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
+        """Rate-limit noisy VectorStore availability warnings."""
+        now = time.monotonic()
+        if now - self._last_vector_store_warning_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
+            logger.warning("%s: %s", message, error)
+            self._last_vector_store_warning_at = now
+        else:
+            logger.debug("%s: %s", message, error)
 
     async def _fallback_store(
         self,
