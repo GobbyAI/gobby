@@ -96,11 +96,40 @@ function isReviewPolicy(value: unknown): value is ReviewPolicy {
   return typeof value === 'string' && REVIEW_POLICIES.includes(value as ReviewPolicy)
 }
 
+const STAGE_NAME_ACRONYMS = new Set([
+  'qa',
+  'pr',
+  'ui',
+  'api',
+  'cli',
+  'mcp',
+  'json',
+  'xml',
+  'http',
+  'https',
+  'css',
+  'html',
+  'sql',
+  'tui',
+  'ide',
+  'db',
+  'ci',
+  'cd',
+  'sdk',
+  'url',
+  'id',
+])
+
 function titleizeStageName(name: string): string {
   return name
     .split(/[_\s-]+/)
     .filter(Boolean)
-    .map(part => part[0]?.toUpperCase() + part.slice(1))
+    .map(part => {
+      if (STAGE_NAME_ACRONYMS.has(part.toLowerCase())) {
+        return part.toUpperCase()
+      }
+      return (part[0]?.toUpperCase() ?? '') + part.slice(1)
+    })
     .join(' ')
 }
 
