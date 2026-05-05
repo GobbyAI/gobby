@@ -22,6 +22,7 @@ Documentation guides for using Gobby's features.
 | [search.md](search.md) | Unified search with TF-IDF, embeddings, and hybrid modes |
 | [code-index.md](code-index.md) | AST-based symbol indexing with `gobby-code` MCP tools |
 | [tdd-enforcement.md](tdd-enforcement.md) | TDD enforcement — test-first ordering, nudges, and block rules |
+| [testing.md](testing.md) | Targeted backend, frontend, coverage, and browser test workflows |
 
 ## Orchestration & Parallel Development
 

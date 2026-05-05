@@ -1,35 +1,129 @@
-# Testing Overview
+# Testing
 
-This guide provides a high-level overview of the testing infrastructure in Gobby.
+Gobby's test workflow is optimized for targeted verification. The repository has
+thousands of tests, so contributors and agents should run the narrowest backend
+or frontend command that proves the change.
 
-## Running Tests
+## Backend Pytest
 
-Gobby uses `pytest` for Python backend tests and `vitest`/`playwright` for frontend tests.
+Backend tests live under `tests/` and are configured in `pyproject.toml`.
+Pytest is run through `uv` so it uses the project environment:
 
-### Backend Tests
-
-To run the full suite:
 ```bash
-uv run pytest
+uv run pytest tests/tasks/test_validation.py -v
 ```
 
-To run a specific test file:
+Run a package or marker slice when the affected surface spans more than one
+file:
+
 ```bash
-uv run pytest tests/path/to/test_file.py
+uv run pytest tests/tasks/ -v
+uv run pytest tests/workflows/ -m "not slow" -v
+uv run pytest tests/servers/ --cov=gobby --cov-report=term-missing --cov-fail-under=80
 ```
 
-### Frontend Tests
+Avoid the repository-wide pytest command during normal agent work. The full
+suite is intentionally reserved for explicit human requests and broader gates
+because it is large and slow.
 
-Located in the `web/` directory:
+## Pytest Configuration
+
+The canonical pytest settings are in `pyproject.toml`:
+
+- `asyncio_mode = "auto"` for async tests.
+- `testpaths = ["tests"]` limits default collection to the backend test tree.
+- `pythonpath = ["src"]` makes `gobby` importable from source.
+- `python_files = ["test_*.py", "run_*_sandbox.py"]`.
+- `python_classes = ["Test*"]`.
+- `python_functions = ["test_*"]`.
+- `addopts` enables verbose output and disables `faulthandler`.
+
+Coverage is not enabled by default in local pytest runs. CI and pre-push gates
+enforce the 80% project threshold; local coverage runs should add:
+
+```bash
+uv run pytest tests/path/ --cov=gobby --cov-report=term-missing --cov-fail-under=80
+```
+
+## Markers
+
+Use markers to describe test scope and to keep targeted runs readable:
+
+| Marker | Use |
+|--------|-----|
+| `unit` | Fast, isolated tests. |
+| `integration` | Tests that exercise multiple components together. |
+| `e2e` | End-to-end flows; `tests/conftest.py` moves these to the end of collection. |
+| `slow` | Long-running tests; deselect locally with `-m "not slow"`. |
+| `cli` | Click command and CLI behavior tests. |
+| `skill_tdd` | Skill pressure-scenario tests. |
+| `no_config_protection` | Opt out of the production-resource protection fixture for exceptional cases. |
+
+Sandbox compatibility tests under `tests/integration/sandbox/` are skipped
+unless the run explicitly passes `--run-sandbox`:
+
+```bash
+uv run pytest tests/integration/sandbox/ --run-sandbox -v
+```
+
+## Shared Fixtures
+
+The root `tests/conftest.py` provides common isolation and test helpers:
+
+- `temp_dir` gives each test a temporary working directory.
+- `repo_root` points to the repository root.
+- `safe_db_dir` and `safe_gobby_home_dir` isolate database and home-directory
+  state.
+- `temp_db`, `session_manager`, `project_manager`, and `mcp_manager` provide
+  storage-backed managers on a migrated temporary database.
+- `mock_config`, `mock_config_with_websocket`, `default_config`,
+  `mock_daemon_config`, `mock_machine_id`, and `mock_llm_service` cover common
+  daemon dependencies.
+- `protect_production_resources` is applied automatically. It sets safe
+  `GOBBY_*` paths and patches config loading/saving so tests do not touch the
+  user's real daemon database, home directory, logs, or hooks.
+
+Domain test packages may add narrower fixtures in their own `conftest.py`
+files. For example, `tests/tasks/conftest.py` provides a validation prompt
+loader mock, and `tests/servers/conftest.py` provides HTTP server and
+`TestClient` fixtures.
+
+## Frontend Tests
+
+The web UI lives in `web/`. Use npm scripts from that directory:
+
 ```bash
 cd web
-npm run test      # Unit tests (Vitest)
-npm run test:e2e  # E2E tests (Playwright)
+npm run test -- src/__tests__/App.test.tsx
+npm run type-check
+npm run lint
 ```
 
-## Test Markers
+`npm run test` maps to `vitest run`; `npm run test:watch` starts watch mode.
+Playwright is configured at `web/playwright.config.ts`, and browser tests live
+under `web/tests/`. Run a specific Playwright file instead of the whole browser
+suite:
 
-- `unit`: Fast, isolated tests.
-- `integration`: Tests interaction between components.
-- `e2e`: Full system flows.
-- `slow`: Long-running tests.
+```bash
+cd web
+npx playwright test tests/provider-picker.spec.ts
+```
+
+## Picking Validation
+
+Choose validation based on the changed surface:
+
+| Change | Recommended command |
+|--------|---------------------|
+| One backend module | `uv run pytest tests/<matching-file>.py -v` |
+| Task, workflow, or server behavior | `uv run pytest tests/<domain>/ -v` |
+| Coverage-sensitive backend work | `uv run pytest tests/<domain>/ --cov=gobby --cov-report=term-missing --cov-fail-under=80` |
+| CLI behavior | `uv run pytest tests/cli/ -m cli -v` |
+| Frontend component | `cd web && npm run test -- src/__tests__/<file>.test.tsx` |
+| Frontend type or lint change | `cd web && npm run type-check` or `cd web && npm run lint` |
+| Browser flow | `cd web && npx playwright test tests/<file>.spec.ts` |
+
+When a test fails, keep the rerun focused on the failing file or marker until
+the failure is understood. Broaden only when the change touches shared behavior.
+
+_Last verified: 2026-05-04_
