@@ -220,7 +220,7 @@ export function ChatPage({
         return;
       }
 
-      chat.viewSession?.(target.sessionId);
+      chat.viewSession?.(target.sessionId, { forceRefresh: true });
       chat.observeSession?.(target.sessionId, "observe");
       if (isMobile && isPinned) {
         setIsPinned(false);
@@ -332,7 +332,8 @@ export function ChatPage({
     : chat.isContinuingSession
       ? "Message input — resuming session"
       : undefined;
-  const activityPanelChatSessionId = chat.dbSessionId;
+  const activityPanelChatSessionId =
+    chat.viewingSessionId || chat.attachedSessionId ? null : chat.dbSessionId;
 
   const handleResumeViewedSession = useCallback(() => {
     if (

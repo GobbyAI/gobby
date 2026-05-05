@@ -9,6 +9,7 @@ import {
   isMobileState,
   isPinnedState,
   setIsPinnedSpy,
+  showTabSpy,
   setupChatPageEnvironment,
   teardownChatPageEnvironment,
   togglePanelSpy,
@@ -286,6 +287,78 @@ describe("ChatPage – activity panel", () => {
 
     expect(onRequestPlanChanges).toHaveBeenCalledWith("Needs changes");
     expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the parked web chat visible in Sessions while a terminal swap is active", async () => {
+    const viewSession = vi.fn();
+    const observeSession = vi.fn();
+    const conversations = createConversations();
+    const voice = createVoice();
+    const chat = createChat({
+      dbSessionId: "db-session-1",
+      messages: [
+        {
+          id: "main-msg-1",
+          role: "user",
+          content: "Park me",
+          timestamp: new Date("2026-05-04T12:00:00Z"),
+        },
+      ],
+      viewSession,
+      observeSession,
+    });
+
+    const { rerender } = render(
+      <ChatPage chat={chat} conversations={conversations} voice={voice} />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("swap-terminal-session"));
+    });
+
+    expect(showTabSpy).toHaveBeenCalledWith("sessions");
+    expect(viewSession).toHaveBeenCalledWith("terminal-2", {
+      forceRefresh: true,
+    });
+    expect(observeSession).toHaveBeenCalledWith("terminal-2", "observe");
+    expect(screen.getByTestId("activity-panel-focus-session-id")).toHaveTextContent(
+      "db-session-1",
+    );
+
+    await act(async () => {
+      rerender(
+        <ChatPage
+          chat={createChat({
+            ...chat,
+            viewingSessionId: "terminal-2",
+            viewingSessionMeta: {
+              ref: "#220",
+              source: "codex",
+              title: "Terminal",
+              status: "active",
+              model: "gpt-5.4",
+              externalId: "terminal-ext",
+              chatMode: null,
+              gitBranch: "main",
+              contextWindow: null,
+              agentRunId: null,
+              workflowName: null,
+              agentName: null,
+              sessionType: "terminal",
+            },
+            viewSession,
+            observeSession,
+          })}
+          conversations={conversations}
+          voice={voice}
+        />,
+      );
+    });
+
+    expect(screen.getByTestId("activity-panel-chat-session-id")).toHaveTextContent("");
+    expect(screen.getByTestId("activity-panel-focus-session-id")).toHaveTextContent(
+      "db-session-1",
+    );
   });
 
 });

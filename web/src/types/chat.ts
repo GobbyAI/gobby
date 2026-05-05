@@ -275,7 +275,7 @@ export interface ChatState {
   onProviderChange?: (provider: string | null) => void;
   dbSessionId?: string | null;
   conversationSwitchKey?: number;
-  viewSession?: (sessionId: string) => void;
+  viewSession?: (sessionId: string, options?: { forceRefresh?: boolean }) => void;
   clearViewingSession?: () => void;
   mainSessionMeta?: SessionObservationMeta | null;
   viewingSessionId?: string | null;

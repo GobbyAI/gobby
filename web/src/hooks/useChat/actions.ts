@@ -126,7 +126,7 @@ const switchConversation = useCallback(
       fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (viewingSessionIdRef.current) return;
+          if (viewingSessionIdRef.current || dbSessionIdRef.current !== id) return;
           if (!data?.messages?.length || conversationIdRef.current !== id)
             return;
           const mapped = data.messages.map((m: Record<string, unknown>) =>
@@ -140,14 +140,21 @@ const switchConversation = useCallback(
           }
         })
         .catch((err) => console.error("Failed to fetch chat messages:", err))
-        .finally(() => setIsLoadingMessages(false));
+        .finally(() => {
+          if (!viewingSessionIdRef.current && conversationIdRef.current === id) {
+            setIsLoadingMessages(false);
+          }
+        });
     }
 
     fetch(`${baseUrl}/api/sessions/${id}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         const s = data?.session;
-        if (!s || conversationIdRef.current !== id) return;
+        if (!s || conversationIdRef.current !== id || dbSessionIdRef.current !== id) {
+          return;
+        }
+        if (!preserveViewing && viewingSessionIdRef.current) return;
         applyMainSessionMeta(s);
         if (s.chat_mode) {
           const restored = normalizeChatMode(s.chat_mode);

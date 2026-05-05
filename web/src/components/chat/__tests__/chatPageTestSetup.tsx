@@ -106,6 +106,7 @@ export const activityPanelMockFactory = () => ({
     onSwapSession,
     onResumeSession,
     chatSessionId,
+    focusSessionId,
     onApprovePlan,
     onRequestPlanChanges,
     onAddFileToChat,
@@ -118,6 +119,7 @@ export const activityPanelMockFactory = () => ({
     }) => void;
     onResumeSession?: (sessionId: string) => void;
     chatSessionId?: string | null;
+    focusSessionId?: string | null;
     onApprovePlan?: () => void;
     onRequestPlanChanges?: (feedback: string) => void;
     onAddFileToChat?: (filePath: string) => void;
@@ -126,6 +128,9 @@ export const activityPanelMockFactory = () => ({
       <span data-testid="activity-panel-session-count">{sessions?.length ?? 0}</span>
       <span data-testid="activity-panel-chat-session-id">
         {chatSessionId ?? ""}
+      </span>
+      <span data-testid="activity-panel-focus-session-id">
+        {focusSessionId ?? ""}
       </span>
       <button
         type="button"

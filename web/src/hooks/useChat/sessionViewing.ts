@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps -- Extracted useChat session-viewing callbacks intentionally close over parent refs and stable setters to preserve the original hook behavior. */
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { SessionObservationMeta } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
@@ -16,6 +16,7 @@ import {
 } from "./core";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
+type ViewSessionOptions = { forceRefresh?: boolean };
 
 interface UseChatSessionViewingParams extends Record<string, any> {
   resolveAgentName: (agentRunId: string) => Promise<string | null>;
@@ -68,21 +69,29 @@ export function useChatSessionViewing(params: UseChatSessionViewingParams) {
     wsRef,
   } = params;
 
+const viewRequestSeqRef = useRef(0);
+
 // View a CLI session (read-only, no WS subscription — loads via REST)
 const viewSession = useCallback(
-  (sessionId: string) => {
+  (sessionId: string, options?: ViewSessionOptions) => {
+    const forceRefresh = options?.forceRefresh ?? false;
     // Skip if already viewing/attached to this session
     if (
-      (viewingSessionIdRef.current === sessionId &&
+      !forceRefresh &&
+      ((viewingSessionIdRef.current === sessionId &&
         (viewingSessionMetaRef.current || messagesRef.current.length > 0)) ||
-      observedSessionIdRef.current === sessionId
+        observedSessionIdRef.current === sessionId)
     ) {
       return;
     }
+    const requestSeq = ++viewRequestSeqRef.current;
+    const isCurrentRequest = () =>
+      viewRequestSeqRef.current === requestSeq &&
+      viewingSessionIdRef.current === sessionId;
 
     // Detach from any active WS subscription first
     const observedSessionId = observedSessionIdRef.current;
-    if (observedSessionId) {
+    if (observedSessionId && observedSessionId !== sessionId) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -126,13 +135,14 @@ const viewSession = useCallback(
     fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!data?.messages?.length) return;
-        if (viewingSessionIdRef.current !== sessionId) return;
-        const mapped = mapApiMessages(data.messages);
+        if (!isCurrentRequest()) return;
+        const mapped = data?.messages?.length ? mapApiMessages(data.messages) : [];
         setMessages(mapped);
       })
       .catch((err) => console.error("Failed to fetch session messages:", err))
-      .finally(() => setIsLoadingMessages(false));
+      .finally(() => {
+        if (isCurrentRequest()) setIsLoadingMessages(false);
+      });
 
     // Fetch session metadata
     const metadataFetchStartedAt = Date.now();
@@ -140,7 +150,7 @@ const viewSession = useCallback(
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         const s = data?.session;
-        if (!s || viewingSessionIdRef.current !== sessionId) return;
+        if (!s || !isCurrentRequest()) return;
         const ref = s.seq_num ? `#${s.seq_num}` : null;
         setSessionRef(ref);
         const nextMeta: SessionObservationMeta = {
@@ -164,12 +174,9 @@ const viewSession = useCallback(
         setViewingSessionMeta(nextMeta);
         if (nextMeta.agentRunId) {
           void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
-            if (!agentName || viewingSessionIdRef.current !== sessionId)
-              return;
+            if (!agentName || !isCurrentRequest()) return;
             setViewingSessionMeta((prev) =>
-              prev && viewingSessionIdRef.current === sessionId
-                ? { ...prev, agentName }
-                : prev,
+              prev && isCurrentRequest() ? { ...prev, agentName } : prev,
             );
           });
         }
@@ -189,6 +196,7 @@ const viewSession = useCallback(
 
 // Clear viewing state and restore previous web chat
 const clearViewingSession = useCallback(() => {
+  viewRequestSeqRef.current += 1;
   // Detach from any active WS subscription
   const observedSessionId = observedSessionIdRef.current;
   if (observedSessionId) {
@@ -249,7 +257,13 @@ const clearViewingSession = useCallback(() => {
     fetch(`${baseUrl}/api/chat/${prevDbSid}/messages?limit=100&after_seq=0`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!data?.messages?.length) return;
+        if (
+          !data?.messages?.length ||
+          viewingSessionIdRef.current ||
+          loadDbSessionId() !== prevDbSid
+        ) {
+          return;
+        }
         const mapped = data.messages.map((m: Record<string, unknown>) =>
           mapRenderedMessageToChatMessage(m),
         );
@@ -262,6 +276,9 @@ const clearViewingSession = useCallback(() => {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         const s = data?.session;
+        if (viewingSessionIdRef.current || loadDbSessionId() !== prevDbSid) {
+          return;
+        }
         if (s?.chat_mode) {
           onModeChangedRef.current?.(normalizeChatMode(s.chat_mode));
         }
