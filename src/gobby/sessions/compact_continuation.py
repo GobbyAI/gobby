@@ -20,6 +20,7 @@ COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_SELF_CONTINUE_PROMPT = "Continue where you last left off."
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
+COMPACT_SELF_CONTINUE_FALLBACK_DELAY_SECONDS = 3.0
 
 
 def mark_compact_self_continuation_pending(
@@ -149,6 +150,24 @@ def consume_and_schedule_compact_self_continuation(
     return schedule_compact_self_continuation(target_session, prompt, loop=loop)
 
 
+def schedule_compact_self_continuation_fallback(
+    db: DatabaseProtocol,
+    *,
+    pending_session_id: str,
+    target_session: Any,
+    loop: Any | None = None,
+    delay_seconds: float = COMPACT_SELF_CONTINUE_FALLBACK_DELAY_SECONDS,
+) -> bool:
+    """Schedule a delayed fallback for CLIs that do not emit SessionStart after compacting."""
+    coro = _consume_and_send_compact_self_continuation_fallback(
+        db,
+        pending_session_id=pending_session_id,
+        target_session=target_session,
+        delay_seconds=delay_seconds,
+    )
+    return _schedule_coroutine(coro, loop=loop)
+
+
 async def _send_compact_self_continuation(
     tmux: Any,
     target: str,
@@ -170,6 +189,44 @@ async def _send_compact_self_continuation(
         return
     if not ok:
         logger.warning("tmux send-keys returned false for compact_self continuation %s", session_id)
+
+
+async def _consume_and_send_compact_self_continuation_fallback(
+    db: DatabaseProtocol,
+    *,
+    pending_session_id: str,
+    target_session: Any,
+    delay_seconds: float,
+) -> None:
+    if delay_seconds > 0:
+        await asyncio.sleep(delay_seconds)
+
+    session_id = getattr(target_session, "id", pending_session_id)
+    ctx = parse_terminal_context_value(getattr(target_session, "terminal_context", None))
+    if ctx is None:
+        logger.debug("Cannot run compact_self continuation fallback; no terminal context")
+        return
+
+    target = ctx.get("tmux_pane") or ctx.get("tmux_session")
+    if not target:
+        logger.debug(
+            "Cannot run compact_self continuation fallback for session %s; no tmux target",
+            session_id,
+        )
+        return
+
+    prompt = consume_compact_self_continuation_pending(db, pending_session_id)
+    if prompt is None:
+        return
+
+    tmux = get_tmux_manager_for_context(ctx)
+    await _send_compact_self_continuation(
+        tmux,
+        str(target),
+        prompt,
+        str(session_id),
+        delay_seconds=0,
+    )
 
 
 def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:

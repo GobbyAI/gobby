@@ -17,6 +17,7 @@ from gobby.config.tmux import TmuxConfig
 from gobby.sessions.compact_continuation import (
     clear_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
+    schedule_compact_self_continuation_fallback,
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.storage.agents import LocalAgentRunManager
@@ -348,6 +349,12 @@ def register_terminal_tools(
                 "compacted": False,
                 "reason": reason,
             }
+        if continuation_pending:
+            schedule_compact_self_continuation_fallback(
+                db,
+                pending_session_id=resolved_session_id,
+                target_session=session,
+            )
         result = {
             "compacted": True,
             "command": command,
