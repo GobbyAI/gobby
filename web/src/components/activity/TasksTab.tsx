@@ -615,6 +615,12 @@ export const TasksTab = memo(function TasksTab({
           {ref && (
             <span className="activity-task-row-ref">{ref}</span>
           )}
+          <span
+            className="activity-task-row-title"
+            style={{ color: textColor, fontWeight: textWeight }}
+          >
+            {task.title}
+          </span>
           {currentStage && (
             <span className="activity-task-row-stage" title={stateSummary}>
               <span
@@ -627,12 +633,6 @@ export const TasksTab = memo(function TasksTab({
               </span>
             </span>
           )}
-          <span
-            className="activity-task-row-title"
-            style={{ color: textColor, fontWeight: textWeight }}
-          >
-            {task.title}
-          </span>
           <button
             type="button"
             className="session-more-btn"
