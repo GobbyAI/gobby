@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 
 import { cn } from '../../lib/utils'
 import { CodeBlock } from '../shared/CodeBlock'
+import { TOOL_CARD_SPACING } from '../shared/spacing'
 import {
   type GsqzMetadata,
   parseGsqzWrapper,
@@ -36,7 +37,8 @@ export function MetadataStrip({ meta, className }: MetadataStripProps) {
   return (
     <div
       className={cn(
-        'flex flex-wrap gap-x-3 gap-y-0.5 px-2 py-1 text-[10px] font-mono',
+        'flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono',
+        TOOL_CARD_SPACING.metaStrip,
         'border-b border-border/40 text-muted-foreground bg-muted/30',
         className,
       )}
@@ -69,7 +71,8 @@ function GsqzMetadataStrip({ metadata }: GsqzMetadataStripProps) {
   return (
     <div
       className={cn(
-        'px-2 py-1 text-[10px] font-mono border-b border-border/40 bg-muted/30',
+        TOOL_CARD_SPACING.metaStrip,
+        'text-[10px] font-mono border-b border-border/40 bg-muted/30',
         isError ? 'text-destructive-foreground/80' : 'text-muted-foreground',
       )}
     >
@@ -86,8 +89,10 @@ export interface JsonResultBlockProps {
   className?: string
 }
 
-const JSON_BLOCK_BASE =
-  'rounded p-2 max-h-96 overflow-y-auto overflow-x-hidden font-mono text-xs whitespace-pre-wrap break-words'
+const JSON_BLOCK_BASE = cn(
+  'rounded max-h-96 overflow-y-auto overflow-x-hidden font-mono text-xs whitespace-pre-wrap break-words',
+  TOOL_CARD_SPACING.resultPad,
+)
 
 function formatJsonForDisplay(value: unknown): string {
   let serialized: string

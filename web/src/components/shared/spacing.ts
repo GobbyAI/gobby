@@ -30,4 +30,8 @@ export const TOOL_CARD_SPACING = {
   bodyCompact: 'px-3 pb-2',
   /** Small label inside an expanded section ("Arguments", "Result"). */
   label: 'mb-1 font-medium',
+  /** Compact metadata strip above a tool result (file/exit/token line). */
+  metaStrip: 'px-2 py-1',
+  /** Tight all-sides pad on small result tiles (e.g. JSON result block). */
+  resultPad: 'p-2',
 } as const
