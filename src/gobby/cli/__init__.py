@@ -37,6 +37,7 @@ from .setup import setup
 from .skills import skills
 from .sync import sync
 from .tasks import tasks
+from .test_quality import test_quality
 from .tokens import tokens
 from .ui import ui
 from .workflows import workflows
@@ -69,6 +70,7 @@ cli.add_command(setup)
 cli.add_command(install)
 cli.add_command(uninstall)
 cli.add_command(tasks)
+cli.add_command(test_quality)
 cli.add_command(tokens)
 cli.add_command(memory)
 cli.add_command(sessions)

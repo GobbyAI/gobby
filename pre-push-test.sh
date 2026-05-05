@@ -95,6 +95,16 @@ else
 fi
 echo ""
 
+# Test quality - static audit against tracked baseline
+echo ">>> Running test-quality audit..."
+if uv run gobby test-quality audit --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high 2>&1 | tee "$REPORTS_DIR/test-quality-$TIMESTAMP.txt"; then
+    echo "✓ Test-quality audit passed"
+else
+    echo "✗ Test-quality audit failed"
+    FAILED=1
+fi
+echo ""
+
 # Pytest - tests with coverage (80% threshold)
 # Uses verbose mode with timestamps to correlate test execution with daemon logs
 echo ">>> Running pytest with coverage..."

@@ -237,6 +237,7 @@ dev = [
     "bandit>=1.8.0",
     "black>=26.3.1",  # CVE-2026-32274
     "mypy>=1.8.0",
+    "mutmut>=3.0.0",
     "pip>=26.0",  # CVE-2026-1703
     "pip-audit>=2.7.0",
     "pre-commit>=4.0.0",
@@ -257,6 +258,11 @@ dev = [
 [tool.coverage.run]
 source = ["src/gobby"]
 # parallel = true
+
+[tool.mutmut]
+paths_to_mutate = ["src/gobby"]
+pytest_add_cli_args_test_selection = ["tests/"]
+runner = "python -m pytest -q"
 
 [tool.coverage.paths]
 gobby = ["src/gobby", "*/gobby", "*/site-packages/gobby"]
