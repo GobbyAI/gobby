@@ -400,47 +400,11 @@ class TestLinearSync:
         assert "Created missing issues: 3" in result.output
         mock_svc.return_value.sync_active_forward.assert_called_once_with(team_id="TEAM-1")
 
-    @patch(
-        "gobby.cli.linear.asyncio.run",
-        return_value={
-            "mode": "forward_active",
-            "created_count": 1,
-            "created_issues": [],
-            "push": {"pushed": 1, "skipped": 0, "errors": 0},
-            "synced_at": "2026-05-05T00:00:00+00:00",
-        },
-    )
-    @patch("gobby.cli.linear.get_sync_service")
-    @patch("gobby.cli.linear.get_linear_deps")
-    def test_sync_all_forward_active_alias_still_works(
-        self,
-        mock_deps: MagicMock,
-        mock_svc: MagicMock,
-        _async: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        tm, mcp, pm, pid = _mock_linear_deps(linear_team_id="TEAM-1")
-        mock_deps.return_value = (tm, mcp, pm, pid)
-
-        result = runner.invoke(
-            linear, ["sync-all", "--forward", "--active"], catch_exceptions=False
-        )
-
-        assert result.exit_code == 0
-        assert "Forward active Linear sync complete" in result.output
-        mock_svc.return_value.sync_active_forward.assert_called_once_with(team_id="TEAM-1")
-
-    @patch("gobby.cli.linear.get_linear_deps")
-    def test_sync_all_active_requires_forward(
-        self, mock_deps: MagicMock, runner: CliRunner
-    ) -> None:
-        tm, mcp, pm, pid = _mock_linear_deps(linear_team_id="TEAM-1")
-        mock_deps.return_value = (tm, mcp, pm, pid)
-
+    def test_sync_all_active_option_removed(self, runner: CliRunner) -> None:
         result = runner.invoke(linear, ["sync-all", "--active"], catch_exceptions=False)
 
         assert result.exit_code != 0
-        assert "--active is only supported with --forward" in result.output
+        assert "No such option: --active" in result.output
 
 
 # ---------------------------------------------------------------------------

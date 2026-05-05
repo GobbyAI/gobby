@@ -521,15 +521,7 @@ def linear_sync(task_id: str, json_format: bool) -> None:
     is_flag=True,
     help="Push active non-closed Gobby tasks to Linear without pulling first",
 )
-@click.option(
-    "--active",
-    "active_only",
-    is_flag=True,
-    help="Compatibility alias; --forward already syncs active non-closed tasks only",
-)
-def linear_sync_all(
-    team_id: str | None, json_format: bool, forward: bool, active_only: bool
-) -> None:
+def linear_sync_all(team_id: str | None, json_format: bool, forward: bool) -> None:
     """Bidirectional sync between gobby and Linear.
 
     Pulls updates from Linear first, then pushes dirty gobby tasks back.
@@ -538,9 +530,6 @@ def linear_sync_all(
     linked team.
     """
     try:
-        if active_only and not forward:
-            raise click.ClickException("--active is only supported with --forward.")
-
         _, _, project_manager, project_id = get_linear_deps()
 
         if not team_id:
