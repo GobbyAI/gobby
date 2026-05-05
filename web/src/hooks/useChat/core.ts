@@ -595,15 +595,13 @@ export function appendTextBlock(msg: ChatMessage, text: string) {
   }
 }
 
-/** Helper: append a tool call to the current tool_chain block, or start a new one. */
+/** Helper: start a fresh tool_chain block for each tool call.
+ * Matches the historical-replay parser (transcript_renderer.py) which emits one
+ * tool_chain block per tool call and never merges them. groupToolCalls()
+ * handles visual same-tool aggregation in the renderer. */
 export function appendToolBlock(msg: ChatMessage, tc: ToolCall) {
   if (!msg.contentBlocks) msg.contentBlocks = [];
-  const last = msg.contentBlocks[msg.contentBlocks.length - 1];
-  if (last?.type === "tool_chain") {
-    last.tool_calls.push(tc);
-  } else {
-    msg.contentBlocks.push({ type: "tool_chain", tool_calls: [tc] });
-  }
+  msg.contentBlocks.push({ type: "tool_chain", tool_calls: [tc] });
 }
 
 /** Find a tool call by its tool_use_id across contentBlocks and flat toolCalls. */
