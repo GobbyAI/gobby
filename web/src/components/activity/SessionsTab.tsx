@@ -637,7 +637,7 @@ export const SessionsTab = memo(function SessionsTab({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 relative">
+      <div className="activity-panel-toolbar">
         <ActivityPanelSearch
           value={searchInput}
           onChange={setSearchInput}

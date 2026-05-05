@@ -671,7 +671,7 @@ export const TasksTab = memo(function TasksTab({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
-      <div className="activity-task-pane-bar activity-task-pane-bar--toolbar relative">
+      <div className="activity-panel-toolbar">
         <ActivityPanelSearch
           value={search}
           onChange={setSearch}

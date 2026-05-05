@@ -90,12 +90,13 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+      <div className="activity-panel-toolbar">
         <SegmentedControl<StatusFilter>
           value={statusFilter}
           onChange={setStatusFilter}
           options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
           ariaLabel="Cron status filter"
+          className="ml-auto"
         />
       </div>
 

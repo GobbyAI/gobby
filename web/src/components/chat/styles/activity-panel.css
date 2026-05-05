@@ -539,3 +539,31 @@
     transform: scale(0.85);
   }
 }
+
+/* ============================================
+   Activity Panel — shared filter-row toolbar
+   Single authoring site for the toolbar shell that hosts the optional
+   ActivityPanelSearch on the left and a filter affordance (SegmentedControl
+   for 2–3 options, or .activity-filter-button + dropdown for many) on the
+   right. Active-state treatment is locked: filled accent (var(--accent) at
+   15% bg + accent text; an accent border too when the element owns its own
+   border). Applied to the SegmentedControl active option and to
+   .activity-filter-button when its dropdown is open.
+   ============================================ */
+.activity-panel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.activity-panel-toolbar > .activity-panel-toolbar__end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}

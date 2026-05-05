@@ -66,12 +66,13 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+      <div className="activity-panel-toolbar">
         <SegmentedControl<StatusFilter>
           value={statusFilter}
           onChange={handleStatusFilterChange}
           options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
           ariaLabel="Trace status filter"
+          className="ml-auto"
         />
       </div>
 
