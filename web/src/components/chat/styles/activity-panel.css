@@ -483,3 +483,30 @@
     min-height: 2.75rem;
   }
 }
+
+/* ============================================
+   Activity Panel — shared search input
+   Single authoring site for list-panel search.
+   ============================================ */
+.activity-panel-search {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.65rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-normal);
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+.activity-panel-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.activity-panel-search::placeholder {
+  color: var(--text-muted);
+}

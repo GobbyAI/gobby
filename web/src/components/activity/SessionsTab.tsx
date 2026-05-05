@@ -35,6 +35,7 @@ import {
 } from "./sessionsFilters";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
+import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import {
   type RunningAgent,
   type WatchingSessionEntry,
@@ -636,12 +637,10 @@ export const SessionsTab = memo(function SessionsTab({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 relative">
-        <input
-          type="search"
+        <ActivityPanelSearch
           value={searchInput}
-          onChange={(event) => setSearchInput(event.target.value)}
+          onChange={setSearchInput}
           placeholder="Search sessions"
-          className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
         />
         <button
           type="button"

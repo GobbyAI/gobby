@@ -46,6 +46,7 @@ import {
 } from "./TasksTabDetailPanel";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
+import { ActivityPanelSearch } from "./ActivityPanelSearch";
 
 interface TasksTabProps {
   projectId?: string | null;
@@ -671,12 +672,10 @@ export const TasksTab = memo(function TasksTab({
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
       <div className="activity-task-pane-bar activity-task-pane-bar--toolbar relative">
-        <input
-          type="text"
-          className="activity-task-search"
-          placeholder="Search..."
+        <ActivityPanelSearch
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
+          placeholder="Search tasks"
         />
         <button
           type="button"

@@ -134,27 +134,6 @@
   justify-content: space-between;
 }
 
-.activity-task-search {
-  flex: 1;
-  min-width: 0;
-  padding: 0.45rem 0.65rem;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 0.45rem;
-  color: var(--text-primary);
-  font-size: calc(var(--font-size-base) * 0.78);
-  font-family: inherit;
-}
-
-.activity-task-search:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.activity-task-search::placeholder {
-  color: var(--text-muted);
-}
-
 .activity-filter-button {
   position: relative;
   display: inline-flex;
