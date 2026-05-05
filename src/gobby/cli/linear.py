@@ -15,6 +15,7 @@ from gobby.cli.tasks._utils import resolve_task_id
 from gobby.integrations.linear import LinearIntegration
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.storage.database import LocalDatabase
+from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.linear import LinearSyncService
@@ -33,14 +34,22 @@ def get_linear_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectM
     db = LocalDatabase()
     task_manager = LocalTaskManager(db)
     project_manager = LocalProjectManager(db)
-    mcp_manager = MCPClientManager()
 
     ctx = get_project_context(cwd=Path.cwd())
     if not ctx or not ctx.get("id"):
         raise click.ClickException("Not in a gobby project directory. Run 'gobby init' first.")
 
     project_id: str = ctx["id"]
+    mcp_manager = _create_linear_mcp_manager(db, project_id)
     return task_manager, mcp_manager, project_manager, project_id
+
+
+def _create_linear_mcp_manager(db: LocalDatabase, project_id: str) -> MCPClientManager:
+    """Create an MCP manager with the same database-backed servers as the daemon."""
+    return MCPClientManager(
+        mcp_db_manager=LocalMCPManager(db),
+        project_id=project_id,
+    )
 
 
 def get_sync_service(team_id: str | None = None) -> LinearSyncService:

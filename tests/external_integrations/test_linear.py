@@ -60,6 +60,15 @@ class TestLinearIntegrationAvailability:
         integration = LinearIntegration(mock_mcp_manager)
         assert integration.is_available() is False
 
+    def test_is_available_returns_true_for_configured_lazy_manager(self, mock_mcp_manager) -> None:
+        """Lazy managers are usable before the first on-demand connection."""
+        mock_mcp_manager.has_server.return_value = True
+        mock_mcp_manager.health = {}
+        mock_mcp_manager.lazy_connect = True
+
+        integration = LinearIntegration(mock_mcp_manager)
+        assert integration.is_available() is True
+
 
 class TestLinearIntegrationCaching:
     """Test availability caching behavior."""

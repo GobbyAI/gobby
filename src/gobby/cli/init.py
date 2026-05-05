@@ -174,8 +174,7 @@ def _maybe_run_linear_setup(
         return
 
     try:
-        from gobby.cli.linear import _run_linear_setup
-        from gobby.mcp_proxy.manager import MCPClientManager
+        from gobby.cli.linear import _create_linear_mcp_manager, _run_linear_setup
         from gobby.storage.database import LocalDatabase
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.tasks import LocalTaskManager
@@ -185,7 +184,7 @@ def _maybe_run_linear_setup(
         result = asyncio.run(
             _run_linear_setup(
                 task_manager=LocalTaskManager(db),
-                mcp_manager=MCPClientManager(),
+                mcp_manager=_create_linear_mcp_manager(db, project_id),
                 project_manager=project_manager,
                 project_id=project_id,
                 bootstrap=True,
