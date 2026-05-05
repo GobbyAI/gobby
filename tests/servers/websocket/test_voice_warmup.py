@@ -11,6 +11,7 @@ import pytest
 
 from gobby.config.voice import VoiceConfig
 from gobby.servers.websocket.voice import VoiceMixin
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -153,8 +154,8 @@ class TestVoiceWarmup:
         mock_tts = MagicMock()
         mixin._whisper_stt = mock_stt
         mixin._tts_provider = mock_tts
-        mixin._voice_warmup_task = asyncio.create_task(asyncio.sleep(60))
-        background_task = asyncio.create_task(asyncio.sleep(60))
+        mixin._voice_warmup_task = asyncio.create_task(wait_forever())
+        background_task = asyncio.create_task(wait_forever())
         mixin._background_tasks.add(background_task)
         mixin._voice_enabled["conv-1"] = True
 
@@ -177,7 +178,7 @@ class TestVoiceWarmup:
     @pytest.mark.asyncio
     async def test_check_voice_idle_cancels_inflight_warmup(self) -> None:
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
-        mixin._voice_warmup_task = asyncio.create_task(asyncio.sleep(60))
+        mixin._voice_warmup_task = asyncio.create_task(wait_forever())
 
         await mixin._check_voice_idle()
 

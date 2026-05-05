@@ -11,6 +11,7 @@ from gobby.servers.websocket.chat._session import (
     _resolve_git_branch,
 )
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from tests._timing import drain_asyncio_tasks, wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -100,7 +101,7 @@ class TestCancelActiveChat:
         session = AsyncMock()
         mixin._chat_sessions["conv-xyz"] = session
 
-        task = asyncio.create_task(asyncio.sleep(10))
+        task = asyncio.create_task(wait_forever())
         mixin._active_chat_tasks["conv-xyz"] = task
 
         # Add TTS cancel mock to test that branch too
@@ -438,7 +439,7 @@ class TestCreateChatSessionInner:
             mixin._fire_lifecycle = AsyncMock()
 
             await mixin._create_chat_session_inner("conv-persona")
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
             assert mock_resolve_agent.call_args is not None
             assert mock_resolve_agent.call_args.kwargs["cli_source"] == "gemini"

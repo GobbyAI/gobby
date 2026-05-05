@@ -13,6 +13,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.features import ChatConfig
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.chat_session import ChatSession
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -80,20 +81,19 @@ class TestCanUseTool:
         input_data = {"questions": [{"question": "Which auth?", "options": [{"label": "OAuth"}]}]}
         answers = {"Which auth?": "OAuth"}
 
-        async def provide_answer_after_delay() -> None:
-            await asyncio.sleep(0.05)
-            session.provide_answer(answers)
-
-        # Start the answer provider concurrently
-        answer_task = asyncio.create_task(provide_answer_after_delay())
-
-        result = await session._can_use_tool(
-            "AskUserQuestion",
-            input_data,
-            ToolPermissionContext(),
+        answer_task = asyncio.create_task(
+            session._can_use_tool(
+                "AskUserQuestion",
+                input_data,
+                ToolPermissionContext(),
+            )
         )
-
-        await answer_task
+        await wait_for_async_condition(
+            lambda: session.has_pending_question,
+            description="pending user question",
+        )
+        session.provide_answer(answers)
+        result = await answer_task
 
         assert isinstance(result, PermissionResultAllow)
         assert result.updated_input is not None
@@ -109,13 +109,15 @@ class TestCanUseTool:
 
         input_data = {"questions": [{"question": "Pick one"}]}
 
-        async def check_and_answer() -> None:
-            await asyncio.sleep(0.05)
-            assert session.has_pending_question is True
-            session.provide_answer({"Pick one": "A"})
-
-        answer_task = asyncio.create_task(check_and_answer())
-        await session._can_use_tool("AskUserQuestion", input_data, ToolPermissionContext())
+        answer_task = asyncio.create_task(
+            session._can_use_tool("AskUserQuestion", input_data, ToolPermissionContext())
+        )
+        await wait_for_async_condition(
+            lambda: session.has_pending_question,
+            description="pending user question",
+        )
+        assert session.has_pending_question is True
+        session.provide_answer({"Pick one": "A"})
         await answer_task
 
         assert session.has_pending_question is False
@@ -157,13 +159,15 @@ class TestDefaultModelResolution:
         input_data = {"questions": [{"question": "Name?"}]}
         answers = {"Name?": "Alice"}
 
-        async def answer() -> None:
-            await asyncio.sleep(0.05)
-            session.provide_answer(answers)
-
-        task = asyncio.create_task(answer())
-        result = await session._can_use_tool("AskUserQuestion", input_data, ToolPermissionContext())
-        await task
+        task = asyncio.create_task(
+            session._can_use_tool("AskUserQuestion", input_data, ToolPermissionContext())
+        )
+        await wait_for_async_condition(
+            lambda: session.has_pending_question,
+            description="pending user question",
+        )
+        session.provide_answer(answers)
+        result = await task
 
         assert isinstance(result, PermissionResultAllow)
         assert result.updated_input["answers"] == answers
@@ -220,13 +224,12 @@ class TestToolApproval:
         config.policies = []
         session._tool_approval_config = config
 
-        async def reject_after_delay() -> None:
-            await asyncio.sleep(0.05)
-            session.provide_approval("reject")
-
-        task = asyncio.create_task(reject_after_delay())
-        result = await session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
-        await task
+        task = asyncio.create_task(
+            session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
+        )
+        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        session.provide_approval("reject")
+        result = await task
 
         assert isinstance(result, PermissionResultDeny)
         assert "Write" in result.message
@@ -236,13 +239,12 @@ class TestToolApproval:
         """_wait_for_tool_approval should return PermissionResultAllow on approval."""
         from claude_agent_sdk import PermissionResultAllow
 
-        async def approve_after_delay() -> None:
-            await asyncio.sleep(0.05)
-            session.provide_approval("approve")
-
-        task = asyncio.create_task(approve_after_delay())
-        result = await session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
-        await task
+        task = asyncio.create_task(
+            session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
+        )
+        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        session.provide_approval("approve")
+        result = await task
 
         assert isinstance(result, PermissionResultAllow)
         assert result.updated_input == {"file_path": "/tmp/test"}

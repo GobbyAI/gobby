@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +19,7 @@ from gobby.adapters.gemini_acp_client import (
     DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
     GeminiACPClient,
 )
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -607,7 +607,7 @@ class TestSend:
                 return next(handshake_iter).encode()
             except StopIteration:
                 pass
-            await asyncio.sleep(1)
+            await wait_forever()
             return b""
 
         proc.stdout.readline = AsyncMock(side_effect=_slow_readline)

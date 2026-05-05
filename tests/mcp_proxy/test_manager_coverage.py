@@ -25,6 +25,7 @@ from gobby.mcp_proxy.models import (
     MCPError,
     MCPServerConfig,
 )
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -732,7 +733,7 @@ class TestMCPClientManagerEnsureConnected:
         )
 
         async def slow_connect(cfg):
-            await asyncio.sleep(10)  # Will timeout
+            await wait_forever()
 
         with patch.object(manager, "_connect_server", side_effect=slow_connect):
             with pytest.raises(MCPError, match="Connection timeout"):
@@ -815,7 +816,7 @@ class TestMCPClientManagerDisconnect:
 
         # Add a mock reconnect task
         async def slow_reconnect():
-            await asyncio.sleep(100)
+            await wait_forever()
 
         task = asyncio.create_task(slow_reconnect())
         manager._reconnect_tasks.add(task)
@@ -840,7 +841,7 @@ class TestMCPClientManagerDisconnect:
         mock_connection = AsyncMock()
 
         async def slow_disconnect():
-            await asyncio.sleep(100)
+            await wait_forever()
 
         mock_connection.disconnect = slow_disconnect
         mock_connection.is_connected = True
@@ -901,7 +902,7 @@ class TestMCPClientManagerCallTool:
         mock_session = AsyncMock()
 
         async def slow_tool(*args):
-            await asyncio.sleep(10)
+            await wait_forever()
             return {"result": "late"}
 
         mock_session.call_tool = slow_tool
@@ -1474,19 +1475,11 @@ class TestMCPClientManagerMonitorHealth:
         )
         manager._running = True
 
-        # Start monitoring
-        task = asyncio.create_task(manager._monitor_health())
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
 
-        # Wait for a health check
-        await asyncio.sleep(0.05)
-
-        # Stop monitoring
-        manager._running = False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
 
         mock_connection.health_check.assert_called()
 
@@ -1555,17 +1548,11 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection.is_connected = False
         manager._connections["test-server"] = mock_connection
 
-        task = asyncio.create_task(manager._monitor_health())
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
 
-        # Wait for a few iterations
-        await asyncio.sleep(0.05)
-
-        manager._running = False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
 
         # Should not have called health_check since not connected
         assert (
@@ -1598,17 +1585,11 @@ class TestMCPClientManagerMonitorHealth:
         )
         manager._running = True
 
-        task = asyncio.create_task(manager._monitor_health())
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
 
-        # Let it run for a bit with exceptions
-        await asyncio.sleep(0.05)
-
-        manager._running = False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
 
         assert mock_connection.health_check.await_count >= 1
         assert manager.health["test-server"].consecutive_failures >= 1
@@ -1736,11 +1717,11 @@ class TestMCPClientManagerConcurrentConnection:
         manager = MCPClientManager(server_configs=[config])
 
         mock_session = MagicMock()
+        connect_started = asyncio.Event()
         connection_established = asyncio.Event()
 
         async def simulate_concurrent_connect():
-            # Wait for test to acquire lock first
-            await asyncio.sleep(0.01)
+            await connect_started.wait()
             # Simulate another coroutine connecting while we wait
             mock_connection = MagicMock()
             mock_connection.is_connected = True
@@ -1750,6 +1731,7 @@ class TestMCPClientManagerConcurrentConnection:
 
         async def slow_connect(cfg):
             # Wait for "concurrent" connection to complete
+            connect_started.set()
             await connection_established.wait()
             return mock_session
 

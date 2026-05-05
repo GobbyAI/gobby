@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -38,12 +39,10 @@ class TestRegisterAndNotify:
     ) -> None:
         registry.register("pe-abc123", subscribers=[])
 
-        async def _notify_soon() -> None:
-            await asyncio.sleep(0.05)
-            await registry.notify("pe-abc123", {"status": "completed"})
-
-        asyncio.create_task(_notify_soon())
-        result = await registry.wait("pe-abc123", timeout=2.0)
+        task = asyncio.create_task(registry.wait("pe-abc123", timeout=2.0))
+        await drain_asyncio_tasks()
+        await registry.notify("pe-abc123", {"status": "completed"})
+        result = await task
         assert result == {"status": "completed"}
 
     @pytest.mark.asyncio

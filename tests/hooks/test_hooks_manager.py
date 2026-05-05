@@ -12,6 +12,7 @@ from gobby.hooks.hook_manager import HookManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -788,13 +789,15 @@ class TestHookManagerBroadcasting:
     ) -> None:
         """Test that events are broadcast thread-safely when no loop is running."""
         import asyncio
-        import time
+        import threading
 
         manager = hook_manager_with_mocks
 
         mock_broadcaster = MagicMock()
+        broadcasted = threading.Event()
 
         async def mock_broadcast(*args, **kwargs):
+            broadcasted.set()
             return None
 
         mock_broadcaster.broadcast_event = MagicMock(side_effect=mock_broadcast)
@@ -816,8 +819,7 @@ class TestHookManagerBroadcasting:
         try:
             # Call handle outside of event loop
             manager.handle(sample_session_start_event)
-            # Give the loop time to process the scheduled coroutine
-            time.sleep(0.1)
+            assert broadcasted.wait(timeout=1)
         finally:
             manager._loop = None
             loop.call_soon_threadsafe(loop.stop)
@@ -1388,7 +1390,10 @@ class TestHookManagerWebhookDispatch:
                 manager._dispatch_webhooks_async(event)
                 assert dispatched.wait(timeout=1), "Async webhook dispatch never ran"
                 assert mock_dispatch_single.await_count == 1
-                asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=1)
+                async def no_op() -> None:
+                    return None
+
+                asyncio.run_coroutine_threadsafe(no_op(), loop).result(timeout=1)
         finally:
             loop.call_soon_threadsafe(loop.stop)
             loop_thread.join(timeout=1)
@@ -1435,7 +1440,10 @@ class TestHookManagerWebhookDispatch:
                 ),
             ):
                 manager._dispatch_webhooks_async(event)
-                await asyncio.sleep(0.01)
+                await wait_for_async_condition(
+                    lambda: manager._webhook_dispatcher._dispatch_single.await_count == 1,
+                    description="webhook dispatch",
+                )
                 assert manager._webhook_dispatcher._dispatch_single.await_count == 1
 
         asyncio.run(run_dispatch())

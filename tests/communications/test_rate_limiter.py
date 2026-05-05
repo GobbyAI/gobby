@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 import pytest
@@ -31,8 +30,7 @@ async def test_rate_limiter_refill():
     assert limiter.check("chan-1") is True
     assert limiter.check("chan-1") is False
 
-    # Wait for refill (0.1s should give 1 token)
-    await asyncio.sleep(0.15)
+    limiter._buckets["chan-1"].last_refill -= 0.15
     assert limiter.check("chan-1") is True
 
 

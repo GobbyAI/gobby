@@ -22,6 +22,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -216,7 +217,7 @@ class TestHandleAllLifecycles:
 
             # Make the coroutine hang by patching _evaluate_rules
             async def slow_coroutine(event):
-                await asyncio.sleep(10)
+                await wait_forever()
                 return HookResponse(decision="allow")
 
             async def cancel_pending_tasks() -> None:

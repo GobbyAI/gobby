@@ -13,13 +13,15 @@ import os
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import httpx
 import pytest
 
+from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
+    daemon_health_unavailable,
+    prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
 )
@@ -47,12 +49,9 @@ class TestCrashRecovery:
         gobby_home = config_path.parent
         log_dir = gobby_home / "logs"
 
-        env = os.environ.copy()
+        env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(gobby_home)
-        env["ANTHROPIC_API_KEY"] = ""
-        env["OPENAI_API_KEY"] = ""
-        env["GEMINI_API_KEY"] = ""
 
         # Start daemon
         with (
@@ -80,7 +79,7 @@ class TestCrashRecovery:
 
             # Forcefully kill the daemon (simulating crash)
             os.kill(process.pid, signal.SIGKILL)
-            time.sleep(1.0)
+            process.wait(timeout=25)
 
             # Verify database file still exists
             db_path = gobby_home / "gobby-hub.db"
@@ -112,12 +111,9 @@ class TestCrashRecovery:
         gobby_home = config_path.parent
         log_dir = gobby_home / "logs"
 
-        env = os.environ.copy()
+        env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(gobby_home)
-        env["ANTHROPIC_API_KEY"] = ""
-        env["OPENAI_API_KEY"] = ""
-        env["GEMINI_API_KEY"] = ""
 
         # Start first daemon
         with (
@@ -145,7 +141,7 @@ class TestCrashRecovery:
 
             # Forcefully kill (crash)
             os.kill(process1.pid, signal.SIGKILL)
-            time.sleep(2.0)
+            process1.wait(timeout=25)
 
             # Start second daemon (recovery)
             with (
@@ -226,12 +222,9 @@ class TestStalePIDFile:
         pid_file = gobby_home / "gobby.pid"
         pid_file.write_text("99999999")
 
-        env = os.environ.copy()
+        env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(gobby_home)
-        env["ANTHROPIC_API_KEY"] = ""
-        env["OPENAI_API_KEY"] = ""
-        env["GEMINI_API_KEY"] = ""
 
         # Start daemon (it should handle the stale PID)
         with (
@@ -275,12 +268,9 @@ class TestClientReconnection:
         gobby_home = config_path.parent
         log_dir = gobby_home / "logs"
 
-        env = os.environ.copy()
+        env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(gobby_home)
-        env["ANTHROPIC_API_KEY"] = ""
-        env["OPENAI_API_KEY"] = ""
-        env["GEMINI_API_KEY"] = ""
 
         # Start first daemon
         with (
@@ -308,7 +298,11 @@ class TestClientReconnection:
             # Stop daemon gracefully
             os.kill(process1.pid, signal.SIGTERM)
             process1.wait(timeout=25)
-            time.sleep(2.0)
+            wait_for_condition(
+                lambda: daemon_health_unavailable(http_port),
+                timeout=5.0,
+                description="first daemon shutdown",
+            )
 
             # Start second daemon
             with (
@@ -354,12 +348,9 @@ class TestTaskStatePersistence:
         log_dir = gobby_home / "logs"
         db_path = gobby_home / "gobby-hub.db"
 
-        env = os.environ.copy()
+        env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(gobby_home)
-        env["ANTHROPIC_API_KEY"] = ""
-        env["OPENAI_API_KEY"] = ""
-        env["GEMINI_API_KEY"] = ""
 
         # Start first daemon
         with (
@@ -405,7 +396,11 @@ class TestTaskStatePersistence:
             # Stop daemon gracefully
             os.kill(process1.pid, signal.SIGTERM)
             process1.wait(timeout=25)
-            time.sleep(2.0)
+            wait_for_condition(
+                lambda: daemon_health_unavailable(http_port),
+                timeout=5.0,
+                description="first daemon shutdown",
+            )
 
             # Start second daemon
             with (
@@ -456,12 +451,9 @@ class TestTaskStatePersistence:
         log_dir = gobby_home / "logs"
         db_path = gobby_home / "gobby-hub.db"
 
-        env = os.environ.copy()
+        env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(gobby_home)
-        env["ANTHROPIC_API_KEY"] = ""
-        env["OPENAI_API_KEY"] = ""
-        env["GEMINI_API_KEY"] = ""
 
         # Start daemon
         with (
@@ -504,7 +496,7 @@ class TestTaskStatePersistence:
 
             # Crash the daemon
             os.kill(process1.pid, signal.SIGKILL)
-            time.sleep(2.0)
+            process1.wait(timeout=25)
 
             # Verify task survives crash (check database directly)
             conn = sqlite3.connect(str(db_path))

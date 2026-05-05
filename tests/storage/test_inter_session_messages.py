@@ -557,18 +557,14 @@ class TestInterSessionMessageManagerListMessages:
 
         mgr = InterSessionMessageManager(temp_db)
 
-        import time
-
         # alpha → beta (inbox for beta, sent for alpha)
         m1 = mgr.create_message(from_session=s_alpha.id, to_session=s_beta.id, content="msg-1")
-        time.sleep(0.01)
         m2 = mgr.create_message(
             from_session=s_alpha.id,
             to_session=s_beta.id,
             content="msg-2",
             message_type="command_result",
         )
-        time.sleep(0.01)
         # beta → alpha (inbox for alpha, sent for beta)
         m3 = mgr.create_message(from_session=s_beta.id, to_session=s_alpha.id, content="msg-3")
 

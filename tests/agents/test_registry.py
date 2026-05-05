@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -649,8 +648,8 @@ class TestRunningAgentRegistryCleanup:
         for agent in agents:
             registry.add(agent)
 
-        # Wait a tiny bit so agents have some age
-        time.sleep(0.01)
+        for agent in agents:
+            agent.started_at = datetime.now(UTC) - timedelta(seconds=1)
 
         # Use tiny max_age that all agents exceed
         removed = registry.cleanup_stale(max_age_seconds=0.001)

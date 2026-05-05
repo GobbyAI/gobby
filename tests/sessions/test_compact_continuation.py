@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -16,8 +16,18 @@ from gobby.sessions.compact_continuation import (
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.workflows.state_manager import SessionVariableManager
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
+
+
+class _FakeTmux:
+    def __init__(self) -> None:
+        self.sent_keys: list[tuple[str, str, bool]] = []
+
+    async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+        self.sent_keys.append((pane_id, text, literal))
+        return True
 
 
 def _make_db(tmp_path) -> LocalDatabase:
@@ -30,11 +40,11 @@ def _make_db(tmp_path) -> LocalDatabase:
 async def test_fallback_consumes_pending_marker_and_sends_prompt(tmp_path) -> None:
     db = _make_db(tmp_path)
     try:
-        session = MagicMock()
-        session.id = "sess-1"
-        session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
-        tmux = MagicMock()
-        tmux.send_keys = AsyncMock(return_value=True)
+        session = SimpleNamespace(
+            id="sess-1",
+            terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+        )
+        tmux = _FakeTmux()
 
         assert mark_compact_self_continuation_pending(db, "sess-1")
         with patch(
@@ -48,14 +58,9 @@ async def test_fallback_consumes_pending_marker_and_sends_prompt(tmp_path) -> No
                 delay_seconds=0,
             )
             assert scheduled is True
-            for _ in range(3):
-                await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
-        tmux.send_keys.assert_awaited_once_with(
-            "%12",
-            f"{COMPACT_SELF_CONTINUE_PROMPT}\n",
-            literal=True,
-        )
+        assert tmux.sent_keys == [("%12", f"{COMPACT_SELF_CONTINUE_PROMPT}\n", True)]
         variables = SessionVariableManager(db).get_variables("sess-1")
         assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
     finally:
@@ -66,11 +71,11 @@ async def test_fallback_consumes_pending_marker_and_sends_prompt(tmp_path) -> No
 async def test_fallback_noops_when_marker_was_already_consumed(tmp_path) -> None:
     db = _make_db(tmp_path)
     try:
-        session = MagicMock()
-        session.id = "sess-1"
-        session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
-        tmux = MagicMock()
-        tmux.send_keys = AsyncMock(return_value=True)
+        session = SimpleNamespace(
+            id="sess-1",
+            terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+        )
+        tmux = _FakeTmux()
 
         with patch(
             "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
@@ -83,9 +88,10 @@ async def test_fallback_noops_when_marker_was_already_consumed(tmp_path) -> None
                 delay_seconds=0,
             )
             assert scheduled is True
-            for _ in range(3):
-                await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
-        tmux.send_keys.assert_not_awaited()
+        assert tmux.sent_keys == []
+        variables = SessionVariableManager(db).get_variables("sess-1")
+        assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
     finally:
         db.close()

@@ -8,6 +8,7 @@ import pytest
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPServerConfig
+from tests._timing import wait_forever
 
 
 class BlockingConnection:
@@ -22,7 +23,7 @@ class BlockingConnection:
     async def disconnect(self) -> None:
         self.disconnect_started.set()
         try:
-            await asyncio.sleep(100)
+            await wait_forever()
         except asyncio.CancelledError:
             self.disconnect_cancelled = True
             raise
@@ -47,7 +48,7 @@ async def test_disconnect_all_cleans_state_when_cancelled_during_disconnect() ->
     manager._lazy_connector.mark_connected("slow-server")
 
     async def slow_reconnect() -> None:
-        await asyncio.sleep(100)
+        await wait_forever()
 
     reconnect_task = asyncio.create_task(slow_reconnect())
     manager._reconnect_tasks.add(reconnect_task)

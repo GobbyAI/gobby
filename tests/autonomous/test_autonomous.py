@@ -7,9 +7,8 @@ Tests cover:
 """
 
 import threading
-import time
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -505,11 +504,13 @@ class TestProgressTrackerSummary:
         """Test that summary timestamps are accurate."""
         # Record low-value first
         progress_tracker.record_event(session_id, ProgressType.FILE_READ)
-        time.sleep(0.01)  # Small delay to ensure different timestamps
 
         # Record high-value
         progress_tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
-        time.sleep(0.01)
+        progress_tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+        )
 
         # Record another low-value
         progress_tracker.record_event(session_id, ProgressType.FILE_READ)
@@ -584,9 +585,10 @@ class TestProgressTrackerStagnation:
 
         # Record a high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
-
-        # Wait longer than threshold
-        time.sleep(0.02)
+        tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+        )
 
         # Record low-value events
         tracker.record_event(session_id, ProgressType.FILE_READ)
@@ -1197,9 +1199,10 @@ class TestStuckDetectorProgressStagnation:
 
         # Record high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
-
-        # Wait for stagnation threshold
-        time.sleep(0.02)
+        tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+        )
 
         # Record low-value event to update last_event_at
         tracker.record_event(session_id, ProgressType.FILE_READ)

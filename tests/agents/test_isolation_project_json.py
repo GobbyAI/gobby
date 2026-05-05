@@ -95,7 +95,8 @@ async def test_clone_and_parent_can_index_same_relative_file_without_collision(
         trigger._schedule_file("src/shared.py", "parent-proj", str(parent))
         trigger._schedule_file("src/shared.py", "parent-proj", str(clone))
 
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key(str(parent)), "parent-proj")
+        await trigger._flush(trigger._root_key(str(clone)), "parent-proj")
 
     assert mock_exec.call_count == 2
     cwds = {call.kwargs["cwd"] for call in mock_exec.call_args_list}

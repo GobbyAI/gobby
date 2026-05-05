@@ -5,7 +5,6 @@ Validates the full cron lifecycle: scheduling, execution, backoff, cleanup.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -15,6 +14,7 @@ from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronScheduler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
+from tests._timing import wait_for_async_condition
 
 if TYPE_CHECKING:
     from gobby.config.cron import CronConfig
@@ -82,8 +82,10 @@ async def test_shell_job_run_now(
     assert run is not None
     assert run.status == "pending"  # Initially pending, runs async
 
-    # Wait for completion
-    await asyncio.sleep(0.5)
+    await wait_for_async_condition(
+        lambda: (cron_storage.get_run(run.id) or run).status == "completed",
+        description="shell cron completion",
+    )
 
     # Fetch fresh run
     final = cron_storage.get_run(run.id)
@@ -150,9 +152,7 @@ async def test_handler_dispatch_via_run_now(
     run = await scheduler.run_now(job.id)
     assert run is not None
 
-    import asyncio
-
-    await asyncio.sleep(0.5)
+    await wait_for_async_condition(lambda: call_log, description="handler cron dispatch")
 
     assert call_log == ["handler-test"]
     final = cron_storage.get_run(run.id)
@@ -183,9 +183,10 @@ async def test_consecutive_failure_backoff(
     run = await scheduler.run_now(job.id)
     assert run is not None
 
-    import asyncio
-
-    await asyncio.sleep(0.5)
+    await wait_for_async_condition(
+        lambda: (cron_storage.get_job(job.id) or job).consecutive_failures == 1,
+        description="first failed cron run",
+    )
 
     # Check failure counter incremented
     updated_job = cron_storage.get_job(job.id)
@@ -196,7 +197,10 @@ async def test_consecutive_failure_backoff(
     # Run again
     run2 = await scheduler.run_now(job.id)
     assert run2 is not None
-    await asyncio.sleep(0.5)
+    await wait_for_async_condition(
+        lambda: (cron_storage.get_job(job.id) or job).consecutive_failures == 2,
+        description="second failed cron run",
+    )
 
     updated_job2 = cron_storage.get_job(job.id)
     assert updated_job2 is not None

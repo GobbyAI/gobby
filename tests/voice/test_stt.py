@@ -13,6 +13,7 @@ import pytest
 
 from gobby.config.voice import VoiceConfig
 from gobby.voice.stt import WhisperSTT
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -504,21 +505,23 @@ class TestEnsureModel:
         mock_whisper_model = MagicMock()
 
         original_to_thread = asyncio.to_thread
+        load_started = asyncio.Event()
+        release_load = asyncio.Event()
 
         async def slow_to_thread(fn, *args, **kwargs):
             nonlocal load_count
             load_count += 1
-            # Simulate slow model loading
-            await asyncio.sleep(0.01)
+            load_started.set()
+            await release_load.wait()
             return await original_to_thread(fn, *args, **kwargs)
 
         with patch("gobby.voice.stt.asyncio.to_thread", side_effect=slow_to_thread):
             with patch("faster_whisper.WhisperModel", return_value=mock_whisper_model):
-                # Launch two concurrent _ensure_model calls
-                results = await asyncio.gather(
-                    stt._ensure_model(),
-                    stt._ensure_model(),
-                )
+                first = asyncio.create_task(stt._ensure_model())
+                await wait_for_async_condition(load_started.is_set, description="model load start")
+                second = asyncio.create_task(stt._ensure_model())
+                release_load.set()
+                results = await asyncio.gather(first, second)
 
                 # Both should return the same model instance
                 assert results[0] is mock_whisper_model

@@ -6,7 +6,6 @@ using mock-based TestClient approach.
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,6 +20,7 @@ from gobby.servers.routes.sessions import (
     _get_session_stats,
     create_sessions_router,
 )
+from tests._timing import wait_for_condition
 
 pytestmark = pytest.mark.unit
 
@@ -144,9 +144,10 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
             project_id=sample_project["id"],
         )
 
-        deadline = time.monotonic() + 1
-        while ws_server.broadcast_session_event.await_count == 0 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        wait_for_condition(
+            lambda: ws_server.broadcast_session_event.await_count > 0,
+            description="session broadcast",
+        )
 
         ws_server.broadcast_session_event.assert_awaited_once_with(
             "session_created",

@@ -44,7 +44,7 @@ async def test_single_file_triggers_gcode(trigger: CodeIndexTrigger, tmp_path: P
         patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
     ):
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key("/repo"), "proj-1")
 
         mock_exec.assert_called_once()
         call_args = mock_exec.call_args
@@ -71,7 +71,7 @@ async def test_multiple_files_batched(trigger: CodeIndexTrigger, tmp_path: Path)
         trigger._schedule_file("/src/b.py", "proj-1", "/repo")
         trigger._schedule_file("/src/c.py", "proj-1", "/repo")
 
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key("/repo"), "proj-1")
 
         mock_exec.assert_called_once()
         call_args = mock_exec.call_args[0]
@@ -93,7 +93,7 @@ async def test_same_file_deduped(trigger: CodeIndexTrigger, tmp_path: Path) -> N
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
 
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key("/repo"), "proj-1")
 
         mock_exec.assert_called_once()
         # Only one instance of the file in args
@@ -115,16 +115,17 @@ async def test_debounce_timer_resets(trigger: CodeIndexTrigger, tmp_path: Path) 
     ):
         trigger._schedule_file("/src/a.py", "proj-1", "/repo")
 
-        # Wait less than debounce time, then add another file
-        await asyncio.sleep(0.03)
-        mock_exec.assert_not_called()
+        first_timer = trigger._flush_timers_by_root[trigger._root_key("/repo")]
 
         trigger._schedule_file("/src/b.py", "proj-1", "/repo")
 
-        # Wait for debounce after second edit
-        await asyncio.sleep(0.1)
+        second_timer = trigger._flush_timers_by_root[trigger._root_key("/repo")]
+        assert first_timer.cancelled()
+        assert second_timer is not first_timer
+        mock_exec.assert_not_called()
 
         # Should have been called once with both files
+        await trigger._flush(trigger._root_key("/repo"), "proj-1")
         mock_exec.assert_called_once()
         call_args = mock_exec.call_args[0]
         assert "/src/a.py" in call_args
@@ -146,7 +147,8 @@ async def test_different_projects_independent(trigger: CodeIndexTrigger, tmp_pat
         trigger._schedule_file("/repo1/a.py", "proj-1", "/repo1")
         trigger._schedule_file("/repo2/b.py", "proj-2", "/repo2")
 
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key("/repo1"), "proj-1")
+        await trigger._flush(trigger._root_key("/repo2"), "proj-2")
 
         assert mock_exec.call_count == 2
 
@@ -169,7 +171,8 @@ async def test_two_isolated_roots_same_parent_dont_collide(
         trigger._schedule_file("src/shared.py", "parent-proj", str(root_a))
         trigger._schedule_file("src/shared.py", "parent-proj", str(root_b))
 
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key(str(root_a)), "parent-proj")
+        await trigger._flush(trigger._root_key(str(root_b)), "parent-proj")
 
         assert mock_exec.call_count == 2
         cwds = {call.kwargs["cwd"] for call in mock_exec.call_args_list}
@@ -194,7 +197,7 @@ async def test_pending_paths_resolve_under_root_key_cwd(
     ):
         trigger._schedule_file("src/pkg.py", "proj-1", str(root))
 
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key(str(root)), "proj-1")
 
         mock_exec.assert_called_once()
         call_args = mock_exec.call_args
@@ -217,7 +220,7 @@ async def test_gcode_failure_does_not_propagate(trigger: CodeIndexTrigger, tmp_p
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
 
         # Should not raise
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key("/repo"), "proj-1")
 
 
 # ── No gcode binary ─────────────────────────────────────────────────
@@ -233,7 +236,7 @@ async def test_no_gcode_warns_and_skips(trigger: CodeIndexTrigger, tmp_path: Pat
     ):
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
 
-        await asyncio.sleep(0.1)
+        await trigger._flush(trigger._root_key("/repo"), "proj-1")
 
         mock_exec.assert_not_called()
 

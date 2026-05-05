@@ -1,6 +1,5 @@
 """Tests for async MCP call dispatch (hooks/mcp_dispatch.py)."""
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
@@ -9,6 +8,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.mcp_dispatch import dispatch_mcp_calls
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -115,8 +115,10 @@ class TestBackgroundDispatch:
             logging.getLogger("test"),
         )
 
-        # Background task needs a tick to execute
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: call_tool.called,
+            description="background MCP call",
+        )
         call_tool.assert_called_once()
 
     @pytest.mark.asyncio
@@ -131,7 +133,10 @@ class TestBackgroundDispatch:
             logging.getLogger("test"),
         )
 
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: call_tool.called,
+            description="background MCP error",
+        )
         call_tool.assert_called_once()
 
 
@@ -167,9 +172,6 @@ class TestBlockingDispatch:
 
     @pytest.mark.asyncio
     async def test_blocking_timeout_logged(self) -> None:
-        async def slow_call(s: str, t: str, args: dict) -> None:
-            await asyncio.sleep(60)
-
         # We can't easily test the 30s timeout in a unit test,
         # so just verify the blocking path works without errors
         call_tool = AsyncMock()
@@ -195,7 +197,10 @@ class TestMultipleCalls:
         ]
 
         await dispatch_mcp_calls(calls, _make_event(), call_tool, logging.getLogger("test"))
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: call_tool.call_count == 2,
+            description="all MCP calls",
+        )
 
         assert call_tool.call_count == 2
 

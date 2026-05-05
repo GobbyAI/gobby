@@ -15,6 +15,7 @@ from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -176,7 +177,7 @@ class TestExpansionRuns:
                     "start_expansion_run",
                     {"task_id": parent_task, "auto_apply": False},
                 )
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
         assert result["success"] is True
         assert result["status"] == "running"
@@ -316,7 +317,7 @@ class TestExpansionRuns:
                     "resume_expansion_run",
                     {"run_id": run.id},
                 )
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
         assert result["success"] is True
         assert result["status"] == "running"

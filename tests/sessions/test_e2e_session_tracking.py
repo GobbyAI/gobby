@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator
@@ -11,6 +10,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.database import LocalDatabase
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -124,20 +124,12 @@ async def test_full_lifecycle(env):
     with open(transcript_file, "w") as f:
         f.write(msg1 + "\n")
 
-    # 4. Wait for Processor to Poll - use polling instead of fixed sleep
-    async def wait_for_message_processing(timeout: float = 2.0, interval: float = 0.05):
-        """Poll until the message is processed or timeout."""
-        elapsed = 0.0
-        while elapsed < timeout:
-            msgs = db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,))
-            if len(msgs) >= 1:
-                return True
-            await asyncio.sleep(interval)
-            elapsed += interval
-        return False
-
-    message_processed = await wait_for_message_processing()
-    assert message_processed, "Message was not processed within timeout"
+    await wait_for_async_condition(
+        lambda: len(db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,)))
+        >= 1,
+        timeout=2.0,
+        description="stored session message",
+    )
 
     # 5. Verify DB Storage
     msgs = db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,))

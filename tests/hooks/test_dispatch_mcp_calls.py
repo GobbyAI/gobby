@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -172,8 +173,10 @@ class TestDispatchMcpCallsBackgroundMode:
         # We're in an async context, so get_running_loop will succeed
         stub._dispatch_mcp_calls(calls, event)
 
-        # Give the task a chance to execute
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: proxy.call_tool.called,
+            description="background MCP call",
+        )
 
         proxy.call_tool.assert_called_once()
         call_args = proxy.call_tool.call_args[0]
@@ -202,7 +205,10 @@ class TestDispatchMcpCallsBackgroundMode:
 
         # Should not raise
         stub._dispatch_mcp_calls(calls, event)
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: stub.logger.error.called,
+            description="background MCP error log",
+        )
 
         # Error was logged
         stub.logger.error.assert_called()
@@ -319,7 +325,10 @@ class TestDispatchMcpCallsProxyNone:
         ]
 
         stub._dispatch_mcp_calls(calls, event)
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: stub.logger.warning.called,
+            description="missing proxy warning",
+        )
 
         stub.logger.warning.assert_called()
 

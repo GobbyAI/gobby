@@ -28,6 +28,7 @@ from gobby.adapters.codex_impl.types import (
 )
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -406,7 +407,7 @@ class TestCodexAppServerClientStop:
 
         # Create an actual asyncio task that we can cancel
         async def long_running():
-            await asyncio.sleep(100)
+            await wait_forever()
 
         mock_task = asyncio.create_task(long_running())
         client._reader_task = mock_task

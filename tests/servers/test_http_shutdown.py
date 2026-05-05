@@ -7,6 +7,7 @@ import pytest
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
+from tests._timing import drain_asyncio_tasks, wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -121,7 +122,7 @@ class TestProcessShutdown:
         server = HTTPServer(services=services, port=8000, test_mode=True)
 
         async def quick_task() -> None:
-            await asyncio.sleep(0.1)
+            await drain_asyncio_tasks()
 
         task = asyncio.create_task(quick_task())
         server._background_tasks.add(task)
@@ -143,7 +144,7 @@ class TestProcessShutdown:
         server = HTTPServer(services=services, port=8000, test_mode=True)
 
         async def slow_task() -> None:
-            await asyncio.sleep(100)
+            await wait_forever()
 
         task = asyncio.create_task(slow_task())
         server._background_tasks.add(task)
@@ -154,7 +155,8 @@ class TestProcessShutdown:
             start = time.perf_counter()
             max_wait = 0.1
             while len(server._background_tasks) > 0 and (time.perf_counter() - start) < max_wait:
-                await asyncio.sleep(0.01)
+                await drain_asyncio_tasks()
+                break
 
         with patch.object(server, "_process_shutdown", fast_shutdown):
             await server._process_shutdown()

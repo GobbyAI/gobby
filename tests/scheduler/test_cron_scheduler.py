@@ -14,6 +14,7 @@ from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronScheduler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronRun
+from tests._timing import drain_asyncio_tasks, wait_for_async_condition
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
@@ -79,7 +80,14 @@ async def test_scheduler_advances_dispatcher_next_run_at(
     )
 
     await scheduler._check_due_jobs()
-    await asyncio.sleep(0.1)
+    await wait_for_async_condition(
+        lambda: (
+            (updated := cron_storage.get_job(job.id)) is not None
+            and updated.next_run_at is not None
+            and updated.next_run_at != job.next_run_at
+        ),
+        description="dispatcher next_run_at update",
+    )
 
     updated = cron_storage.get_job(job.id)
     assert updated is not None
@@ -147,8 +155,10 @@ async def test_check_due_jobs_dispatches(
     cron_storage.update_job(job.id, next_run_at=past)
 
     await scheduler._check_due_jobs()
-    # Give the background task a moment to complete
-    await asyncio.sleep(0.1)
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        description="cron execution dispatch",
+    )
 
     mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
 
@@ -187,7 +197,7 @@ async def test_respects_max_concurrent(
     cron_storage.update_job(job2.id, next_run_at=past)
 
     await scheduler._check_due_jobs()
-    await asyncio.sleep(0.1)
+    await drain_asyncio_tasks()
 
     # Should not have dispatched because max concurrent reached
     mock_executor.execute.assert_not_called()  # type: ignore[attr-defined]
@@ -221,7 +231,7 @@ async def test_backoff_on_consecutive_failures(
     )
 
     await scheduler._check_due_jobs()
-    await asyncio.sleep(0.1)
+    await drain_asyncio_tasks()
 
     # Should be skipped due to backoff
     mock_executor.execute.assert_not_called()  # type: ignore[attr-defined]
@@ -259,7 +269,10 @@ async def test_run_now(
     assert run is not None
     assert run.cron_job_id == job.id
 
-    await asyncio.sleep(0.1)
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        description="manual cron execution",
+    )
     mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
 
 

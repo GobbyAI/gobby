@@ -9,6 +9,7 @@ import pytest
 
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -75,7 +76,7 @@ class TestWebChatSessionRegistry:
 
         release.set()
         await active_task
-        await asyncio.sleep(0)
+        await drain_asyncio_tasks()
         queued_task = registry._queued_compaction_tasks.get("conv-1")
         assert queued_task is not None
         await queued_task

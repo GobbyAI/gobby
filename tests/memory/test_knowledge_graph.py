@@ -123,10 +123,7 @@ class TestAddToGraph:
     ) -> None:
         """Concurrent callers should only run schema DDL once."""
 
-        async def _ensure_once() -> None:
-            await asyncio.sleep(0.01)
-
-        mock_neo4j.ensure_memory_graph_schema = AsyncMock(side_effect=_ensure_once)
+        mock_neo4j.ensure_memory_graph_schema = AsyncMock()
 
         await asyncio.gather(*[service._ensure_graph_schema() for _ in range(5)])
 

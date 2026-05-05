@@ -104,11 +104,12 @@ def prepare_daemon_env(
     env["PYTHONPATH"] = f"{src_dir}:{current_pythonpath}" if current_pythonpath else str(src_dir)
 
     # Remove test-process-specific path overrides so the daemon uses its own
-    # isolated config/DB. GOBBY_TEST_PROTECT is intentionally preserved here:
-    # it is the safety guard that prevents stop_daemon / kill_all_gobby_daemons
-    # / stop_daemon_process / get_daemon_pid in the spawned daemon (and any
+    # isolated config/DB. GOBBY_TEST_PROTECT is forced here: it is the safety
+    # guard that prevents stop_daemon / kill_all_gobby_daemons /
+    # stop_daemon_process / get_daemon_pid in the spawned daemon (and any
     # subprocesses it forks: agents, hooks, helper CLIs) from reaching the
     # user's real daemon via system-wide psutil discovery.
+    env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
 
@@ -190,6 +191,15 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
             time.sleep(0.5)
     return False
+
+
+def daemon_health_unavailable(port: int) -> bool:
+    """Return true when the daemon health endpoint is no longer reachable."""
+    try:
+        response = httpx.get(f"http://localhost:{port}/api/admin/status", timeout=0.2)
+        return response.status_code != 200
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
+        return True
 
 
 def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:

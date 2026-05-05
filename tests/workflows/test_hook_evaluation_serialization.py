@@ -16,6 +16,7 @@ from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEven
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.integration
 
@@ -107,7 +108,7 @@ async def test_same_session_evaluations_are_serialized(tmp_path) -> None:
             )
         )
     )
-    await asyncio.sleep(0.05)
+    await drain_asyncio_tasks(cycles=2)
 
     assert entered == ["first"]
 
@@ -199,7 +200,7 @@ async def test_session_end_cleanup_waits_for_queued_same_session_event(tmp_path)
             _event(HookEventType.BEFORE_TOOL, data={"name": "queued"}, cwd=str(tmp_path))
         )
     )
-    await asyncio.sleep(0.05)
+    await drain_asyncio_tasks(cycles=2)
 
     assert not queued_entered.is_set()
     assert "platform-session" in handler._eval_locks
@@ -302,7 +303,7 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
     await asyncio.wait_for(skill_eval_entered.wait(), timeout=1)
 
     gated_task = asyncio.create_task(handler._evaluate_rules(gated_tool_event))
-    await asyncio.sleep(0.05)
+    await drain_asyncio_tasks(cycles=2)
     assert not gated_task.done()
 
     release_skill_eval.set()

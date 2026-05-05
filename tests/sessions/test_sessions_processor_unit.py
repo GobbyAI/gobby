@@ -5,7 +5,6 @@ Tests edge cases, error handling, and branch coverage not covered
 by integration tests.
 """
 
-import asyncio
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +14,7 @@ import pytest
 from gobby.hooks.events import HookEventType, SessionSource
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedMessage
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -182,8 +182,10 @@ class TestProcessingLoop:
 
         await processor.start()
 
-        # Give the loop time to execute and encounter the error
-        await asyncio.sleep(0.15)
+        await wait_for_async_condition(
+            lambda: "Error in SessionMessageProcessor loop" in caplog.text,
+            description="processor loop error log",
+        )
 
         assert "Error in SessionMessageProcessor loop" in caplog.text
         assert processor._running  # Loop should continue

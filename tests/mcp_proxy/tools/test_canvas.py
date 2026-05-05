@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.canvas import (
     resolve_interaction,
     sweep_expired,
 )
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -89,9 +90,11 @@ async def test_render_surface_success(registry, broadcaster):
 async def test_render_surface_blocking(registry):
     tool = registry.get_tool("render_surface")
 
-    # Start a mock interaction in the background that fires after a small delay
     async def mock_interaction():
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: get_canvas("canvas-block") is not None,
+            description="blocking canvas registration",
+        )
         await resolve_interaction("canvas-block", {"type": "click"})
 
     task = asyncio.create_task(mock_interaction())

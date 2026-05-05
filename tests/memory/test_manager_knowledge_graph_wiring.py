@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.services.knowledge_graph import KnowledgeGraphResult, KnowledgeGraphStatus
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -377,7 +377,10 @@ class TestGraphBackgroundTask:
 
         # Should not raise
         await manager.create_memory(content="test")
-        await asyncio.sleep(0.1)
+        await wait_for_async_condition(
+            lambda: len(manager._background_tasks) == 0,
+            description="graph background task cleanup",
+        )
 
 
 class TestNoGraphServiceReference:

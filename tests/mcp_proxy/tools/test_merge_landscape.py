@@ -9,7 +9,6 @@ Each tool gets a happy-path test plus at least one failure mode.
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 from unittest.mock import MagicMock
 
@@ -18,6 +17,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 from gobby.storage.worktrees import Worktree
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -453,7 +453,7 @@ async def test_verify_in_worktree_timeout(tmp_path, monkeypatch) -> None:
         returncode: int | None = None
 
         async def communicate(self):
-            await asyncio.sleep(10)
+            await wait_forever()
             return b"", b""
 
         def kill(self) -> None:

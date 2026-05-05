@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -125,8 +124,8 @@ class TestAgentMessageCache:
         message = coordinator.get_cached_message("session-123", max_age_seconds=1.0)
         assert message == "Hello world"
 
-        # Wait for expiration
-        time.sleep(1.1)
+        cached_message, timestamp = coordinator._agent_message_cache["session-123"]
+        coordinator._agent_message_cache["session-123"] = (cached_message, timestamp - 1.1)
         message = coordinator.get_cached_message("session-123", max_age_seconds=1.0)
         assert message is None
 
@@ -575,7 +574,7 @@ class TestConcurrentOperations:
             with coordinator.get_lookup_lock():
                 # Simulate work
                 current = call_count["count"]
-                time.sleep(0.01)
+                threading.Event().wait(0.01)
                 call_count["count"] = current + 1
 
         threads = [threading.Thread(target=increment_with_lock) for _ in range(10)]

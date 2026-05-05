@@ -12,6 +12,7 @@ import pytest
 
 from gobby.servers.pending_interactions import PendingInteractionManager
 from gobby.storage.database import LocalDatabase
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -96,14 +97,11 @@ class TestResolve:
     async def test_resolve_wakes_waiter(self, manager: PendingInteractionManager) -> None:
         iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
 
-        async def resolve_after_delay() -> None:
-            await asyncio.sleep(0.05)
-            await manager.resolve(iid, "approve")
-
-        task = asyncio.create_task(resolve_after_delay())
-        result = await manager.wait(iid)
+        task = asyncio.create_task(manager.wait(iid))
+        await drain_asyncio_tasks()
+        await manager.resolve(iid, "approve")
+        result = await task
         assert result["decision"] == "approve"
-        await task
 
     @pytest.mark.asyncio
     async def test_resolve_expired_returns_false(self, manager: PendingInteractionManager) -> None:
@@ -130,14 +128,11 @@ class TestExpire:
     ) -> None:
         iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
 
-        async def expire_after_delay() -> None:
-            await asyncio.sleep(0.05)
-            await manager.expire(iid)
-
-        task = asyncio.create_task(expire_after_delay())
-        result = await manager.wait(iid)
+        task = asyncio.create_task(manager.wait(iid))
+        await drain_asyncio_tasks()
+        await manager.expire(iid)
+        result = await task
         assert result["decision"] == "timeout"
-        await task
 
 
 class TestSupersede:

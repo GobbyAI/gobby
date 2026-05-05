@@ -5,7 +5,6 @@ computes in-memory stats, and (optionally) writes stats to the sessions table
 via session_manager.  It does NOT write to a session_messages table.
 """
 
-import asyncio
 import json
 from collections.abc import AsyncGenerator
 
@@ -13,6 +12,7 @@ import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.database import LocalDatabase
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -57,8 +57,10 @@ async def test_processor_lifecycle(processor, transcript_file):
     with open(transcript_file, "w") as f:
         f.write(msg1 + "\n")
 
-    # 4. Wait for poll (interval is 0.1s in fixture)
-    await asyncio.sleep(0.3)
+    await wait_for_async_condition(
+        lambda: processor._stats.get("session-1", {}).get("message_count", 0) >= 1,
+        description="initial transcript processing",
+    )
 
     # 5. Verify in-memory stats were computed
     stats = processor._stats.get("session-1", {})
@@ -84,7 +86,10 @@ async def test_incremental_processing(processor, transcript_file):
     with open(transcript_file, "w") as f:
         f.write(msg1 + "\n")
 
-    await asyncio.sleep(0.3)
+    await wait_for_async_condition(
+        lambda: processor._stats.get("session-1", {}).get("message_count", 0) >= 1,
+        description="first incremental transcript processing",
+    )
 
     # Verify first message processed
     stats = processor._stats.get("session-1", {})
@@ -100,7 +105,10 @@ async def test_incremental_processing(processor, transcript_file):
     with open(transcript_file, "a") as f:
         f.write(msg2 + "\n")
 
-    await asyncio.sleep(0.3)
+    await wait_for_async_condition(
+        lambda: processor._stats.get("session-1", {}).get("message_count", 0) >= 2,
+        description="second incremental transcript processing",
+    )
 
     # Verify total messages counted (stats accumulate)
     stats = processor._stats.get("session-1", {})
@@ -137,7 +145,10 @@ async def test_recovery_after_restart(processor, transcript_file):
     await processor.start()
     processor.register_session("session-1", str(transcript_file))
 
-    await asyncio.sleep(0.3)
+    await wait_for_async_condition(
+        lambda: processor._stats.get("session-1", {}).get("message_count", 0) == 1,
+        description="restart transcript processing",
+    )
 
     # Processor should have only processed msg2 (skipping msg1 via offset)
     stats = processor._stats.get("session-1", {})
@@ -183,7 +194,13 @@ async def test_concurrent_sessions(processor, tmp_path):
             + "\n"
         )
 
-    await asyncio.sleep(0.3)
+    await wait_for_async_condition(
+        lambda: (
+            processor._stats.get("s1", {}).get("message_count", 0) >= 1
+            and processor._stats.get("s2", {}).get("message_count", 0) >= 1
+        ),
+        description="concurrent transcript processing",
+    )
 
     # Verify both sessions processed
     stats_s1 = processor._stats.get("s1", {})

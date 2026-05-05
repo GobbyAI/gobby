@@ -12,15 +12,16 @@ import os
 import signal
 import subprocess
 import sys
-import time
 import uuid
 
 import httpx
 import pytest
 
+from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    daemon_health_unavailable,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -223,7 +224,11 @@ class TestSessionPersistence:
             # Stop daemon gracefully
             os.kill(process1.pid, signal.SIGTERM)
             process1.wait(timeout=25)
-            time.sleep(2.0)
+            wait_for_condition(
+                lambda: daemon_health_unavailable(http_port),
+                timeout=5.0,
+                description="first daemon shutdown",
+            )
 
             # Start second daemon
             with open(log_file, "a") as log_f, open(error_log_file, "a") as err_f:

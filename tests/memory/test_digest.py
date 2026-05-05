@@ -18,6 +18,7 @@ from gobby.memory.digest import (
     memory_sync_export,
     memory_sync_import,
 )
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -545,9 +546,7 @@ class TestBuildTurnAndDigest:
         llm_service = MagicMock()
 
         async def _slow_call(*args, **kwargs):
-            import asyncio as _asyncio
-
-            await _asyncio.sleep(0.05)
+            await wait_forever()
             return "Too Slow"
 
         llm_service.call_feature = AsyncMock(side_effect=_slow_call)

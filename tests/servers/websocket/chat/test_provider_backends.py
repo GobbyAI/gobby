@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.servers.websocket.chat.backends.codex import CodexManagedChatSession
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +29,7 @@ async def test_dispatch_before_tool_once_shares_inflight_none_response() -> None
     first = asyncio.create_task(session._dispatch_before_tool_once("same-tool", "Read", {}))
     await started.wait()
     second = asyncio.create_task(session._dispatch_before_tool_once("same-tool", "Read", {}))
-    await asyncio.sleep(0)
+    await drain_asyncio_tasks()
 
     assert session._apply_pre_tool_lifecycle.await_count == 1
 

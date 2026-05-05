@@ -11,6 +11,7 @@ import pytest
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -314,7 +315,7 @@ async def test_async_start_returns_running_and_emits_later(temp_db, sample_proje
         auto_apply: bool = True,
     ):
         _ = self, session_id, auto_apply
-        await asyncio.sleep(0)
+        await drain_asyncio_tasks()
         return run_manager.save_apply_result(run_id, task_id_map={}, created_task_ids=[])
 
     with patch(
@@ -330,8 +331,7 @@ async def test_async_start_returns_running_and_emits_later(temp_db, sample_proje
             task_id=task.id,
             run_id="run-async",
         )
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        await drain_asyncio_tasks(cycles=2)
 
     assert result.status == "running"
     registry.emit.assert_any_call("expansion_run_completed", task_id=task.id, run_id="run-async")
