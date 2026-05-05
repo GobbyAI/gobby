@@ -516,12 +516,16 @@ def linear_sync(task_id: str, json_format: bool) -> None:
 @linear.command("sync-all")
 @click.argument("team_id", required=False)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-@click.option("--forward", is_flag=True, help="Push from Gobby to Linear without pulling first")
+@click.option(
+    "--forward",
+    is_flag=True,
+    help="Push active non-closed Gobby tasks to Linear without pulling first",
+)
 @click.option(
     "--active",
     "active_only",
     is_flag=True,
-    help="With --forward, sync active non-closed tasks only",
+    help="Compatibility alias; --forward already syncs active non-closed tasks only",
 )
 def linear_sync_all(
     team_id: str | None, json_format: bool, forward: bool, active_only: bool
@@ -529,17 +533,13 @@ def linear_sync_all(
     """Bidirectional sync between gobby and Linear.
 
     Pulls updates from Linear first, then pushes dirty gobby tasks back.
-    Use --forward --active for initial setup from Gobby into Linear without
-    pulling or syncing closed local task history. If TEAM_ID is not specified,
-    uses the linked team.
+    Use --forward for initial setup from Gobby into Linear without pulling or
+    syncing closed local task history. If TEAM_ID is not specified, uses the
+    linked team.
     """
     try:
         if active_only and not forward:
             raise click.ClickException("--active is only supported with --forward.")
-        if forward and not active_only:
-            raise click.ClickException(
-                "--forward currently requires --active to avoid syncing closed task history."
-            )
 
         _, _, project_manager, project_id = get_linear_deps()
 
