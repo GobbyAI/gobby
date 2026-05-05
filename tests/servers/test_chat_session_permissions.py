@@ -378,9 +378,17 @@ class TestWaitForToolApproval:
 
 
 class TestConsumePlanModeContext:
-    def test_consume_plan_mode_not_plan(self, session: ChatSession) -> None:
+    def test_consume_mode_context_act(self, session: ChatSession) -> None:
         session.chat_mode = "normal"
-        assert session._consume_plan_mode_context() is None
+        context = session._consume_plan_mode_context()
+        assert context is not None
+        assert 'status="act"' in context
+
+    def test_consume_mode_context_auto(self, session: ChatSession) -> None:
+        session.chat_mode = "bypass"
+        context = session._consume_plan_mode_context()
+        assert context is not None
+        assert 'status="auto"' in context
 
     def test_consume_plan_mode_approved(self, session: ChatSession) -> None:
         session.chat_mode = "plan"

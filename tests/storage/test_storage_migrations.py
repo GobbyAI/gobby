@@ -40,7 +40,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 248
+    assert latest_known_version() == 249
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -51,15 +51,16 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         246,
         247,
         248,
+        249,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 10
-    assert get_current_version(db) == 248
+    assert applied == 11
+    assert get_current_version(db) == 249
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248]
+    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
 
 
@@ -71,9 +72,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 248
+    assert get_current_version(db) == 249
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248]
+    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -429,6 +430,7 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
     assert {"model_family", "cache_creation_tokens", "cache_read_tokens"}.issubset(
         _column_names(db, "token_events")
     )
+    assert "content_blocks_json" in _column_names(db, "chat_messages")
 
     assert "expansion_context" not in _column_names(db, "tasks")
     assert "expansion_status" not in _column_names(db, "tasks")
@@ -515,6 +517,7 @@ def test_task_state_bucket_tracks_stage_and_terminal_state(tmp_path) -> None:
     )
     manager = LocalTaskManager(db)
     task = manager.create_task("proj-state", "Track state")
+    manager.initialize_task_manifest(task.id)
 
     assert (
         db.fetchone("SELECT state_bucket FROM tasks WHERE id = ?", (task.id,))["state_bucket"]

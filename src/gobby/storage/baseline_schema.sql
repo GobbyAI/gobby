@@ -1474,6 +1474,7 @@ CREATE TABLE chat_messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
     tool_calls_json TEXT,
+    content_blocks_json TEXT,
     metadata_json TEXT,
     seq INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))

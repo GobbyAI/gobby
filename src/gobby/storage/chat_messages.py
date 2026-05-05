@@ -22,6 +22,7 @@ def save_message(
     role: str,
     content: str,
     tool_calls_json: str | None = None,
+    content_blocks_json: str | None = None,
     metadata_json: str | None = None,
     seq: int | None = None,
 ) -> str:
@@ -35,9 +36,21 @@ def save_message(
             ).fetchone()
             seq = row[0]
         conn.execute(
-            """INSERT INTO chat_messages (id, conversation_id, role, content, tool_calls_json, metadata_json, seq)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (msg_id, conversation_id, role, content, tool_calls_json, metadata_json, seq),
+            """INSERT INTO chat_messages (
+                   id, conversation_id, role, content, tool_calls_json,
+                   content_blocks_json, metadata_json, seq
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                msg_id,
+                conversation_id,
+                role,
+                content,
+                tool_calls_json,
+                content_blocks_json,
+                metadata_json,
+                seq,
+            ),
         )
     return msg_id
 
@@ -51,7 +64,8 @@ def get_messages(
 ) -> list[dict[str, Any]]:
     """Load messages for a conversation, optionally after a sequence number."""
     rows = db.fetchall(
-        """SELECT id, conversation_id, role, content, tool_calls_json, metadata_json, seq, created_at
+        """SELECT id, conversation_id, role, content, tool_calls_json, content_blocks_json,
+                  metadata_json, seq, created_at
            FROM chat_messages
            WHERE conversation_id = ? AND seq > ?
            ORDER BY seq ASC
@@ -73,6 +87,11 @@ def get_messages(
                 msg["tool_calls"] = json.loads(row["tool_calls_json"])
             except json.JSONDecodeError:
                 msg["tool_calls"] = []
+        if row["content_blocks_json"]:
+            try:
+                msg["content_blocks"] = json.loads(row["content_blocks_json"])
+            except json.JSONDecodeError:
+                msg["content_blocks"] = []
         if row["metadata_json"]:
             try:
                 msg["metadata"] = json.loads(row["metadata_json"])

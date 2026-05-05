@@ -102,6 +102,28 @@ class TestDetectPlanModeFromContext:
         assert variables.get("plan_mode") is False
         assert variables.get("plan_skill_loaded") is False
 
+    def test_detects_claude_auto_mode_system_reminder(self, variables) -> None:
+        variables["mode_level"] = 1
+        variables["plan_mode"] = True
+        variables["plan_skill_loaded"] = True
+        prompt = (
+            "<system-reminder>"
+            "Auto mode is active. Permission mode is bypassPermissions."
+            "</system-reminder>"
+        )
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
+        assert variables.get("mode_level") == 2
+        assert variables.get("plan_mode") is False
+        assert variables.get("plan_skill_loaded") is False
+
+    def test_detects_claude_act_mode_system_reminder(self, variables) -> None:
+        variables["mode_level"] = 2
+        prompt = "<system-reminder>You are in Act mode.</system-reminder>"
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "normal"
+        assert variables.get("mode_level") == 1
+
     def test_does_not_change_when_already_in_plan_mode(self, variables) -> None:
         variables["mode_level"] = 0
         variables["plan_mode"] = True
@@ -212,6 +234,13 @@ class TestDetectPlanModeFromContext:
         variables["chat_mode"] = "bypass"
         prompt = '<plan-mode status="approved">\nPlan approved.\n</plan-mode>'
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("mode_level") == 2
+
+    def test_detects_auto_chat_mode_tag(self, variables) -> None:
+        variables["mode_level"] = 1
+        prompt = '<chat-mode status="auto">\nYou are in AUTO MODE.\n</chat-mode>'
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
         assert variables.get("mode_level") == 2
 
     def test_plan_mode_active_tag_inside_conversation_history_ignored(self, variables) -> None:

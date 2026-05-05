@@ -9,7 +9,10 @@ import type {
   ToolResult,
 } from "../../types/chat";
 import { classifyTool } from "../../types/chat";
-import { normalizeChatRole } from "../../lib/chatMessageMapping";
+import {
+  mapRenderedMessageToChatMessage,
+  normalizeChatRole,
+} from "../../lib/chatMessageMapping";
 import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
 
 export interface ContextUsage {
@@ -561,8 +564,19 @@ export function mapStoredChatMessage(m: {
   role: string;
   content: string;
   tool_calls?: ToolCall[];
+  content_blocks?: ContentBlock[];
   created_at: string;
 }): ChatMessage {
+  if (m.content_blocks?.length) {
+    return mapRenderedMessageToChatMessage({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      timestamp: m.created_at,
+      content_blocks: m.content_blocks,
+    });
+  }
+
   return {
     id: m.id,
     role: normalizeChatRole(m.role, m.content),

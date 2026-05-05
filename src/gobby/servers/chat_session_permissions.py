@@ -557,9 +557,19 @@ class ChatSessionPermissionsMixin:
         ``_consume_`` signals this mutation to callers.
         """
         if self.chat_mode != "plan":
-            # Non-plan modes: SDK set_permission_mode handles mode signaling
-            # to the agent via the control protocol — no context injection needed.
-            return None
+            if self.chat_mode == "bypass":
+                return (
+                    '<chat-mode status="auto">\n'
+                    "You are in AUTO MODE. You may execute work, edit files, and use tools; "
+                    "Gobby will auto-approve tool requests.\n"
+                    "</chat-mode>"
+                )
+            return (
+                '<chat-mode status="act">\n'
+                "You are in ACT MODE. You may execute work, edit files, and use tools; "
+                "Gobby may ask the user to approve sensitive tool requests.\n"
+                "</chat-mode>"
+            )
 
         if self._plan_approved:
             return (

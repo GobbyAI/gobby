@@ -15,6 +15,7 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat._session import _resolve_git_branch
+from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat.local_openai_warmup import (
     LocalOpenAIModelWarmupError,
 )
@@ -317,6 +318,7 @@ class ChatMessagingMixin:
 
         assistant_message_id = f"assistant-{uuid4().hex[:12]}"
         accumulated_text = ""
+        assistant_blocks = AssistantContentBlocks()
         after_tool_call = False  # Track tool→text transitions to prevent sentence collisions
         has_sent_text = False  # Survives accumulated_text flushes for separator injection
 
@@ -375,7 +377,12 @@ class ChatMessagingMixin:
                 return f"#{s.seq_num}"
             return None
 
-        async def _persist_message(session: Any, role: str, text: str) -> None:
+        async def _persist_message(
+            session: Any,
+            role: str,
+            text: str,
+            content_blocks: list[dict[str, Any]] | None = None,
+        ) -> None:
             """Persist a chat message to the chat_messages table for display recovery."""
             try:
                 from gobby.storage import chat_messages as cm_store
@@ -383,15 +390,28 @@ class ChatMessagingMixin:
                 sm = getattr(self, "session_manager", None)
                 if sm and sm.db:
                     chat_session_id = getattr(session, "db_session_id", None) or conversation_id
+                    blocks_json = json.dumps(content_blocks) if content_blocks else None
                     await asyncio.to_thread(
                         cm_store.save_message,
                         sm.db,
                         conversation_id=chat_session_id,
                         role=role,
                         content=text,
+                        content_blocks_json=blocks_json,
                     )
             except Exception as e:
                 logger.debug(f"Failed to persist chat message: {e}")
+
+        async def _persist_current_assistant(session: Any) -> None:
+            if not assistant_blocks.has_content():
+                return
+            await _persist_message(
+                session,
+                "assistant",
+                assistant_blocks.visible_text,
+                list(assistant_blocks.blocks),
+            )
+            assistant_blocks.reset()
 
         # Track the tool_call_id used for the pending_approval message so we
         # can transition (dismiss) the approval card when the real ToolCallEvent
@@ -418,16 +438,6 @@ class ChatMessagingMixin:
         # Track pending tool calls so we can persist tool_name + arguments
         # when ToolResultEvent arrives (it only has tool_call_id)
         pending_tool_calls: dict[str, dict[str, Any]] = {}
-
-        async def _persist_tool_call(
-            tool_call_id: str,
-            tool_name: str,
-            tool_input: dict[str, Any] | None,
-            tool_result: Any | None,
-            is_error: bool = False,
-        ) -> None:
-            """Tool call persistence removed (session_messages table dropped)."""
-            pass
 
         gen: AsyncIterator[Any] | None = None
         try:
@@ -568,6 +578,7 @@ class ChatMessagingMixin:
             gen = session.send_message(sdk_content)
             async for event in gen:
                 if isinstance(event, ThinkingEvent):
+                    assistant_blocks.append_thinking(event.content)
                     if not await _safe_send(
                         _base_msg(
                             type="chat_thinking",
@@ -584,8 +595,8 @@ class ChatMessagingMixin:
                     session_obj = self._chat_sessions.get(conversation_id)
                     if session_obj and getattr(session_obj, "_plan_approval_completed", False):
                         session_obj._plan_approval_completed = False
-                        if accumulated_text.strip():
-                            await _persist_message(session, "assistant", accumulated_text)
+                        if assistant_blocks.has_content():
+                            await _persist_current_assistant(session)
                             accumulated_text = ""
                         assistant_message_id = f"assistant-{uuid4().hex[:12]}"
                         after_tool_call = False
@@ -601,6 +612,7 @@ class ChatMessagingMixin:
                     if content.strip():
                         has_sent_text = True
                     accumulated_text += content
+                    assistant_blocks.append_text(content)
                     if not await _safe_send(
                         _base_msg(
                             type="chat_stream",
@@ -620,12 +632,6 @@ class ChatMessagingMixin:
                             logger.debug("TTS feed_text failed", exc_info=True)
 
                 elif isinstance(event, ToolCallEvent):
-                    # Flush accumulated text as a separate message before tool calls.
-                    # This prevents text segments from merging across tool boundaries
-                    # (e.g., "Want me to test it?Good call." running together).
-                    if accumulated_text.strip():
-                        await _persist_message(session, "assistant", accumulated_text)
-                        accumulated_text = ""
                     # If there's a pending approval card, transition it so
                     # the frontend dismisses the approval dialog.
                     if pending_approval_id is not None:
@@ -647,6 +653,12 @@ class ChatMessagingMixin:
                         "tool_name": event.tool_name,
                         "arguments": event.arguments,
                     }
+                    assistant_blocks.append_tool_call(
+                        tool_call_id=event.tool_call_id,
+                        tool_name=event.tool_name,
+                        server_name=event.server_name,
+                        arguments=event.arguments,
+                    )
                     if not await _safe_send(
                         _base_msg(
                             type="tool_status",
@@ -668,12 +680,11 @@ class ChatMessagingMixin:
                         logger.warning(
                             f"ToolResultEvent for {event.tool_call_id} arrived before ToolCallEvent (tool_name will be 'unknown')",
                         )
-                    await _persist_tool_call(
+                    assistant_blocks.complete_tool_call(
                         tool_call_id=event.tool_call_id,
-                        tool_name=pending.get("tool_name", "unknown"),
-                        tool_input=pending.get("arguments"),
-                        tool_result=event.result if event.success else event.error,
-                        is_error=not event.success,
+                        success=event.success,
+                        result=event.result,
+                        error=event.error,
                     )
                     if not await _safe_send(
                         _base_msg(
@@ -695,9 +706,8 @@ class ChatMessagingMixin:
                         except Exception:
                             logger.debug("TTS flush failed", exc_info=True)
 
-                    # Persist remaining assistant text (after last tool call, if any)
-                    if accumulated_text.strip():
-                        await _persist_message(session, "assistant", accumulated_text)
+                    # Persist the same rich assistant message the live UI saw.
+                    await _persist_current_assistant(session)
 
                     done_msg = _base_msg(
                         type="chat_stream",

@@ -429,6 +429,12 @@ def _apply_dispatch_mutex_run_id_index(db: LocalDatabase) -> None:
     )
 
 
+def _apply_chat_message_content_blocks_schema(db: LocalDatabase) -> None:
+    columns = {row["name"] for row in db.fetchall("PRAGMA table_info(chat_messages)")}
+    if "content_blocks_json" not in columns:
+        db.execute("ALTER TABLE chat_messages ADD COLUMN content_blocks_json TEXT")
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         240,
@@ -443,6 +449,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (246, "Add generic stage dispatch target columns", _apply_stage_dispatch_schema),
     (247, "Add managed native binary update state", _apply_bin_update_state_schema),
     (248, "Add dispatch mutex run id lookup index", _apply_dispatch_mutex_run_id_index),
+    (249, "Persist rich web chat content blocks", _apply_chat_message_content_blocks_schema),
 ]
 
 

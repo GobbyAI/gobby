@@ -171,7 +171,7 @@ def detect_task_claim(
             )
         return
 
-    if inner_tool_name not in ("create_task", "claim_task"):
+    if inner_tool_name not in ("create_task", "claim_task", "update_task"):
         return
 
     # Check if the call succeeded
@@ -209,6 +209,18 @@ def detect_task_claim(
         task_id = result.get("id") if isinstance(result, dict) else None
         if not task_id:
             return
+    elif inner_tool_name == "update_task":
+        update_args = tool_input.get("arguments", {}) or {}
+        if update_args.get("status") != "in_progress":
+            return
+        raw_task_id = update_args.get("task_id")
+        if raw_task_id and task_manager:
+            try:
+                task = task_manager.get_task(raw_task_id, project_id=project_id)
+                if task:
+                    task_id = task.id
+            except Exception as e:
+                logger.warning(f"Cannot resolve task ref '{raw_task_id}' to UUID: {e}")
 
     if not task_id:
         logger.debug(f"Skipping task claim state update - no valid UUID for {inner_tool_name}")
@@ -369,6 +381,17 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
     system_reminders = re.findall(r"<system-reminder>(.*?)</system-reminder>", cleaned, re.DOTALL)
     reminder_text = " ".join(system_reminders)
 
+    def set_mode(chat_mode: str, reason: str) -> None:
+        variables["chat_mode"] = chat_mode
+        level = compute_mode_level(chat_mode)
+        if variables.get("mode_level") != level:
+            variables["mode_level"] = level
+            logger.info(f"Session {session_id}: mode_level={level} ({reason})")
+        if level != 0 and (variables.get("plan_mode") or variables.get("plan_skill_loaded")):
+            variables["plan_mode"] = False
+            variables["plan_skill_loaded"] = False
+            logger.info(f"Session {session_id}: plan_mode=False")
+
     plan_mode_indicators = [
         "Plan mode is active",
         "Plan mode still active",
@@ -387,6 +410,35 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
                 variables["plan_mode"] = True
                 logger.info(f"Session {session_id}: plan_mode=True")
             return
+
+    reminder_lower = reminder_text.lower()
+    mode_indicators = [
+        (
+            "bypass",
+            [
+                "auto mode is active",
+                "you are in auto mode",
+                "bypasspermissions",
+                "permission mode is bypasspermissions",
+            ],
+        ),
+        (
+            "normal",
+            [
+                "act mode is active",
+                "you are in act mode",
+                "normal execution mode",
+                "acceptedits",
+                "permission mode is default",
+            ],
+        ),
+    ]
+
+    for chat_mode, indicators in mode_indicators:
+        for indicator in indicators:
+            if indicator in reminder_lower:
+                set_mode(chat_mode, f"detected from system reminder: '{indicator}'")
+                return
 
     exit_indicators = [
         "Exited Plan Mode",
@@ -458,6 +510,14 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
                 f"Session {session_id}: mode_level={variables['mode_level']} "
                 f'(detected from <plan-mode status="approved">)'
             )
+        return
+
+    if '<chat-mode status="auto">' in cleaned:
+        set_mode("bypass", 'detected from <chat-mode status="auto">')
+        return
+
+    if '<chat-mode status="act">' in cleaned:
+        set_mode("normal", 'detected from <chat-mode status="act">')
         return
 
     # --- No plan-mode markers found: heal stale state ---

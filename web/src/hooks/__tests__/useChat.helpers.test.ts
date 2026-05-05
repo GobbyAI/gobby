@@ -61,6 +61,56 @@ describe("useChat persisted message helpers", () => {
     });
   });
 
+  it("restores rich persisted chat content blocks on mount", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+      session: {
+        id: "test-conversation-id",
+        source: "claude",
+        session_type: "web_chat",
+        status: "active",
+      },
+    });
+    mockFetch.mockJsonResponse("/api/chat/test-conversation-id/messages", {
+      messages: [
+        {
+          id: "restored-rich-1",
+          role: "assistant",
+          content: "Done",
+          content_blocks: [
+            { type: "thinking", content: "Inspecting" },
+            {
+              type: "tool_chain",
+              tool_calls: [
+                {
+                  id: "tc-1",
+                  tool_name: "Bash",
+                  server_name: "builtin",
+                  tool_type: "bash",
+                  status: "completed",
+                  arguments: { command: "pwd" },
+                  result: { content: "/tmp/project" },
+                },
+              ],
+            },
+            { type: "text", content: "Done" },
+          ],
+          seq: 1,
+          created_at: "2026-04-14T00:00:00Z",
+        },
+      ],
+      max_seq: 1,
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.messages[0].thinkingContent).toBe("Inspecting");
+      expect(result.current.messages[0].toolCalls?.[0].tool_name).toBe("Bash");
+      expect(result.current.messages[0].contentBlocks).toHaveLength(3);
+    });
+  });
+
   it("restores protocol-tagged raw chat rows as system messages", async () => {
     mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
       session: {
