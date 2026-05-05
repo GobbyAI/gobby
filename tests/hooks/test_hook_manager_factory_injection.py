@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -71,6 +71,34 @@ def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
     assert create.call_args.kwargs["session_manager"] is session_manager
     assert manager._database is database
     assert manager._session_manager is session_manager
+
+
+def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
+    """HookManager shutdown should leave daemon-owned storage handles open."""
+    database = MagicMock()
+    session_manager = MagicMock()
+    components = _mock_components(database, session_manager)
+    components.webhook_dispatcher.close = AsyncMock()
+
+    with (
+        patch("gobby.hooks.hook_manager.HookManagerFactory.create") as create,
+        patch("gobby.hooks.hook_manager.asyncio.get_running_loop", side_effect=RuntimeError),
+        patch("gobby.hooks.event_enrichment.EventEnricher"),
+        patch("gobby.hooks.session_lookup.SessionLookupService"),
+        patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
+    ):
+        create.return_value = components
+        manager = HookManager(
+            daemon_host="localhost",
+            daemon_port=60887,
+            database=database,
+            session_manager=session_manager,
+            log_file="/tmp/test-hook-manager.log",
+        )
+
+    manager.shutdown()
+
+    database.close.assert_not_called()
 
 
 def test_factory_create_reuses_injected_session_manager(

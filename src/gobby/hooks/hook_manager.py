@@ -135,6 +135,7 @@ class HookManager:
         self._message_processor = message_processor
         self.memory_sync_manager = memory_sync_manager
         self.task_sync_manager = task_sync_manager
+        self._owns_database = database is None and session_manager is None
 
         # Capture event loop for thread-safe broadcasting (if running in async context)
         self._loop: asyncio.AbstractEventLoop | None
@@ -885,6 +886,7 @@ class HookManager:
         Clean up HookManager resources on daemon shutdown.
 
         Stops background health check monitoring and transcript watchers.
+        Closes only database handles created by this HookManager.
         """
         self.logger.debug("HookManager shutting down")
 
@@ -902,7 +904,7 @@ class HookManager:
         except Exception as e:
             self.logger.warning(f"Failed to close webhook dispatcher: {e}")
 
-        if hasattr(self, "_database"):
+        if self._owns_database and hasattr(self, "_database"):
             self._database.close()
 
         self.logger.debug("HookManager shutdown complete")
