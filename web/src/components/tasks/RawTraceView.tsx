@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 
+import { JsonBlock } from '../chat/JsonBlock'
+import { CodeBlock } from '../shared/CodeBlock'
+
 interface SessionMessage {
   tool_name: string | null
   tool_input: string | null
@@ -52,13 +55,7 @@ const ENTRY_SECTION_LABEL_CLS =
   'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
 const COPY_BTN_CLS =
   'cursor-pointer rounded-[3px] border border-[var(--border)] bg-transparent px-[0.35rem] py-[0.1rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-const JSON_CLS =
-  'm-0 max-h-80 overflow-x-auto overflow-y-auto whitespace-pre rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] leading-[1.5] text-[var(--text-secondary)]'
-const JSON_STRING_CLS = 'text-[var(--color-info)]'
-const JSON_NUMBER_CLS = 'text-[var(--color-warning-foreground)]'
-const JSON_KEYWORD_CLS = 'text-[var(--color-error)]'
-const SEARCH_HIT_CLS =
-  'rounded-sm bg-[color-mix(in_srgb,var(--color-warning-foreground)_30%,transparent)] px-px text-[var(--color-warning-foreground)]'
+const PAYLOAD_WRAPPER_CLS = 'max-h-80 overflow-auto rounded border border-[var(--border)]'
 
 function getBaseUrl(): string {
   return ''
@@ -69,50 +66,44 @@ function formatTime(iso: string): string {
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function prettyJson(raw: string | null): string {
-  if (!raw) return ''
+type PayloadView =
+  | { kind: 'json'; parsed: unknown; pretty: string }
+  | { kind: 'text'; text: string }
+
+function parsePayload(raw: string | null): PayloadView | null {
+  if (!raw) return null
   try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
+    const parsed = JSON.parse(raw)
+    if (parsed !== null && (typeof parsed === 'object')) {
+      return { kind: 'json', parsed, pretty: JSON.stringify(parsed, null, 2) }
+    }
   } catch {
-    return raw
+    // fall through to text rendering
   }
+  return { kind: 'text', text: raw }
 }
 
-function highlightJson(json: string, searchTerm: string): (JSX.Element | string)[] {
-  const tokens = json.split(/("(?:[^"\\]|\\.)*")|(\b(?:true|false|null)\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g)
-  const parts: (JSX.Element | string)[] = []
-  let keyIdx = 0
+function payloadCopyText(view: PayloadView): string {
+  return view.kind === 'json' ? view.pretty : view.text
+}
 
-  for (const token of tokens) {
-    if (token === undefined || token === '') continue
-    keyIdx++
+function payloadMatchString(view: PayloadView): string {
+  return (view.kind === 'json' ? view.pretty : view.text).toLowerCase()
+}
 
-    let className = ''
-    if (/^"/.test(token)) {
-      className = JSON_STRING_CLS
-    } else if (/^(true|false|null)$/.test(token)) {
-      className = JSON_KEYWORD_CLS
-    } else if (/^-?\d/.test(token)) {
-      className = JSON_NUMBER_CLS
-    }
-
-    if (searchTerm && token.toLowerCase().includes(searchTerm.toLowerCase())) {
-      const idx = token.toLowerCase().indexOf(searchTerm.toLowerCase())
-      parts.push(
-        <span key={`${keyIdx}-a`} className={className}>{token.slice(0, idx)}</span>,
-        <mark key={`${keyIdx}-h`} className={SEARCH_HIT_CLS}>{token.slice(idx, idx + searchTerm.length)}</mark>,
-        <span key={`${keyIdx}-b`} className={className}>{token.slice(idx + searchTerm.length)}</span>,
-      )
-    } else {
-      parts.push(
-        className
-          ? <span key={keyIdx} className={className}>{token}</span>
-          : token
-      )
-    }
+function PayloadBody({ view }: { view: PayloadView }) {
+  if (view.kind === 'json') {
+    return <JsonBlock value={view.parsed} className={PAYLOAD_WRAPPER_CLS} />
   }
-
-  return parts
+  return (
+    <CodeBlock
+      language="text"
+      showLineNumbers={false}
+      className={PAYLOAD_WRAPPER_CLS}
+    >
+      {view.text}
+    </CodeBlock>
+  )
 }
 
 function isErrorResult(resultStr: string | null): boolean {
@@ -149,22 +140,23 @@ function TraceEntryCard({
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [copiedField, setCopiedField] = useState<'input' | 'result' | null>(null)
 
-  const inputJson = useMemo(() => prettyJson(entry.input), [entry.input])
-  const resultJson = useMemo(() => prettyJson(entry.result), [entry.result])
+  const inputView = useMemo(() => parsePayload(entry.input), [entry.input])
+  const resultView = useMemo(() => parsePayload(entry.result), [entry.result])
 
   useEffect(() => {
     if (searchTerm) {
       const lower = searchTerm.toLowerCase()
       const matches = entry.toolName.toLowerCase().includes(lower)
-        || inputJson.toLowerCase().includes(lower)
-        || resultJson.toLowerCase().includes(lower)
+        || (inputView !== null && payloadMatchString(inputView).includes(lower))
+        || (resultView !== null && payloadMatchString(resultView).includes(lower))
       if (matches) setExpanded(true)
     }
-  }, [searchTerm, entry.toolName, inputJson, resultJson])
+  }, [searchTerm, entry.toolName, inputView, resultView])
 
   const handleCopy = async (field: 'input' | 'result') => {
-    const text = field === 'input' ? inputJson : resultJson
-    const ok = await copyToClipboard(text)
+    const view = field === 'input' ? inputView : resultView
+    if (view === null) return
+    const ok = await copyToClipboard(payloadCopyText(view))
     if (ok) {
       setCopiedField(field)
       setTimeout(() => setCopiedField(null), 1500)
@@ -186,7 +178,7 @@ function TraceEntryCard({
 
       {expanded && (
         <div className={ENTRY_BODY_CLS}>
-          {inputJson && (
+          {inputView !== null && (
             <div className={ENTRY_SECTION_CLS}>
               <div className={ENTRY_SECTION_HEADER_CLS}>
                 <span className={ENTRY_SECTION_LABEL_CLS}>Input</span>
@@ -198,10 +190,10 @@ function TraceEntryCard({
                   {copiedField === 'input' ? 'Copied' : 'Copy'}
                 </button>
               </div>
-              <pre className={JSON_CLS}>{highlightJson(inputJson, searchTerm)}</pre>
+              <PayloadBody view={inputView} />
             </div>
           )}
-          {resultJson && (
+          {resultView !== null && (
             <div className={ENTRY_SECTION_CLS}>
               <div className={ENTRY_SECTION_HEADER_CLS}>
                 <span className={ENTRY_SECTION_LABEL_CLS}>Result</span>
@@ -213,7 +205,7 @@ function TraceEntryCard({
                   {copiedField === 'result' ? 'Copied' : 'Copy'}
                 </button>
               </div>
-              <pre className={JSON_CLS}>{highlightJson(resultJson, searchTerm)}</pre>
+              <PayloadBody view={resultView} />
             </div>
           )}
         </div>
