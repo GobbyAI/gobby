@@ -25,7 +25,7 @@
 
   --text-primary: oklch(92% 0.004 125);
   --text-secondary: oklch(68% 0.005 125);
-  --text-muted: oklch(48% 0.005 125);
+  --text-muted: oklch(62% 0.005 125);
 
   --border: oklch(28% 0.008 125);
 
@@ -189,7 +189,7 @@
 
   --text-primary: oklch(20% 0.005 125);
   --text-secondary: oklch(40% 0.005 125);
-  --text-muted: oklch(60% 0.005 125);
+  --text-muted: oklch(51% 0.005 125);
 
   --border: oklch(86% 0.008 125);
 
