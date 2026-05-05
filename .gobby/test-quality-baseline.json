@@ -208,33 +208,6 @@
       "test_name": "TestCliUpdateCommandWithHashFormat.test_update_with_hash_format"
     },
     {
-      "fingerprint": "tests/cli/test_cli_daemon.py::TestEdgeCases.test_start_health_check_timeout::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 1199,
-      "message": "test is skipped unconditionally",
-      "path": "tests/cli/test_cli_daemon.py",
-      "severity": "high",
-      "test_name": "TestEdgeCases.test_start_health_check_timeout"
-    },
-    {
-      "fingerprint": "tests/cli/test_cli_daemon.py::TestStartCommand.test_start_health_check_fails::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 455,
-      "message": "test is skipped unconditionally",
-      "path": "tests/cli/test_cli_daemon.py",
-      "severity": "high",
-      "test_name": "TestStartCommand.test_start_health_check_fails"
-    },
-    {
-      "fingerprint": "tests/cli/test_cli_utils.py::TestIsPortAvailable.test_unavailable_port::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 414,
-      "message": "test is skipped unconditionally",
-      "path": "tests/cli/test_cli_utils.py",
-      "severity": "high",
-      "test_name": "TestIsPortAvailable.test_unavailable_port"
-    },
-    {
       "fingerprint": "tests/cli/test_daemon_coverage.py::TestServicesStart.test_compose_exists_failure::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 55,
@@ -633,7 +606,7 @@
     {
       "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestMergeManagerHelperMethods.test_get_active_resolution_returns_pending_resolution::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 332,
+      "line": 341,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/integration/test_worktree_merge_integration.py",
       "severity": "high",
@@ -642,38 +615,11 @@
     {
       "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestMergeManagerHelperMethods.test_get_conflict_by_path_finds_conflict::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 338,
+      "line": 347,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/integration/test_worktree_merge_integration.py",
       "severity": "high",
       "test_name": "TestMergeManagerHelperMethods.test_get_conflict_by_path_finds_conflict"
-    },
-    {
-      "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestTaskStatusDuringMerge.test_task_has_blocked_by_merge_field::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 131,
-      "message": "test is skipped unconditionally",
-      "path": "tests/integration/test_worktree_merge_integration.py",
-      "severity": "high",
-      "test_name": "TestTaskStatusDuringMerge.test_task_has_blocked_by_merge_field"
-    },
-    {
-      "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestTaskStatusDuringMerge.test_task_has_merge_in_progress_field::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 123,
-      "message": "test is skipped unconditionally",
-      "path": "tests/integration/test_worktree_merge_integration.py",
-      "severity": "high",
-      "test_name": "TestTaskStatusDuringMerge.test_task_has_merge_in_progress_field"
-    },
-    {
-      "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestTaskStatusDuringMerge.test_task_manager_has_set_merge_status_method::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 139,
-      "message": "test is skipped unconditionally",
-      "path": "tests/integration/test_worktree_merge_integration.py",
-      "severity": "high",
-      "test_name": "TestTaskStatusDuringMerge.test_task_manager_has_set_merge_status_method"
     },
     {
       "fingerprint": "tests/llm/test_claude_cli_session.py::TestCLISession.test_interrupt_noop_when_no_process::NO_ASSERTION",
@@ -755,24 +701,6 @@
       "path": "tests/mcp_proxy/test_mcp_proxy_stdio.py",
       "severity": "high",
       "test_name": "TestEnsureDaemonRunning.test_does_nothing_if_healthy"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/test_proxy_server.py::test_call_hook::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 282,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/mcp_proxy/test_proxy_server.py",
-      "severity": "high",
-      "test_name": "test_call_hook"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/test_proxy_server.py::test_call_hook::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 280,
-      "message": "test is skipped unconditionally",
-      "path": "tests/mcp_proxy/test_proxy_server.py",
-      "severity": "high",
-      "test_name": "test_call_hook"
     },
     {
       "fingerprint": "tests/mcp_proxy/tools/test_agents.py::TestFireSyntheticStop.test_catches_exceptions::NO_ASSERTION",
@@ -1216,27 +1144,9 @@
       "test_name": "TestBroadcast.test_broadcast_handles_generic_exception"
     },
     {
-      "fingerprint": "tests/sessions/test_e2e_session_tracking.py::test_full_lifecycle::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 85,
-      "message": "test is skipped unconditionally",
-      "path": "tests/sessions/test_e2e_session_tracking.py",
-      "severity": "high",
-      "test_name": "test_full_lifecycle"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestBackgroundLoops.test_loops_handle_cancellation::ASSERT_TRUE",
-      "issue_code": "ASSERT_TRUE",
-      "line": 374,
-      "message": "test asserts a constant truthy value",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestBackgroundLoops.test_loops_handle_cancellation"
-    },
-    {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_session_already_has_summary::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 471,
+      "line": 470,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "high",
@@ -1245,7 +1155,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_session_no_transcript_path::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 498,
+      "line": 497,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "high",
@@ -1254,7 +1164,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_session_not_found::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 464,
+      "line": 463,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "high",
@@ -1263,7 +1173,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_summary_generation_exception::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 508,
+      "line": 507,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "high",
@@ -1272,7 +1182,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_none_transcript_path::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 676,
+      "line": 675,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "high",
@@ -1281,7 +1191,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_session_not_found_returns_early::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 667,
+      "line": 666,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "high",
@@ -1290,7 +1200,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestPurgeSoftDeletedDefinitions.test_exception_handled::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 552,
+      "line": 551,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "high",
@@ -1826,24 +1736,6 @@
       "path": "tests/workflows/test_summary_actions.py",
       "severity": "high",
       "test_name": "TestRenameTmuxWindow.test_skips_when_no_tmux_pane"
-    },
-    {
-      "fingerprint": "tests/workflows/test_workflow_hooks.py::test_hook_manager_blocks_on_workflow::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 95,
-      "message": "test is skipped unconditionally",
-      "path": "tests/workflows/test_workflow_hooks.py",
-      "severity": "high",
-      "test_name": "test_hook_manager_blocks_on_workflow"
-    },
-    {
-      "fingerprint": "tests/workflows/test_workflow_hooks.py::test_hook_manager_integration::UNCONDITIONAL_SKIP",
-      "issue_code": "UNCONDITIONAL_SKIP",
-      "line": 55,
-      "message": "test is skipped unconditionally",
-      "path": "tests/workflows/test_workflow_hooks.py",
-      "severity": "high",
-      "test_name": "test_hook_manager_integration"
     },
     {
       "fingerprint": "tests/adapters/test_codex.py::TestCodexAdapterApprovalAttach.test_attach_registers_approval_handler::ONLY_MOCK_ASSERTIONS",
@@ -2559,7 +2451,7 @@
     {
       "fingerprint": "tests/cli/test_cli_daemon.py::TestEdgeCases.test_start_health_check_non_200_response::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1261,
+      "line": 1258,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_daemon.py",
       "severity": "medium",
@@ -2568,7 +2460,7 @@
     {
       "fingerprint": "tests/cli/test_cli_daemon.py::TestRestartCommand.test_restart_with_verbose::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 871,
+      "line": 870,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_daemon.py",
       "severity": "medium",
@@ -2577,7 +2469,7 @@
     {
       "fingerprint": "tests/cli/test_cli_daemon.py::TestStartCommand.test_start_kills_existing_processes::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 508,
+      "line": 507,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_daemon.py",
       "severity": "medium",
@@ -2586,7 +2478,7 @@
     {
       "fingerprint": "tests/cli/test_cli_daemon.py::TestStopCommand.test_stop_failure::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 586,
+      "line": 585,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_daemon.py",
       "severity": "medium",
@@ -2595,7 +2487,7 @@
     {
       "fingerprint": "tests/cli/test_cli_daemon.py::TestStopCommand.test_stop_success::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 567,
+      "line": 566,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_daemon.py",
       "severity": "medium",
@@ -2658,7 +2550,7 @@
     {
       "fingerprint": "tests/cli/test_cli_utils.py::TestInitLocalStorage.test_creates_database::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 677,
+      "line": 676,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_utils.py",
       "severity": "medium",
@@ -2667,7 +2559,7 @@
     {
       "fingerprint": "tests/cli/test_cli_utils.py::TestInitLocalStorage.test_creates_database::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 677,
+      "line": 676,
       "message": "test only verifies mock interactions",
       "path": "tests/cli/test_cli_utils.py",
       "severity": "medium",
@@ -2676,7 +2568,7 @@
     {
       "fingerprint": "tests/cli/test_cli_utils.py::TestKillAllGobbyDaemons.test_finds_and_kills_daemon::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 526,
+      "line": 525,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_utils.py",
       "severity": "medium",
@@ -2685,7 +2577,7 @@
     {
       "fingerprint": "tests/cli/test_cli_utils.py::TestKillAllGobbyDaemons.test_skips_cli_processes::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 545,
+      "line": 544,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_utils.py",
       "severity": "medium",
@@ -2694,7 +2586,7 @@
     {
       "fingerprint": "tests/cli/test_cli_utils.py::TestStopDaemon.test_permission_error::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 653,
+      "line": 652,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_utils.py",
       "severity": "medium",
@@ -2703,7 +2595,7 @@
     {
       "fingerprint": "tests/cli/test_cli_utils.py::TestStopDaemon.test_stops_running_daemon::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 601,
+      "line": 600,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_cli_utils.py",
       "severity": "medium",
@@ -6024,7 +5916,7 @@
     {
       "fingerprint": "tests/mcp_proxy/test_proxy_server.py::test_call_tool_project_id_priority_over_session::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 440,
+      "line": 432,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/mcp_proxy/test_proxy_server.py",
       "severity": "medium",
@@ -6033,7 +5925,7 @@
     {
       "fingerprint": "tests/mcp_proxy/test_proxy_server.py::test_call_tool_with_project_id_override::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 361,
+      "line": 353,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/mcp_proxy/test_proxy_server.py",
       "severity": "medium",
@@ -8922,7 +8814,7 @@
     {
       "fingerprint": "tests/sessions/test_e2e_session_tracking.py::test_full_lifecycle::SLEEP_IN_TEST",
       "issue_code": "SLEEP_IN_TEST",
-      "line": 131,
+      "line": 135,
       "message": "test uses sleep-based timing",
       "path": "tests/sessions/test_e2e_session_tracking.py",
       "severity": "medium",
@@ -8958,7 +8850,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_no_llm_service::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 457,
+      "line": 456,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -8967,7 +8859,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_sentinel_summary_does_not_count_as_existing_summary::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 480,
+      "line": 479,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -8976,7 +8868,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_summary_generation_success::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 525,
+      "line": 524,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -8985,7 +8877,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptJsonDispatch.test_gemini_json_uses_parse_session_json::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 685,
+      "line": 684,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -8994,7 +8886,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptJsonDispatch.test_invalid_json_returns_early::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 724,
+      "line": 723,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9003,7 +8895,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptJsonDispatch.test_jsonl_still_uses_parse_lines::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 709,
+      "line": 708,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9012,7 +8904,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_codex_parser_selected::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 579,
+      "line": 578,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9021,7 +8913,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_droid_parser_selected_with_transcript_path::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 594,
+      "line": 593,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9030,7 +8922,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_gemini_parser_selected::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 564,
+      "line": 563,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9039,7 +8931,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptTokenPreservation.test_zero_tokens_preserves_existing_nonzero::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 770,
+      "line": 769,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9048,7 +8940,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptTokenPreservation.test_zero_tokens_updates_when_existing_also_zero::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 795,
+      "line": 794,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9057,7 +8949,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestPromptFileCleanup.test_expire_calls_cleanup::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 440,
+      "line": 439,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -9066,7 +8958,7 @@
     {
       "fingerprint": "tests/sessions/test_lifecycle.py::TestPurgeSoftDeletedDefinitions.test_success::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 545,
+      "line": 544,
       "message": "test only verifies mock interactions",
       "path": "tests/sessions/test_lifecycle.py",
       "severity": "medium",
@@ -10983,7 +10875,7 @@
     {
       "fingerprint": "tests/workflows/test_workflow_hooks.py::test_hook_manager_integration::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 56,
+      "line": 55,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/workflows/test_workflow_hooks.py",
       "severity": "medium",

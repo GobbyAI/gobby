@@ -52,7 +52,6 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
     assert response.decision == "allow"
 
 
-@pytest.mark.skip(reason="Flaky - race condition in health monitor mock setup")
 def test_hook_manager_integration():
     with (
         patch("gobby.hooks.factory.LocalDatabase"),
@@ -76,6 +75,9 @@ def test_hook_manager_integration():
 
         manager._cached_daemon_is_ready = True
         manager._cached_daemon_status = "healthy"
+        manager._get_cached_daemon_status = MagicMock(
+            return_value=(True, "OK", "healthy", None)
+        )
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -92,7 +94,6 @@ def test_hook_manager_integration():
         assert response.decision == "allow"
 
 
-@pytest.mark.skip(reason="Flaky - race condition in health monitor mock setup")
 def test_hook_manager_blocks_on_workflow():
     with (
         patch("gobby.hooks.factory.LocalDatabase"),
@@ -118,6 +119,9 @@ def test_hook_manager_blocks_on_workflow():
 
         manager._cached_daemon_is_ready = True
         manager._cached_daemon_status = "healthy"
+        manager._get_cached_daemon_status = MagicMock(
+            return_value=(True, "OK", "healthy", None)
+        )
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,

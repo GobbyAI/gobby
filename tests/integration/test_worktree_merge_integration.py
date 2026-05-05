@@ -120,7 +120,10 @@ class TestTaskStatusDuringMerge:
     provides sufficient tracking for Phase 1.
     """
 
-    @pytest.mark.skip(reason="Task merge fields deferred to Phase 2 - requires schema migration")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Task merge fields deferred to Phase 2 - requires schema migration",
+    )
     def test_task_has_merge_in_progress_field(self) -> None:
         """Task should have merge_in_progress field."""
         from gobby.storage.tasks import Task
@@ -128,7 +131,10 @@ class TestTaskStatusDuringMerge:
         task_fields = Task.__dataclass_fields__
         assert "merge_in_progress" in task_fields
 
-    @pytest.mark.skip(reason="Task merge fields deferred to Phase 2 - requires schema migration")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Task merge fields deferred to Phase 2 - requires schema migration",
+    )
     def test_task_has_blocked_by_merge_field(self) -> None:
         """Task should have blocked_by_merge field."""
         from gobby.storage.tasks import Task
@@ -136,7 +142,10 @@ class TestTaskStatusDuringMerge:
         task_fields = Task.__dataclass_fields__
         assert "blocked_by_merge" in task_fields
 
-    @pytest.mark.skip(reason="Task merge fields deferred to Phase 2 - requires schema migration")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Task merge fields deferred to Phase 2 - requires schema migration",
+    )
     def test_task_manager_has_set_merge_status_method(self) -> None:
         """TaskManager should have method to set merge status."""
         from gobby.storage.tasks import LocalTaskManager

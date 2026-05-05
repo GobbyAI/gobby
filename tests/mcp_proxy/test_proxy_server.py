@@ -277,14 +277,6 @@ async def test_recommend_tools(daemon_tools, mock_mcp_manager):
     assert "recommendation" in result
 
 
-@pytest.mark.skip(reason="GobbyDaemonTools does not have call_hook method - removed in refactor")
-@pytest.mark.asyncio
-async def test_call_hook(daemon_tools):
-    # GobbyDaemonTools no longer exposes call_hook - this functionality
-    # is handled by the hook system directly, not through MCP tools
-    pass
-
-
 @pytest.mark.asyncio
 async def test_call_tool_returns_mcp_error_on_validation_failure(daemon_tools):
     """Test that call_tool returns CallToolResult(isError=True) when validation fails."""

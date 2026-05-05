@@ -452,9 +452,7 @@ class TestStartCommand:
             assert result.exit_code == 1
             assert "Daemon process exited immediately" in result.output
 
-    @pytest.mark.skip(
-        reason="Flaky: FD leak from earlier tests causes OSError in isolated_filesystem"
-    )
+    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=None)
     @patch("gobby.cli.daemon.httpx.get")
     @patch("gobby.cli.daemon.subprocess.Popen")
     @patch("gobby.cli.daemon.is_port_available")
@@ -471,11 +469,12 @@ class TestStartCommand:
         mock_is_port_available: MagicMock,
         mock_popen: MagicMock,
         mock_httpx_get: MagicMock,
+        mock_wait_for_health: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
     ) -> None:
-        """Test start continues with warning when health check fails."""
+        """Test start exits when health check fails."""
         mock_load_config.return_value = mock_daemon_config
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
@@ -485,7 +484,6 @@ class TestStartCommand:
         mock_process.poll.return_value = None
         mock_popen.return_value = mock_process
 
-        # Health check always fails
         mock_httpx_get.side_effect = httpx.ConnectError("Connection refused")
 
         with (
@@ -498,8 +496,9 @@ class TestStartCommand:
 
             result = runner.invoke(cli, ["start"])
 
-            assert result.exit_code == 0
-            assert "Warning: Daemon started but health check failed" in result.output
+            assert result.exit_code == 1
+            assert "Health check failed" in result.output
+            mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
 
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
@@ -1196,9 +1195,7 @@ class TestEdgeCases:
         if pid_file.exists():
             pid_file.unlink()
 
-    @pytest.mark.skip(
-        reason="Flaky: FD leak from earlier tests causes OSError in isolated_filesystem"
-    )
+    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=None)
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
     @patch("gobby.cli.daemon.subprocess.Popen")
@@ -1217,6 +1214,7 @@ class TestEdgeCases:
         mock_popen: MagicMock,
         mock_httpx_get: MagicMock,
         mock_fetch_status: MagicMock,
+        mock_wait_for_health: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
@@ -1233,7 +1231,6 @@ class TestEdgeCases:
         mock_process.poll.return_value = None
         mock_popen.return_value = mock_process
 
-        # Simulate timeout
         mock_httpx_get.side_effect = httpx.TimeoutException("Timeout")
 
         with (
@@ -1246,9 +1243,9 @@ class TestEdgeCases:
 
             result = runner.invoke(cli, ["start"])
 
-            # Should still succeed but with warning
-            assert result.exit_code == 0
-            assert "health check failed" in result.output
+            assert result.exit_code == 1
+            assert "Health check failed" in result.output
+            mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")

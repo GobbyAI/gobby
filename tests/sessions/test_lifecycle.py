@@ -370,8 +370,7 @@ class TestBackgroundLoops:
 
         with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
             await manager._expire_loop()
-            # Should just return cleanly
-            assert True
+            assert manager._expire_stale_sessions.await_count == 1
 
 
 class TestPromptFileCleanup:

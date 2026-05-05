@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -82,7 +83,10 @@ async def env(tmp_path) -> AsyncGenerator[dict]:
 
 
 @pytest.mark.e2e
-@pytest.mark.skip(reason="Flaky: test isolation issue when running with full suite")
+@pytest.mark.skipif(
+    not os.environ.get("GOBBY_RUN_E2E_SESSION_LIFECYCLE"),
+    reason="requires GOBBY_RUN_E2E_SESSION_LIFECYCLE until full-suite isolation is fixed",
+)
 async def test_full_lifecycle(env):
     hm = env["hm"]
     ws = env["ws"]

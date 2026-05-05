@@ -411,13 +411,12 @@ class TestIsPortAvailable:
         # We can't guarantee this port is available, but it's likely
         assert isinstance(result, bool)
 
-    @pytest.mark.skip(reason="Flaky - SO_REUSEADDR allows rebind on some systems")
     def test_unavailable_port(self) -> None:
         """Test that an occupied port is not available."""
         # Bind to a port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("localhost", 0))
+        sock.listen(1)
         port = sock.getsockname()[1]
 
         try:
