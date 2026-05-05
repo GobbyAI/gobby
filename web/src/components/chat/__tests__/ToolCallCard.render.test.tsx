@@ -102,7 +102,7 @@ describe('ToolCallCard rendering', () => {
                 result: { success: true },
                 response_time_ms: 42,
               },
-              content_type: 'json',
+              kind: 'json',
               truncated: false,
             },
           }),
@@ -136,7 +136,7 @@ describe('ToolCallCard rendering', () => {
               content: {
                 output: [{ type: 'input_image', image_url: DATA_URI }],
               },
-              content_type: 'json',
+              kind: 'json',
               truncated: false,
             },
           }),
@@ -184,7 +184,7 @@ describe('ToolCallCard rendering', () => {
                 output:
                   'Chunk ID: 21a8f9\nWall time: 0.1813 seconds\nOutput:\nhash ok? True\n',
               },
-              content_type: 'json',
+              kind: 'json',
               truncated: false,
             },
           }),
@@ -216,7 +216,7 @@ describe('ToolCallCard rendering', () => {
             arguments: { tag: 'environment_context' },
             result: {
               content: { shell: 'zsh', timezone: 'America/Chicago' },
-              content_type: 'json',
+              kind: 'json',
               truncated: false,
             },
           }),
@@ -246,7 +246,7 @@ describe('ToolCallCard rendering', () => {
             arguments: { tag: 'system_instructions' },
             result: {
               content: 'System instructions',
-              content_type: 'text',
+              kind: 'text',
               truncated: false,
             },
           }),
@@ -257,7 +257,7 @@ describe('ToolCallCard rendering', () => {
             arguments: { tag: 'environment_context' },
             result: {
               content: { shell: 'zsh' },
-              content_type: 'json',
+              kind: 'json',
               truncated: false,
             },
           }),
@@ -268,7 +268,7 @@ describe('ToolCallCard rendering', () => {
             arguments: { tag: 'collaboration_mode' },
             result: {
               content: 'Default',
-              content_type: 'text',
+              kind: 'text',
               truncated: false,
             },
           }),

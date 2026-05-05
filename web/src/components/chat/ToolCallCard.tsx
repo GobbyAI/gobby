@@ -476,17 +476,23 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
 /** Parse answered values from AskUserQuestion result content. */
 function parseAnsweredValues(result: ToolResult | undefined): Record<string, string> | null {
   if (!result?.content) return null
-  try {
-    const text = typeof result.content === 'string' ? result.content : JSON.stringify(result.content)
-    // The result is JSON with {answers: {question: answer}} or just {question: answer}
-    const parsed = JSON.parse(text)
-    if (parsed && typeof parsed === 'object') {
-      return parsed.answers ?? parsed
+  if (result.kind === 'json') {
+    const obj = result.content as Record<string, unknown>
+    const answers = (obj.answers ?? obj) as Record<string, string>
+    return answers
+  }
+  if (result.kind === 'text') {
+    const text = result.content as string
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') {
+        return parsed.answers ?? parsed
+      }
+    } catch {
+      // Fall back to treating content as a plain string
     }
-  } catch {
-    // Fall back to treating content as a plain string
-    if (typeof result.content === 'string' && result.content.trim()) {
-      return { _raw: result.content }
+    if (text.trim()) {
+      return { _raw: text }
     }
   }
   return null

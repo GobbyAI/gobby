@@ -294,7 +294,7 @@ describe('extractResultContent', () => {
         result: { success: true },
         response_time_ms: 42,
       },
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 
@@ -307,7 +307,7 @@ describe('extractResultContent', () => {
   it('parses and flattens stringified MCP proxy envelopes', () => {
     const result = {
       content: '{"success":true,"result":{"task_id":"#11820"},"response_time_ms":42}',
-      content_type: 'text',
+      kind: 'text',
       truncated: false,
       metadata: { source: 'mcp' },
     }
@@ -331,7 +331,7 @@ describe('extractResultContent', () => {
           response_time_ms: 42,
         },
       },
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 
@@ -354,7 +354,7 @@ describe('extractResultContent', () => {
           response_time_ms: 1.59,
         },
       },
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 
@@ -370,7 +370,7 @@ describe('extractResultContent', () => {
     const payload = { success: true, result: { success: true } }
     const result = {
       content: payload,
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 

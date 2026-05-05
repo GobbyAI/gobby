@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.transcripts.base import (
@@ -16,16 +16,24 @@ from gobby.sessions.transcripts.base import (
 
 logger = logging.getLogger(__name__)
 
+ToolResultKind = Literal["text", "json", "image", "error"]
+
 _INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt"})
 _PROTOCOL_TOOL_NAME = "protocol_context"
 
 
 @dataclass
 class ToolResult:
-    """Result of a tool execution."""
+    """Result of a tool execution.
+
+    `kind` discriminates how `content` should be rendered: text bodies are
+    plain strings, json bodies are dict/list payloads, image/error bodies
+    follow tool-specific shapes. The frontend dispatches on `kind` rather
+    than sniffing `typeof content`.
+    """
 
     content: Any
-    content_type: str  # text/json/image/error
+    kind: ToolResultKind
     truncated: bool = False
     metadata: dict[str, Any] | None = None
 
@@ -560,7 +568,7 @@ def _make_protocol_tool_call(
         arguments["attributes"] = parsed_attrs
 
     result_content = _parse_protocol_payload(body)
-    result_type = "json" if isinstance(result_content, (dict, list)) else "text"
+    result_kind: ToolResultKind = "json" if isinstance(result_content, (dict, list)) else "text"
 
     return RenderedToolCall(
         id=f"protocol-{source_index}-{ordinal}",
@@ -570,7 +578,7 @@ def _make_protocol_tool_call(
         arguments=arguments,
         result=ToolResult(
             content=result_content,
-            content_type=result_type,
+            kind=result_kind,
             metadata={"protocol_tag": normalized_tag},
         ),
         status="completed",
@@ -777,7 +785,7 @@ def _process_message_block(
             content = msg.tool_result or msg.content
             tool_call.result = ToolResult(
                 content=content,
-                content_type="json" if msg.tool_result else "text",
+                kind="json" if msg.tool_result else "text",
                 metadata=extract_result_metadata(tool_call.tool_type, content, tool_call.arguments),
             )
             tool_call.status = "completed"

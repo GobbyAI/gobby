@@ -336,7 +336,7 @@ describe('ToolCallCards rendering', () => {
           url:
             'https://example.test/a/very/long/result/path/that/should/wrap/instead/of/forcing/a/horizontal/scrollbar?with=query-values-and-more-values',
         },
-        content_type: 'json',
+        kind: 'json',
         truncated: false,
       },
     })

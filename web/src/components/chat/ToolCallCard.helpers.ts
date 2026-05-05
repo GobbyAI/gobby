@@ -68,7 +68,7 @@ export function getToolDisplayName(call: ToolCall): string {
 function isTypedResult(result: unknown): result is ToolResult {
   if (typeof result !== 'object' || result === null) return false
   const obj = result as Record<string, unknown>
-  return 'content' in obj && 'content_type' in obj
+  return 'content' in obj && 'kind' in obj
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

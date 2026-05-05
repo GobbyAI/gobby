@@ -287,7 +287,7 @@ function makeProtocolToolCall(
     arguments: attributes ? { tag: normalizedTag, attributes } : { tag: normalizedTag },
     result: {
       content: resultContent,
-      content_type: typeof resultContent === 'object' && resultContent !== null ? 'json' : 'text',
+      kind: typeof resultContent === 'object' && resultContent !== null ? 'json' : 'text',
       truncated: false,
       metadata: { protocol_tag: normalizedTag },
     },

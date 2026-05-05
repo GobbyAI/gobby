@@ -14,7 +14,7 @@ describe('protocolContent', () => {
       throw new Error('Expected protocol tool call')
     }
     expect(segment.call.tool_name).toBe('protocol_context')
-    expect(segment.call.result?.content_type).toBe('text')
+    expect(segment.call.result?.kind).toBe('text')
     expect(String(segment.call.result?.content)).toContain('/tmp/project')
   })
 

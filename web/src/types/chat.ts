@@ -42,9 +42,11 @@ export function normalizeChatMode(mode: string | null | undefined): ChatMode {
   return "plan";
 }
 
+export type ToolResultKind = 'text' | 'json' | 'image' | 'error';
+
 export interface ToolResult {
   content: unknown;
-  content_type: string; // 'text' | 'json' | 'image' | 'error'
+  kind: ToolResultKind;
   truncated: boolean;
   metadata?: Record<string, unknown>; // exit_code, line_count, etc.
 }
