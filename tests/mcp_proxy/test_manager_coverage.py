@@ -1329,8 +1329,9 @@ class TestMCPClientManagerReconnect:
         """Test _reconnect handles unknown server gracefully."""
         manager = MCPClientManager(server_configs=[])
 
-        # Should not raise
-        await manager._reconnect("unknown-server")
+        result = await manager._reconnect("unknown-server")
+        assert result is None
+        assert "unknown-server" not in manager._connections
 
     @pytest.mark.asyncio
     async def test_reconnect_handles_failure(self):
@@ -1349,8 +1350,9 @@ class TestMCPClientManagerReconnect:
             "_connect_server",
             side_effect=Exception("Reconnect failed"),
         ):
-            # Should not raise
-            await manager._reconnect("test-server")
+            result = await manager._reconnect("test-server")
+            assert result is None
+            assert "test-server" not in manager._connections
 
 
 class TestMCPClientManagerServerConfig:
@@ -1537,6 +1539,7 @@ class TestMCPClientManagerMonitorHealth:
                 await task
             except asyncio.CancelledError:
                 pass
+            assert mock_connection.health_check.await_count >= 1
 
     @pytest.mark.asyncio
     async def test_monitor_health_continues_when_no_connections(self):
@@ -1607,7 +1610,8 @@ class TestMCPClientManagerMonitorHealth:
         except asyncio.CancelledError:
             pass
 
-        # Should have continued running despite exceptions
+        assert mock_connection.health_check.await_count >= 1
+        assert manager.health["test-server"].consecutive_failures >= 1
 
 
 class TestMCPClientManagerConnectAllEager:

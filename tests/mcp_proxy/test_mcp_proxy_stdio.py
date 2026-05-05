@@ -469,7 +469,8 @@ class TestEnsureDaemonRunning:
                     # Must import function from module to ensure patches apply
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                    await ensure_daemon_running()
+                    result = await ensure_daemon_running()
+                    assert result is None
 
     @pytest.mark.asyncio
     async def test_restarts_unhealthy_daemon(self):

@@ -25,7 +25,9 @@ class TestProcessShutdown:
         )
         server = HTTPServer(services=services, port=8000, test_mode=True)
 
-        await server._terminate_streamable_http_sessions()
+        result = await server._terminate_streamable_http_sessions()
+        assert result is None
+        assert server._mcp_server is None
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_terminates_all_transports(self) -> None:
@@ -281,7 +283,7 @@ class TestProcessShutdown:
         assert all(call.args != ("shutdown_failed_total",) for call in mock_inc.call_args_list)
 
     @pytest.mark.asyncio
-    async def test_shutdown_handles_mcp_disconnect_error(self) -> None:
+    async def test_shutdown_handles_mcp_disconnect_error(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test shutdown handles MCP disconnect error gracefully."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.disconnect_all.side_effect = RuntimeError("Disconnect failed")
@@ -299,7 +301,10 @@ class TestProcessShutdown:
             test_mode=True,
         )
 
-        await server._process_shutdown()
+        with caplog.at_level("WARNING"):
+            await server._process_shutdown()
+        mock_mcp_manager.disconnect_all.assert_awaited_once()
+        assert "Error disconnecting MCP servers: Disconnect failed" in caplog.text
 
     @pytest.mark.asyncio
     async def test_shutdown_increments_success_metric(self) -> None:

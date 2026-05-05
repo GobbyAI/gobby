@@ -395,8 +395,8 @@ class TestLazyServerConnectorEdgeCases:
     def test_unregister_nonexistent_server_no_error(self) -> None:
         """Unregistering non-existent server does not raise error."""
         connector = LazyServerConnector()
-        # Should not raise
         connector.unregister_server("nonexistent")
+        assert connector.get_state("nonexistent") is None
 
     def test_custom_retry_config(self) -> None:
         """Custom retry config is used."""

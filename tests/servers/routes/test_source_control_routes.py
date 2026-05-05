@@ -70,19 +70,24 @@ def client(mock_server):
 class TestValidateGitRef:
     def test_valid_simple_branch(self) -> None:
         """A simple alphanumeric branch name should not raise."""
-        _validate_git_ref("main", "branch")
+        result = _validate_git_ref("main", "branch")
+        assert result is None
 
     def test_valid_slash_branch(self) -> None:
-        _validate_git_ref("feature/my-branch", "branch")
+        result = _validate_git_ref("feature/my-branch", "branch")
+        assert result is None
 
     def test_valid_with_dots(self) -> None:
-        _validate_git_ref("v1.2.3", "tag")
+        result = _validate_git_ref("v1.2.3", "tag")
+        assert result is None
 
     def test_valid_with_hyphens_in_middle(self) -> None:
-        _validate_git_ref("my-branch-name", "branch")
+        result = _validate_git_ref("my-branch-name", "branch")
+        assert result is None
 
     def test_valid_with_underscore(self) -> None:
-        _validate_git_ref("release_candidate", "branch")
+        result = _validate_git_ref("release_candidate", "branch")
+        assert result is None
 
     def test_invalid_empty_string(self) -> None:
         with pytest.raises(HTTPException) as exc_info:

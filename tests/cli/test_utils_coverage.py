@@ -962,7 +962,9 @@ def test_kill_port_holder_no_match() -> None:
     fake_proc.net_connections.return_value = [conn]
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
-        _kill_port_holder(5173)  # No error, just no-op
+        result = _kill_port_holder(5173)
+        assert result is None
+        fake_proc.net_connections.assert_called_once()
 
 
 def test_kill_port_holder_access_denied() -> None:
@@ -973,7 +975,9 @@ def test_kill_port_holder_access_denied() -> None:
     fake_proc.net_connections.side_effect = psutil.AccessDenied(55555)
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
-        _kill_port_holder(5173)  # Should not raise
+        result = _kill_port_holder(5173)
+        assert result is None
+        fake_proc.net_connections.assert_called_once()
 
 
 def test_kill_port_holder_kills_alive_procs() -> None:

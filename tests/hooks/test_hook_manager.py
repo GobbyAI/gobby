@@ -751,8 +751,8 @@ class TestEnsureProjectInDb:
         manager = manager_with_mocks
         manager._session_manager = None
 
-        # Should not raise
         manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
+        assert manager._session_manager is None
 
     def test_ensure_project_db_error_handled(
         self,
@@ -765,8 +765,9 @@ class TestEnsureProjectInDb:
 
         with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
             MockPM.return_value.ensure_exists.side_effect = ValueError("DB error")
-            # Should not raise
-            manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
+            result = manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
+            assert result is None
+            MockPM.return_value.ensure_exists.assert_called_once_with("proj-1", "test", None)
 
 
 class TestSessionManagerUnification:

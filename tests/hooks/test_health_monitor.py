@@ -419,14 +419,15 @@ class TestHealthMonitorIntegration:
         logger.setLevel(logging.DEBUG)
 
         # Patch logger.debug to verify no exceptions during health check cycle
-        with patch.object(logger, "debug"):
+        with patch.object(logger, "debug") as mock_debug:
             monitor = HealthMonitor(
                 daemon_client=mock_client, health_check_interval=0.1, logger=logger
             )
             monitor.start()
             time.sleep(0.15)
             monitor.stop()
-            # Test passes if no exceptions occurred during health check cycle
+            assert monitor._is_shutdown is True
+            assert mock_debug.called
 
 
 class TestHealthMonitorEdgeCases:

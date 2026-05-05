@@ -31,8 +31,8 @@ class TestMCPServerConfig:
             project_id="test-project-uuid",
         )
 
-        # Should not raise
-        config.validate()
+        result = config.validate()
+        assert result is None
         assert config.name == "test-server"
         assert config.transport == "http"
         assert config.url == "http://localhost:8080/mcp"
@@ -60,10 +60,11 @@ class TestMCPServerConfig:
             env={"DEBUG": "true"},
         )
 
-        # Should not raise
-        config.validate()
+        result = config.validate()
+        assert result is None
         assert config.command == "npx"
         assert config.args == ["-y", "@test/server"]
+        assert config.env == {"DEBUG": "true"}
 
     def test_stdio_config_missing_command_raises(self) -> None:
         """Test stdio config without command raises error."""
@@ -86,8 +87,9 @@ class TestMCPServerConfig:
             url="ws://localhost:8080/mcp",
         )
 
-        # Should not raise
-        config.validate()
+        result = config.validate()
+        assert result is None
+        assert config.url == "ws://localhost:8080/mcp"
 
     def test_unsupported_transport_raises(self) -> None:
         """Test unsupported transport raises error."""

@@ -84,7 +84,9 @@ class TestMergeCliImports:
 
     def test_import_merge_cli_module(self) -> None:
         """Can import merge CLI module."""
-        from gobby.cli import merge  # noqa: F401
+        from gobby.cli import merge
+
+        assert merge is not None
 
     def test_import_merge_commands(self) -> None:
         """Can import merge command group."""

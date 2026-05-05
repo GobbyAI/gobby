@@ -111,5 +111,6 @@ async def test_broadcaster_handles_no_websocket_server():
         data={},
     )
 
-    # Should not raise
-    await broadcaster.broadcast_event(event)
+    result = await broadcaster.broadcast_event(event)
+    assert result is None
+    assert broadcaster.websocket_server is None

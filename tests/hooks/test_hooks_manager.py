@@ -823,6 +823,7 @@ class TestHookManagerBroadcasting:
             loop.call_soon_threadsafe(loop.stop)
             loop_thread.join(timeout=1)
             loop.close()
+        assert mock_broadcaster.broadcast_event.called
 
     def test_handle_no_loop_no_broadcaster_error(
         self, hook_manager_with_mocks: HookManager, sample_session_start_event: HookEvent
@@ -1299,8 +1300,8 @@ class TestHookManagerWebhookDispatch:
         # Disable webhooks
         manager._webhook_dispatcher.config.enabled = False
 
-        # Should not raise
-        manager._dispatch_webhooks_async(event)
+        result = manager._dispatch_webhooks_async(event)
+        assert result is None
 
     def test_dispatch_webhooks_async_no_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1321,8 +1322,8 @@ class TestHookManagerWebhookDispatch:
         manager._webhook_dispatcher.config.enabled = True
         manager._webhook_dispatcher.config.endpoints = []
 
-        # Should not raise
-        manager._dispatch_webhooks_async(event)
+        result = manager._dispatch_webhooks_async(event)
+        assert result is None
 
     def test_dispatch_webhooks_async_with_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1433,10 +1434,9 @@ class TestHookManagerWebhookDispatch:
                     new_callable=AsyncMock,
                 ),
             ):
-                # Should create task in current loop
                 manager._dispatch_webhooks_async(event)
-                # Give the task a chance to start
                 await asyncio.sleep(0.01)
+                assert manager._webhook_dispatcher._dispatch_single.await_count == 1
 
         asyncio.run(run_dispatch())
 

@@ -534,4 +534,8 @@ async def test_real_droid_exec_binary_starts(tmp_path: Path) -> None:
     session.project_path = str(tmp_path)
 
     await backend.attach_session(session)
+    assert session._connected is True
+    assert "conv-droid" in backend._handles
     await backend.detach_session(session)
+    assert session._connected is False
+    assert backend._handles == {}

@@ -125,8 +125,9 @@ class TestBroadcast:
     @pytest.mark.asyncio
     async def test_broadcast_empty_clients(self) -> None:
         b = FakeBroadcaster()
-        # Should not raise
-        await b.broadcast({"type": "test"})
+        result = await b.broadcast({"type": "test"})
+        assert result is None
+        assert b.clients == {}
 
     @pytest.mark.asyncio
     async def test_broadcast_sends_to_subscribed_clients(self) -> None:
@@ -153,8 +154,9 @@ class TestBroadcast:
         ws.send.side_effect = ConnectionClosed(None, None)
         b.clients[ws] = {}
 
-        # Should not raise
-        await b.broadcast({"type": "test"})
+        result = await b.broadcast({"type": "test"})
+        assert result is None
+        assert ws in b.clients
 
     @pytest.mark.asyncio
     async def test_broadcast_handles_generic_exception(self) -> None:
@@ -163,8 +165,9 @@ class TestBroadcast:
         ws.send.side_effect = RuntimeError("send failed")
         b.clients[ws] = {}
 
-        # Should not raise
-        await b.broadcast({"type": "test"})
+        result = await b.broadcast({"type": "test"})
+        assert result is None
+        assert ws in b.clients
 
     @pytest.mark.asyncio
     async def test_broadcast_multiple_clients(self) -> None:

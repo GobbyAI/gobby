@@ -845,14 +845,15 @@ class TestFireSyntheticStop:
         """Test that _fire_synthetic_stop does nothing when resolver is None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        # Should not raise
-        _fire_synthetic_stop(None, "sess-123")
+        result = _fire_synthetic_stop(None, "sess-123")
+        assert result is None
 
     def test_noop_when_resolver_returns_none(self):
         """Test that _fire_synthetic_stop does nothing when resolver returns None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        _fire_synthetic_stop(lambda: None, "sess-123")
+        result = _fire_synthetic_stop(lambda: None, "sess-123")
+        assert result is None
 
     def test_calls_evaluate_workflow_rules(self):
         """Test that _fire_synthetic_stop fires a synthetic STOP event."""
@@ -876,8 +877,9 @@ class TestFireSyntheticStop:
         mock_hook_mgr = MagicMock()
         mock_hook_mgr._evaluate_workflow_rules.side_effect = RuntimeError("boom")
 
-        # Should not raise
-        _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
+        result = _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
+        assert result is None
+        assert mock_hook_mgr._evaluate_workflow_rules.call_count == 1
 
     @pytest.mark.asyncio
     async def test_kill_agent_fires_synthetic_stop(self):

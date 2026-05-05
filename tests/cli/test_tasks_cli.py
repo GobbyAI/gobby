@@ -2582,8 +2582,8 @@ class TestTaskUtilsFunctions:
         from gobby.cli.tasks._utils import check_tasks_enabled
 
         with patch("gobby.cli.tasks._utils.config.load_config", side_effect=FileNotFoundError):
-            # Should not raise, fail open
             check_tasks_enabled()
+            assert check_tasks_enabled() is None
 
     def test_stage_state_choices(self) -> None:
         """Test stage-state CLI choices."""

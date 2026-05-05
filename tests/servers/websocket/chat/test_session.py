@@ -91,8 +91,9 @@ class TestResolveGitBranch:
 class TestCancelActiveChat:
     @pytest.mark.asyncio
     async def test_cancel_active_chat_no_session(self, mixin: DummyMixin):
-        await mixin._cancel_active_chat("conv-xyz")
-        # should pass silently
+        result = await mixin._cancel_active_chat("conv-xyz")
+        assert result is None
+        assert "conv-xyz" not in mixin._active_chat_tasks
 
     @pytest.mark.asyncio
     async def test_cancel_active_chat_with_session(self, mixin: DummyMixin):

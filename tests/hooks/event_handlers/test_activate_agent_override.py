@@ -156,13 +156,13 @@ class TestActivateDefaultAgentEdgeCases:
             logger=logging.getLogger("test"),
         )
 
-        # Should not raise
-        handlers._activate_default_agent(
+        result = handlers._activate_default_agent(
             session_id="sess-1",
             cli_source="claude",
             project_id=None,
             agent_name_override="my-agent",
         )
+        assert result is None
 
     def test_no_session_storage_returns_early(self) -> None:
         """If session_storage is None, method returns without error."""
@@ -172,13 +172,13 @@ class TestActivateDefaultAgentEdgeCases:
             logger=logging.getLogger("test"),
         )
 
-        # Should not raise
-        handlers._activate_default_agent(
+        result = handlers._activate_default_agent(
             session_id="sess-1",
             cli_source="claude",
             project_id=None,
             agent_name_override="my-agent",
         )
+        assert result is None
 
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_override_none_agent_name_skips(self, mock_resolve: MagicMock) -> None:
@@ -202,13 +202,13 @@ class TestActivateDefaultAgentEdgeCases:
         handlers = _make_event_handlers()
         mock_resolve.side_effect = AgentResolutionError("not found")
 
-        # Should not raise
-        handlers._activate_default_agent(
+        result = handlers._activate_default_agent(
             session_id="sess-1",
             cli_source="claude",
             project_id=None,
             agent_name_override="bad-agent",
         )
+        assert result is None
 
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_resolve_returns_none_logs_debug(self, mock_resolve: MagicMock) -> None:

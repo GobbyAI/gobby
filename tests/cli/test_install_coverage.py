@@ -37,8 +37,8 @@ class TestEchoHelpers:
         }
         runner = CliRunner()
         with runner.isolated_filesystem():
-            # Just check it doesn't raise
             _echo_install_details(result)
+            assert result["hooks_installed"] == ["hook1", "hook2"]
 
     def test_echo_install_details_full(self) -> None:
         result: dict[str, Any] = {
@@ -50,6 +50,8 @@ class TestEchoHelpers:
             "mcp_configured": True,
         }
         _echo_install_details(result, mcp_config_path="~/.claude.json", config_path="~/.config")
+        assert result["mcp_configured"] is True
+        assert result["plugins_installed"] == ["plugin1"]
 
     def test_echo_install_details_mcp_already(self) -> None:
         result: dict[str, Any] = {
@@ -57,6 +59,7 @@ class TestEchoHelpers:
             "mcp_already_configured": True,
         }
         _echo_install_details(result, mcp_config_path="~/.claude.json")
+        assert result["mcp_already_configured"] is True
 
     def test_echo_uninstall_details_with_hooks(self) -> None:
         result: dict[str, Any] = {
@@ -64,6 +67,8 @@ class TestEchoHelpers:
             "files_removed": ["file1"],
         }
         _echo_uninstall_details(result)
+        assert result["hooks_removed"] == ["hook1", "hook2"]
+        assert result["files_removed"] == ["file1"]
 
     def test_echo_uninstall_details_empty(self) -> None:
         result: dict[str, Any] = {
@@ -71,6 +76,7 @@ class TestEchoHelpers:
             "files_removed": [],
         }
         _echo_uninstall_details(result)
+        assert result == {"hooks_removed": [], "files_removed": []}
 
 
 # ---------------------------------------------------------------------------

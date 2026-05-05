@@ -366,7 +366,9 @@ class TestRunServer:
             patch("uvicorn.Config", MagicMock()),
             patch("uvicorn.Server", mock_server_class),
         ):
-            await run_server(server)
+            result = await run_server(server)
+        assert result is None
+        mock_server_instance.serve.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_run_server_handles_system_exit(self) -> None:
@@ -388,4 +390,6 @@ class TestRunServer:
             patch("uvicorn.Config", MagicMock()),
             patch("uvicorn.Server", mock_server_class),
         ):
-            await run_server(server)
+            result = await run_server(server)
+        assert result is None
+        mock_server_instance.serve.assert_awaited_once()

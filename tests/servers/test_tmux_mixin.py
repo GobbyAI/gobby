@@ -148,6 +148,7 @@ class TestTmuxListSessions:
             ),
         ):
             await server._handle_tmux_list_sessions(ws, {"request_id": "r1"})
+        assert ws.sent_messages == []
 
 
 class TestTmuxAttach:
@@ -390,8 +391,9 @@ class TestTmuxResize:
     @pytest.mark.asyncio
     async def test_resize_missing_fields(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        # Should not raise - silent failure
-        await server._handle_tmux_resize(ws, {})
+        result = await server._handle_tmux_resize(ws, {})
+        assert result is None
+        assert ws.sent_messages == []
 
     @pytest.mark.asyncio
     async def test_resize_calls_bridge(self, server: WebSocketServer) -> None:
@@ -407,7 +409,9 @@ class TestTmuxClientCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_empty(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        await server._cleanup_tmux_client(ws)  # should not raise
+        result = await server._cleanup_tmux_client(ws)
+        assert result is None
+        assert ws not in server._tmux_client_bridges
 
     @pytest.mark.asyncio
     async def test_cleanup_with_bridges(self, server: WebSocketServer) -> None:

@@ -380,5 +380,6 @@ class TestStreamChatResponse:
 
         ws.send.side_effect = ConnectionClosed(None, None)
 
-        # Should catch gracefully and not propagate
-        await mixin._stream_chat_response(ws, "c1", "hi", None)
+        result = await mixin._stream_chat_response(ws, "c1", "hi", None)
+        assert result is None
+        assert mixin._chat_sessions["c1"] is session

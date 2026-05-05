@@ -68,8 +68,8 @@ class TestSessionRegistrationTracking:
     def test_unregister_nonexistent_is_safe(self) -> None:
         """Test unregistering a non-existent session doesn't raise."""
         coordinator = SessionCoordinator()
-        # Should not raise
         coordinator.unregister_session("nonexistent")
+        assert coordinator._registered_sessions == set()
 
     def test_clear_registrations(self) -> None:
         """Test clearing all registrations."""
