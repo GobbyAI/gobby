@@ -332,8 +332,17 @@ export function ChatPage({
     : chat.isContinuingSession
       ? "Message input — resuming session"
       : undefined;
+  // Watching a terminal explicitly in observe mode keeps the activity-panel
+  // chat anchored to the main web session so the user doesn't lose access to
+  // their primary conversation while reading along. Other terminal swaps (no
+  // interaction mode set, or proxy mode) clear the chat session like any
+  // other session swap.
   const activityPanelChatSessionId =
-    chat.viewingSessionId || chat.attachedSessionId ? null : chat.dbSessionId;
+    chat.viewingSessionId || chat.attachedSessionId
+      ? isSwappedTerminal && chat.sessionInteractionMode === "observe"
+        ? chat.dbSessionId
+        : null
+      : chat.dbSessionId;
 
   const handleResumeViewedSession = useCallback(() => {
     if (

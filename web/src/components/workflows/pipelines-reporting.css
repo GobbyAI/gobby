@@ -400,15 +400,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.reporting-command-payload {
-  font-family: inherit;
-  font-size: calc(var(--font-size-base) * 0.7);
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
 
 /* Light-theme overrides for surfaces whose dark/light tints differ.
    Migrated from PipelinesPage.css during #13899. */

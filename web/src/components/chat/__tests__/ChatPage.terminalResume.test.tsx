@@ -146,7 +146,7 @@ describe("ChatPage – terminal resume", () => {
     });
 
     expect(continueSessionInChat).not.toHaveBeenCalled();
-    expect(viewSession).toHaveBeenCalledWith("terminal-2");
+    expect(viewSession).toHaveBeenCalledWith("terminal-2", { forceRefresh: true });
     expect(observeSession).toHaveBeenCalledWith("terminal-2", "observe");
   });
 
@@ -173,7 +173,7 @@ describe("ChatPage – terminal resume", () => {
     });
 
     expect(continueSessionInChat).not.toHaveBeenCalled();
-    expect(viewSession).toHaveBeenCalledWith("terminal-auto");
+    expect(viewSession).toHaveBeenCalledWith("terminal-auto", { forceRefresh: true });
     expect(observeSession).toHaveBeenCalledWith("terminal-auto", "observe");
   });
 
