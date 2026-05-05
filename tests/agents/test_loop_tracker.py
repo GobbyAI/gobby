@@ -89,7 +89,9 @@ class TestClear:
         assert not self.tracker.should_escalate("run-1")
 
     def test_clear_unknown_is_noop(self) -> None:
-        self.tracker.clear("unknown")  # Should not raise
+        result = self.tracker.clear("unknown")
+        assert result is None
+        assert self.tracker.get_count("unknown") == 0
 
     def test_clear_does_not_affect_other_runs(self) -> None:
         self.tracker.record_dismissal("run-1")

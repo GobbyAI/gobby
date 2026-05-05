@@ -62,7 +62,9 @@ class TestRegisterAndNotify:
     @pytest.mark.asyncio
     async def test_notify_unregistered_is_noop(self, registry: CompletionEventRegistry) -> None:
         """Notifying an unregistered ID doesn't raise."""
-        await registry.notify("nonexistent", {"status": "completed"})
+        result = await registry.notify("nonexistent", {"status": "completed"})
+        assert result is None
+        assert registry.get_result("nonexistent") is None
 
     @pytest.mark.asyncio
     async def test_wait_unregistered_raises(self, registry: CompletionEventRegistry) -> None:
@@ -167,7 +169,9 @@ class TestCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_unregistered_is_noop(self, registry: CompletionEventRegistry) -> None:
-        registry.cleanup("nonexistent")  # Should not raise
+        result = registry.cleanup("nonexistent")
+        assert result is None
+        assert not registry.is_registered("nonexistent")
 
 
 class TestContinuationPrompt:

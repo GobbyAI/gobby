@@ -161,7 +161,10 @@ async def test_different_sessions_evaluate_concurrently(tmp_path) -> None:
 
     await asyncio.wait_for(both_entered.wait(), timeout=1)
     release.set()
-    await asyncio.gather(task_a, task_b)
+    results = await asyncio.gather(task_a, task_b)
+
+    assert entered == {"platform-a", "platform-b"}
+    assert [result.decision for result in results] == ["allow", "allow"]
 
 
 @pytest.mark.asyncio

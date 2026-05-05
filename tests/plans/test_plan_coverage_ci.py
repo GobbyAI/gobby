@@ -63,12 +63,16 @@ def test_plan_registry_queries_plans_table(temp_db: TestDatabase) -> None:
 
 
 def test_registered_active_plan_files_parse_with_declared_kind(temp_db: TestDatabase) -> None:
+    parsed = []
     for entry in _active_entries(temp_db):
-        parse_plan(
-            entry.plan_path,
-            plan_kind=_parser_kind(entry.plan_kind),
-            parse_mode="draft",
+        parsed.append(
+            parse_plan(
+                entry.plan_path,
+                plan_kind=_parser_kind(entry.plan_kind),
+                parse_mode="draft",
+            )
         )
+    assert len(parsed) == len(_active_entries(temp_db))
 
 
 def test_active_implementation_manifests_match_on_disk(temp_db: TestDatabase) -> None:
@@ -167,7 +171,12 @@ def _entry_for_path(path: Path) -> PlanRegistryEntry:
         plan_id=plan_id,
     )
     plan_kind = "implementation" if state == "active" and manifest_path.exists() else "strategy"
-    plan_hash = parse_plan(path, parse_mode="draft").source_hash if state == "active" else None
+    parser_kind = _parser_kind(plan_kind)
+    plan_hash = (
+        parse_plan(path, plan_kind=parser_kind, parse_mode="draft").source_hash
+        if state == "active"
+        else None
+    )
     return PlanRegistryEntry(
         plan_id=plan_id,
         project_id=PROJECT_ID,

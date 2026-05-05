@@ -299,8 +299,9 @@ class TestNoneIsolationHandler:
             parent_session_id="sess",
         )
 
-        # Should not raise
-        await handler.cleanup_environment(config)
+        result = await handler.cleanup_environment(config)
+        assert result is None
+        assert handler.build_context_prompt("prompt", IsolationContext(cwd="/path")) == "prompt"
 
     def test_is_isolation_handler_subclass(self) -> None:
         """Test NoneIsolationHandler is a subclass of IsolationHandler."""

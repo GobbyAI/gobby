@@ -988,8 +988,9 @@ class TestCodexMcpHookSynthesis:
 
         processor.register_session("sid", str(transcript), source="codex")
 
-        # Should not raise.
-        await processor._process_session("sid", str(transcript))
+        result = await processor._process_session("sid", str(transcript))
+        assert result is None
+        assert processor._hook_manager is None
 
     @pytest.mark.asyncio
     async def test_registration_survives_missing_transcript_then_picks_up(

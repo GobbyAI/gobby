@@ -14,6 +14,7 @@ from gobby.memory.neo4j_client import Neo4jConnectionError
 from gobby.memory.services.knowledge_graph import (
     Entity,
     KnowledgeGraphService,
+    KnowledgeGraphStatus,
     Relationship,
 )
 
@@ -430,8 +431,10 @@ class TestGracefulDegradation:
         )
         mock_neo4j.merge_node = AsyncMock(side_effect=Neo4jConnectionError("refused"))
 
-        # Should not raise
-        await service.add_to_graph("Josh is here")
+        result = await service.add_to_graph("Josh is here")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert mock_neo4j.merge_node.await_count == 1
 
     async def test_search_graph_returns_empty_when_neo4j_down(
         self,
@@ -791,7 +794,10 @@ class TestRemoveMemoryFromGraph:
         """remove_memory_from_graph on non-existent ID doesn't raise."""
         mock_neo4j.query.return_value = []
         await service.remove_memory_from_graph("nonexistent")
-        # No error raised — MATCH...DETACH DELETE is a no-op on zero matches
+        delete_calls = [
+            c for c in mock_neo4j.query.call_args_list if "DETACH DELETE m" in c.args[0]
+        ]
+        assert len(delete_calls) == 1
 
     async def test_remove_memory_from_graph_neo4j_unreachable(
         self,
@@ -800,5 +806,5 @@ class TestRemoveMemoryFromGraph:
     ) -> None:
         """remove_memory_from_graph logs warning when Neo4j is unreachable."""
         mock_neo4j.query.side_effect = Neo4jConnectionError("connection refused")
-        # Should not raise
         await service.remove_memory_from_graph("mem-1")
+        assert mock_neo4j.query.await_count == 1

@@ -131,6 +131,7 @@ class TestDaemonStop:
         still_running = [
             c.pid for c in alive if c.is_running() and c.status() != psutil.STATUS_ZOMBIE
         ]
+        assert still_running == []
         if still_running:
             pytest.fail(f"Orphan child processes still running: {still_running}")
 
@@ -148,6 +149,7 @@ class TestDaemonStop:
             pytest.fail("Expected process not to exist")
         except ProcessLookupError:
             pass  # Expected - process doesn't exist
+        assert pid_file.exists()
 
         # Clean up
         pid_file.unlink()

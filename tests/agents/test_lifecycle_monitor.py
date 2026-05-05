@@ -1958,8 +1958,9 @@ class TestRecoverTaskFromFailedAgent:
             db=temp_db,
             task_manager=None,
         )
-        # Should not raise
-        await mon._recover_task_from_failed_agent("nonexistent-run")
+        result = await mon._recover_task_from_failed_agent("nonexistent-run")
+        assert result is None
+        assert mon._task_manager is None
 
     @pytest.mark.asyncio
     async def test_no_db_run_is_noop(
@@ -2216,5 +2217,9 @@ class TestCleanupAgentFdClose:
             tmux_session_name="gobby-no-fd",
         )
 
-        # Should not raise
-        await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
+        result = await monitor._cleanup_agent(
+            run, terminal_payload="test cleanup", is_success=True
+        )
+
+        assert result is None
+        assert run.id not in monitor._master_fds

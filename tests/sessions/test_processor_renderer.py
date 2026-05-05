@@ -59,7 +59,9 @@ class TestRenderStateTracking:
         assert "sess-1" not in processor._render_states
 
     def test_unregister_nonexistent_no_error(self, processor: SessionMessageProcessor) -> None:
-        processor.unregister_session("nonexistent")
+        result = processor.unregister_session("nonexistent")
+        assert result is None
+        assert processor._render_states == {}
 
 
 class TestRenderedBroadcast:

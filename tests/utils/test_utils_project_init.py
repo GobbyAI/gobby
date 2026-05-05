@@ -602,8 +602,9 @@ class TestUpdateProjectJsonVerification:
     def test_noop_when_no_project_json(self, tmp_path: Path) -> None:
         """Does nothing if project.json doesn't exist."""
         verification = VerificationCommands(unit_tests="pytest")
-        # Should not raise
-        _update_project_json_verification(tmp_path, verification)
+        result = _update_project_json_verification(tmp_path, verification)
+        assert result is None
+        assert not (tmp_path / ".gobby" / "project.json").exists()
 
 
 class TestWriteProjectJson:

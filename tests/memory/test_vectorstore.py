@@ -272,7 +272,10 @@ async def test_delete(vector_store: VectorStore) -> None:
 @pytest.mark.asyncio
 async def test_delete_nonexistent(vector_store: VectorStore) -> None:
     """delete() on nonexistent ID should not raise."""
-    await vector_store.delete(MEM_1)  # Should not raise
+    result = await vector_store.delete(MEM_1)
+
+    assert result is None
+    assert await vector_store.count() == 0
 
 
 @pytest.mark.asyncio
@@ -385,8 +388,11 @@ async def test_close(tmp_path) -> None:
     )
     await store.initialize()
     await store.close()
-    # Calling close again should not raise
-    await store.close()
+    assert store._client is None
+
+    result = await store.close()
+    assert result is None
+    assert store._client is None
 
 
 @pytest.mark.asyncio

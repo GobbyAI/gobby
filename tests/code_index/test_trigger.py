@@ -219,8 +219,10 @@ async def test_gcode_failure_does_not_propagate(trigger: CodeIndexTrigger, tmp_p
     ):
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
 
-        # Should not raise
-        await trigger._flush(trigger._root_key("/repo"), "proj-1")
+        result = await trigger._flush(trigger._root_key("/repo"), "proj-1")
+
+    assert result is None
+    assert mock_proc.communicate.await_count == 1
 
 
 # ── No gcode binary ─────────────────────────────────────────────────

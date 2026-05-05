@@ -254,7 +254,11 @@ class TestAccessStats:
 
     def test_update_access_stats_empty_list(self, memory_manager) -> None:
         """Test _update_access_stats handles empty list."""
-        memory_manager._update_access_stats([])
+        with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
+            result = memory_manager._update_access_stats([])
+
+        assert result is None
+        assert update_access_stats.call_count == 0
 
     def test_update_access_stats_invalid_timestamp(self, db, memory_config) -> None:
         """Test _update_access_stats handles invalid timestamps gracefully."""
@@ -264,8 +268,7 @@ class TestAccessStats:
         memory.id = "mm-test"
         memory.last_accessed_at = "invalid-timestamp"
 
-        # Should not raise, should proceed with update
-        manager._update_access_stats([memory])
+        assert manager._update_access_stats([memory]) is None
 
     def test_update_access_stats_no_timezone(self, db, memory_config) -> None:
         """Test _update_access_stats handles timestamps without timezone."""
@@ -494,7 +497,8 @@ class TestEdgeCases:
         with patch.object(manager.storage, "update_access_stats") as mock_update:
             mock_update.side_effect = Exception("Database error")
 
-            manager._update_access_stats([memory])
+            assert manager._update_access_stats([memory]) is None
+            assert mock_update.call_count == 1
 
 
 # =============================================================================
@@ -566,8 +570,10 @@ class TestVectorStoreIntegration:
     @pytest.mark.asyncio
     async def test_embed_and_upsert_no_vectorstore(self, memory_manager) -> None:
         """_embed_and_upsert does nothing when no VectorStore."""
-        # Should not raise
-        await memory_manager._embed_and_upsert("id", "content")
+        result = await memory_manager._embed_and_upsert("id", "content")
+
+        assert result is None
+        assert memory_manager.vector_store is None
 
     @pytest.mark.asyncio
     async def test_embed_and_upsert_failure_logged(self, db, memory_config) -> None:

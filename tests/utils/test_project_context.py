@@ -789,10 +789,12 @@ class TestEnsureProjectJsonForIsolation:
         gobby_dir.chmod(0o444)
 
         try:
-            # Should not raise
-            ensure_project_json_for_isolation(repo, target)
+            result = ensure_project_json_for_isolation(repo, target)
         finally:
             gobby_dir.chmod(0o755)
+
+        assert result is None
+        assert not (target / ".gobby" / "project.json").exists()
 
 
 class TestBuildAndSetProjectContext:

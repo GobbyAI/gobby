@@ -375,12 +375,15 @@ class TestGraphBackgroundTask:
         # Make graph service fail
         manager._kg_service.add_to_graph = AsyncMock(side_effect=Exception("Neo4j down"))
 
-        # Should not raise
-        await manager.create_memory(content="test")
+        memory = await manager.create_memory(content="test")
         await wait_for_async_condition(
             lambda: len(manager._background_tasks) == 0,
             description="graph background task cleanup",
         )
+
+        assert memory.id == "test-id"
+        assert manager._kg_service is not None
+        assert len(manager._background_tasks) == 0
 
 
 class TestNoGraphServiceReference:

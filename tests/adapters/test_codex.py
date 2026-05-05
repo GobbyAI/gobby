@@ -260,8 +260,8 @@ class TestCodexAppServerClientNotificationHandlers:
         client = CodexAppServerClient()
         handler = MagicMock()
 
-        # Should not raise
         client.remove_notification_handler("missing", handler)
+        assert client._notification_handlers == {}
 
 
 class TestCodexAppServerClientStart:
@@ -974,8 +974,9 @@ class TestCodexAdapterAttachDetach:
         """Detaching when not attached is a no-op."""
         adapter = CodexAdapter()
 
-        # Should not raise
         adapter.detach_from_client()
+        assert adapter._attached is False
+        assert adapter._codex_client is None
 
 
 class TestCodexAdapterTranslateToHookEvent:
@@ -1605,8 +1606,8 @@ class TestCodexAdapterHandleNotification:
         """Notification without hook manager is silently ignored."""
         adapter = CodexAdapter()
 
-        # Should not raise
         adapter._handle_notification("turn/started", {"threadId": "thr-1"})
+        assert adapter._hook_manager is None
 
     def test_handle_notification_error_handling(self) -> None:
         """Errors in notification handling are caught."""
@@ -1614,8 +1615,8 @@ class TestCodexAdapterHandleNotification:
         mock_hook_manager.handle.side_effect = Exception("Processing error")
         adapter = CodexAdapter(hook_manager=mock_hook_manager)
 
-        # Should not raise
         adapter._handle_notification("turn/started", {"threadId": "thr-1"})
+        assert mock_hook_manager.handle.call_count == 1
 
 
 class TestCodexAdapterSyncExistingSessions:

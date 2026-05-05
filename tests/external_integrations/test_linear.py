@@ -176,8 +176,10 @@ class TestLinearIntegrationErrorMessages:
         mock_mcp_manager.health = {"linear": MagicMock(state="connected")}
 
         integration = LinearIntegration(mock_mcp_manager)
-        # Should not raise
-        integration.require_available()
+        result = integration.require_available()
+
+        assert result is None
+        assert mock_mcp_manager.has_server.call_count == 1
 
 
 class TestLinearIntegrationServerName:

@@ -32,26 +32,25 @@ def test_load_diagnose_schema_points_at_mirrored_contract() -> None:
 
 
 def test_diagnose_schema_accepts_nullable_install_provenance() -> None:
-    validate_diagnose_payload(
-        {
-            "schema_version": 2,
-            "ghook_version": "0.2.1",
-            "cli": "codex",
-            "hook_type": "stop",
-            "source": None,
-            "critical": True,
-            "terminal_context_enabled": True,
-            "daemon_url": "http://127.0.0.1:60887",
-            "daemon_host": "127.0.0.1",
-            "daemon_port": 60887,
-            "project_root": None,
-            "project_id": None,
-            "terminal_context_preview": None,
-            "cli_recognized": True,
-            "install_method": None,
-            "install_source_url": None,
-        }
-    )
+    payload = {
+        "schema_version": 2,
+        "ghook_version": "0.2.1",
+        "cli": "codex",
+        "hook_type": "stop",
+        "source": None,
+        "critical": True,
+        "terminal_context_enabled": True,
+        "daemon_url": "http://127.0.0.1:60887",
+        "daemon_host": "127.0.0.1",
+        "daemon_port": 60887,
+        "project_root": None,
+        "project_id": None,
+        "terminal_context_preview": None,
+        "cli_recognized": True,
+        "install_method": None,
+        "install_source_url": None,
+    }
+    assert validate_diagnose_payload(payload) is None
 
 
 def test_build_diagnose_command_swaps_owned_marker(monkeypatch: pytest.MonkeyPatch) -> None:

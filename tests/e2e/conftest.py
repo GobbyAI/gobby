@@ -886,11 +886,25 @@ async def async_mcp_client(
 # --- Production Leak Detection ---
 
 
+_SNAPSHOT_EXCLUDED_DIRS = {"skill-cache"}
+
+
 def _snapshot_dir(path: Path) -> dict[str, float]:
     """Return {relative_path: mtime} for all files under *path*."""
     if not path.exists():
         return {}
-    return {str(p.relative_to(path)): p.stat().st_mtime for p in path.rglob("*") if p.is_file()}
+
+    snapshot: dict[str, float] = {}
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [name for name in dirs if name not in _SNAPSHOT_EXCLUDED_DIRS]
+        root_path = Path(root)
+        for filename in files:
+            file_path = root_path / filename
+            try:
+                snapshot[str(file_path.relative_to(path))] = file_path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+    return snapshot
 
 
 def _production_daemon_running() -> bool:

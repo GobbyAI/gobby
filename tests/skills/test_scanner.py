@@ -207,7 +207,9 @@ class TestTempFileHandling:
     """Tests for temp file creation and cleanup."""
 
     def test_temp_file_cleaned_up(self) -> None:
-        _scan("# Test content", name="cleanup-test")
+        result = _scan("# Test content", name="cleanup-test")
+        assert result["is_safe"] is True
+        assert result["findings_count"] == 0
 
     def test_temp_file_cleaned_up_even_on_error(self) -> None:
         with patch(

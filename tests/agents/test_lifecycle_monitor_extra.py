@@ -191,8 +191,9 @@ class TestRecoverTaskFromFailedAgent:
             agent_run_manager=MagicMock(),
             db=MagicMock(),
         )
-        await monitor._recover_task_from_failed_agent("run-1")
-        # Should return safely
+        result = await monitor._recover_task_from_failed_agent("run-1")
+        assert result is None
+        assert monitor._task_manager is None
 
     @pytest.mark.asyncio
     async def test_recover_task_not_in_progress(self) -> None:

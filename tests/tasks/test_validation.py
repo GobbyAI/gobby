@@ -1272,12 +1272,11 @@ class TestGetValidationContextSmartMerged:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         mock_diff.return_value = None
 
-        get_validation_context_smart(
+        context = get_validation_context_smart(
             "Task with no related files",
             max_chars=100,  # Very limited
         )
-        # May return None or minimal context
-        # The function should handle this gracefully
+        assert context is None
 
     @patch("gobby.tasks.validation.run_git_command")
     def test_respects_max_chars(self, mock_run) -> None:

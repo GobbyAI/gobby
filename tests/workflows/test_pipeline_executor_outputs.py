@@ -238,6 +238,7 @@ class TestEmitEvent:
             llm_service=mock_llm_service,
         )
         await executor._emit_event("test", "pe-1")
+        assert executor.event_callback is None
 
     @pytest.mark.asyncio
     async def test_emit_event_callback_error_suppressed(
@@ -253,6 +254,7 @@ class TestEmitEvent:
             event_callback=callback,
         )
         await executor._emit_event("test", "pe-1")
+        assert callback.await_count == 1
 
     @pytest.mark.asyncio
     async def test_emit_event_calls_callback(
@@ -286,6 +288,7 @@ class TestNotifyCompletion:
             llm_service=mock_llm_service,
         )
         await executor._notify_completion("pe-1", "completed", "test-pipe")
+        assert executor.completion_registry is None
 
     @pytest.mark.asyncio
     async def test_notify_with_outputs(
@@ -342,6 +345,7 @@ class TestNotifyCompletion:
             completion_registry=registry,
         )
         await executor._notify_completion("pe-1", "failed", "test-pipe", error="oops")
+        assert registry.notify.await_count == 1
 
     @pytest.mark.asyncio
     async def test_notify_with_error_field(
@@ -376,6 +380,7 @@ class TestClosePipelineSession:
             llm_service=mock_llm_service,
         )
         executor._close_pipeline_session(None, "caller-1")
+        assert executor.session_manager is None
 
     def test_same_session_does_nothing(
         self, mock_db, mock_execution_manager, mock_llm_service
@@ -405,6 +410,7 @@ class TestClosePipelineSession:
             session_manager=sm,
         )
         executor._close_pipeline_session("pipeline-sess", "caller-sess")
+        assert sm.update_status.call_count == 1
         sm.update_status.assert_called_once_with("pipeline-sess", "deleted")
 
     def test_close_session_error_suppressed(
@@ -421,3 +427,4 @@ class TestClosePipelineSession:
             session_manager=sm,
         )
         executor._close_pipeline_session("pipeline-sess", "caller-sess")
+        assert sm.update_status.call_count == 1

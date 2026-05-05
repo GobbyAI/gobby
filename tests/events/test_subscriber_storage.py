@@ -59,7 +59,9 @@ class TestCompletionSubscribers:
 
     def test_remove_subscribers_noop_if_none(self, manager: LocalPipelineExecutionManager) -> None:
         """Remove on nonexistent completion_id doesn't raise."""
-        manager.remove_completion_subscribers("nonexistent")
+        result = manager.remove_completion_subscribers("nonexistent")
+        assert result is None
+        assert manager.get_completion_subscribers("nonexistent") == []
 
     def test_subscribers_isolated_by_completion_id(
         self, manager: LocalPipelineExecutionManager

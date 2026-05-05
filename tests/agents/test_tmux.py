@@ -384,7 +384,10 @@ class TestTmuxOutputReader:
     @pytest.mark.asyncio
     async def test_stop_all_empty(self) -> None:
         reader = TmuxOutputReader()
-        await reader.stop_all()  # should not raise
+        result = await reader.stop_all()
+
+        assert result is None
+        assert reader._reader_tasks == {}
 
 
 # =============================================================================
@@ -504,12 +507,18 @@ class TestTmuxPTYBridge:
     @pytest.mark.asyncio
     async def test_detach_missing_is_noop(self) -> None:
         bridge = TmuxPTYBridge()
-        await bridge.detach("nonexistent")  # should not raise
+        result = await bridge.detach("nonexistent")
+
+        assert result is None
+        assert await bridge.list_bridges() == {}
 
     @pytest.mark.asyncio
     async def test_detach_all_empty(self) -> None:
         bridge = TmuxPTYBridge()
-        await bridge.detach_all()  # should not raise
+        result = await bridge.detach_all()
+
+        assert result is None
+        assert await bridge.list_bridges() == {}
 
     @pytest.mark.asyncio
     async def test_attach_duplicate_raises(self) -> None:
@@ -530,7 +539,7 @@ class TestTmuxPTYBridge:
     @pytest.mark.asyncio
     async def test_resize_missing_is_noop(self) -> None:
         bridge = TmuxPTYBridge()
-        await bridge.resize("nonexistent", 50, 200)  # should not raise
+        assert await bridge.resize("nonexistent", 50, 200) is None
 
 
 # =============================================================================

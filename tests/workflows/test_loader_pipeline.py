@@ -447,8 +447,7 @@ class TestValidatePipelineReferences:
                 {"id": "step2", "prompt": "Process the output from $step1.output"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_rejects_forward_reference(self) -> None:
         """Test that $later_step.output (forward ref) is rejected."""
@@ -495,8 +494,7 @@ class TestValidatePipelineReferences:
                 },
             ],
         }
-        # Should not raise - all references are to earlier steps
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_validates_condition_references(self) -> None:
         """Test that references in condition fields are validated."""
@@ -512,8 +510,7 @@ class TestValidatePipelineReferences:
                 },
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_validates_input_references(self) -> None:
         """Test that references in input fields are validated."""
@@ -525,8 +522,7 @@ class TestValidatePipelineReferences:
                 {"id": "step2", "exec": "process", "input": "$step1.output"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_validates_output_references(self) -> None:
         """Test that references in pipeline outputs are validated."""
@@ -542,8 +538,7 @@ class TestValidatePipelineReferences:
                 {"id": "final", "exec": "./finish.sh"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_rejects_invalid_output_reference(self) -> None:
         """Test that invalid references in outputs are rejected."""
@@ -569,8 +564,7 @@ class TestValidatePipelineReferences:
                 {"id": "step1", "exec": "echo $inputs.target"},
             ],
         }
-        # Should not raise - $inputs.* is not a step reference
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_multiple_refs_all_valid(self) -> None:
         """Test pipeline with multiple valid references."""
@@ -583,8 +577,7 @@ class TestValidatePipelineReferences:
                 {"id": "step3", "prompt": "Combine $step1.output and $step2.output"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_multiple_refs_one_invalid(self) -> None:
         """Test that one invalid ref among valid ones is caught."""

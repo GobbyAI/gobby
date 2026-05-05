@@ -169,8 +169,10 @@ class TestGitHubIntegrationErrorMessages:
         mock_mcp_manager.health = {"github": MagicMock(state="connected")}
 
         integration = GitHubIntegration(mock_mcp_manager)
-        # Should not raise
-        integration.require_available()
+        result = integration.require_available()
+
+        assert result is None
+        assert mock_mcp_manager.has_server.call_count == 1
 
 
 class TestGitHubIntegrationServerName:

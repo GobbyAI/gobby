@@ -105,8 +105,10 @@ async def test_cleanup_handles_cancelled_error():
             return_value=mock_store,
         ),
     ):
-        # Should not raise
-        await cleanup_comms_messages_loop(MagicMock(), lambda: False, retention_days=30)
+        result = await cleanup_comms_messages_loop(MagicMock(), lambda: False, retention_days=30)
+
+    assert result is None
+    assert mock_store.delete_messages_before.call_count == 0
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.merge_resolutions import MergeResolutionManager
+from gobby.storage.merge_resolutions import MergeConflict, MergeResolution, MergeResolutionManager
 
 pytestmark = pytest.mark.integration
 
@@ -341,11 +341,25 @@ class TestMergeManagerHelperMethods:
     def test_get_active_resolution_returns_pending_resolution(self, mock_resolution) -> None:
         """get_active_resolution should return the current pending resolution."""
 
-        if not hasattr(MergeResolutionManager, "get_active_resolution"):
-            pytest.fail("get_active_resolution method not implemented")
+        db = MagicMock()
+        db.fetchone.return_value = {"id": "mr-abc123"}
+        manager = MergeResolutionManager(db)
+
+        with patch.object(MergeResolution, "from_row", return_value=mock_resolution):
+            result = manager.get_active_resolution()
+
+        assert result is mock_resolution
+        assert "status = 'pending'" in db.fetchone.call_args.args[0]
 
     def test_get_conflict_by_path_finds_conflict(self, mock_conflict) -> None:
         """get_conflict_by_path should find conflict by file path."""
 
-        if not hasattr(MergeResolutionManager, "get_conflict_by_path"):
-            pytest.fail("get_conflict_by_path method not implemented")
+        db = MagicMock()
+        db.fetchone.return_value = {"id": "mc-conflict1"}
+        manager = MergeResolutionManager(db)
+
+        with patch.object(MergeConflict, "from_row", return_value=mock_conflict):
+            result = manager.get_conflict_by_path("src/test.py", "mr-abc123")
+
+        assert result is mock_conflict
+        assert db.fetchone.call_args.args[1] == ("src/test.py", "mr-abc123")

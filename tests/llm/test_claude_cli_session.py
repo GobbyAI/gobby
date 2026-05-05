@@ -210,15 +210,17 @@ class TestCLISession:
     async def test_interrupt_noop_when_no_process(self) -> None:
         cli = ClaudeCLI(cli_path="/usr/bin/claude")
         session = cli.session()
-        # Should not raise
-        await session.interrupt()
+        result = await session.interrupt()
+        assert result is None
+        assert session._process is None
 
     @pytest.mark.asyncio
     async def test_stop_noop_when_no_process(self) -> None:
         cli = ClaudeCLI(cli_path="/usr/bin/claude")
         session = cli.session()
-        # Should not raise
-        await session.stop()
+        result = await session.stop()
+        assert result is None
+        assert session._process is None
 
     @pytest.mark.asyncio
     async def test_env_overrides_passed_to_subprocess(self) -> None:

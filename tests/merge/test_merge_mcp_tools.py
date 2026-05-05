@@ -27,7 +27,9 @@ class TestMergeToolsImports:
 
     def test_import_merge_tools_module(self) -> None:
         """Can import merge tools module."""
-        from gobby.mcp_proxy.tools import merge  # noqa: F401
+        from gobby.mcp_proxy.tools import merge
+
+        assert hasattr(merge, "create_merge_registry")
 
     def test_import_create_merge_registry(self) -> None:
         """Can import create_merge_registry function."""

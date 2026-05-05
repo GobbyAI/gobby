@@ -143,8 +143,9 @@ def test_delete_variables_nonexistent(db) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    # Should not raise
-    mgr.delete_variables("nonexistent")
+    result = mgr.delete_variables("nonexistent")
+    assert result is None
+    assert mgr.get_variables("nonexistent") == {}
 
 
 def test_variables_persist_across_workflow_changes(db) -> None:
