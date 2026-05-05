@@ -550,6 +550,10 @@ anchor = create_task(
     task_type="review_anchor",
     category="planning",
     title=f"Plan-adversary review — round {current_round + 1}",
+)
+initialize_task_manifest(
+    task_id=anchor.id,
+    stage_names=["planning"],
     stage_caps=[{"stage_name": "planning", "max_review_rounds": max_rounds + 1}],
 )
 set_variable(name="active_anchor_id", value=anchor.id, session_id="#<self>")

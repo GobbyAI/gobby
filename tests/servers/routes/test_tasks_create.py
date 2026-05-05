@@ -34,11 +34,12 @@ def test_post_simple_fix(temp_db, sample_project) -> None:
 
 
 def test_post_review_anchor(temp_db, sample_project) -> None:
+    task_manager = LocalTaskManager(temp_db)
     server = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
         session_manager=SessionManager(temp_db),
-        task_manager=LocalTaskManager(temp_db),
+        task_manager=task_manager,
     )
 
     with patch.object(server, "resolve_project_id", return_value=sample_project["id"]):
@@ -48,4 +49,6 @@ def test_post_review_anchor(temp_db, sample_project) -> None:
         )
 
     assert response.status_code == 201
-    assert response.json()["task_type"] == "review_anchor"
+    payload = response.json()
+    assert payload["task_type"] == "review_anchor"
+    assert task_manager.stage_states.list_for_task(payload["id"]) == []

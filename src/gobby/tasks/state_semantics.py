@@ -157,7 +157,12 @@ def _current_stage_payload(task: Any) -> dict[str, str] | None:
     state = _read_field(stage, "state")
     if not isinstance(name, str) or not isinstance(state, str):
         return None
-    return {"name": name, "state": state}
+    payload = {"name": name, "state": state}
+    for field_name in ("display_name", "display_label", "category"):
+        value = _read_field(stage, field_name)
+        if isinstance(value, str):
+            payload[field_name] = value
+    return payload
 
 
 def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[str, Any]:

@@ -90,6 +90,15 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
         title="Expansion parent",
         task_type="epic",
     )
+    service.task_manager.initialize_task_manifest(
+        parent.id,
+        stage_names=["development", "holistic_qa", "pr", "merge"],
+        stage_caps=[
+            {"stage_name": "development", "max_review_rounds": 3},
+            {"stage_name": "holistic_qa", "max_review_rounds": 4},
+            {"stage_name": "pr", "max_work_attempts": 2},
+        ],
+    )
     spec = {
         "version": 1,
         "parent_task_id": parent.id,
@@ -131,14 +140,19 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
     leaf_id = applied.task_id_map["leaf-1"]
     assert phase_epic_id in applied.created_task_ids
     assert leaf_id in applied.created_task_ids
-    assert [
-        row.stage_name for row in service.task_manager.stage_states.list_for_task(phase_epic_id)
-    ] == ["holistic_qa", "pr", "merge"]
-    assert [row.stage_name for row in service.task_manager.stage_states.list_for_task(leaf_id)] == [
+    phase_rows = service.task_manager.stage_states.list_for_task(phase_epic_id)
+    leaf_rows = service.task_manager.stage_states.list_for_task(leaf_id)
+    assert [row.stage_name for row in phase_rows] == [
         "development",
+        "holistic_qa",
         "pr",
         "merge",
     ]
+    assert [row.stage_name for row in leaf_rows] == ["development", "pr", "merge"]
+    assert phase_rows[0].max_review_rounds == 3
+    assert phase_rows[1].max_review_rounds == 4
+    assert leaf_rows[0].max_review_rounds == 3
+    assert leaf_rows[1].max_work_attempts == 2
     leaf = service.task_manager.get_task(leaf_id)
     assert f"expansion-run:{run.id}" in (leaf.labels or [])
     assert service.task_manager.artifacts.get_artifacts(parent.id).expansion_run_id == run.id
@@ -154,7 +168,6 @@ def test_apply_parent_with_no_stages_is_noop_for_expansion_completion(
         title="No stages parent",
         task_type="epic",
     )
-    temp_db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (parent.id,))
     spec = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
         "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
@@ -166,6 +179,7 @@ def test_apply_parent_with_no_stages_is_noop_for_expansion_completion(
 
     assert applied.status == "completed"
     assert service.task_manager.stage_states.list_for_task(parent.id) == []
+    assert service.task_manager.stage_states.list_for_task(applied.task_id_map["leaf"]) == []
 
 
 def test_apply_completes_current_expansion_stage(temp_db, sample_project) -> None:
@@ -174,7 +188,10 @@ def test_apply_completes_current_expansion_stage(temp_db, sample_project) -> Non
         project_id=sample_project["id"],
         title="Expansion stage parent",
         task_type="epic",
-        stages_override=["expansion", "development"],
+    )
+    service.task_manager.initialize_task_manifest(
+        parent.id,
+        stage_names=["expansion", "development"],
     )
     service.task_manager.stage_states.start_stage(parent.id, "expansion", by_session_id=None)
     spec = {
@@ -197,7 +214,10 @@ def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
         project_id=sample_project["id"],
         title="Reset parent",
         task_type="epic",
-        stages_override=["expansion", "development"],
+    )
+    service.task_manager.initialize_task_manifest(
+        parent.id,
+        stage_names=["expansion", "development"],
     )
     unrelated = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -274,6 +294,7 @@ def test_reset_refuses_progressed_generated_task(temp_db, sample_project) -> Non
         task_type="task",
         category="code",
     )
+    service.task_manager.initialize_task_manifest(leaf.id, stage_names=["development"])
     service.task_manager.stage_states.start_stage(leaf.id, "development", by_session_id=None)
     run = service.run_manager.create(
         parent_task_id=parent.id,

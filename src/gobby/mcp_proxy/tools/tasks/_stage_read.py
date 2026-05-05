@@ -15,6 +15,9 @@ STAGE_STATE_SCHEMA: dict[str, Any] = {
     "properties": {
         "task_id": {"type": "string"},
         "stage_name": {"type": "string"},
+        "display_name": {"type": ["string", "null"]},
+        "display_label": {"type": ["string", "null"]},
+        "category": {"type": ["string", "null"]},
         "position": {"type": "integer"},
         "state": {"type": "string"},
         "review_policy": {"type": "string"},

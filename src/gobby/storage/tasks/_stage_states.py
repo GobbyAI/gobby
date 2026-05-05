@@ -572,6 +572,13 @@ class StageStatesManager:
         raise ValueError(f"Unknown stage transition '{verb}'")
 
     def _state_from_row(self, row: Any) -> StageState:
+        display_label = self._row_value(row, "display_label")
+        category = self._row_value(row, "category")
+        if display_label is None or category is None:
+            registry_entry = self.registry.get(row["stage_name"])
+            if registry_entry is not None:
+                display_label = display_label or registry_entry.display_label
+                category = category or registry_entry.category
         return StageState(
             task_id=row["task_id"],
             stage_name=row["stage_name"],
@@ -591,6 +598,9 @@ class StageStatesManager:
             artifact_refs=_coerce_artifact_refs(row["artifact_refs"]),
             notes=row["notes"],
             updated_at=row["updated_at"],
+            display_name=display_label,
+            display_label=display_label,
+            category=category,
         )
 
     def _ensure_phase2_columns(self) -> None:
@@ -728,6 +738,13 @@ class StageStatesManager:
 
     def _columns(self, table_name: str) -> set[str]:
         return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
+
+    @staticmethod
+    def _row_value(row: Any, column: str) -> Any:
+        try:
+            return row[column]
+        except (IndexError, KeyError):
+            return None
 
     def _validate_specs(self, specs: Sequence[StageManifestSpec]) -> None:
         if not specs:

@@ -91,7 +91,7 @@ from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
 from gobby.storage.tasks._search import TaskFTS5Searcher
-from gobby.storage.tasks._stage_manifest import init_stage_manifest_for_task
+from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._transitions import (
@@ -227,8 +227,6 @@ class LocalTaskManager:
         github_repo: str | None = None,
         linear_issue_id: str | None = None,
         linear_team_id: str | None = None,
-        stage_caps: Sequence[Mapping[str, object]] | None = None,
-        stages_override: Sequence[str] | None = None,
         **kwargs: Any,
     ) -> Task:
         """Create a new task with collision handling."""
@@ -254,17 +252,31 @@ class LocalTaskManager:
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
         )
-        init_stage_manifest_for_task(
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def initialize_task_manifest(
+        self,
+        task_id: str,
+        *,
+        task_type: str | None = None,
+        stage_names: Sequence[str] | None = None,
+        stage_caps: Sequence[Mapping[str, object]] | None = None,
+        by_session_id: str | None = None,
+    ) -> list[Any]:
+        """Explicitly initialize a task lifecycle manifest."""
+        resolved_type = task_type or self.get_task(task_id).task_type
+        rows = initialize_task_manifest_for_task(
             self.stages_registry,
             self.stage_states,
             task_id,
-            task_type=task_type,
+            task_type=resolved_type,
+            stage_names=stage_names,
             stage_caps=stage_caps,
-            stages_override=stages_override,
-            by_session_id=created_in_session_id,
+            by_session_id=by_session_id,
         )
         self._notify_listeners()
-        return self.get_task(task_id)
+        return rows
 
     def get_task(self, task_id: str, project_id: str | None = None) -> Task:
         """Get a task by ID or reference.
@@ -411,6 +423,7 @@ class LocalTaskManager:
         *,
         skip_stages: Iterable[str] = (),
         yolo: bool | None = None,
+        parent_manifest_specs: Iterable[Any] | None = None,
     ) -> int:
         """Apply build dispatch state to an epic and every descendant task."""
         if unattended is None:
@@ -422,6 +435,7 @@ class LocalTaskManager:
             unattended=unattended,
             allow_automation=allow_automation,
             skip_stages=skip_stages,
+            parent_manifest_specs=parent_manifest_specs,
         )
         self._notify_listeners()
         return updated_count
@@ -853,8 +867,6 @@ class LocalTaskManager:
         validation_criteria: str | None = None,
         assigned_agent: str | None = None,
         additional_skills: list[str] | None = None,
-        stage_caps: Sequence[Mapping[str, object]] | None = None,
-        stages_override: Sequence[str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Create a task and return result dict."""
@@ -872,8 +884,6 @@ class LocalTaskManager:
             validation_criteria=validation_criteria,
             assigned_agent=assigned_agent,
             additional_skills=additional_skills,
-            stage_caps=stage_caps,
-            stages_override=stages_override,
         )
         return {"task": task.to_dict()}
 

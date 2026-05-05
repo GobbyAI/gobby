@@ -106,7 +106,8 @@ def test_step_7_4_prepares_review_anchor_before_spawn(body: str) -> None:
     assert 'task_type="review_anchor"' in body
     assert 'category="planning"' in body
     assert '"max_review_rounds": max_rounds + 1' in body
-    assert "stage_caps=[" in body
+    assert "initialize_task_manifest(" in body
+    assert 'stage_names=["planning"]' in body
     assert "old_anchor_id = get_variable" in body
     assert 'set_variable(name="active_anchor_id", value=None' in body
     assert 'set_variable(name="active_anchor_id", value=anchor.id' in body

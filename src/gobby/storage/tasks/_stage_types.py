@@ -83,6 +83,12 @@ class IllegalManifestMutationError(ValueError):
 class ManifestAlreadyInitializedError(ValueError):
     """Raised when a task already has a different stage manifest."""
 
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+        super().__init__(
+            f"Task '{task_id}' already has lifecycle stage rows with a different shape"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StageState:
@@ -104,6 +110,9 @@ class StageState:
     artifact_refs: dict[str, str] | None
     notes: str | None
     updated_at: str
+    display_name: str | None = None
+    display_label: str | None = None
+    category: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

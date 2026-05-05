@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
-from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES  # noqa: F401
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES as TDD_ELIGIBLE_CATEGORIES
 from gobby.tasks.state_semantics import serialize_task_state
 
 # Priority name to numeric value mapping

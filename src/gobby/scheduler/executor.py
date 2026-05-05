@@ -12,7 +12,6 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun
 
 if TYPE_CHECKING:
-    from gobby.app_context import ServiceContainer
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ class CronExecutor:
         storage: CronJobStorage,
         agent_runner: Any | None = None,
         pipeline_executor: PipelineExecutor | None = None,
-        services: ServiceContainer | None = None,
+        services: object | None = None,
     ):
         self.storage = storage
         self.agent_runner = agent_runner

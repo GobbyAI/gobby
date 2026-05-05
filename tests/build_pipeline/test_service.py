@@ -46,6 +46,15 @@ def _project(temp_db: LocalDatabase, tmp_path: Path) -> tuple[str, Path]:
     return project.id, repo_path
 
 
+def _disable_dispatcher_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.build.service import DispatcherTickSummary
+
+    async def no_tick(*_args: object, **_kwargs: object) -> DispatcherTickSummary:
+        return DispatcherTickSummary()
+
+    monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", no_tick)
+
+
 @pytest.mark.asyncio
 async def test_build_rejects_unknown_skip_stage_with_valid_values(
     temp_db,
@@ -311,11 +320,152 @@ async def test_build_leaf_forces_none_isolation_and_sets_agent(
     )
 
     updated = task_manager.get_task(leaf.id)
+    rows = task_manager.stage_states.list_for_task(leaf.id)
     assert result.created is False
     assert result.initial_lifecycle == "development"
+    assert [row.stage_name for row in rows] == ["development", "pr", "merge"]
     assert updated.allow_automation is True
     assert updated.isolation == "none"
     assert updated.assigned_agent == "backend-developer"
+
+
+@pytest.mark.asyncio
+async def test_build_rerun_same_manifest_preserves_active_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    leaf = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Same shape leaf",
+        category="code",
+        task_type="task",
+    )
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(profile="quick", isolation="none"),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+    started = task_manager.stage_states.start_stage(
+        leaf.id,
+        "development",
+        by_session_id=None,
+    )
+    assert started.stage_name == "development"
+    assert started.state == "in_progress"
+
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(profile="quick", isolation="none"),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    current = task_manager.stage_states.current_stage(leaf.id)
+    assert current is not None
+    assert current.stage_name == "development"
+    assert current.state == "in_progress"
+    assert current.entered_at == started.entered_at
+
+
+@pytest.mark.asyncio
+async def test_build_rejects_active_different_manifest_with_restart_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    leaf = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Different shape active leaf",
+        category="code",
+        task_type="task",
+    )
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(profile="quick", isolation="none"),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+    task_manager.stage_states.start_stage(leaf.id, "development", by_session_id=None)
+
+    with pytest.raises(ValueError, match="gobby build restart.*gobby build clean"):
+        await _build(
+            f"#{leaf.seq_num}",
+            _options(profile="quick", isolation="none", stages=["development"]),
+            db=temp_db,
+            project_id=sample_project["id"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_build_reseeds_pristine_manifest_to_requested_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    leaf = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Pristine reseed leaf",
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["development", "pr", "merge"])
+
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(profile="quick", isolation="none", stages=["development"]),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    rows = task_manager.stage_states.list_for_task(leaf.id)
+    assert [row.stage_name for row in rows] == ["development"]
+
+
+@pytest.mark.asyncio
+async def test_build_epic_cascade_initializes_child_from_resolved_scope(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.config.build import StageCapOverride
+
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Scoped build epic",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Scoped child",
+        parent_task_id=epic.id,
+        category="code",
+        task_type="task",
+    )
+
+    await _build(
+        f"#{epic.seq_num}",
+        _options(
+            profile="quick",
+            isolation="none",
+            stages=["development"],
+            stage_caps=[StageCapOverride("development", max_review_rounds=8)],
+        ),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    child_rows = task_manager.stage_states.list_for_task(child.id)
+    assert [row.stage_name for row in child_rows] == ["development"]
+    assert child_rows[0].max_review_rounds == 8
 
 
 @pytest.mark.asyncio

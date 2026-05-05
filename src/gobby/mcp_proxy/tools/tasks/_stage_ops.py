@@ -16,7 +16,7 @@ from gobby.storage.tasks._stage_types import (
     StageManifestSpec,
     StageState,
 )
-from gobby.storage.tasks._stage_views import stage_state_operation_view
+from gobby.storage.tasks._stage_views import stage_state_operation_view, stage_state_view
 from gobby.utils.session_context import get_current_session_id
 
 
@@ -83,12 +83,58 @@ def _register_stage_tool(
     )
 
 
+_STAGE_CAPS_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "stage_name": {"type": "string"},
+            "max_work_attempts": {"type": "integer", "minimum": 1},
+            "max_review_rounds": {"type": "integer", "minimum": 1},
+        },
+        "required": ["stage_name"],
+    },
+}
+
+
 def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     """Create mutating task stage manifest tools for gobby-tasks-ops."""
 
     registry = InternalToolRegistry(
         name="gobby-tasks-stage-ops",
         description="Mutating task stage manifest tools",
+    )
+
+    def initialize_task_manifest(
+        task_id: str,
+        stage_names: list[str] | None = None,
+        stage_caps: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Initialize a task lifecycle manifest from defaults or explicit stages."""
+        resolved_id = _resolve_task(ctx, task_id)
+        rows = ctx.task_manager.initialize_task_manifest(
+            resolved_id,
+            stage_names=stage_names,
+            stage_caps=stage_caps,
+            by_session_id=_session_id(ctx),
+        )
+        return {
+            "ok": True,
+            "task_id": resolved_id,
+            "stages": [stage_state_view(row) for row in rows],
+        }
+
+    _register_stage_tool(
+        registry,
+        name="initialize_task_manifest",
+        description="Initialize a task lifecycle manifest from task-type defaults or explicit stages.",
+        properties={
+            "task_id": {"type": "string"},
+            "stage_names": {"type": "array", "items": {"type": "string"}},
+            "stage_caps": _STAGE_CAPS_SCHEMA,
+        },
+        required=["task_id"],
+        func=initialize_task_manifest,
     )
 
     def start_stage(task_id: str, stage_name: str, notes: str | None = None) -> dict[str, Any]:

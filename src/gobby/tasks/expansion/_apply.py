@@ -9,15 +9,13 @@ from typing import Any, cast
 
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.tasks import Task
+from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.tasks.expansion._common import (
     _TDD_CATEGORIES,
     _manifest_stage_names,
     _stable_ref_id,
     _stable_test_id,
 )
-
-_PHASE_SUBEPIC_STAGES = ("holistic_qa", "pr", "merge")
-_MANIFEST_WORK_ITEM_STAGES = ("development", "pr", "merge")
 
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
@@ -66,6 +64,15 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     task = self.task_manager.get_task(run.parent_task_id)
     if task is None:
         raise ValueError(f"Parent task {run.parent_task_id} not found")
+    parent_manifest = self.task_manager.stage_states.list_for_task(task.id)
+    phase_manifest_specs = derive_child_manifest_specs(
+        parent_manifest,
+        include_holistic_qa=True,
+    )
+    leaf_manifest_specs = derive_child_manifest_specs(
+        parent_manifest,
+        include_holistic_qa=False,
+    )
 
     spec = run.compiled_spec
     validation = self.validate_compiled_spec(spec)
@@ -134,9 +141,14 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                     created_in_session_id=session_id,
                     description=phase.get("summary"),
                     labels=[provenance_label],
-                    stages_override=_PHASE_SUBEPIC_STAGES,
                 )
                 phase_parent_map[phase["id"]] = result["task"]["id"]
+                if phase_manifest_specs:
+                    self.task_manager.stage_states.initialize_manifest(
+                        result["task"]["id"],
+                        phase_manifest_specs,
+                        by_session_id=session_id,
+                    )
         else:
             phase_parent_map = {phase["id"]: task.id for phase in phase_list}
 
@@ -168,6 +180,12 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                 )
                 created_task_map[_stable_test_id(phase_id)] = test_result["task"]["id"]
                 phase_child_ids[phase_id].append(test_result["task"]["id"])
+                if leaf_manifest_specs:
+                    self.task_manager.stage_states.initialize_manifest(
+                        test_result["task"]["id"],
+                        leaf_manifest_specs,
+                        by_session_id=session_id,
+                    )
                 _copy_target_branch_to_leaf(
                     self,
                     task_id=test_result["task"]["id"],
@@ -197,11 +215,16 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                     labels=task_label_map.get(task_item["id"]),
                     assigned_agent=task_item.get("assigned_agent"),
                     additional_skills=task_item.get("additional_skills"),
-                    stages_override=_stages_override_for_task_item(spec, task_item),
                 )
                 created_id = create_result["task"]["id"]
                 created_task_map[task_item["id"]] = created_id
                 phase_child_ids[phase_id].append(created_id)
+                if leaf_manifest_specs:
+                    self.task_manager.stage_states.initialize_manifest(
+                        created_id,
+                        leaf_manifest_specs,
+                        by_session_id=session_id,
+                    )
                 _copy_target_branch_to_leaf(
                     self,
                     task_id=created_id,
@@ -228,6 +251,12 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                 )
                 created_task_map[_stable_ref_id(phase_id)] = ref_result["task"]["id"]
                 phase_child_ids[phase_id].append(ref_result["task"]["id"])
+                if leaf_manifest_specs:
+                    self.task_manager.stage_states.initialize_manifest(
+                        ref_result["task"]["id"],
+                        leaf_manifest_specs,
+                        by_session_id=session_id,
+                    )
                 _copy_target_branch_to_leaf(
                     self,
                     task_id=ref_result["task"]["id"],
@@ -325,15 +354,6 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     if run is None:
         raise RuntimeError(f"Expansion run {run_id} disappeared after apply")
     return run
-
-
-def _stages_override_for_task_item(
-    spec: dict[str, Any],
-    task_item: dict[str, Any],
-) -> tuple[str, ...] | None:
-    if spec.get("contract_plan") and task_item.get("source_section_id") is not None:
-        return _MANIFEST_WORK_ITEM_STAGES
-    return None
 
 
 def validate_applied_run(

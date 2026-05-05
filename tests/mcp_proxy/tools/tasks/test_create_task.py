@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
@@ -24,9 +26,7 @@ def test_simple_fix_type(task_registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_task_accepts_stage_caps_and_persists_manifest_cap(
-    temp_db, sample_project
-) -> None:
+async def test_create_task_does_not_accept_or_seed_stage_caps(temp_db, sample_project) -> None:
     session = SessionManager(temp_db).register(
         external_id="stage-caps-mcp",
         machine_id="test-machine",
@@ -37,21 +37,67 @@ async def test_create_task_accepts_stage_caps_and_persists_manifest_cap(
     registry = create_task_registry(manager, MagicMock())
     schema = registry.get_schema("create_task")
 
-    assert "stage_caps" in schema["inputSchema"]["properties"]
+    assert "stage_caps" not in schema["inputSchema"]["properties"]
 
     with session_context_for_test(session.id):
         result = await registry.call(
             "create_task",
             {
-                "title": "Capped review anchor",
+                "title": "Metadata-only review anchor",
                 "category": "planning",
                 "task_type": "review_anchor",
-                "stage_caps": [
-                    {"stage_name": "planning", "max_review_rounds": 100},
-                ],
             },
         )
 
     assert "error" not in result
-    planning = stage_row(temp_db, result["id"], "planning")
+    assert manager.stage_states.list_for_task(result["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_initialize_task_manifest_persists_review_anchor_cap(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Capped review anchor",
+        category="planning",
+        task_type="review_anchor",
+    )
+    ctx = RegistryContext(task_manager=manager, sync_manager=MagicMock())
+    registry = create_stage_ops_registry(ctx)
+    schema = registry.get_schema("initialize_task_manifest")
+
+    assert "stage_caps" in schema["inputSchema"]["properties"]
+
+    result = await registry.call(
+        "initialize_task_manifest",
+        {
+            "task_id": task.id,
+            "stage_names": ["planning"],
+            "stage_caps": [{"stage_name": "planning", "max_review_rounds": 100}],
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["stages"][0]["display_label"] == "Planning"
+    planning = stage_row(temp_db, result["task_id"], "planning")
     assert planning["max_review_rounds"] == 100
+
+
+@pytest.mark.asyncio
+async def test_initialize_task_manifest_rejects_unknown_stage(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Bad stage task",
+        category="planning",
+        task_type="review_anchor",
+    )
+    registry = create_stage_ops_registry(
+        RegistryContext(task_manager=manager, sync_manager=MagicMock())
+    )
+
+    with pytest.raises(ValueError, match="Unknown stage 'missing'"):
+        await registry.call(
+            "initialize_task_manifest",
+            {"task_id": task.id, "stage_names": ["planning", "missing"]},
+        )

@@ -15,7 +15,13 @@ from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, Task, TaskArtifacts
+from gobby.storage.tasks import (
+    LocalTaskManager,
+    ManifestAlreadyInitializedError,
+    StageManifestSpec,
+    Task,
+    TaskArtifacts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +314,7 @@ async def _build_epic(
         unattended=opts.unattended,
         skip_stages=skip_stages,
         allow_automation=True,
+        parent_manifest_specs=specs,
     )
     _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
@@ -632,7 +639,14 @@ def _initialize_stage_manifest(
     skip_stages: list[str],
 ) -> list[StageManifestSpec]:
     specs = resolve_stage_manifest_specs(task_manager, task.task_type, opts, skip_stages)
-    task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
+    try:
+        task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
+    except ManifestAlreadyInitializedError as exc:
+        raise ValueError(
+            "Task already has a different lifecycle manifest. "
+            f"Use `gobby build restart {task.id}` or `gobby build clean {task.id}` "
+            "before changing the build stage shape."
+        ) from exc
     return specs
 
 

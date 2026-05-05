@@ -49,6 +49,9 @@ class StageStateView(BaseModel):
 
     task_id: str
     stage_name: str
+    display_name: str | None = None
+    display_label: str | None = None
+    category: str | None = None
     position: int
     state: Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
     review_policy: Literal["none", "required", "optional"]

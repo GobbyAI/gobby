@@ -26,25 +26,11 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
+from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import StageManifestSpec
 
 logger = logging.getLogger(__name__)
-
-
-def _manifest_specs_for_task_type(
-    stage_states: StageStatesManager,
-    task_type: str,
-    skip_stages: set[str],
-) -> list[StageManifestSpec]:
-    defaults = stage_states.registry.list_default_stages(task_type)
-    if not defaults and task_type != "task":
-        defaults = stage_states.registry.list_default_stages("task")
-    manifest = [stage_name for stage_name, _position in defaults if stage_name not in skip_stages]
-    return [
-        StageManifestSpec(stage_name=stage_name, position=index)
-        for index, stage_name in enumerate(manifest)
-    ]
 
 
 def _is_unattended(task: Any) -> bool:
@@ -369,6 +355,7 @@ def cascade_build_state_to_subtree(
     *,
     skip_stages: Iterable[str] = (),
     yolo: bool | None = None,
+    parent_manifest_specs: Iterable[StageManifestSpec] | None = None,
 ) -> int:
     """Apply build dispatch state to an epic and every descendant task.
 
@@ -381,7 +368,7 @@ def cascade_build_state_to_subtree(
     if unattended is None:
         unattended = bool(yolo)
     normalized_isolation = Isolation(isolation).value
-    skipped = {stage.strip() for stage in skip_stages if stage.strip()}
+    _ = tuple(skip_stages)
     now = datetime.now(UTC).isoformat()
 
     with db.transaction_immediate() as conn:
@@ -431,11 +418,19 @@ def cascade_build_state_to_subtree(
         )
 
     stage_states = StageStatesManager(db, TaskLifecycleEventManager(db))
+    parent_specs = (
+        list(parent_manifest_specs)
+        if parent_manifest_specs is not None
+        else stage_states.list_for_task(epic_id)
+    )
     for row in rows:
         task_id = cast(str, row["id"])
         if task_id == epic_id:
             continue
-        specs = _manifest_specs_for_task_type(stage_states, cast(str, row["task_type"]), skipped)
+        specs = derive_child_manifest_specs(
+            parent_specs,
+            include_holistic_qa=cast(str, row["task_type"]) == "epic",
+        )
         if specs:
             stage_states.initialize_manifest(task_id, specs, by_session_id=None)
 

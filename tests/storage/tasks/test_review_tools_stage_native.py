@@ -160,6 +160,7 @@ def test_fresh_feature_task_planning_review_path_uses_registry_policy(
         title="Production path feature",
         task_type="feature",
     )
+    manager.initialize_task_manifest(task.id)
     rows = {row["stage_name"]: row for row in stage_rows(temp_db, task.id)}
 
     assert [row["position"] for row in rows.values()] == list(range(len(rows)))
@@ -185,6 +186,7 @@ def test_fresh_review_anchor_task_has_planning_review_stage(temp_db, sample_proj
         task_type="review_anchor",
         category="planning",
     )
+    manager.initialize_task_manifest(task.id, stage_names=["planning"])
 
     rows = stage_rows(temp_db, task.id)
 
@@ -202,6 +204,10 @@ def test_review_anchor_stage_caps_persist_planning_review_rounds(temp_db, sample
         title="Plan review round anchor",
         task_type="review_anchor",
         category="planning",
+    )
+    manager.initialize_task_manifest(
+        task.id,
+        stage_names=["planning"],
         stage_caps=[{"stage_name": "planning", "max_review_rounds": 100}],
     )
 
@@ -217,6 +223,10 @@ def test_planning_stage_allows_99_rejections_with_100_round_cap(temp_db, sample_
         title="High budget plan review anchor",
         task_type="review_anchor",
         category="planning",
+    )
+    manager.initialize_task_manifest(
+        task.id,
+        stage_names=["planning"],
         stage_caps=[{"stage_name": "planning", "max_review_rounds": 100}],
     )
 
@@ -244,6 +254,7 @@ def test_duplicate_stage_escalation_with_same_reason_is_noop(temp_db, sample_pro
         task_type="review_anchor",
         category="planning",
     )
+    manager.initialize_task_manifest(task.id, stage_names=["planning"])
 
     manager.stage_states.escalate_stage_failure(task.id, "planning_review_failed:max")
     manager.stage_states.escalate_stage_failure(task.id, "planning_review_failed:max")

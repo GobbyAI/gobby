@@ -142,6 +142,9 @@ def test_list_includes_denormalized_manifest(
     task_payload = next(item for item in response.json()["tasks"] if item["id"] == task.id)
     assert [stage["stage_name"] for stage in task_payload["stages"]] == ["development", "pr"]
     assert task_payload["stages"][0]["review_policy"] == "required"
+    assert task_payload["stages"][0]["display_name"] == "Development"
+    assert task_payload["stages"][0]["display_label"] == "Development"
+    assert task_payload["stages"][0]["category"] == "implementation"
     assert "work_attempt_count" in task_payload["stages"][0]
     assert "review_round_count" in task_payload["stages"][0]
 
