@@ -6,6 +6,7 @@ import { useCronJobs } from '../../hooks/useCronJobs'
 import type { CronJob, CronRun } from '../../hooks/useCronJobs'
 import { cronRunStatusKind } from './cronRunStatus'
 import { ActivityPanelEmpty, CronEmptyIcon } from './ActivityPanelEmpty'
+import { ActivityRowStatusDot } from './ActivityRowStatusDot'
 
 interface CronTabProps {
   projectId?: string | null
@@ -206,28 +207,36 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
 
 function CronStatusDot({ enabled }: { enabled: boolean }) {
   if (enabled) {
-    return <span className="pipeline-running-dot" aria-label="Enabled" />
+    return (
+      <ActivityRowStatusDot
+        color="var(--accent)"
+        pulse
+        label="Enabled"
+      />
+    )
   }
-  return (
-    <span
-      className="inline-block w-2 h-2 rounded-full bg-muted-foreground/40 shrink-0"
-      aria-label="Disabled"
-    />
-  )
+  return <ActivityRowStatusDot color="var(--text-muted)" label="Disabled" />
 }
 
 function RunStatusGlyph({ status }: { status: string }) {
   const kind = cronRunStatusKind(status)
   if (kind === 'success') {
-    return <span className="text-success-foreground text-xs shrink-0">{'✓'}</span>
+    return (
+      <ActivityRowStatusDot
+        color="var(--color-success-foreground)"
+        label="Success"
+      />
+    )
   }
   if (kind === 'failure') {
-    return <span className="text-error text-xs shrink-0">{'✗'}</span>
+    return <ActivityRowStatusDot color="var(--color-error)" label="Failure" />
   }
   if (kind === 'running') {
-    return <span className="pipeline-running-dot" />
+    return (
+      <ActivityRowStatusDot color="var(--accent)" pulse label="Running" />
+    )
   }
-  return <span className="text-muted-foreground text-xs shrink-0">{'○'}</span>
+  return <ActivityRowStatusDot color="var(--text-muted)" label={status} />
 }
 
 function formatNextFiring(job: CronJob, now: number): string {

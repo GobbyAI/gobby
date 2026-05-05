@@ -27,27 +27,6 @@
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.pipeline-running-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-  animation: pipeline-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pipeline-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.5;
-    transform: scale(0.85);
-  }
-}
-
 @media (pointer: coarse) {
   .pipeline-exec-row {
     min-height: 44px;

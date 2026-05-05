@@ -11,6 +11,7 @@ import {
   TASK_STATE_ORDER,
   type TaskDisplayState,
 } from '../../lib/taskState'
+import { ActivityRowStatusDot } from '../activity/ActivityRowStatusDot'
 import { cn } from '../../lib/utils'
 
 // =============================================================================
@@ -40,7 +41,6 @@ const PRIORITY_STYLES: Record<
 const TASK_BADGE_CLS =
   'inline-flex items-center justify-center h-5 px-1.5 rounded-full text-[length:var(--text-2xs)] font-semibold leading-none whitespace-nowrap'
 const TASK_BADGE_DOT_CLS = 'inline-block w-[7px] h-[7px] rounded-full shrink-0'
-const TASK_BADGE_DOT_STANDALONE_CLS = 'inline-block w-2 h-2 rounded-full shrink-0'
 const TASK_BADGE_BLOCKED_CLS =
   'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[length:var(--text-2xs)] font-medium text-[var(--color-error)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]'
 
@@ -78,11 +78,10 @@ export function StatusDot({ status, task }: { status?: string; task?: TaskStateL
     ? getTaskStateSummary(task)
     : TASK_STATE_LABELS[displayState]
   return (
-    <span
-      className={TASK_BADGE_DOT_STANDALONE_CLS}
-      style={{ backgroundColor: TASK_STATE_COLORS[displayState] || "var(--text-muted)" }}
+    <ActivityRowStatusDot
+      color={TASK_STATE_COLORS[displayState] || "var(--text-muted)"}
+      label={`Status: ${label}`}
       title={label}
-      aria-label={`Status: ${label}`}
     />
   );
 }
@@ -179,5 +178,4 @@ export {
   TASK_BADGE_BLOCKED_CLS,
   TASK_BADGE_CLS,
   TASK_BADGE_DOT_CLS,
-  TASK_BADGE_DOT_STANDALONE_CLS,
 };

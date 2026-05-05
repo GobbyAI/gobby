@@ -36,6 +36,7 @@ import {
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
 import {
   type RunningAgent,
   type WatchingSessionEntry,
@@ -724,6 +725,17 @@ export const SessionsTab = memo(function SessionsTab({
                 }}
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <ActivityRowStatusDot
+                    color={
+                      entry.status === "active"
+                        ? "var(--color-success-foreground)"
+                        : entry.status === "expired"
+                          ? "var(--text-muted)"
+                          : "var(--color-warning-foreground)"
+                    }
+                    pulse={entry.status === "active"}
+                    label={`Session ${entry.status}`}
+                  />
                   <SourceIcon source={entry.provider} size={14} />
                   <span className="activity-row-title">
                     {displayLabel}

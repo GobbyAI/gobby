@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ActivityRowStatusDot } from "../activity/ActivityRowStatusDot";
 import { formatDuration, formatJson } from "./executionFormatters";
 import { getExecStatusColorVar } from "../../lib/pipelineColors";
 export { TraceIcon } from "./ReportsPage.icons";
@@ -134,9 +135,10 @@ export function PipelineIcon() {
 
 export function PipelineStatusDot({ status }: { status: string }) {
   return (
-    <span
-      className="pipeline-status-dot"
-      style={{ backgroundColor: getExecStatusColorVar(status) }}
+    <ActivityRowStatusDot
+      color={getExecStatusColorVar(status)}
+      pulse={status === "running"}
+      label={status}
       title={status}
     />
   );

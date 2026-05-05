@@ -210,7 +210,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                 onClick={() => handleSelect(exec.id)}
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <ExecutionStatusIcon status={exec.status} />
+                  <PipelineStatusDot status={exec.status} />
                   <span className="activity-row-title">{exec.pipeline_name}</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -286,17 +286,3 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   )
 })
 
-function ExecutionStatusIcon({ status }: { status: string }) {
-  if (status === 'completed' || status === 'success') {
-    return <span className="text-success-foreground text-xs">{'\u2713'}</span>
-  }
-  if (status === 'failed' || status === 'error') {
-    return <span className="text-error text-xs">{'\u2717'}</span>
-  }
-  if (status === 'running') {
-    return (
-      <span className="pipeline-running-dot" />
-    )
-  }
-  return <span className="text-muted-foreground text-xs">{'\u25CB'}</span>
-}

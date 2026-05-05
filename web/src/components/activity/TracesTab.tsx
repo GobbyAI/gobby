@@ -5,6 +5,7 @@ import { formatTime } from '../workflows/executionFormatters'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'
 import type { TraceRecord, SpanRecord } from '../../hooks/useTraces'
 import { ActivityPanelEmpty, TracesEmptyIcon } from './ActivityPanelEmpty'
+import { ActivityRowStatusDot } from './ActivityRowStatusDot'
 
 interface TracesTabProps {
   projectId?: string | null
@@ -185,26 +186,16 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
 function TraceStatusDot({ status }: { status: SpanRecord['status'] | TraceRecord['status'] }) {
   if (status === 'OK') {
     return (
-      <span
-        className="inline-block w-2 h-2 rounded-full bg-success-foreground shrink-0"
-        aria-label="OK"
+      <ActivityRowStatusDot
+        color="var(--color-success-foreground)"
+        label="OK"
       />
     )
   }
   if (status === 'ERROR') {
-    return (
-      <span
-        className="inline-block w-2 h-2 rounded-full bg-error shrink-0"
-        aria-label="Error"
-      />
-    )
+    return <ActivityRowStatusDot color="var(--color-error)" label="Error" />
   }
-  return (
-    <span
-      className="inline-block w-2 h-2 rounded-full bg-muted-foreground/40 shrink-0"
-      aria-label="Unset"
-    />
-  )
+  return <ActivityRowStatusDot color="var(--text-muted)" label="Unset" />
 }
 
 function formatDurationMs(ms: number): string {
