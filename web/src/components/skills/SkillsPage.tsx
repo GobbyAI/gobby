@@ -10,7 +10,29 @@ import type { SkillFormData } from './SkillForm'
 import { SkillHubBrowser } from './SkillHubBrowser'
 import { SkillImportModal } from './SkillImportModal'
 import { cn } from '../../lib/utils'
-import '../workflows/WorkflowsPage.css'
+import {
+  WORKFLOWS_PAGE_CLS,
+  WORKFLOWS_TOOLBAR_CLS,
+  WORKFLOWS_TOOLBAR_LEFT_CLS,
+  WORKFLOWS_TOOLBAR_TITLE_CLS,
+  WORKFLOWS_TOOLBAR_COUNT_CLS,
+  WORKFLOWS_TOOLBAR_RIGHT_CLS,
+  WORKFLOWS_TOOLBAR_BTN_CLS,
+  WORKFLOWS_NEW_BTN_CLS,
+  WORKFLOWS_FILTER_BAR_CLS,
+  WORKFLOWS_FILTER_WRAPPER_CLS,
+  WORKFLOWS_FILTER_BTN_CLS,
+  WORKFLOWS_FILTER_BADGE_CLS,
+  WORKFLOWS_FILTER_POPOVER_CLS,
+  WORKFLOWS_FILTER_POPOVER_SECTION_CLS,
+  WORKFLOWS_FILTER_POPOVER_LABEL_CLS,
+  WORKFLOWS_FILTER_POPOVER_CHIPS_CLS,
+  WORKFLOWS_FILTER_CHIP_CLS,
+  WORKFLOWS_FILTER_CHIP_ACTIVE_CLS,
+  WORKFLOWS_SEARCH_CLS,
+  WORKFLOWS_CONTENT_CLS,
+  WORKFLOWS_LOADING_CLS,
+} from '../workflows/workflows-styles'
 
 const ERROR_TOAST_CLS =
   'fixed right-5 top-[60px] z-[1000] cursor-pointer appearance-none rounded-md border-0 bg-[var(--color-error)] px-4 py-2 text-left text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fadeIn_0.2s_ease]'
@@ -238,7 +260,7 @@ export function SkillsPage() {
   const activeFilterCount = sourceFilter !== 'installed' ? 1 : 0
 
   return (
-    <main className="workflows-page">
+    <main className={WORKFLOWS_PAGE_CLS}>
       {ConfirmDialogElement}
       {errorMessage && (
         <button
@@ -251,12 +273,12 @@ export function SkillsPage() {
         </button>
       )}
 
-      <div className="workflows-toolbar">
-        <div className="workflows-toolbar-left">
-          <h1 className="workflows-toolbar-title">Skills</h1>
-          <span className="workflows-toolbar-count">{stats?.total ?? 0}</span>
+      <div className={WORKFLOWS_TOOLBAR_CLS}>
+        <div className={WORKFLOWS_TOOLBAR_LEFT_CLS}>
+          <h1 className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Skills</h1>
+          <span className={WORKFLOWS_TOOLBAR_COUNT_CLS}>{stats?.total ?? 0}</span>
         </div>
-        <div className="workflows-toolbar-right">
+        <div className={WORKFLOWS_TOOLBAR_RIGHT_CLS}>
           <div className={cn(VIEW_TOGGLE_CLS, activeTab === 'installed' && 'mr-2')}>
             <button
               className={cn(VIEW_BTN_CLS, activeTab === 'installed' && VIEW_BTN_ACTIVE_CLS)}
@@ -275,22 +297,22 @@ export function SkillsPage() {
           </div>
           {activeTab === 'installed' && (
             <>
-              <button className="workflows-toolbar-btn" onClick={() => setShowImport(true)} title="Import">
+              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={() => setShowImport(true)} title="Import">
                 <ImportIcon />
               </button>
-              <button className="workflows-toolbar-btn" onClick={handleRestore} title="Restore Defaults">
+              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={handleRestore} title="Restore Defaults">
                 <RestoreIcon />
               </button>
-              <button className="workflows-new-btn" onClick={handleCreate}>+ New</button>
+              <button className={WORKFLOWS_NEW_BTN_CLS} onClick={handleCreate}>+ New</button>
             </>
           )}
         </div>
       </div>
 
-      <div className="workflows-filter-row">
+      <div className={WORKFLOWS_FILTER_BAR_CLS}>
         {activeTab === 'installed' && (
           <input
-            className="workflows-search"
+            className={WORKFLOWS_SEARCH_CLS}
             type="text"
             value={searchText}
             onChange={handleSearch}
@@ -298,29 +320,29 @@ export function SkillsPage() {
           />
         )}
         {activeTab === 'installed' && (
-          <div className="workflows-filter-wrapper" ref={filterRef}>
+          <div className={WORKFLOWS_FILTER_WRAPPER_CLS} ref={filterRef}>
             <button
               type="button"
-              className="workflows-filter-btn"
+              className={WORKFLOWS_FILTER_BTN_CLS}
               onClick={() => setShowFilterPopover(v => !v)}
             >
               Filter
               {activeFilterCount > 0 && (
-                <span className="workflows-filter-badge">{activeFilterCount}</span>
+                <span className={WORKFLOWS_FILTER_BADGE_CLS}>{activeFilterCount}</span>
               )}
             </button>
             {showFilterPopover && (
-              <div className="workflows-filter-popover">
-                <div className="workflows-filter-popover-section">
-                  <div className="workflows-filter-popover-label">Source</div>
-                  <div className="workflows-filter-popover-chips">
+              <div className={WORKFLOWS_FILTER_POPOVER_CLS}>
+                <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+                  <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Source</div>
+                  <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
                     {SOURCE_OPTIONS.map(opt => (
                       <button
                         key={opt.value}
                         type="button"
                         className={cn(
-                          'workflows-filter-chip',
-                          sourceFilter === opt.value && 'workflows-filter-chip--active',
+                          WORKFLOWS_FILTER_CHIP_CLS,
+                          sourceFilter === opt.value && WORKFLOWS_FILTER_CHIP_ACTIVE_CLS,
                         )}
                         onClick={() => handleSourceFilter(opt.value)}
                       >
@@ -346,9 +368,9 @@ export function SkillsPage() {
             onClear={handleClearFilters}
           />
 
-          <div className="workflows-content">
+          <div className={WORKFLOWS_CONTENT_CLS}>
             {isLoading ? (
-              <div className="workflows-loading">Loading skills...</div>
+              <div className={WORKFLOWS_LOADING_CLS}>Loading skills...</div>
             ) : (
               <SkillsGrid
                 skills={filteredSkills}
@@ -368,7 +390,7 @@ export function SkillsPage() {
       )}
 
       {activeTab === 'hub' && (
-        <div className="workflows-content">
+        <div className={WORKFLOWS_CONTENT_CLS}>
           <SkillHubBrowser
             hubs={hubs}
             hubResults={hubResults}

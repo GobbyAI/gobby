@@ -21,6 +21,7 @@ import {
 } from "./execution-utils";
 import { formatTime, formatDuration, formatJson } from "./executionFormatters";
 import { CronIcon } from "./ReportsPage.icons";
+import { WORKFLOWS_CONTENT_CLS } from "./workflows-styles";
 import "./pipelines-reporting.css";
 
 const REPORTING_TRIGGER_CLS =
@@ -235,7 +236,7 @@ export function ReportingTab({
   const isLoading = pipelinesLoading || agentsLoading;
 
   return (
-    <div className="workflows-content">
+    <div className={WORKFLOWS_CONTENT_CLS}>
       {/* Filter bar — matches tasks-filter-bar pattern */}
       <div className={REPORTING_FILTER_BAR_CLS}>
         <div className={REPORTING_FILTER_CHIPS_CLS}>

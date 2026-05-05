@@ -6,7 +6,43 @@ import { PipelinesTab } from "./PipelinesTab";
 import { CodeMirrorEditor } from "../shared/CodeMirrorEditor";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
-import "./WorkflowsPage.css";
+import {
+  WORKFLOWS_PAGE_CLS,
+  WORKFLOWS_TOOLBAR_CLS,
+  WORKFLOWS_TOOLBAR_LEFT_CLS,
+  WORKFLOWS_TOOLBAR_TITLE_CLS,
+  WORKFLOWS_TAB_ROW_CLS,
+  WORKFLOWS_TAB_ROW_RIGHT_CLS,
+  WORKFLOWS_FILTER_ICON_BTN_CLS,
+  WORKFLOWS_FILTER_ICON_BTN_ACTIVE_CLS,
+  WORKFLOWS_SEARCH_CLS,
+  WORKFLOWS_TOOLBAR_BTN_CLS,
+  WORKFLOWS_TOOLBAR_BTN_SPINNING_CLS,
+  WORKFLOWS_NEW_BTN_CLS,
+  WORKFLOWS_FILTER_WRAPPER_CLS,
+  WORKFLOWS_FILTER_POPOVER_CLS,
+  WORKFLOWS_FILTER_POPOVER_SECTION_CLS,
+  WORKFLOWS_FILTER_POPOVER_SECTION_BOTTOM_CLS,
+  WORKFLOWS_FILTER_POPOVER_LABEL_CLS,
+  WORKFLOWS_FILTER_POPOVER_CHIPS_CLS,
+  WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS,
+  WORKFLOWS_FILTER_CHIP_CLS,
+  WORKFLOWS_FILTER_CHIP_ACTIVE_CLS,
+  WORKFLOWS_TOGGLE_TRACK_CLS,
+  WORKFLOWS_TOGGLE_TRACK_ON_CLS,
+  WORKFLOWS_TOGGLE_KNOB_CLS,
+  WORKFLOWS_TOGGLE_KNOB_ON_CLS,
+  WORKFLOWS_MODAL_OVERLAY_CLS,
+  WORKFLOWS_YAML_MODAL_CLS,
+  WORKFLOWS_YAML_HEADER_CLS,
+  WORKFLOWS_YAML_HEADER_HEADING_CLS,
+  WORKFLOWS_YAML_HEADER_ACTIONS_CLS,
+  WORKFLOWS_YAML_ERROR_CLS,
+  WORKFLOWS_YAML_EDITOR_CLS,
+  WORKFLOWS_LOADING_CLS,
+  WORKFLOWS_MODAL_CANCEL_CLS,
+  WORKFLOWS_MODAL_SUBMIT_CLS,
+} from "./workflows-styles";
 
 type ActiveTab = "pipelines" | "agents" | "rules";
 type SourceFilter = "installed" | "project" | "templates" | "deleted";
@@ -152,34 +188,34 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
   }, [sourceFilter, rulesAllEnabled]);
 
   return (
-    <main className="workflows-page">
+    <main className={WORKFLOWS_PAGE_CLS}>
       {/* Title row */}
-      <div className="workflows-toolbar">
-        <div className="workflows-toolbar-left">
-          <h1 className="workflows-toolbar-title">Workflows</h1>
+      <div className={WORKFLOWS_TOOLBAR_CLS}>
+        <div className={WORKFLOWS_TOOLBAR_LEFT_CLS}>
+          <h1 className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Workflows</h1>
         </div>
       </div>
 
       {/* Tab bar + search/filter/actions */}
-      <div className="workflows-tab-row">
+      <div className={WORKFLOWS_TAB_ROW_CLS}>
         <TabBar
           tabs={TABS}
           activeTab={activeTab}
           onTabChange={(id) => setActiveTab(id as ActiveTab)}
           className="mb-0 shrink-0"
         />
-        <div className="workflows-tab-row-right">
+        <div className={WORKFLOWS_TAB_ROW_RIGHT_CLS}>
           <input
-            className="workflows-search"
+            className={WORKFLOWS_SEARCH_CLS}
             type="text"
             placeholder={`Search ${activeTab}...`}
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
           />
-          <div className="workflows-filter-wrapper" ref={filterRef}>
+          <div className={WORKFLOWS_FILTER_WRAPPER_CLS} ref={filterRef}>
             <button
               type="button"
-              className={`workflows-filter-icon-btn ${activeFilterCount > 0 ? "workflows-filter-icon-btn--active" : ""}`}
+              className={`${WORKFLOWS_FILTER_ICON_BTN_CLS} ${activeFilterCount > 0 ? WORKFLOWS_FILTER_ICON_BTN_ACTIVE_CLS : ""}`}
               onClick={() => setShowFilterPopover((v) => !v)}
               title="Filter"
             >
@@ -224,7 +260,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           </div>
           <button
             type="button"
-            className={`workflows-toolbar-btn ${refreshing ? "workflows-toolbar-btn--spinning" : ""}`}
+            className={`${WORKFLOWS_TOOLBAR_BTN_CLS} ${refreshing ? WORKFLOWS_TOOLBAR_BTN_SPINNING_CLS : ""}`}
             onClick={handleRefresh}
             title="Refresh"
           >
@@ -233,7 +269,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           {sourceFilter === "templates" && (
             <button
               type="button"
-              className="workflows-toolbar-btn"
+              className={WORKFLOWS_TOOLBAR_BTN_CLS}
               onClick={handleInstallAll}
             >
               Install All
@@ -246,9 +282,11 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
                 onClick={handleBulkToggleRules}
               >
                 <div
-                  className={`workflows-toggle-track ${rulesAllEnabled ? "workflows-toggle-track--on" : ""}`}
+                  className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${rulesAllEnabled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
                 >
-                  <div className="workflows-toggle-knob" />
+                  <div
+                    className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${rulesAllEnabled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
+                  />
                 </div>
                 <span>Enable All</span>
               </div>
@@ -256,7 +294,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           {activeTab === "pipelines" && (
             <button
               type="button"
-              className="workflows-new-btn"
+              className={WORKFLOWS_NEW_BTN_CLS}
               onClick={() => setShowPipelineCreate(true)}
             >
               + Pipeline
@@ -265,7 +303,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           {activeTab === "agents" && (
             <button
               type="button"
-              className="workflows-new-btn"
+              className={WORKFLOWS_NEW_BTN_CLS}
               onClick={() => setShowAgentCreateForm((prev) => !prev)}
             >
               + Agent
@@ -274,7 +312,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           {activeTab === "rules" && (
             <button
               type="button"
-              className="workflows-new-btn"
+              className={WORKFLOWS_NEW_BTN_CLS}
               onClick={() => setShowRuleCreateModal(true)}
             >
               + Rule
@@ -387,16 +425,16 @@ function FilterPopover({
   onPriorityFilterChange: (v: number | null) => void;
 }) {
   return (
-    <div className="workflows-filter-popover">
+    <div className={WORKFLOWS_FILTER_POPOVER_CLS}>
       {/* Source section */}
-      <div className="workflows-filter-popover-section">
-        <div className="workflows-filter-popover-label">Source</div>
-        <div className="workflows-filter-popover-chips">
+      <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+        <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Source</div>
+        <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
           {SOURCE_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
-              className={`workflows-filter-chip ${sourceFilter === opt.value ? "workflows-filter-chip--active" : ""}`}
+              className={`${WORKFLOWS_FILTER_CHIP_CLS} ${sourceFilter === opt.value ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
               onClick={() => onSourceFilterChange(opt.value)}
             >
               {opt.label}
@@ -407,12 +445,12 @@ function FilterPopover({
 
       {/* Tab-specific section */}
       {activeTab === "pipelines" && (
-        <div className="workflows-filter-popover-section">
-          <div className="workflows-filter-popover-label">Status</div>
-          <div className="workflows-filter-popover-chips">
+        <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+          <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Status</div>
+          <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
             <button
               type="button"
-              className={`workflows-filter-chip ${pipelineEnabledFilter === true ? "workflows-filter-chip--active" : ""}`}
+              className={`${WORKFLOWS_FILTER_CHIP_CLS} ${pipelineEnabledFilter === true ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
               onClick={() =>
                 onPipelineEnabledFilterChange(
                   pipelineEnabledFilter === true ? null : true,
@@ -423,7 +461,7 @@ function FilterPopover({
             </button>
             <button
               type="button"
-              className={`workflows-filter-chip ${pipelineEnabledFilter === false ? "workflows-filter-chip--active" : ""}`}
+              className={`${WORKFLOWS_FILTER_CHIP_CLS} ${pipelineEnabledFilter === false ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
               onClick={() =>
                 onPipelineEnabledFilterChange(
                   pipelineEnabledFilter === false ? null : false,
@@ -437,14 +475,14 @@ function FilterPopover({
       )}
 
       {activeTab === "agents" && agentProviders.length > 0 && (
-        <div className="workflows-filter-popover-section">
-          <div className="workflows-filter-popover-label">Provider</div>
-          <div className="workflows-filter-popover-chips">
+        <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+          <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Provider</div>
+          <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
             {agentProviders.map((p) => (
               <button
                 key={p}
                 type="button"
-                className={`workflows-filter-chip ${agentProviderFilter === p ? "workflows-filter-chip--active" : ""}`}
+                className={`${WORKFLOWS_FILTER_CHIP_CLS} ${agentProviderFilter === p ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
                 onClick={() =>
                   onAgentProviderFilterChange(
                     agentProviderFilter === p ? "all" : p,
@@ -459,14 +497,14 @@ function FilterPopover({
       )}
 
       {activeTab === "rules" && ruleEventTypes.length > 0 && (
-        <div className="workflows-filter-popover-section">
-          <div className="workflows-filter-popover-label">Event</div>
-          <div className="workflows-filter-popover-chips">
+        <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+          <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Event</div>
+          <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
             {ruleEventTypes.map((ev) => (
               <button
                 key={ev}
                 type="button"
-                className={`workflows-filter-chip ${ruleEventFilter === ev ? "workflows-filter-chip--active" : ""}`}
+                className={`${WORKFLOWS_FILTER_CHIP_CLS} ${ruleEventFilter === ev ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
                 onClick={() =>
                   onRuleEventFilterChange(ruleEventFilter === ev ? null : ev)
                 }
@@ -479,14 +517,14 @@ function FilterPopover({
       )}
 
       {/* Priority */}
-      <div className="workflows-filter-popover-section">
-        <div className="workflows-filter-popover-label">Priority</div>
-        <div className="workflows-filter-popover-chips">
+      <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+        <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Priority</div>
+        <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
           {[1, 2, 3].map((p) => (
             <button
               key={p}
               type="button"
-              className={`workflows-filter-chip ${priorityFilter === p ? "workflows-filter-chip--active" : ""}`}
+              className={`${WORKFLOWS_FILTER_CHIP_CLS} ${priorityFilter === p ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
               onClick={() =>
                 onPriorityFilterChange(priorityFilter === p ? null : p)
               }
@@ -499,14 +537,14 @@ function FilterPopover({
 
       {/* Tags */}
       {availableTags.length > 0 && (
-        <div className="workflows-filter-popover-section">
-          <div className="workflows-filter-popover-label">Tag</div>
-          <div className="workflows-filter-popover-chips">
+        <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+          <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Tag</div>
+          <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
             {availableTags.map((tag) => (
               <button
                 key={tag}
                 type="button"
-                className={`workflows-filter-chip ${tagFilter === tag ? "workflows-filter-chip--active" : ""}`}
+                className={`${WORKFLOWS_FILTER_CHIP_CLS} ${tagFilter === tag ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
                 onClick={() =>
                   onTagFilterChange(tagFilter === tag ? null : tag)
                 }
@@ -519,27 +557,33 @@ function FilterPopover({
       )}
 
       {/* Hide Built-in */}
-      <div className="workflows-filter-popover-section workflows-filter-popover-section--bottom">
+      <div
+        className={`${WORKFLOWS_FILTER_POPOVER_SECTION_CLS} ${WORKFLOWS_FILTER_POPOVER_SECTION_BOTTOM_CLS}`}
+      >
         <label
-          className="workflows-filter-popover-checkbox"
+          className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
           onClick={() => onHideGobbyChange(!hideGobby)}
         >
           <div
-            className={`workflows-toggle-track ${hideGobby ? "workflows-toggle-track--on" : ""}`}
+            className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${hideGobby ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
           >
-            <div className="workflows-toggle-knob" />
+            <div
+              className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${hideGobby ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
+            />
           </div>
           <span>Hide Built-in</span>
         </label>
         {sourceFilter === "templates" && (
           <label
-            className="workflows-filter-popover-checkbox"
+            className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
             onClick={() => onHideInstalledChange(!hideInstalled)}
           >
             <div
-              className={`workflows-toggle-track ${hideInstalled ? "workflows-toggle-track--on" : ""}`}
+              className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${hideInstalled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
             >
-              <div className="workflows-toggle-knob" />
+              <div
+                className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${hideInstalled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
+              />
             </div>
             <span>Hide Installed</span>
           </label>
@@ -607,31 +651,36 @@ export function YamlEditorModal({
   useDialogFocus({ ref: dialogRef, isOpen: true, onClose: handleClose });
 
   return (
-    <div className="workflows-modal-overlay" onClick={handleClose}>
+    <div className={WORKFLOWS_MODAL_OVERLAY_CLS} onClick={handleClose}>
       {ConfirmDialogElement}
       <div
         ref={dialogRef}
-        className="workflows-yaml-modal"
+        className={WORKFLOWS_YAML_MODAL_CLS}
         role="dialog"
         aria-modal="true"
         aria-labelledby="workflows-yaml-title"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="workflows-yaml-header">
-          <h2 id="workflows-yaml-title">Edit YAML — {workflowName}</h2>
-          <div className="workflows-yaml-header-actions">
-            {error && <span className="workflows-yaml-error">{error}</span>}
+        <div className={WORKFLOWS_YAML_HEADER_CLS}>
+          <h2
+            id="workflows-yaml-title"
+            className={WORKFLOWS_YAML_HEADER_HEADING_CLS}
+          >
+            Edit YAML — {workflowName}
+          </h2>
+          <div className={WORKFLOWS_YAML_HEADER_ACTIONS_CLS}>
+            {error && <span className={WORKFLOWS_YAML_ERROR_CLS}>{error}</span>}
             <button
               type="button"
-              className="workflows-modal-cancel"
+              className={WORKFLOWS_MODAL_CANCEL_CLS}
               onClick={handleClose}
             >
               Cancel
             </button>
             <button
               type="button"
-              className="workflows-modal-submit"
+              className={WORKFLOWS_MODAL_SUBMIT_CLS}
               onClick={handleSave}
               disabled={saving || loading}
             >
@@ -639,9 +688,9 @@ export function YamlEditorModal({
             </button>
           </div>
         </div>
-        <div className="workflows-yaml-editor">
+        <div className={WORKFLOWS_YAML_EDITOR_CLS}>
           {loading ? (
-            <div className="workflows-loading">Loading YAML...</div>
+            <div className={WORKFLOWS_LOADING_CLS}>Loading YAML...</div>
           ) : (
             <CodeMirrorEditor
               content={yamlContent}

@@ -1,5 +1,24 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import '../agents/agents.css'
+import {
+  WORKFLOWS_CONTENT_CLS,
+  WORKFLOWS_LOADING_CLS,
+  WORKFLOWS_EMPTY_CLS,
+  WORKFLOWS_GRID_CLS,
+  WORKFLOWS_CARD_TEMPLATE_CLS,
+  WORKFLOWS_CARD_TYPE_CLS,
+  WORKFLOWS_CARD_TYPE_VARIANT_CLS,
+  WORKFLOWS_CARD_BADGE_CLS,
+  WORKFLOWS_CARD_BADGE_SOURCE_CLS,
+  WORKFLOWS_CARD_BADGE_DRIFT_CLS,
+  WORKFLOWS_CARD_FOOTER_CLS,
+  WORKFLOWS_CARD_ACTIONS_CLS,
+  WORKFLOWS_ACTION_BTN_CLS,
+  WORKFLOWS_ACTION_BTN_DRIFT_CLS,
+  WORKFLOWS_ACTION_BTN_RESTORE_CLS,
+  WORKFLOWS_ACTION_ICON_CLS,
+  WORKFLOWS_ACTION_ICON_DANGER_CLS,
+} from './workflows-styles'
 import * as yaml from 'js-yaml'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { YamlEditorModal } from './WorkflowsPage'
@@ -734,13 +753,13 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
 
 
       {/* Card grid */}
-      <div className="workflows-content">
+      <div className={WORKFLOWS_CONTENT_CLS}>
         {loading ? (
-          <div className="workflows-loading">Loading agent definitions...</div>
+          <div className={WORKFLOWS_LOADING_CLS}>Loading agent definitions...</div>
         ) : filtered.length === 0 ? (
-          <div className="workflows-empty">No agent definitions found</div>
+          <div className={WORKFLOWS_EMPTY_CLS}>No agent definitions found</div>
         ) : (
-          <div className="workflows-grid">
+          <div className={WORKFLOWS_GRID_CLS}>
             {filtered.map(item => {
               const d = item.definition
               const isDb = !!item.db_id
@@ -753,7 +772,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
               return (
                 <div
                   key={d.name}
-                  className={`agent-def-card${item.deleted_at ? ' agent-def-card--deleted' : ''}${isTemplate ? ' workflows-card--template' : ''}`}
+                  className={`agent-def-card${item.deleted_at ? ' agent-def-card--deleted' : ''}${isTemplate ? ' ' + WORKFLOWS_CARD_TEMPLATE_CLS : ''}`}
                 >
                   {/* Card header */}
                   <button
@@ -770,7 +789,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                   >
                     <div className="agent-def-header-top">
                       <span className={`agent-def-name${item.deleted_at ? ' agent-def-name--deleted' : ''}`}>{d.name}</span>
-                      <span className="workflows-card-type workflows-card-type--agent">agent</span>
+                      <span className={`${WORKFLOWS_CARD_TYPE_CLS} ${WORKFLOWS_CARD_TYPE_VARIANT_CLS.agent}`}>agent</span>
                     </div>
                     {d.description && (
                       <div className="agent-def-desc">
@@ -778,7 +797,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                       </div>
                     )}
                     <div className="agent-def-badges">
-                      <span className="workflows-card-badge workflows-card-badge--source">
+                      <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_SOURCE_CLS}`}>
                         {SOURCE_LABELS[item.source] || item.source}
                       </span>
                       <span
@@ -809,19 +828,19 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                         {d.timeout}s
                       </span>
                       {item.has_template_update && (
-                        <span className="workflows-card-badge workflows-card-badge--drift">Template updated</span>
+                        <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_DRIFT_CLS}`}>Template updated</span>
                       )}
                     </div>
                   </button>
 
                   {/* Card footer - always visible */}
-                  <div className="workflows-card-footer">
+                  <div className={WORKFLOWS_CARD_FOOTER_CLS}>
                     {item.deleted_at ? (
-                      <div className="workflows-card-actions">
+                      <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                         {item.db_id && (
                           <button
                             type="button"
-                            className="workflows-action-btn workflows-action-btn--restore"
+                            className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_RESTORE_CLS}`}
                             onClick={() => handleRestore(item.db_id!)}
                             title="Restore this agent"
                           >
@@ -832,20 +851,20 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                     ) : isTemplate ? (
                       <>
                         <div />
-                        <div className="workflows-card-actions">
+                        <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                           {devMode ? (
                             <>
                               {installedNames.has(d.name)
-                                ? <button type="button" className="workflows-action-btn" disabled title="Already installed">Installed</button>
-                                : <button type="button" className="workflows-action-btn" onClick={() => handleInstallFromTemplate(d.name)} title="Create an installed copy">Install</button>}
-                              <button type="button" className="workflows-action-icon" onClick={() => handleDuplicate(item)} title="Duplicate" aria-label="Duplicate agent">
+                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
+                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleInstallFromTemplate(d.name)} title="Create an installed copy">Install</button>}
+                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDuplicate(item)} title="Duplicate" aria-label="Duplicate agent">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
                               </button>
-                              <button type="button" className="workflows-action-icon" onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
+                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                               </button>
                               {item.db_id && (
-                                <button type="button" className="workflows-action-icon workflows-action-icon--danger" onClick={() => handleDelete(item.db_id!)} title="Delete" aria-label="Delete agent">
+                                <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={() => handleDelete(item.db_id!)} title="Delete" aria-label="Delete agent">
                                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
                                 </button>
                               )}
@@ -853,9 +872,9 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                           ) : (
                             <>
                               {installedNames.has(d.name)
-                                ? <button type="button" className="workflows-action-btn" disabled title="Already installed">Installed</button>
-                                : <button type="button" className="workflows-action-btn" onClick={() => handleInstallFromTemplate(d.name)} title="Create an installed copy">Install</button>}
-                              <button type="button" className="workflows-action-icon" onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
+                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
+                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleInstallFromTemplate(d.name)} title="Create an installed copy">Install</button>}
+                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                               </button>
                             </>
@@ -865,28 +884,28 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                     ) : (
                       <>
                         <div />
-                        <div className="workflows-card-actions">
+                        <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                           {item.source === 'installed' && projectId && item.db_id && d.name !== 'default' && (
-                            <button type="button" className="workflows-action-btn" onClick={() => handleMoveToProject(item)} title="Move to current project">To Project</button>
+                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleMoveToProject(item)} title="Move to current project">To Project</button>
                           )}
                           {item.source === 'project' && item.db_id && (
-                            <button type="button" className="workflows-action-btn" onClick={() => handleMoveToGlobal(item)} title="Move to global scope">To Global</button>
+                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleMoveToGlobal(item)} title="Move to global scope">To Global</button>
                           )}
                           {item.has_template_update && item.db_id && (
-                            <button type="button" className="workflows-action-btn workflows-action-btn--drift" onClick={() => handleRestoreFromTemplate(item)} title="Restore to bundled template version">Restore</button>
+                            <button type="button" className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_DRIFT_CLS}`} onClick={() => handleRestoreFromTemplate(item)} title="Restore to bundled template version">Restore</button>
                           )}
-                          <button type="button" className="workflows-action-icon" onClick={() => handleDuplicate(item)} title="Duplicate" aria-label="Duplicate agent">
+                          <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDuplicate(item)} title="Duplicate" aria-label="Duplicate agent">
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
                           </button>
-                          <button type="button" className="workflows-action-icon" onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
+                          <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                           </button>
                           {item.db_id ? (
-                            <button type="button" className="workflows-action-icon workflows-action-icon--danger" onClick={() => handleDelete(item.db_id!)} title="Delete" aria-label="Delete agent">
+                            <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={() => handleDelete(item.db_id!)} title="Delete" aria-label="Delete agent">
                               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
                             </button>
                           ) : (
-                            <button type="button" className="workflows-action-btn" onClick={() => handleImport(d.name)} disabled={importingName === d.name} title="Import to DB for customization">
+                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleImport(d.name)} disabled={importingName === d.name} title="Import to DB for customization">
                               {importingName === d.name ? '...' : 'Import'}
                             </button>
                           )}

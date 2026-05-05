@@ -17,6 +17,7 @@ import {
   PIPELINE_STEPS_CLS,
 } from './execution-utils'
 import { formatTime, formatDuration, formatJson } from './executionFormatters'
+import { WORKFLOWS_CONTENT_CLS, WORKFLOWS_LOADING_CLS } from './workflows-styles'
 
 const PAGINATION_FOOTER_CLS =
   'flex items-center justify-between px-3 py-2.5 mt-2 border-t border-border text-base text-[var(--text-secondary)]'
@@ -176,7 +177,7 @@ export function PipelineExecutionsView({
   }
 
   return (
-    <div className="workflows-content">
+    <div className={WORKFLOWS_CONTENT_CLS}>
       {/* Status filter chips */}
       <div className={FILTERS_ROW_CLS}>
         {STATUS_FILTERS.map(({ value, label }) => (
@@ -192,7 +193,7 @@ export function PipelineExecutionsView({
       </div>
 
       {isLoading ? (
-        <div className="workflows-loading">Loading executions...</div>
+        <div className={WORKFLOWS_LOADING_CLS}>Loading executions...</div>
       ) : executions.length === 0 ? (
         <div className={`${PANEL_CLS} ${PANEL_EMPTY_CLS}`}>
           <div className={EMPTY_INNER_CLS}>
