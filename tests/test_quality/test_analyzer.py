@@ -70,6 +70,32 @@ def test_uses_private_assertion_helper():
     assert codes == set()
 
 
+def test_fixture_named_like_test_is_not_analyzed(tmp_path: Path) -> None:
+    codes = _issue_codes(
+        tmp_path,
+        """
+import pytest
+from pytest import fixture
+
+
+@pytest.fixture
+def test_project():
+    return object()
+
+
+@fixture()
+def test_db():
+    return object()
+
+
+def test_uses_fixture(test_project):
+    assert test_project is not None
+""",
+    )
+
+    assert codes == set()
+
+
 def test_assert_true_is_reported(tmp_path: Path) -> None:
     codes = _issue_codes(
         tmp_path,

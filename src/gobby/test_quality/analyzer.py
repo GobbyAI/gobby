@@ -130,6 +130,8 @@ def _iter_test_nodes(tree: ast.Module) -> Iterable[_TestNode]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
             "test_"
         ):
+            if _has_pytest_fixture_decorator(node.decorator_list):
+                continue
             yield _make_test_node(node.name, node, ())
         elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
             class_decorators = tuple(node.decorator_list)
@@ -137,6 +139,8 @@ def _iter_test_nodes(tree: ast.Module) -> Iterable[_TestNode]:
                 if isinstance(
                     child, (ast.FunctionDef, ast.AsyncFunctionDef)
                 ) and child.name.startswith("test_"):
+                    if _has_pytest_fixture_decorator(child.decorator_list):
+                        continue
                     yield _make_test_node(f"{node.name}.{child.name}", child, class_decorators)
 
 
@@ -338,6 +342,11 @@ def _is_xfail_without_strict_or_reason(decorator: ast.expr) -> bool:
         for keyword in decorator.keywords
     )
     return not (has_strict_true and has_reason)
+
+
+def _has_pytest_fixture_decorator(decorators: Sequence[ast.expr]) -> bool:
+    fixture_names = {"fixture", "pytest.fixture", "pytest_asyncio.fixture"}
+    return any(_call_name(decorator) in fixture_names for decorator in decorators)
 
 
 def _is_nonempty_string(node: ast.expr) -> bool:

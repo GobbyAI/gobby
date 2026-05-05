@@ -136,24 +136,6 @@
       "test_name": "TestTmuxPTYBridge.test_resize_missing_is_noop"
     },
     {
-      "fingerprint": "tests/autonomous/test_autonomous.py::test_db::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 43,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/autonomous/test_autonomous.py",
-      "severity": "high",
-      "test_name": "test_db"
-    },
-    {
-      "fingerprint": "tests/autonomous/test_autonomous.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 65,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/autonomous/test_autonomous.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
       "fingerprint": "tests/cli/tasks/test_progress_bar.py::TestCascadeProgress.test_cascade_progress_shows_task_reference::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 45,
@@ -730,33 +712,6 @@
       "test_name": "TestFireSyntheticStop.test_noop_when_resolver_returns_none"
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_expansion_new.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 33,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/mcp_proxy/tools/test_task_expansion_new.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_expansion_new.py::test_session::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 42,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/mcp_proxy/tools/test_task_expansion_new.py",
-      "severity": "high",
-      "test_name": "test_session"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_expansion_qa.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 25,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/mcp_proxy/tools/test_task_expansion_qa.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/workflows/test_pipelines.py::TestAutoSubscribeLineage.test_handles_register_error::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 94,
@@ -892,42 +847,6 @@
       "test_name": "test_registered_active_plan_files_parse_with_declared_kind"
     },
     {
-      "fingerprint": "tests/servers/conftest.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 108,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/servers/conftest.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
-      "fingerprint": "tests/servers/routes/admin/test_stats.py::test_app::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 11,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/servers/routes/admin/test_stats.py",
-      "severity": "high",
-      "test_name": "test_app"
-    },
-    {
-      "fingerprint": "tests/servers/routes/admin/test_usage.py::test_app::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 12,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/servers/routes/admin/test_usage.py",
-      "severity": "high",
-      "test_name": "test_app"
-    },
-    {
-      "fingerprint": "tests/servers/routes/test_agent_spawn_routes.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 65,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/servers/routes/test_agent_spawn_routes.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
       "fingerprint": "tests/servers/routes/test_source_control_routes.py::TestValidateGitRef.test_valid_simple_branch::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 71,
@@ -1016,33 +935,6 @@
       "path": "tests/servers/test_http_shutdown.py",
       "severity": "high",
       "test_name": "TestProcessShutdown.test_terminate_streamable_http_sessions_no_mcp_server"
-    },
-    {
-      "fingerprint": "tests/servers/test_mcp_routes.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 61,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/servers/test_mcp_routes.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
-      "fingerprint": "tests/servers/test_sessions_rendered_messages.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 31,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/servers/test_sessions_rendered_messages.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
-      "fingerprint": "tests/servers/test_sessions_routes.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 43,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/servers/test_sessions_routes.py",
-      "severity": "high",
-      "test_name": "test_project"
     },
     {
       "fingerprint": "tests/servers/test_tmux_mixin.py::TestTmuxClientCleanup.test_cleanup_empty::NO_ASSERTION",
@@ -1252,15 +1144,6 @@
       "test_name": "TestRenderStateTracking.test_unregister_nonexistent_no_error"
     },
     {
-      "fingerprint": "tests/sessions/test_sessions_manager.py::test_project::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 28,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_sessions_manager.py",
-      "severity": "high",
-      "test_name": "test_project"
-    },
-    {
       "fingerprint": "tests/sessions/test_sessions_processor_unit.py::TestCodexMcpHookSynthesis.test_no_hook_manager_is_noop::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 970,
@@ -1277,15 +1160,6 @@
       "path": "tests/skills/test_scanner.py",
       "severity": "high",
       "test_name": "TestTempFileHandling.test_temp_file_cleaned_up"
-    },
-    {
-      "fingerprint": "tests/storage/test_audit_coverage.py::test_db::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 13,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/storage/test_audit_coverage.py",
-      "severity": "high",
-      "test_name": "test_db"
     },
     {
       "fingerprint": "tests/storage/test_memory_fts_triggers.py::TestFTSTriggerScoping.test_access_stats_update_succeeds_without_fts::NO_ASSERTION",
