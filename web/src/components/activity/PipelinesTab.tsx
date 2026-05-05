@@ -5,7 +5,6 @@ import { formatDateTime, formatDuration } from '../workflows/executionFormatters
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
 import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityFilterDropdown } from './ActivityFilterDropdown'
-import '../workflows/PipelinesPage.css'
 
 interface PipelinesTabProps {
   projectId?: string | null
@@ -270,7 +269,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       {/* Detail pane */}
       {selectedId && detailExec && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="pipeline-detail-header flex items-center justify-between gap-3 px-3 border-b border-border">
+          <div className="h-10 bg-[var(--bg-secondary)] flex items-center justify-between gap-3 px-3 border-b border-border">
             <div className="flex items-center gap-2 min-w-0">
               <PipelineStatusDot status={detailExec.status} />
               <span className="activity-row-title">{detailExec.pipeline_name}</span>
@@ -299,9 +298,14 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           <div className="flex-1 overflow-y-auto">
             {detailStepCount > 0 ? (
               <>
-                <div className="pipeline-steps-timeline">
+                <div className="flex flex-col py-2 pl-3 pr-2">
                   {detailSteps.map((step, i) => (
-                    <StepDisplay key={step.step_id ?? i} step={step} index={i} />
+                    <StepDisplay
+                      key={step.step_id ?? i}
+                      step={step}
+                      index={i}
+                      layout="timeline"
+                    />
                   ))}
                 </div>
               </>

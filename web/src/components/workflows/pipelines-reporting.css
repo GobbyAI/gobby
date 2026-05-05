@@ -409,3 +409,34 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+/* Light-theme overrides for surfaces whose dark/light tints differ.
+   Migrated from PipelinesPage.css during #13899. */
+
+[data-theme="light"] .reporting-tag--provider {
+  background: color-mix(in srgb, var(--color-info) 6%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+[data-theme="light"] .reporting-tag--model {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+[data-theme="light"] .reporting-tag--mode {
+  background: color-mix(in srgb, var(--color-warning-foreground) 6%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
+}
+
+[data-theme="light"] .reporting-code-block pre {
+  background: var(--surface-tint-subtle);
+  border-left-color: var(--border);
+}
+
+[data-theme="light"] .reporting-stat {
+  background: var(--surface-tint-subtle);
+  border-color: var(--border);
+}

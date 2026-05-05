@@ -7,9 +7,56 @@ import {
   AlertIcon,
   PipelineIcon,
   TraceIcon,
+  PIPELINE_BTN_CLS,
+  PIPELINE_BTN_APPROVE_CLS,
+  PIPELINE_BTN_REJECT_CLS,
+  PIPELINE_APPROVAL_CLS,
+  PIPELINE_APPROVAL_MESSAGE_CLS,
+  PIPELINE_APPROVAL_ACTIONS_CLS,
+  PIPELINE_ERROR_CLS,
+  PIPELINE_STEPS_CLS,
 } from './execution-utils'
 import { formatTime, formatDuration, formatJson } from './executionFormatters'
-import './PipelinesPage.css'
+
+const PAGINATION_FOOTER_CLS =
+  'flex items-center justify-between px-3 py-2.5 mt-2 border-t border-border text-base text-[var(--text-secondary)]'
+const PAGINATION_RIBBON_CLS = 'tabular-nums'
+const PAGINATION_BUTTONS_CLS = 'flex gap-2'
+
+const FILTERS_ROW_CLS = 'flex flex-wrap gap-1.5 mb-3'
+const FILTER_CHIP_CLS =
+  'px-2.5 py-1 border border-border rounded-full bg-transparent text-[var(--text-secondary)] text-[length:calc(var(--font-size-base)*0.75)] font-medium cursor-pointer transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const FILTER_CHIP_ACTIVE_CLS =
+  'bg-[var(--bg-tertiary)] text-[var(--text-primary)] border-[var(--text-muted)]'
+
+const PANEL_CLS =
+  'bg-[var(--bg-secondary)] border border-border rounded-lg overflow-hidden'
+const PANEL_EMPTY_CLS = 'flex items-center justify-center min-h-[120px]'
+const EMPTY_INNER_CLS = 'text-center text-[var(--text-muted)]'
+const EMPTY_TEXT_CLS = 'text-[length:calc(var(--font-size-base)*0.875)]'
+
+const LIST_CLS = 'max-h-[400px] overflow-y-auto'
+const EXEC_ROW_CLS = 'border-b border-border last:border-b-0'
+const EXEC_HEADER_CLS =
+  'flex items-center justify-between px-4 py-3 cursor-pointer transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+const EXEC_INFO_CLS = 'flex items-center gap-2'
+const EXEC_META_CLS = 'flex items-center gap-2'
+const EXEC_DETAILS_CLS = 'px-4 pb-4'
+
+const PIPELINE_NAME_CLS =
+  'font-medium text-[length:calc(var(--font-size-base)*0.9)]'
+const PIPELINE_ID_CLS =
+  'text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)] font-[inherit]'
+const PIPELINE_TIME_CLS =
+  'text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const PIPELINE_STEP_TIMING_CLS =
+  'text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] font-[inherit] tabular-nums'
+
+const OUTPUTS_CLS = 'mt-3'
+const OUTPUTS_HEADING_CLS =
+  'text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--text-secondary)] mb-2'
+const OUTPUTS_PRE_CLS =
+  'font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] bg-[var(--code-bg)] p-3 rounded-md overflow-x-auto m-0'
 
 interface PipelineExecutionsViewProps {
   executions: PipelineExecutionRecord[]
@@ -46,14 +93,14 @@ function PaginationFooter({
   const hasPrev = offset > 0
   const hasNext = end < total
   return (
-    <div className="pipeline-pagination-footer">
-      <span className="pipeline-pagination-ribbon">
+    <div className={PAGINATION_FOOTER_CLS}>
+      <span className={PAGINATION_RIBBON_CLS}>
         {start}–{end} of {total}
       </span>
-      <div className="pipeline-pagination-buttons">
+      <div className={PAGINATION_BUTTONS_CLS}>
         <button
           type="button"
-          className="pipeline-btn"
+          className={PIPELINE_BTN_CLS}
           disabled={!hasPrev}
           onClick={() => onOffsetChange(Math.max(0, offset - limit))}
         >
@@ -61,7 +108,7 @@ function PaginationFooter({
         </button>
         <button
           type="button"
-          className="pipeline-btn"
+          className={PIPELINE_BTN_CLS}
           disabled={!hasNext}
           onClick={() => onOffsetChange(offset + limit)}
         >
@@ -131,12 +178,12 @@ export function PipelineExecutionsView({
   return (
     <div className="workflows-content">
       {/* Status filter chips */}
-      <div className="pipeline-exec-filters">
+      <div className={FILTERS_ROW_CLS}>
         {STATUS_FILTERS.map(({ value, label }) => (
           <button
             key={value}
             type="button"
-            className={`pipeline-exec-filter-chip ${(filters.status || '') === value ? 'pipeline-exec-filter-chip--active' : ''}`}
+            className={`${FILTER_CHIP_CLS} ${(filters.status || '') === value ? FILTER_CHIP_ACTIVE_CLS : ''}`}
             onClick={() => onFiltersChange({ ...filters, status: value || undefined })}
           >
             {label}
@@ -147,36 +194,33 @@ export function PipelineExecutionsView({
       {isLoading ? (
         <div className="workflows-loading">Loading executions...</div>
       ) : executions.length === 0 ? (
-        <div className="pipeline-panel pipeline-panel--empty">
-          <div className="pipeline-empty">
-            <PipelineIcon />
-            <p>No pipeline executions{filters.status ? ` with status "${filters.status}"` : ''}</p>
+        <div className={`${PANEL_CLS} ${PANEL_EMPTY_CLS}`}>
+          <div className={EMPTY_INNER_CLS}>
+            <PipelineIcon className="mb-2 opacity-50 inline-block" />
+            <p className={EMPTY_TEXT_CLS}>No pipeline executions{filters.status ? ` with status "${filters.status}"` : ''}</p>
           </div>
         </div>
       ) : (
-        <div className="pipeline-panel">
-          <div className="pipeline-list" style={{ maxHeight: 'none' }}>
+        <div className={PANEL_CLS}>
+          <div className={LIST_CLS} style={{ maxHeight: 'none' }}>
             {executions.map((execution) => (
-              <div
-                key={execution.id}
-                className={`pipeline-execution pipeline-execution--${execution.status}`}
-              >
+              <div key={execution.id} className={EXEC_ROW_CLS}>
                 <div
-                  className="pipeline-execution-header"
+                  className={EXEC_HEADER_CLS}
                   role="button"
                   tabIndex={0}
                   onClick={() => toggleExpanded(execution.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpanded(execution.id) } }}
                 >
-                  <div className="pipeline-execution-info">
+                  <div className={EXEC_INFO_CLS}>
                     <StatusBadge status={execution.status} />
-                    <span className="pipeline-name">{execution.pipeline_name}</span>
-                    <span className="pipeline-id">{execution.id.slice(0, 12)}</span>
+                    <span className={PIPELINE_NAME_CLS}>{execution.pipeline_name}</span>
+                    <span className={PIPELINE_ID_CLS}>{execution.id.slice(0, 12)}</span>
                   </div>
-                  <div className="pipeline-execution-meta">
-                    <span className="pipeline-time">{formatTime(execution.created_at)}</span>
+                  <div className={EXEC_META_CLS}>
+                    <span className={PIPELINE_TIME_CLS}>{formatTime(execution.created_at)}</span>
                     {execution.completed_at && (
-                      <span className="pipeline-step-timing">
+                      <span className={PIPELINE_STEP_TIMING_CLS}>
                         {formatDuration(execution.created_at, execution.completed_at)}
                       </span>
                     )}
@@ -185,13 +229,13 @@ export function PipelineExecutionsView({
                 </div>
 
                 {expanded.has(execution.id) && (
-                  <div className="pipeline-execution-details">
+                  <div className={EXEC_DETAILS_CLS}>
                     {/* Trace link */}
                     {execution.trace_id && onNavigateToTrace && (
-                      <div className="pipeline-trace-link" style={{ marginBottom: '1rem' }}>
+                      <div className="mb-4">
                         <button
                           type="button"
-                          className="pipeline-btn"
+                          className={PIPELINE_BTN_CLS}
                           onClick={() => onNavigateToTrace(execution.trace_id!)}
                           title="View telemetry trace for this execution"
                         >
@@ -207,15 +251,15 @@ export function PipelineExecutionsView({
                         (s) => s.status === 'waiting_approval' && s.approval_token
                       )
                       return waitingStep?.approval_token ? (
-                        <div className="pipeline-approval">
-                          <div className="pipeline-approval-message">
+                        <div className={PIPELINE_APPROVAL_CLS}>
+                          <div className={PIPELINE_APPROVAL_MESSAGE_CLS}>
                             <AlertIcon />
                             <span>Step "{waitingStep.step_id}" requires approval</span>
                           </div>
-                          <div className="pipeline-approval-actions">
+                          <div className={PIPELINE_APPROVAL_ACTIONS_CLS}>
                             <button
                               type="button"
-                              className="pipeline-btn pipeline-btn--approve"
+                              className={`${PIPELINE_BTN_CLS} ${PIPELINE_BTN_APPROVE_CLS}`}
                               onClick={() => handleApprove(waitingStep.approval_token!)}
                               disabled={actionLoading === waitingStep.approval_token}
                             >
@@ -223,7 +267,7 @@ export function PipelineExecutionsView({
                             </button>
                             <button
                               type="button"
-                              className="pipeline-btn pipeline-btn--reject"
+                              className={`${PIPELINE_BTN_CLS} ${PIPELINE_BTN_REJECT_CLS}`}
                               onClick={() => handleReject(waitingStep.approval_token!)}
                               disabled={actionLoading === waitingStep.approval_token}
                             >
@@ -236,7 +280,7 @@ export function PipelineExecutionsView({
 
                     {/* Steps */}
                     {execution.steps.length > 0 && (
-                      <div className="pipeline-steps">
+                      <div className={PIPELINE_STEPS_CLS}>
                         {execution.steps.map((step, index) => (
                           <StepDisplay key={step.id} step={step} index={index} />
                         ))}
@@ -249,7 +293,7 @@ export function PipelineExecutionsView({
                         const outputs = JSON.parse(execution.outputs_json)
                         if (outputs.error) {
                           return (
-                            <div className="pipeline-error">
+                            <div className={PIPELINE_ERROR_CLS}>
                               <span>Error: {outputs.error}</span>
                             </div>
                           )
@@ -260,9 +304,9 @@ export function PipelineExecutionsView({
 
                     {/* Outputs */}
                     {execution.status === 'completed' && execution.outputs_json && (
-                      <div className="pipeline-outputs">
-                        <h4>Outputs</h4>
-                        <pre>{formatJson(execution.outputs_json)}</pre>
+                      <div className={OUTPUTS_CLS}>
+                        <h4 className={OUTPUTS_HEADING_CLS}>Outputs</h4>
+                        <pre className={OUTPUTS_PRE_CLS}>{formatJson(execution.outputs_json)}</pre>
                       </div>
                     )}
                   </div>

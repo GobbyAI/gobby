@@ -146,7 +146,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
 
       {selectedTrace && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="pipeline-detail-header flex items-center gap-3 px-3 border-b border-border">
+          <div className="h-10 bg-[var(--bg-secondary)] flex items-center gap-3 px-3 border-b border-border">
             <div className="flex items-center gap-2 min-w-0">
               <TraceStatusDot status={selectedTrace.status} />
               <span className="text-xs font-medium text-foreground truncate">

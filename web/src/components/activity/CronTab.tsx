@@ -164,7 +164,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
 
       {selectedJob && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="pipeline-detail-header flex items-center gap-3 px-3 border-b border-border">
+          <div className="h-10 bg-[var(--bg-secondary)] flex items-center gap-3 px-3 border-b border-border">
             <div className="flex items-center gap-2 min-w-0">
               <CronStatusDot enabled={selectedJob.enabled} />
               <span className="activity-row-title">

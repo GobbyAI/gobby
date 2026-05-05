@@ -10,11 +10,28 @@ import {
   PipelineIcon,
   AgentIcon,
   PipelineStatusDot as StatusDot,
+  PIPELINE_BTN_CLS,
+  PIPELINE_BTN_APPROVE_CLS,
+  PIPELINE_BTN_REJECT_CLS,
+  PIPELINE_APPROVAL_CLS,
+  PIPELINE_APPROVAL_MESSAGE_CLS,
+  PIPELINE_APPROVAL_ACTIONS_CLS,
+  PIPELINE_ERROR_CLS,
+  PIPELINE_STEPS_CLS,
 } from "./execution-utils";
 import { formatTime, formatDuration, formatJson } from "./executionFormatters";
 import { CronIcon } from "./ReportsPage.icons";
-import "./PipelinesPage.css";
 import "./pipelines-reporting.css";
+
+const REPORTING_TRIGGER_CLS =
+  "inline-flex items-center gap-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-secondary)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_6%,transparent)] border border-[color-mix(in_srgb,var(--color-warning-foreground)_15%,transparent)] rounded px-2 py-1 [&>svg]:w-3 [&>svg]:h-3 [&>svg]:text-[var(--color-warning-foreground)]";
+
+const REPORTING_EMPTY_CLS =
+  "flex flex-col items-center justify-center px-4 py-12 text-[var(--text-muted)] gap-3 [&>svg]:opacity-30 [&>svg]:w-8 [&>svg]:h-8 [&>p]:text-[length:calc(var(--font-size-base)*0.85)] [&>p]:m-0";
+
+const REPORTING_FILTER_BAR_CLS =
+  "flex items-center justify-between gap-3 py-2 border-b border-border mb-2 flex-wrap";
+const REPORTING_FILTER_CHIPS_CLS = "flex items-center gap-1.5 flex-wrap";
 
 type TypeFilter = "all" | "pipelines" | "agents";
 type StatusFilter = "all" | "running" | "waiting" | "completed" | "failed";
@@ -220,8 +237,8 @@ export function ReportingTab({
   return (
     <div className="workflows-content">
       {/* Filter bar — matches tasks-filter-bar pattern */}
-      <div className="reporting-filter-bar">
-        <div className="reporting-filter-chips">
+      <div className={REPORTING_FILTER_BAR_CLS}>
+        <div className={REPORTING_FILTER_CHIPS_CLS}>
           {STATUS_OPTIONS.map((opt) => (
             <button
               key={opt.value}
@@ -253,7 +270,7 @@ export function ReportingTab({
       {isLoading ? (
         <div className="tasks-loading">Loading...</div>
       ) : timeline.length === 0 ? (
-        <div className="reporting-empty">
+        <div className={REPORTING_EMPTY_CLS}>
           <PipelineIcon />
           <p>No executions match the current filters.</p>
         </div>
@@ -399,7 +416,7 @@ function PipelineDrillDown({
       {/* Trigger info */}
       {execution.cron_job_name && (
         <div className="reporting-section">
-          <span className="reporting-trigger">
+          <span className={REPORTING_TRIGGER_CLS}>
             <CronIcon />
             {execution.cron_job_name} &middot; {execution.cron_expr}
           </span>
@@ -454,17 +471,17 @@ function PipelineDrillDown({
             (s) => s.status === "waiting_approval" && s.approval_token,
           );
           return waitingStep?.approval_token ? (
-            <div className="pipeline-approval">
-              <div className="pipeline-approval-message">
+            <div className={PIPELINE_APPROVAL_CLS}>
+              <div className={PIPELINE_APPROVAL_MESSAGE_CLS}>
                 <AlertIcon />
                 <span>
                   Step &ldquo;{waitingStep.step_id}&rdquo; requires approval
                 </span>
               </div>
-              <div className="pipeline-approval-actions">
+              <div className={PIPELINE_APPROVAL_ACTIONS_CLS}>
                 <button
                   type="button"
-                  className="pipeline-btn pipeline-btn--approve"
+                  className={`${PIPELINE_BTN_CLS} ${PIPELINE_BTN_APPROVE_CLS}`}
                   onClick={() => onApprove(waitingStep.approval_token!)}
                   disabled={actionLoading === waitingStep.approval_token}
                 >
@@ -474,7 +491,7 @@ function PipelineDrillDown({
                 </button>
                 <button
                   type="button"
-                  className="pipeline-btn pipeline-btn--reject"
+                  className={`${PIPELINE_BTN_CLS} ${PIPELINE_BTN_REJECT_CLS}`}
                   onClick={() => onReject(waitingStep.approval_token!)}
                   disabled={actionLoading === waitingStep.approval_token}
                 >
@@ -491,7 +508,7 @@ function PipelineDrillDown({
       {execution.steps.length > 0 && (
         <div className="reporting-section">
           <span className="reporting-section-label">Steps</span>
-          <div className="pipeline-steps">
+          <div className={PIPELINE_STEPS_CLS}>
             {execution.steps.map((step, index) => (
               <StepDisplay key={step.id} step={step} index={index} />
             ))}
@@ -506,7 +523,7 @@ function PipelineDrillDown({
             const outputs = JSON.parse(execution.outputs_json);
             if (outputs.error) {
               return (
-                <div className="pipeline-error">
+                <div className={PIPELINE_ERROR_CLS}>
                   <span>Error: {outputs.error}</span>
                 </div>
               );
@@ -687,7 +704,7 @@ function AgentDrillDown({
 
       {/* Error */}
       {(run.status === "error" || run.status === "timeout") && run.error && (
-        <div className="pipeline-error">
+        <div className={PIPELINE_ERROR_CLS}>
           <span>Error: {run.error}</span>
         </div>
       )}
@@ -718,7 +735,7 @@ function AgentDrillDown({
         <div className="reporting-section">
           <button
             type="button"
-            className="pipeline-btn pipeline-btn--reject"
+            className={`${PIPELINE_BTN_CLS} ${PIPELINE_BTN_REJECT_CLS}`}
             onClick={() => onCancel(run.id)}
             disabled={actionLoading === run.id}
           >
