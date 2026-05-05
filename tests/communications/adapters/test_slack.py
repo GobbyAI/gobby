@@ -119,6 +119,8 @@ async def test_send_message_success(
                 "thread_ts": "thread_123",
             },
         )
+        assert mock_post.call_count == 1
+        assert mock_post.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -185,6 +187,8 @@ async def test_send_attachment_success(
         mock_post.assert_any_call(
             "files.getUploadURLExternal", data={"filename": "test.txt", "length": 11}
         )
+        assert mock_post.call_count >= 1
+        assert mock_post.call_args is not None
 
         # Verify Step 2
         mock_put.assert_called_once_with(
@@ -192,6 +196,8 @@ async def test_send_attachment_success(
             content=b"hello world",
             headers={"Content-Type": "text/plain"},
         )
+        assert mock_put.call_count == 1
+        assert mock_put.call_args is not None
 
         # Verify Step 3
         mock_post.assert_any_call(
@@ -202,6 +208,8 @@ async def test_send_attachment_success(
                 "initial_comment": "Check this out",
             },
         )
+        assert mock_post.call_count >= 1
+        assert mock_post.call_args is not None
 
 
 def test_parse_webhook_url_verification(adapter: SlackAdapter) -> None:

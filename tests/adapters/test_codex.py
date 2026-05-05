@@ -450,8 +450,12 @@ class TestCodexAppServerClientContextManager:
             with patch.object(client, "stop", new_callable=AsyncMock) as mock_stop:
                 async with client:
                     mock_start.assert_called_once()
+                    assert mock_start.call_count == 1
+                    assert mock_start.call_args is not None
 
                 mock_stop.assert_called_once()
+                assert mock_stop.call_count == 1
+                assert mock_stop.call_args is not None
 
 
 class TestCodexAppServerClientRequestId:
@@ -792,6 +796,8 @@ class TestCodexAppServerClientTurnManagement:
                 "turn/interrupt",
                 {"threadId": "thr-1", "turnId": "turn-1"},
             )
+            assert mock_send.call_count == 1
+            assert mock_send.call_args is not None
 
 
 class TestCodexAppServerClientRunTurn:
@@ -955,6 +961,8 @@ class TestCodexAdapterAttachDetach:
         adapter.attach_to_client(mock_client)
 
         mock_client.add_notification_handler.assert_not_called()
+        assert mock_client.add_notification_handler.call_count == 0
+        assert not mock_client.add_notification_handler.called
 
     def test_detach_from_client(self) -> None:
         """Detaching removes notification handlers."""
@@ -3135,6 +3143,8 @@ class TestCodexAdapterApprovalAttach:
         adapter.attach_to_client(mock_client)
 
         mock_client.register_approval_handler.assert_called_once()
+        assert mock_client.register_approval_handler.call_count == 1
+        assert mock_client.register_approval_handler.call_args is not None
 
 
 # =============================================================================

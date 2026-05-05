@@ -149,6 +149,8 @@ class TestDaemonDockerFlag:
                 _services_start(tmp_path)
 
         mock_run.assert_not_called()
+        assert mock_run.call_count == 0
+        assert not mock_run.called
 
     def test_services_stop_runs_compose_down(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_stop
@@ -175,6 +177,8 @@ class TestDaemonDockerFlag:
                 _services_stop(tmp_path)
 
         mock_run.assert_not_called()
+        assert mock_run.call_count == 0
+        assert not mock_run.called
 
 
 # ---------------------------------------------------------------------------

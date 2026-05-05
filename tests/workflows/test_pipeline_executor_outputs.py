@@ -271,6 +271,8 @@ class TestEmitEvent:
         )
         await executor._emit_event("pipeline_started", "pe-1", step_count=3)
         callback.assert_called_once_with("pipeline_started", "pe-1", step_count=3)
+        assert callback.call_count == 1
+        assert callback.call_args is not None
 
 
 class TestNotifyCompletion:
@@ -307,6 +309,8 @@ class TestNotifyCompletion:
             "pe-1", "completed", "test-pipe", outputs={"result": "ok"}
         )
         registry.notify.assert_called_once()
+        assert registry.notify.call_count == 1
+        assert registry.notify.call_args is not None
 
     @pytest.mark.asyncio
     async def test_notify_with_orchestration_complete(
@@ -396,6 +400,8 @@ class TestClosePipelineSession:
         )
         executor._close_pipeline_session("sess-1", "sess-1")
         sm.update_status.assert_not_called()
+        assert sm.update_status.call_count == 0
+        assert not sm.update_status.called
 
     def test_closes_different_session(
         self, mock_db, mock_execution_manager, mock_llm_service

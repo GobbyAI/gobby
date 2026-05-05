@@ -387,6 +387,8 @@ class TestGetValidationContextSmartEdgeCases:
         assert context is not None
         # Verify multi-commit diff was NOT called because remaining < 5000
         mock_diff.assert_not_called()
+        assert mock_diff.call_count == 0
+        assert not mock_diff.called
 
     @patch("gobby.tasks.validation.run_git_command")
     @patch("gobby.tasks.validation.get_multi_commit_diff")
@@ -1242,6 +1244,8 @@ class TestGetValidationContextSmartMerged:
         )
         # Should try to find files mentioned in criteria
         mock_find.assert_called()
+        assert mock_find.call_count >= 1
+        assert mock_find.call_args is not None
 
     @patch("gobby.tasks.validation.run_git_command")
     @patch("gobby.tasks.validation.get_multi_commit_diff")

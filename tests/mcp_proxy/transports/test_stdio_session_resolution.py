@@ -101,12 +101,16 @@ async def test_stdio_rest_path_resolves_arguments_session_id_before_dispatch() -
     await mcp_proxy("gobby-sessions", "get_session", request, server)
 
     server.session_manager.resolve_session_reference.assert_any_call("#3", "proj-1")
+    assert server.session_manager.resolve_session_reference.call_count >= 1
+    assert server.session_manager.resolve_session_reference.call_args is not None
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
         "get_session",
         {"session_id": SESSION_UUID_3},
         session_id=SESSION_UUID_3,
     )
+    assert mcp_manager.call_tool.await_count == 1
+    assert mcp_manager.call_tool.await_args is not None
 
 
 @pytest.mark.asyncio
@@ -117,9 +121,13 @@ async def test_stdio_resolves_hash_ref_from_header_hash_ref_without_project_head
     await mcp_proxy("gobby-sessions", "get_session", request, server)
 
     server.session_manager.resolve_session_reference.assert_any_call("#3", PROJECT_ID)
+    assert server.session_manager.resolve_session_reference.call_count >= 1
+    assert server.session_manager.resolve_session_reference.call_args is not None
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
         "get_session",
         {"session_id": SESSION_UUID_3},
         session_id=SESSION_UUID_3,
     )
+    assert mcp_manager.call_tool.await_count == 1
+    assert mcp_manager.call_tool.await_args is not None

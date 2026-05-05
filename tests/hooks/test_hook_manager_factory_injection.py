@@ -99,6 +99,8 @@ def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
     manager.shutdown()
 
     database.close.assert_not_called()
+    assert database.close.call_count == 0
+    assert not database.close.called
 
 
 def test_factory_create_reuses_injected_session_manager(

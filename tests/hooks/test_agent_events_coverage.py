@@ -95,6 +95,8 @@ class TestHandleBeforeAgent:
 
         handler.handle_before_agent(event)
         handler._session_manager.update_session_status.assert_called_with("sess-1", "active")
+        assert handler._session_manager.update_session_status.call_count >= 1
+        assert handler._session_manager.update_session_status.call_args is not None
 
     def test_clear_command_generates_summaries(self) -> None:
         handler = _TestHandler()
@@ -106,6 +108,8 @@ class TestHandleBeforeAgent:
 
         handler.handle_before_agent(event)
         handler._dispatch_session_summaries_fn.assert_called_once_with("sess-1", False, None)
+        assert handler._dispatch_session_summaries_fn.call_count == 1
+        assert handler._dispatch_session_summaries_fn.call_args is not None
 
     def test_exit_command_generates_summaries(self) -> None:
         handler = _TestHandler()
@@ -117,6 +121,8 @@ class TestHandleBeforeAgent:
 
         handler.handle_before_agent(event)
         handler._dispatch_session_summaries_fn.assert_called_once()
+        assert handler._dispatch_session_summaries_fn.call_count == 1
+        assert handler._dispatch_session_summaries_fn.call_args is not None
 
     def test_skill_interception(self) -> None:
         handler = _TestHandler()

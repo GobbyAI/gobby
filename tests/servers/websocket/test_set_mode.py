@@ -77,8 +77,14 @@ class TestSetModeIdempotency:
             await server._handle_set_mode(ws, {"conversation_id": "conv-1", "mode": "plan"})
 
         session.set_chat_mode.assert_not_called()
+        assert session.set_chat_mode.call_count == 0
+        assert not session.set_chat_mode.called
         session.sync_sdk_permission_mode.assert_not_awaited()
+        assert session.sync_sdk_permission_mode.await_count == 0
+        assert session.sync_sdk_permission_mode.await_args is None
         svm_cls.assert_not_called()
+        assert svm_cls.call_count == 0
+        assert not svm_cls.called
 
     async def test_accept_edits_noop_when_already_normal(self) -> None:
         """accept_edits is normalized to normal, so if session is already normal the handler should no-op."""
@@ -91,8 +97,14 @@ class TestSetModeIdempotency:
             await server._handle_set_mode(ws, {"conversation_id": "conv-1", "mode": "accept_edits"})
 
         session.set_chat_mode.assert_not_called()
+        assert session.set_chat_mode.call_count == 0
+        assert not session.set_chat_mode.called
         session.sync_sdk_permission_mode.assert_not_awaited()
+        assert session.sync_sdk_permission_mode.await_count == 0
+        assert session.sync_sdk_permission_mode.await_args is None
         svm_cls.assert_not_called()
+        assert svm_cls.call_count == 0
+        assert not svm_cls.called
 
     async def test_real_change_fires_full_pipeline(self) -> None:
         server = ConcreteSessionControl()

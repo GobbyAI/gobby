@@ -100,6 +100,8 @@ class TestTier1GitAutoMerge:
                 )
 
                 mock_ai.assert_not_called()
+                assert mock_ai.call_count == 0
+                assert not mock_ai.called
 
 
 # =============================================================================
@@ -135,6 +137,8 @@ class TestTier2ConflictOnlyAI:
 
                 # Should have called conflict-only resolution
                 mock_ai.assert_called_once()
+                assert mock_ai.call_count == 1
+                assert mock_ai.call_args is not None
 
     @pytest.mark.asyncio
     async def test_conflict_only_ai_resolves_simple_conflicts(self):
@@ -228,6 +232,8 @@ class TestTier3FullFileAI:
                     )
 
                     mock_t3.assert_called_once()
+                    assert mock_t3.call_count == 1
+                    assert mock_t3.call_args is not None
 
 
 # =============================================================================

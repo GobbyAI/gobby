@@ -291,8 +291,12 @@ class TestAdminRestartHelpers:
         lifecycle._run_service_restart_helper(4321, 60887)
 
         mock_service_restart.assert_called_once_with()
+        assert mock_service_restart.call_count == 1
+        assert mock_service_restart.call_args is not None
         assert mock_wait_for_health.call_count == 2
         mock_log.assert_not_called()
+        assert mock_log.call_count == 0
+        assert not mock_log.called
 
 
 class TestHealthEndpoint:

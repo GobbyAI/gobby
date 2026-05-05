@@ -68,6 +68,8 @@ class TestSessionIntegrationTools:
             mock_st_instance.link_task.assert_called_with(
                 "sess-123", "550e8400-e29b-41d4-a716-446655440000", "worked_on"
             )
+            assert mock_st_instance.link_task.call_count >= 1
+            assert mock_st_instance.link_task.call_args is not None
             assert result == {}
 
     @pytest.mark.asyncio

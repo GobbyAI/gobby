@@ -229,6 +229,8 @@ class TestRegisterPipelineTools:
         ):
             register_pipeline_tools(registry, db=db)
             MockDM.assert_called_once_with(db)
+            assert MockDM.call_count == 1
+            assert MockDM.call_args is not None
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -133,6 +133,8 @@ class TestSetProviderWithExistingSession:
         server.session_manager.update.assert_called_once_with(
             "db-456", source="gemini", status="paused"
         )
+        assert server.session_manager.update.call_count == 1
+        assert server.session_manager.update.call_args is not None
 
     async def test_stores_pending_provider_after_teardown(self) -> None:
         server = ConcreteSessionControl()

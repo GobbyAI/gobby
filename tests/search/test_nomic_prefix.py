@@ -304,6 +304,8 @@ async def test_reload_skipped_during_cooldown() -> None:
             )
 
     mock_reload.assert_not_awaited()
+    assert mock_reload.await_count == 0
+    assert mock_reload.await_args is None
 
 
 @pytest.mark.asyncio
@@ -390,3 +392,5 @@ async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_o
             )
 
     mock_ready.assert_not_awaited()
+    assert mock_ready.await_count == 0
+    assert mock_ready.await_args is None

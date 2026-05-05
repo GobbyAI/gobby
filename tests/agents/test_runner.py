@@ -245,6 +245,8 @@ class TestAgentRunnerGetAndListRuns:
             status=None,
             limit=100,
         )
+        assert runner._run_storage.list_by_session.call_count == 1
+        assert runner._run_storage.list_by_session.call_args is not None
 
 
 class TestAgentRunnerCancelRun:

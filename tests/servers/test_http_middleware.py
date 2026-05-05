@@ -84,3 +84,5 @@ class TestLifespan:
             pass
 
         mock_ws_server.cleanup_voice.assert_awaited_once()
+        assert mock_ws_server.cleanup_voice.await_count == 1
+        assert mock_ws_server.cleanup_voice.await_args is not None

@@ -253,6 +253,8 @@ class TestGitHubSyncServiceSync:
         await sync_service.sync_task_to_github(task_id="test-task-id")
 
         mock_mcp_manager.call_tool.assert_called()
+        assert mock_mcp_manager.call_tool.call_count >= 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_sync_task_raises_when_no_issue_number(self, sync_service, mock_task_manager):

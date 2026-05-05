@@ -151,10 +151,14 @@ class TestClaimTaskTool:
                 session_id="my-session-id",
                 force=False,
             )
+            assert mock_task_manager.claim_task.call_count == 1
+            assert mock_task_manager.claim_task.call_args is not None
             # Should link task to session (best-effort)
             mock_st_instance.link_task.assert_called_once_with(
                 "my-session-id", sample_task.id, "claimed"
             )
+            assert mock_st_instance.link_task.call_count == 1
+            assert mock_st_instance.link_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_claim_task_already_claimed_by_another_session(
@@ -224,6 +228,8 @@ class TestClaimTaskTool:
                 session_id="my-session-id",
                 force=True,
             )
+            assert mock_task_manager.claim_task.call_count == 1
+            assert mock_task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_delegated_child_can_claim_parent_owned_task_without_force(
@@ -613,6 +619,8 @@ class TestClaimTaskVsUpdateTask:
                 session_id="my-session-id",
                 force=False,
             )
+            assert mock_task_manager.claim_task.call_count == 1
+            assert mock_task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_claim_task_detects_conflicts(

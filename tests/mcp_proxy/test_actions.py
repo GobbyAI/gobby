@@ -301,6 +301,8 @@ class TestAddMcpServer:
                     {"name": "tool2", "description": "Second tool"},
                 ],
             )
+            assert mock_gen.call_count == 1
+            assert mock_gen.call_args is not None
 
     @pytest.mark.asyncio
     async def test_add_server_skips_description_generation_when_provided(self, mock_mcp_manager):
@@ -325,6 +327,8 @@ class TestAddMcpServer:
             )
 
             mock_gen.assert_not_called()
+            assert mock_gen.call_count == 0
+            assert not mock_gen.called
 
     @pytest.mark.asyncio
     async def test_add_server_skips_description_generation_when_no_tools(self, mock_mcp_manager):
@@ -348,6 +352,8 @@ class TestAddMcpServer:
             )
 
             mock_gen.assert_not_called()
+            assert mock_gen.call_count == 0
+            assert not mock_gen.called
 
     @pytest.mark.asyncio
     async def test_add_server_handles_description_generation_failure(self, mock_mcp_manager):
@@ -488,6 +494,8 @@ class TestRemoveMcpServer:
             project_id="project-a",
         )
         mock_mcp_manager.remove_server.assert_called_with("server-a", project_id="project-a")
+        assert mock_mcp_manager.remove_server.call_count >= 1
+        assert mock_mcp_manager.remove_server.call_args is not None
 
         # Remove from project B
         await remove_mcp_server(
@@ -496,6 +504,8 @@ class TestRemoveMcpServer:
             project_id="project-b",
         )
         mock_mcp_manager.remove_server.assert_called_with("server-b", project_id="project-b")
+        assert mock_mcp_manager.remove_server.call_count >= 1
+        assert mock_mcp_manager.remove_server.call_args is not None
 
     @pytest.mark.asyncio
     async def test_remove_server_logs_on_success(self, mock_mcp_manager, caplog):

@@ -220,6 +220,8 @@ class TestGobbyDaemonToolsListMcpServers:
             tool_input={},
             result=result,
         )
+        assert tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.await_count == 1
+        assert tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.await_args is not None
 
 
 class TestGobbyDaemonToolsCallTool:
@@ -285,6 +287,8 @@ class TestGobbyDaemonToolsCallTool:
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
             "gobby-skills", "get_skill", {"name": "brevity"}, None
         )
+        assert tools_handler.tool_proxy.call_tool.call_count == 1
+        assert tools_handler.tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_call_tool_with_none_arguments(self, tools_handler):
@@ -300,6 +304,8 @@ class TestGobbyDaemonToolsCallTool:
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
             "server", "no-args-tool", None, None
         )
+        assert tools_handler.tool_proxy.call_tool.call_count == 1
+        assert tools_handler.tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_call_tool_propagates_errors(self, tools_handler):
@@ -353,6 +359,8 @@ class TestGobbyDaemonToolsListTools:
         await tools_handler.list_tools(server_name="server1")
 
         tools_handler.tool_proxy.list_tools.assert_called_once_with("server1", session_id=None)
+        assert tools_handler.tool_proxy.list_tools.call_count == 1
+        assert tools_handler.tool_proxy.list_tools.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_tools_emits_proxy_after_tool(self, tools_handler):
@@ -370,6 +378,8 @@ class TestGobbyDaemonToolsListTools:
             tool_input={"server_name": "server1"},
             result=result,
         )
+        assert tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.await_count == 1
+        assert tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.await_args is not None
 
     @pytest.mark.asyncio
     async def test_list_tools_with_session_id(self, tools_handler):
@@ -383,6 +393,8 @@ class TestGobbyDaemonToolsListTools:
         tools_handler.tool_proxy.list_tools.assert_called_once_with(
             "server1", session_id="session-123"
         )
+        assert tools_handler.tool_proxy.list_tools.call_count == 1
+        assert tools_handler.tool_proxy.list_tools.call_args is not None
 
 
 class TestGobbyDaemonToolsGetToolSchema:
@@ -426,6 +438,8 @@ class TestGobbyDaemonToolsGetToolSchema:
             "my-tool",
             session_id=None,
         )
+        assert tools_handler.tool_proxy.get_tool_schema.call_count == 1
+        assert tools_handler.tool_proxy.get_tool_schema.call_args is not None
 
     @pytest.mark.asyncio
     async def test_get_tool_schema_emits_proxy_after_tool(self, tools_handler):
@@ -445,6 +459,8 @@ class TestGobbyDaemonToolsGetToolSchema:
             tool_input={"server_name": "my-server", "tool_name": "my-tool"},
             result=result,
         )
+        assert tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.await_count == 1
+        assert tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.await_args is not None
 
 
 class TestGobbyDaemonToolsServerManagement:

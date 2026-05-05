@@ -72,6 +72,8 @@ class TestGuardClauses:
         call_tool = AsyncMock()
         await dispatch_mcp_calls([], _make_event(), call_tool, logging.getLogger("test"))
         call_tool.assert_not_called()
+        assert call_tool.call_count == 0
+        assert not call_tool.called
 
     @pytest.mark.asyncio
     async def test_missing_server_skips_call(self) -> None:
@@ -86,6 +88,8 @@ class TestGuardClauses:
         )
 
         call_tool.assert_not_called()
+        assert call_tool.call_count == 0
+        assert not call_tool.called
 
     @pytest.mark.asyncio
     async def test_missing_tool_skips_call(self) -> None:
@@ -99,6 +103,8 @@ class TestGuardClauses:
         )
 
         call_tool.assert_not_called()
+        assert call_tool.call_count == 0
+        assert not call_tool.called
 
 
 class TestBackgroundDispatch:
@@ -120,6 +126,8 @@ class TestBackgroundDispatch:
             description="background MCP call",
         )
         call_tool.assert_called_once()
+        assert call_tool.call_count == 1
+        assert call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_background_error_does_not_propagate(self) -> None:
@@ -138,6 +146,8 @@ class TestBackgroundDispatch:
             description="background MCP error",
         )
         call_tool.assert_called_once()
+        assert call_tool.call_count == 1
+        assert call_tool.call_args is not None
 
 
 class TestBlockingDispatch:
@@ -155,6 +165,8 @@ class TestBlockingDispatch:
         )
 
         call_tool.assert_called_once()
+        assert call_tool.call_count == 1
+        assert call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_blocking_error_logged_not_raised(self) -> None:
@@ -169,6 +181,8 @@ class TestBlockingDispatch:
         )
 
         call_tool.assert_called_once()
+        assert call_tool.call_count == 1
+        assert call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_blocking_timeout_logged(self) -> None:
@@ -182,6 +196,8 @@ class TestBlockingDispatch:
             logging.getLogger("test"),
         )
         call_tool.assert_called_once()
+        assert call_tool.call_count == 1
+        assert call_tool.call_args is not None
 
 
 class TestMultipleCalls:

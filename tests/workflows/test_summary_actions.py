@@ -384,6 +384,8 @@ class TestRenameTmuxWindow:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
+            assert mock_exec.call_count == 1
+            assert mock_exec.call_args is not None
 
     @pytest.mark.asyncio
     async def test_spawned_agent_renames_on_gobby_socket(self):
@@ -404,6 +406,8 @@ class TestRenameTmuxWindow:
         ):
             await _rename_tmux_window(session, "Agent Title")
             mock_mgr.rename_window.assert_called_once_with("%0", "#55: Agent Title")
+            assert mock_mgr.rename_window.call_count == 1
+            assert mock_mgr.rename_window.call_args is not None
 
     @pytest.mark.asyncio
     async def test_failure_does_not_propagate(self):

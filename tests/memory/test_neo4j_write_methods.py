@@ -63,6 +63,8 @@ class TestMergeNode:
         await client.merge_node(entity_key="unknown", name="Unknown", labels=[], properties={})
 
         client.query.assert_called_once()
+        assert client.query.call_count == 1
+        assert client.query.call_args is not None
 
     async def test_merge_node_with_no_properties(self, client: Neo4jClient) -> None:
         """merge_node works with empty properties."""

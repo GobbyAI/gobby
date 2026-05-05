@@ -666,6 +666,8 @@ class TestLocalWorktreeManagerFindStale:
         manager.find_stale("proj-abc", hours=48)
 
         mock_db.fetchall.assert_called_once()
+        assert mock_db.fetchall.call_count == 1
+        assert mock_db.fetchall.call_args is not None
 
     def test_find_stale_returns_worktrees(self, manager, mock_db) -> None:
         """find_stale returns list of stale worktrees."""

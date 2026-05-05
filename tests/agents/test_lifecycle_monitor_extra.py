@@ -88,10 +88,14 @@ class TestRecoverTaskFromFailedAgent:
         await monitor._recover_task_from_failed_agent("run-1")
 
         mock_task_mgr.get_task.assert_called_once_with("task-123")
+        assert mock_task_mgr.get_task.call_count == 1
+        assert mock_task_mgr.get_task.call_args is not None
         # Provider error: dispatch_failure_count unchanged (stays at 0)
         mock_task_mgr.release_task_claim.assert_called_once_with(
             "task-123", dispatch_failure_count=0
         )
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_fallback_assignee(self) -> None:
@@ -138,11 +142,17 @@ class TestRecoverTaskFromFailedAgent:
             claimed_by_session_id="child-123",
             closed=False,
         )
+        assert mock_task_mgr.list_tasks.call_count == 1
+        assert mock_task_mgr.list_tasks.call_args is not None
         mock_task_mgr.get_task.assert_called_once_with("task-fallback")
+        assert mock_task_mgr.get_task.call_count == 1
+        assert mock_task_mgr.get_task.call_args is not None
         # Non-provider error: dispatch_failure_count incremented from 0 to 1
         mock_task_mgr.release_task_claim.assert_called_once_with(
             "task-fallback", dispatch_failure_count=1
         )
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_releases_review_claim_without_status_change(self) -> None:
@@ -183,6 +193,8 @@ class TestRecoverTaskFromFailedAgent:
         await monitor._recover_task_from_failed_agent("run-review")
 
         mock_task_mgr.release_task_claim.assert_called_once_with("task-review")
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_no_task_manager(self) -> None:
@@ -227,6 +239,8 @@ class TestRecoverTaskFromFailedAgent:
 
         await monitor._recover_task_from_failed_agent("run-1")
         mock_task_mgr.release_task_claim.assert_not_called()
+        assert mock_task_mgr.release_task_claim.call_count == 0
+        assert not mock_task_mgr.release_task_claim.called
 
     @pytest.mark.asyncio
     async def test_recover_task_escalates_after_three_failures(self) -> None:
@@ -272,6 +286,8 @@ class TestRecoverTaskFromFailedAgent:
             escalated_at=ANY,
             escalation_reason="Failed 3 dispatch attempts",
         )
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_provider_error_not_counted(self) -> None:
@@ -313,6 +329,8 @@ class TestRecoverTaskFromFailedAgent:
 
         # Should NOT block — provider errors are excluded
         mock_task_mgr.release_task_claim.assert_called_once_with("task-1", dispatch_failure_count=2)
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_uses_persisted_claimed_session_id(self) -> None:
@@ -353,6 +371,8 @@ class TestRecoverTaskFromFailedAgent:
         await monitor._recover_task_from_failed_agent("run-claim-owner")
 
         mock_task_mgr.release_task_claim.assert_not_called()
+        assert mock_task_mgr.release_task_claim.call_count == 0
+        assert not mock_task_mgr.release_task_claim.called
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_pending_runs(self) -> None:
@@ -438,9 +458,13 @@ class TestLoopPromptEscalation:
         ) as mock_kill:
             await monitor.check_loop_prompts()
             mock_kill.assert_called_once_with(run)
+            assert mock_kill.call_count == 1
+            assert mock_kill.call_args is not None
 
         # send_keys should NOT have been called (escalated instead)
         mock_tmux.send_keys.assert_not_called()
+        assert mock_tmux.send_keys.call_count == 0
+        assert not mock_tmux.send_keys.called
 
 
 class TestApprovalPromptAutoEnter:
@@ -847,6 +871,8 @@ class TestTerminalizeCancelledRun:
 
         assert transitioned is True
         mock_task_mgr.release_task_claim.assert_called_once_with("task-1")
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
         mock_completion_registry.notify.assert_awaited_once_with(
             "run-cancel",
             result={
@@ -856,7 +882,11 @@ class TestTerminalizeCancelledRun:
             },
             message="Agent run-cancel cancelled",
         )
+        assert mock_completion_registry.notify.await_count == 1
+        assert mock_completion_registry.notify.await_args is not None
         mock_session_mgr.update_status.assert_called_once_with("child-1", "expired")
+        assert mock_session_mgr.update_status.call_count == 1
+        assert mock_session_mgr.update_status.call_args is not None
 
     @pytest.mark.asyncio
     async def test_clears_claim_without_status_change_for_review_task(self) -> None:
@@ -928,3 +958,5 @@ class TestTerminalizeCancelledRun:
 
         assert transitioned is False
         mock_completion_registry.notify.assert_not_awaited()
+        assert mock_completion_registry.notify.await_count == 0
+        assert mock_completion_registry.notify.await_args is None

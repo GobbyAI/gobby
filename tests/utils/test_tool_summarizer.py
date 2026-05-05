@@ -162,6 +162,8 @@ class TestMaxDescriptionLength:
 
             # Should be summarized
             mock_summarize.assert_called_once()
+            assert mock_summarize.call_count == 1
+            assert mock_summarize.call_args is not None
 
 
 class TestSummarizeDescriptionWithClaude:
@@ -191,6 +193,8 @@ class TestSummarizeDescriptionWithClaude:
             result = await _summarize_description_with_llm("Long description " * 10)
             assert result == "Summarized text"
             mock_llm_service.call_feature.assert_awaited_once()
+            assert mock_llm_service.call_feature.await_count == 1
+            assert mock_llm_service.call_feature.await_args is not None
 
     @pytest.mark.asyncio
     async def test_summarize_description_failure_fallback(self):

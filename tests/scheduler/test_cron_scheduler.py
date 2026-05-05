@@ -161,6 +161,8 @@ async def test_check_due_jobs_dispatches(
     )
 
     mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
+    assert mock_executor.execute.call_count == 1
+    assert mock_executor.execute.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -201,6 +203,8 @@ async def test_respects_max_concurrent(
 
     # Should not have dispatched because max concurrent reached
     mock_executor.execute.assert_not_called()  # type: ignore[attr-defined]
+    assert mock_executor.execute.call_count == 0
+    assert not mock_executor.execute.called
 
 
 @pytest.mark.asyncio
@@ -235,6 +239,8 @@ async def test_backoff_on_consecutive_failures(
 
     # Should be skipped due to backoff
     mock_executor.execute.assert_not_called()  # type: ignore[attr-defined]
+    assert mock_executor.execute.call_count == 0
+    assert not mock_executor.execute.called
 
 
 def test_get_backoff_seconds(scheduler: CronScheduler) -> None:
@@ -461,3 +467,5 @@ async def test_on_run_complete_not_called_without_result(
     # Pass None run — should bail early without calling callback
     await scheduler._execute_and_update(job, None)
     callback.assert_not_called()
+    assert callback.call_count == 0
+    assert not callback.called

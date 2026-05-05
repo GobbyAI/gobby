@@ -201,6 +201,8 @@ class TestSessionLifecycleTransitions:
         mock_message_processor.register_session.assert_any_call(
             "session-2", "/path/to/2.jsonl", source="claude"
         )
+        assert mock_message_processor.register_session.call_count >= 1
+        assert mock_message_processor.register_session.call_args is not None
 
     def test_reregister_skips_sessions_without_transcript_path(self) -> None:
         """Test re-registration skips sessions without transcript_path."""
@@ -288,6 +290,8 @@ class TestSessionLifecycleTransitions:
 
         assert count == 1
         MockSVMgr.assert_called_once_with(mock_session_storage.db)
+        assert MockSVMgr.call_count == 1
+        assert MockSVMgr.call_args is not None
         mock_sv_instance.merge_variables.assert_called_once_with(
             "session-1",
             {
@@ -295,6 +299,8 @@ class TestSessionLifecycleTransitions:
                 "_agent_identity_reinject": False,
             },
         )
+        assert mock_sv_instance.merge_variables.call_count == 1
+        assert mock_sv_instance.merge_variables.call_args is not None
 
 
 class TestAgentRunCompletion:
@@ -330,6 +336,8 @@ class TestAgentRunCompletion:
         coordinator.complete_agent_run(mock_session)
 
         mock_agent_run_manager.complete.assert_not_called()
+        assert mock_agent_run_manager.complete.call_count == 0
+        assert not mock_agent_run_manager.complete.called
 
     def test_complete_agent_run_skips_terminal_states(self) -> None:
         """Test complete_agent_run skips already-completed runs."""
@@ -345,6 +353,8 @@ class TestAgentRunCompletion:
         coordinator.complete_agent_run(mock_session)
 
         mock_agent_run_manager.complete.assert_not_called()
+        assert mock_agent_run_manager.complete.call_count == 0
+        assert not mock_agent_run_manager.complete.called
 
     def test_complete_agent_run_counts_tool_calls_from_messages(self) -> None:
         """Test completing an agent run counts tool calls and turns from session_messages."""
@@ -495,6 +505,8 @@ class TestWorktreeRelease:
         coordinator.release_session_worktrees("session-123")
 
         mock_worktree_manager.release.assert_not_called()
+        assert mock_worktree_manager.release.call_count == 0
+        assert not mock_worktree_manager.release.called
 
     def test_release_handles_individual_errors(self) -> None:
         """Test release handles errors releasing individual worktrees."""

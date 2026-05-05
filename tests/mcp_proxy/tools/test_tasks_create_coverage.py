@@ -539,11 +539,15 @@ class TestCreateTaskTool:
 
                 # update_task should NOT be called (no auto-claim)
                 mock_task_manager.update_task.assert_not_called()
+                assert mock_task_manager.update_task.call_count == 0
+                assert not mock_task_manager.update_task.called
 
                 # Session link should be "created", not "claimed"
                 mock_st_instance.link_task.assert_called_once_with(
                     "test-session", "550e8400-e29b-41d4-a716-446655440020", "created"
                 )
+                assert mock_st_instance.link_task.call_count == 1
+                assert mock_st_instance.link_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_true(self, mock_task_manager, mock_sync_manager):

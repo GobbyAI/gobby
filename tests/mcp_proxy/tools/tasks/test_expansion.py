@@ -106,6 +106,8 @@ def test_completion_emits_terminal_event(temp_db, sample_project) -> None:
         )
 
     registry.emit.assert_any_call("expansion_run_completed", task_id=task.id, run_id="run-complete")
+    assert registry.emit.call_count >= 1
+    assert registry.emit.call_args is not None
 
 
 def test_failure_emits_terminal_event(temp_db, sample_project) -> None:
@@ -145,6 +147,8 @@ def test_failure_emits_terminal_event(temp_db, sample_project) -> None:
         run_id="run-failed",
         reason="boom",
     )
+    assert registry.emit.call_count >= 1
+    assert registry.emit.call_args is not None
 
 
 def test_cancellation_emits_terminal_event(temp_db, sample_project) -> None:
@@ -181,6 +185,8 @@ def test_cancellation_emits_terminal_event(temp_db, sample_project) -> None:
     registry.emit.assert_any_call(
         "expansion_run_cancelled", task_id=task.id, run_id="run-cancelled"
     )
+    assert registry.emit.call_count >= 1
+    assert registry.emit.call_args is not None
 
 
 def test_start_expansion_accepts_caller_allocated_run_id(temp_db, sample_project) -> None:
@@ -259,6 +265,8 @@ def test_start_expansion_reset_output_calls_reset(temp_db, sample_project) -> No
 
     assert result.run_id == "reset-run"
     reset.assert_called_once()
+    assert reset.call_count == 1
+    assert reset.call_args is not None
 
 
 def test_synchronous_terminal_emits_event(temp_db, sample_project) -> None:
@@ -296,6 +304,8 @@ def test_synchronous_terminal_emits_event(temp_db, sample_project) -> None:
 
     assert result.status == "completed"
     registry.emit.assert_any_call("expansion_run_completed", task_id=task.id, run_id="run-sync")
+    assert registry.emit.call_count >= 1
+    assert registry.emit.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -335,3 +345,5 @@ async def test_async_start_returns_running_and_emits_later(temp_db, sample_proje
 
     assert result.status == "running"
     registry.emit.assert_any_call("expansion_run_completed", task_id=task.id, run_id="run-async")
+    assert registry.emit.call_count >= 1
+    assert registry.emit.call_args is not None

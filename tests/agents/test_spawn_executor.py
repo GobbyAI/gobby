@@ -313,6 +313,8 @@ class TestExecuteSpawn:
 
             # Workflow is passed to prepare_terminal_spawn, not directly to spawner
             mock_prepare.assert_called_once()
+            assert mock_prepare.call_count == 1
+            assert mock_prepare.call_args is not None
             call_kwargs = mock_prepare.call_args.kwargs
             assert call_kwargs.get("workflow_name") == "auto-task"
 

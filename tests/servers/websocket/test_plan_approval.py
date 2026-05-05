@@ -38,7 +38,11 @@ async def test_recovered_plan_approval_finds_droid_external_id_fallback() -> Non
     )
 
     session_manager.find_active_by_external_id.assert_any_call("external-droid-session", "droid")
+    assert session_manager.find_active_by_external_id.call_count >= 1
+    assert session_manager.find_active_by_external_id.call_args is not None
     session_manager.update_chat_mode.assert_called_once_with("db-droid-session", "normal")
+    assert session_manager.update_chat_mode.call_count == 1
+    assert session_manager.update_chat_mode.call_args is not None
     sent_messages = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
     assert sent_messages == [
         {

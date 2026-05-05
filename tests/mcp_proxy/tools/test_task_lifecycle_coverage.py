@@ -443,6 +443,8 @@ class TestReopenTask:
 
             assert "error" not in result
             mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+            assert mock_remove.call_count == 1
+            assert mock_remove.call_args is not None
 
     @pytest.mark.asyncio
     async def test_reopen_value_error(self, mock_task_manager, mock_sync_manager):

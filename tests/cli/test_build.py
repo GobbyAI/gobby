@@ -204,7 +204,11 @@ def test_build_stop_cli_runs_migrations_before_control_service() -> None:
 
     assert result.exit_code == 0
     run_migrations.assert_called_once_with(db_cls.return_value)
+    assert run_migrations.call_count == 1
+    assert run_migrations.call_args is not None
     build_stop.assert_called_once_with(db=db_cls.return_value, project_id="project-1")
+    assert build_stop.call_count == 1
+    assert build_stop.call_args is not None
 
 
 def test_build_stop_cli_accepts_task_ref() -> None:

@@ -146,6 +146,8 @@ class TestMemoryUpdateCommand:
             content=None,
             tags=["tag1", "tag2", "tag3"],
         )
+        assert mock_manager.update_memory.call_count == 1
+        assert mock_manager.update_memory.call_args is not None
 
     @patch("gobby.cli.memory.resolve_memory_id")
     @patch("gobby.cli.memory.get_memory_manager")
@@ -172,6 +174,8 @@ class TestMemoryUpdateCommand:
         mock_manager.update_memory.assert_called_once_with(
             memory_id="mem-up123", content=None, tags=None
         )
+        assert mock_manager.update_memory.call_count == 1
+        assert mock_manager.update_memory.call_args is not None
 
 
 class TestMemoryRecallCommand:

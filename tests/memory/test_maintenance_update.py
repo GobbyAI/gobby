@@ -107,3 +107,5 @@ class TestGetStatsBasicBehavior:
         get_stats(storage, db, project_id="proj-1")
 
         storage.list_memories.assert_called_with(project_id="proj-1", limit=10000)
+        assert storage.list_memories.call_count >= 1
+        assert storage.list_memories.call_args is not None

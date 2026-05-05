@@ -50,6 +50,8 @@ class TestServicesStart:
 
         _services_start(tmp_path)
         mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
@@ -67,6 +69,8 @@ class TestServicesStart:
 
         _services_start(tmp_path)
         mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
         assert mock_run.call_args.kwargs["cwd"] == str(tmp_path / "services")
 
     @patch("gobby.cli.daemon.subprocess.run")
@@ -83,6 +87,8 @@ class TestServicesStart:
         result = _services_start(tmp_path)
         assert result is None
         mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
 
     @patch("gobby.config.app.load_config")
     def test_config_error(self, mock_config: MagicMock, tmp_path: Path) -> None:
@@ -112,6 +118,8 @@ class TestServicesStop:
         mock_run.return_value = MagicMock(returncode=0)
         _services_stop(tmp_path)
         mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
@@ -164,6 +172,8 @@ class TestStopCommand:
         result = runner.invoke(stop, ["--docker"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         mock_services.assert_called_once()
+        assert mock_services.call_count == 1
+        assert mock_services.call_args is not None
 
 
 # ---------------------------------------------------------------------------

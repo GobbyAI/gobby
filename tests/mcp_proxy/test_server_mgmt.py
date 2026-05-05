@@ -133,6 +133,8 @@ class TestServerManagementServiceImport:
 
         assert result["success"] is True
         mock_importer.import_from_github.assert_called_once_with("https://github.com/test/repo")
+        assert mock_importer.import_from_github.call_count == 1
+        assert mock_importer.import_from_github.call_args is not None
 
     async def test_import_from_query_delegates_to_importer(self, service):
         """Test that query delegates to MCPServerImporter.import_from_query."""
@@ -158,6 +160,8 @@ class TestServerManagementServiceImport:
 
         assert result["success"] is True
         mock_importer.import_from_query.assert_called_once_with("supabase mcp server")
+        assert mock_importer.import_from_query.call_count == 1
+        assert mock_importer.import_from_query.call_args is not None
 
     async def test_import_handles_exception(self, service):
         """Test that exceptions are caught and returned as errors."""
@@ -209,5 +213,11 @@ class TestServerManagementServiceImport:
 
         # from_project should be used, others ignored
         mock_importer.import_from_project.assert_called_once()
+        assert mock_importer.import_from_project.call_count == 1
+        assert mock_importer.import_from_project.call_args is not None
         mock_importer.import_from_github.assert_not_called()
+        assert mock_importer.import_from_github.call_count == 0
+        assert not mock_importer.import_from_github.called
         mock_importer.import_from_query.assert_not_called()
+        assert mock_importer.import_from_query.call_count == 0
+        assert not mock_importer.import_from_query.called

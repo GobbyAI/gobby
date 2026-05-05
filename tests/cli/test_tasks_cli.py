@@ -287,6 +287,8 @@ class TestListTasksCommand:
             state=None,
             project_id=ANY,
         )
+        assert mock_filter.call_count == 1
+        assert mock_filter.call_args is not None
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
@@ -2208,6 +2210,8 @@ class TestCompactAnalyzeCommand:
 
             assert result.exit_code == 0
             mock_compactor.find_candidates.assert_called_once_with(days_closed=60)
+            assert mock_compactor.find_candidates.call_count == 1
+            assert mock_compactor.find_candidates.call_args is not None
 
 
 class TestCompactApplyCommand:
@@ -2261,6 +2265,8 @@ class TestCompactApplyCommand:
 
             assert result.exit_code == 0
             mock_compactor.compact_task.assert_called_once_with("gt-123", "Summary from file")
+            assert mock_compactor.compact_task.call_count == 1
+            assert mock_compactor.compact_task.call_args is not None
 
     @patch("gobby.cli.tasks.main.get_task_manager")
     def test_compact_apply_error(

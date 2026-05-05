@@ -287,7 +287,11 @@ class TestInstallCommand:
         result = runner.invoke(install, ["--claude", "--no-ext-services"], catch_exceptions=False)
         assert result.exit_code == 0
         mock_qdrant.assert_not_called()
+        assert mock_qdrant.call_count == 0
+        assert not mock_qdrant.called
         mock_neo4j.assert_not_called()
+        assert mock_neo4j.call_count == 0
+        assert not mock_neo4j.called
 
     def test_install_all_no_clis_detected(
         self,

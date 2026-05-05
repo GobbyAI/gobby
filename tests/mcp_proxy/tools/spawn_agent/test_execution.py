@@ -245,6 +245,8 @@ class TestSpawnAgentPreRegistration:
             assert result["success"] is True
             # After successful spawn, child_session_id should be updated in DB
             mock_runner.run_storage.update_child_session.assert_called_once()
+            assert mock_runner.run_storage.update_child_session.call_count == 1
+            assert mock_runner.run_storage.update_child_session.call_args is not None
 
     @pytest.mark.asyncio
     async def test_agent_failed_on_spawn_failure(self, mock_runner, agent_body):
@@ -284,6 +286,8 @@ class TestSpawnAgentPreRegistration:
             assert result["success"] is False
             # DB should mark the run as failed
             mock_runner.run_storage.fail.assert_called_once()
+            assert mock_runner.run_storage.fail.call_count == 1
+            assert mock_runner.run_storage.fail.call_args is not None
 
     @pytest.mark.asyncio
     async def test_status_transitions_to_running_on_success(self, mock_runner, agent_body):
@@ -518,3 +522,5 @@ class TestSpawnAgentPreRegistration:
 
             assert result["success"] is False
             mock_runner.run_storage.start.assert_not_called()
+            assert mock_runner.run_storage.start.call_count == 0
+            assert not mock_runner.run_storage.start.called

@@ -2845,9 +2845,15 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         # Must use CodexHooksAdapter, NOT the app-server adapter
         MockHooksAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        assert MockHooksAdapter.call_count == 1
+        assert MockHooksAdapter.call_args is not None
         mock_adapter.handle_native.assert_called_once()
+        assert mock_adapter.handle_native.call_count == 1
+        assert mock_adapter.handle_native.call_args is not None
         # The app-server adapter must NOT have been called
         ws_adapter.handle_native.assert_not_called()
+        assert ws_adapter.handle_native.call_count == 0
+        assert not ws_adapter.handle_native.called
 
     def test_execute_hook_codex_stop_block_propagates(
         self, session_storage: SessionManager

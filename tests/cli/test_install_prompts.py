@@ -272,11 +272,15 @@ class TestInstallSummary:
             db=db,
             secret_store=secret_store,
         )
+        assert mock_prompt_api.call_count == 1
+        assert mock_prompt_api.call_args is not None
         mock_prompt_hub.assert_called_once_with(
             no_interactive=True,
             db=db,
             secret_store=secret_store,
         )
+        assert mock_prompt_hub.call_count == 1
+        assert mock_prompt_hub.call_args is not None
 
 
 class TestVoiceInstall:
@@ -292,7 +296,11 @@ class TestVoiceInstall:
             _run_voice_install(results, voice_flag=True, db=db)
 
         mock_config_store.assert_called_once_with(db)
+        assert mock_config_store.call_count == 1
+        assert mock_config_store.call_args is not None
         mock_config_store.return_value.set.assert_called_once_with("voice.enabled", True)
+        assert mock_config_store.return_value.set.call_count == 1
+        assert mock_config_store.return_value.set.call_args is not None
         assert results["voice"]["success"] is True
 
 

@@ -1580,7 +1580,11 @@ class TestHelperFunctions:
         result = get_agent_run_manager()
 
         mock_db_cls.assert_called_once()
+        assert mock_db_cls.call_count == 1
+        assert mock_db_cls.call_args is not None
         mock_manager_cls.assert_called_once_with(mock_db)
+        assert mock_manager_cls.call_count == 1
+        assert mock_manager_cls.call_args is not None
         assert result == mock_manager
 
     @patch("gobby.config.app.load_config")

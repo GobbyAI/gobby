@@ -105,6 +105,8 @@ class TestPipelineExecutorExecute:
         )
 
         mock_execution_manager.get_execution.assert_called_with("pe-existing-456")
+        assert mock_execution_manager.get_execution.call_count >= 1
+        assert mock_execution_manager.get_execution.call_args is not None
 
     @pytest.mark.asyncio
     async def test_execute_builds_context_with_inputs(
@@ -358,6 +360,10 @@ class TestExecutePromptStep:
         await execute_prompt_step("Analyze this data", context, mock_llm_service)
 
         mock_llm_service.get_default_provider.return_value.generate_text.assert_called_once()
+        assert mock_llm_service.get_default_provider.return_value.generate_text.call_count == 1
+        assert (
+            mock_llm_service.get_default_provider.return_value.generate_text.call_args is not None
+        )
 
     @pytest.mark.asyncio
     async def test_prompt_step_returns_response(

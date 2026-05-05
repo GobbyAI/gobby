@@ -75,9 +75,7 @@ def test_hook_manager_integration():
 
         manager._cached_daemon_is_ready = True
         manager._cached_daemon_status = "healthy"
-        manager._get_cached_daemon_status = MagicMock(
-            return_value=(True, "OK", "healthy", None)
-        )
+        manager._get_cached_daemon_status = MagicMock(return_value=(True, "OK", "healthy", None))
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -91,6 +89,8 @@ def test_hook_manager_integration():
         response = manager.handle(event)
 
         mock_handler_instance.handle.assert_called_once()
+        assert mock_handler_instance.handle.call_count == 1
+        assert mock_handler_instance.handle.call_args is not None
         assert response.decision == "allow"
 
 
@@ -119,9 +119,7 @@ def test_hook_manager_blocks_on_workflow():
 
         manager._cached_daemon_is_ready = True
         manager._cached_daemon_status = "healthy"
-        manager._get_cached_daemon_status = MagicMock(
-            return_value=(True, "OK", "healthy", None)
-        )
+        manager._get_cached_daemon_status = MagicMock(return_value=(True, "OK", "healthy", None))
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,

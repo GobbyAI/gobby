@@ -305,6 +305,8 @@ def test_bridge_identity_noop_when_not_found():
     manager._bridge_identity("nonexistent-id", "session-xyz")
 
     store.update_identity.assert_not_called()
+    assert store.update_identity.call_count == 0
+    assert not store.update_identity.called
 
 
 # --- find_cross_channel_identity ---

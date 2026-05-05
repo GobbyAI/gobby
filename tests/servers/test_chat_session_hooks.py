@@ -147,6 +147,8 @@ class TestChatSessionHooks:
                     "tool_response": "done",
                 }
             )
+            assert mock_cb.await_count == 1
+            assert mock_cb.await_args is not None
 
     @pytest.mark.asyncio
     async def test_build_stop_hook(self, session: ChatSession) -> None:
@@ -157,6 +159,8 @@ class TestChatSessionHooks:
 
         await hook_fn({"stop_hook_active": True}, None, HookContext(signal=None))
         mock_cb.assert_awaited_once_with({"stop_hook_active": True})
+        assert mock_cb.await_count == 1
+        assert mock_cb.await_args is not None
 
     @pytest.mark.asyncio
     async def test_build_compact_hook(self, session: ChatSession) -> None:
@@ -167,6 +171,8 @@ class TestChatSessionHooks:
 
         await hook_fn({"trigger": "token_limit"}, None, HookContext(signal=None))
         mock_cb.assert_awaited_once_with({"trigger": "token_limit"})
+        assert mock_cb.await_count == 1
+        assert mock_cb.await_args is not None
 
     @pytest.mark.asyncio
     async def test_build_subagent_hooks(self, session: ChatSession) -> None:
@@ -184,4 +190,8 @@ class TestChatSessionHooks:
         await stop_fn({"session_id": "sid_1"}, None, ctx)
 
         mock_start.assert_awaited_once_with({"session_id": "sid_1", "source": "claude"})
+        assert mock_start.await_count == 1
+        assert mock_start.await_args is not None
         mock_stop.assert_awaited_once_with({"session_id": "sid_1", "source": "claude"})
+        assert mock_stop.await_count == 1
+        assert mock_stop.await_args is not None

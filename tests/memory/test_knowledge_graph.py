@@ -156,6 +156,8 @@ class TestAddToGraph:
             "memory/extract_entities",
             {"content": "Josh works at Anthropic"},
         )
+        assert mock_prompt_loader.render.call_count >= 1
+        assert mock_prompt_loader.render.call_args is not None
 
     async def test_add_to_graph_extracts_relationships(
         self,
@@ -183,6 +185,8 @@ class TestAddToGraph:
             "memory/extract_relations",
             {"content": "Josh works on Gobby", "entities": json.dumps(entities)},
         )
+        assert mock_prompt_loader.render.call_count >= 1
+        assert mock_prompt_loader.render.call_args is not None
 
     async def test_add_to_graph_merges_nodes(
         self,
@@ -262,7 +266,11 @@ class TestAddToGraph:
         await service.add_to_graph("Josh is a person")
 
         mock_embed_fn.assert_called()
+        assert mock_embed_fn.call_count >= 1
+        assert mock_embed_fn.call_args is not None
         mock_neo4j.set_node_vector.assert_called_once()
+        assert mock_neo4j.set_node_vector.call_count == 1
+        assert mock_neo4j.set_node_vector.call_args is not None
 
     async def test_add_to_graph_deletes_outdated_relations(
         self,
@@ -319,6 +327,8 @@ class TestAddToGraph:
         await service.add_to_graph("nothing useful")
 
         mock_neo4j.merge_node.assert_not_called()
+        assert mock_neo4j.merge_node.call_count == 0
+        assert not mock_neo4j.merge_node.called
 
 
 # ===========================================================================
@@ -461,6 +471,8 @@ class TestGracefulDegradation:
         await service.add_to_graph("some content")
 
         mock_neo4j.merge_node.assert_not_called()
+        assert mock_neo4j.merge_node.call_count == 0
+        assert not mock_neo4j.merge_node.called
 
     async def test_add_to_graph_logs_memory_id_on_entity_extraction_failure(
         self,
@@ -587,6 +599,8 @@ class TestRelatesToCode:
         await service_with_vector_store.add_to_graph("auth module", memory_id="mem-1")
 
         mock_vector_store.search.assert_not_called()
+        assert mock_vector_store.search.call_count == 0
+        assert not mock_vector_store.search.called
 
     async def test_skips_when_no_vector_store(
         self,

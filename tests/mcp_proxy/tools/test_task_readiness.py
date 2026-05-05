@@ -60,6 +60,8 @@ class TestListReadyTasks:
             limit=5,
             project_id="test-project-id",
         )
+        assert task_manager.list_ready_tasks.call_count == 1
+        assert task_manager.list_ready_tasks.call_args is not None
 
     def test_list_ready_tasks_parent_filter(self, mock_readiness_registry) -> None:
         """Test filtering ready tasks by parent_task_id."""
@@ -151,6 +153,8 @@ class TestListBlockedTasks:
             limit=10,
             project_id="test-project-id",
         )
+        assert task_manager.list_blocked_tasks.call_count == 1
+        assert task_manager.list_blocked_tasks.call_args is not None
 
     def test_list_blocked_tasks_all_projects(self, mock_readiness_registry) -> None:
         """Test list_blocked_tasks with all_projects=True."""
@@ -319,6 +323,8 @@ class TestSuggestNextTask:
             limit=50,
             project_id="test-project-id",
         )
+        assert task_manager.list_ready_tasks.call_count == 1
+        assert task_manager.list_ready_tasks.call_args is not None
 
     def test_suggest_next_task_scoring(self, mock_readiness_registry) -> None:
         """Test that suggest_next_task uses correct scoring algorithm with priority dominance."""

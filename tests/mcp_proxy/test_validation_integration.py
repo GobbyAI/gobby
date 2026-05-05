@@ -900,8 +900,12 @@ async def test_close_task_skip_reason_bypasses_commit_check(mock_task_manager, m
         assert "error" not in result
         # close_task should have been called
         mock_task_manager.close_task.assert_called_once()
+        assert mock_task_manager.close_task.call_count == 1
+        assert mock_task_manager.close_task.call_args is not None
         # Validator should NOT have been called (skip reasons auto-skip validation)
         mock_task_validator.validate_task.assert_not_called()
+        assert mock_task_validator.validate_task.call_count == 0
+        assert not mock_task_validator.validate_task.called
 
 
 @pytest.mark.integration
@@ -957,6 +961,8 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
         # changes_summary is provided, so get_task_diff is NOT called
         # (changes_summary takes precedence over commit-based diff)
         mock_diff.assert_not_called()
+        assert mock_diff.call_count == 0
+        assert not mock_diff.called
 
 
 @pytest.mark.integration
@@ -1018,4 +1024,8 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
 
         # changes_summary is provided, so neither get_task_diff nor smart context is called
         mock_diff.assert_not_called()
+        assert mock_diff.call_count == 0
+        assert not mock_diff.called
         mock_smart_context.assert_not_called()
+        assert mock_smart_context.call_count == 0
+        assert not mock_smart_context.called

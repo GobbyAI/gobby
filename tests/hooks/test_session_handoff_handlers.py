@@ -144,6 +144,8 @@ class TestSessionStartHandoff:
                 "full_session_summary": "# Summary\nWorked on feature X",
             },
         )
+        assert mock_sv_mgr.merge_variables.call_count >= 1
+        assert mock_sv_mgr.merge_variables.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_sets_compact_session_summary_variable(
@@ -191,6 +193,8 @@ class TestSessionStartHandoff:
                 "full_session_summary": "# Compact\nContinuation of task Y",
             },
         )
+        assert mock_sv_mgr.merge_variables.call_count >= 1
+        assert mock_sv_mgr.merge_variables.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_task_claim_vars_carried_over_on_compact(
@@ -253,14 +257,20 @@ class TestSessionStartHandoff:
                 "session_had_task": True,
             },
         )
+        assert mock_sv_mgr.merge_variables.call_count >= 1
+        assert mock_sv_mgr.merge_variables.call_args is not None
         mock_dependencies["task_manager"].claim_task.assert_called_once_with(
             "uuid-123",
             session_id="new-sess-456",
             force=True,
         )
+        assert mock_dependencies["task_manager"].claim_task.call_count == 1
+        assert mock_dependencies["task_manager"].claim_task.call_args is not None
         mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
             "new-sess-456", "uuid-123", "claimed"
         )
+        assert mock_dependencies["session_task_manager"].link_task.call_count == 1
+        assert mock_dependencies["session_task_manager"].link_task.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_closed_task_not_carried_over(
@@ -374,14 +384,20 @@ class TestSessionStartHandoff:
                 "claimed_tasks": {"uuid-789": "#99"},
             },
         )
+        assert mock_sv_mgr.merge_variables.call_count >= 1
+        assert mock_sv_mgr.merge_variables.call_args is not None
         mock_dependencies["task_manager"].claim_task.assert_called_once_with(
             "uuid-789",
             session_id="new-sess-600",
             force=True,
         )
+        assert mock_dependencies["task_manager"].claim_task.call_count == 1
+        assert mock_dependencies["task_manager"].claim_task.call_args is not None
         mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
             "new-sess-600", "uuid-789", "claimed"
         )
+        assert mock_dependencies["session_task_manager"].link_task.call_count == 1
+        assert mock_dependencies["session_task_manager"].link_task.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_task_claim_handoff_skips_reassignment_when_owned_elsewhere(
@@ -434,7 +450,11 @@ class TestSessionStartHandoff:
 
         assert response.decision == "allow"
         mock_dependencies["task_manager"].claim_task.assert_not_called()
+        assert mock_dependencies["task_manager"].claim_task.call_count == 0
+        assert not mock_dependencies["task_manager"].claim_task.called
         mock_dependencies["session_task_manager"].link_task.assert_not_called()
+        assert mock_dependencies["session_task_manager"].link_task.call_count == 0
+        assert not mock_dependencies["session_task_manager"].link_task.called
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_task_context_variable(

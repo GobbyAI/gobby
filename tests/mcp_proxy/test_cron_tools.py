@@ -191,6 +191,8 @@ class TestListCronRuns:
         tool = registry.get_tool("list_cron_runs")
         tool(job_id="cj-abc123", limit=5)
         mock_storage.list_runs.assert_called_once_with("cj-abc123", limit=5)
+        assert mock_storage.list_runs.call_count == 1
+        assert mock_storage.list_runs.call_args is not None
 
 
 class TestRunCronJobNow:

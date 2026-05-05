@@ -309,8 +309,14 @@ class TestProviderModelCatalog:
             models = await catalog._discover_acp_models(client_cls=client_cls)
 
         client_cls.assert_called_once_with(purpose="model-discovery")
+        assert client_cls.call_count == 1
+        assert client_cls.call_args is not None
         client.start.assert_awaited_once()
+        assert client.start.await_count == 1
+        assert client.start.await_args is not None
         client.stop.assert_awaited_once()
+        assert client.stop.await_count == 1
+        assert client.stop.await_args is not None
         assert models == [{"value": "gemini-test", "label": "Gemini Test"}]
 
     def test_load_cache_ignores_unsupported_version(self, temp_dir: Path) -> None:

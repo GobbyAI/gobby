@@ -107,7 +107,11 @@ class TestPackCommand:
 
         assert result.exit_code == 0
         mock_stop.assert_called_once()
+        assert mock_stop.call_count == 1
+        assert mock_stop.call_args is not None
         mock_start.assert_called_once()
+        assert mock_start.call_count == 1
+        assert mock_start.call_args is not None
 
 
 class TestUnpackCommand:

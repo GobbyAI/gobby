@@ -167,6 +167,8 @@ class TestAgentWorkflowCompletion:
 
         assert variables["step_workflow_complete"] is True
         runner.complete_run.assert_called_once_with("run-123", result=None)
+        assert runner.complete_run.call_count == 1
+        assert runner.complete_run.call_args is not None
         completion_registry.notify.assert_awaited_once_with(
             "run-123",
             {
@@ -177,6 +179,8 @@ class TestAgentWorkflowCompletion:
             },
             message="Agent run-123 completed via workflow terminate",
         )
+        assert completion_registry.notify.await_count == 1
+        assert completion_registry.notify.await_args is not None
 
     @pytest.mark.asyncio
     async def test_exit_condition_noops_for_non_agent_session(self, db: LocalDatabase) -> None:
@@ -196,7 +200,11 @@ class TestAgentWorkflowCompletion:
 
         assert variables["step_workflow_complete"] is True
         runner.complete_run.assert_not_called()
+        assert runner.complete_run.call_count == 0
+        assert not runner.complete_run.called
         completion_registry.notify.assert_not_awaited()
+        assert completion_registry.notify.await_count == 0
+        assert completion_registry.notify.await_args is None
 
     @pytest.mark.asyncio
     async def test_failed_codex_mcp_envelope_keeps_review_step_open(

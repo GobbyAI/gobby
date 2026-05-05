@@ -888,6 +888,8 @@ class TestValidateWorkflowForAgent:
             await loader.validate_workflow_for_agent("test_wf", project_path="/my/project")
 
         mock_load.assert_called_once_with("test_wf", project_path="/my/project")
+        assert mock_load.call_count == 1
+        assert mock_load.call_args is not None
 
 
 # ---------------------------------------------------------------------------

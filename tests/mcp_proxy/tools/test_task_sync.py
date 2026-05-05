@@ -360,6 +360,8 @@ class TestGitIntegrationEdgeCases:
         link(task_id="task-1", commit_sha=full_sha)
 
         task_manager.link_commit.assert_called_with("task-1", full_sha, cwd=None)
+        assert task_manager.link_commit.call_count >= 1
+        assert task_manager.link_commit.call_args is not None
 
     def test_link_commit_short_sha(self, mock_sync_registry) -> None:
         """Test linking with short SHA."""
@@ -380,6 +382,8 @@ class TestGitIntegrationEdgeCases:
         link(task_id="task-1", commit_sha="abc123")
 
         task_manager.link_commit.assert_called_with("task-1", "abc123", cwd=None)
+        assert task_manager.link_commit.call_count >= 1
+        assert task_manager.link_commit.call_args is not None
 
     def test_auto_link_with_skipped_commits(self, mock_sync_registry) -> None:
         """Test auto_link_commits reports skipped commits."""

@@ -369,6 +369,8 @@ class TestRunServer:
             result = await run_server(server)
         assert result is None
         mock_server_instance.serve.assert_awaited_once()
+        assert mock_server_instance.serve.await_count == 1
+        assert mock_server_instance.serve.await_args is not None
 
     @pytest.mark.asyncio
     async def test_run_server_handles_system_exit(self) -> None:
@@ -393,3 +395,5 @@ class TestRunServer:
             result = await run_server(server)
         assert result is None
         mock_server_instance.serve.assert_awaited_once()
+        assert mock_server_instance.serve.await_count == 1
+        assert mock_server_instance.serve.await_args is not None

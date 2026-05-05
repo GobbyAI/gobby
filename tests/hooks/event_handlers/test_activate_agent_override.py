@@ -67,10 +67,14 @@ class TestAgentNameOverride:
             )
 
             mock_cs.assert_not_called()
+            assert mock_cs.call_count == 0
+            assert not mock_cs.called
 
         mock_resolve.assert_called_once_with(
             "custom-agent", handlers._session_manager.db, project_id="proj-1"
         )
+        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
@@ -95,7 +99,11 @@ class TestAgentNameOverride:
             )
 
             mock_cs.assert_called_once_with(handlers._session_manager.db)
+            assert mock_cs.call_count == 1
+            assert mock_cs.call_args is not None
             mock_cs.return_value.get.assert_called_once_with("default_agent")
+            assert mock_cs.return_value.get.call_count == 1
+            assert mock_cs.return_value.get.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
@@ -116,6 +124,8 @@ class TestAgentNameOverride:
         mock_resolve.assert_called_once_with(
             "my-agent", handlers._session_manager.db, project_id="proj-2"
         )
+        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
@@ -193,6 +203,8 @@ class TestActivateDefaultAgentEdgeCases:
         )
 
         mock_resolve.assert_not_called()
+        assert mock_resolve.call_count == 0
+        assert not mock_resolve.called
 
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_resolve_failure_logs_error(self, mock_resolve: MagicMock) -> None:
@@ -225,3 +237,5 @@ class TestActivateDefaultAgentEdgeCases:
         )
 
         handlers._session_manager.update.assert_not_called()
+        assert handlers._session_manager.update.call_count == 0
+        assert not handlers._session_manager.update.called

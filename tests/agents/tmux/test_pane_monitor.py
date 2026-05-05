@@ -81,6 +81,8 @@ async def test_no_tmux_agents_noop() -> None:
         await monitor._check_panes()
 
     callback.assert_not_called()
+    assert callback.call_count == 0
+    assert not callback.called
 
 
 @pytest.mark.asyncio
@@ -103,6 +105,8 @@ async def test_all_alive_noop() -> None:
         await monitor._check_panes()
 
     callback.assert_not_called()
+    assert callback.call_count == 0
+    assert not callback.called
 
 
 @pytest.mark.asyncio
@@ -157,6 +161,8 @@ async def test_recently_ended_prevents_double_fire() -> None:
         await monitor._check_panes()
 
     callback.assert_not_called()
+    assert callback.call_count == 0
+    assert not callback.called
 
 
 @pytest.mark.asyncio
@@ -184,6 +190,8 @@ async def test_recently_ended_expires() -> None:
         await monitor._check_panes()
 
     callback.assert_called_once()
+    assert callback.call_count == 1
+    assert callback.call_args is not None
 
 
 @pytest.mark.asyncio

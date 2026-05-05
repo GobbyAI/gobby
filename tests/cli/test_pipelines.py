@@ -289,7 +289,11 @@ class TestPipelinesRun:
 
             assert result.exit_code == 0
             mock_loader.load_pipeline_sync.assert_called_once_with("deploy", project_path=ANY)
+            assert mock_loader.load_pipeline_sync.call_count == 1
+            assert mock_loader.load_pipeline_sync.call_args is not None
             mock_executor.execute.assert_called_once()
+            assert mock_executor.execute.call_count == 1
+            assert mock_executor.execute.call_args is not None
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_parses_inputs(self, runner, mock_pipeline, mock_execution) -> None:

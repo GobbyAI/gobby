@@ -403,6 +403,8 @@ class TestSpawnAutoClaimAssignee:
             "task-uuid-123",
             session_id="child-session-abc",
         )
+        assert task_manager.claim_task.call_count == 1
+        assert task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_non_open_task_gets_assignee_without_status_change(self) -> None:
@@ -458,6 +460,8 @@ class TestSpawnAutoClaimAssignee:
             "task-uuid-456",
             session_id="child-session-abc",
         )
+        assert task_manager.claim_task.call_count == 1
+        assert task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_review_approved_task_gets_assignee_without_status_change(
@@ -515,6 +519,8 @@ class TestSpawnAutoClaimAssignee:
             "task-uuid-789",
             session_id="child-session-abc",
         )
+        assert task_manager.claim_task.call_count == 1
+        assert task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_non_open_claimed_task_is_not_reassigned(self) -> None:
@@ -567,3 +573,5 @@ class TestSpawnAutoClaimAssignee:
 
         assert result["success"] is True
         task_manager.claim_task.assert_not_called()
+        assert task_manager.claim_task.call_count == 0
+        assert not task_manager.claim_task.called

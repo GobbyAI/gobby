@@ -174,6 +174,8 @@ async def test_delete_memory_removes_from_qdrant(manager, mock_vector_store):
 
     # Should have deleted from VectorStore
     mock_vector_store.delete.assert_awaited_once_with(memory.id)
+    assert mock_vector_store.delete.await_count == 1
+    assert mock_vector_store.delete.await_args is not None
 
 
 @pytest.mark.asyncio
@@ -187,6 +189,8 @@ async def test_delete_memory_removes_from_graph(manager, mock_vector_store):
     await manager.delete_memory(memory.id)
 
     mock_kg.remove_memory_from_graph.assert_awaited_once_with(memory.id, project_id=None)
+    assert mock_kg.remove_memory_from_graph.await_count == 1
+    assert mock_kg.remove_memory_from_graph.await_args is not None
 
 
 @pytest.mark.asyncio
@@ -209,8 +213,12 @@ async def test_update_memory_re_embeds(manager, mock_vector_store, mock_embed_fn
 
     # Should have re-embedded
     mock_embed_fn.assert_awaited_once_with("updated content")
+    assert mock_embed_fn.await_count == 1
+    assert mock_embed_fn.await_args is not None
     # Should have upserted to Qdrant
     mock_vector_store.upsert.assert_awaited_once()
+    assert mock_vector_store.upsert.await_count == 1
+    assert mock_vector_store.upsert.await_args is not None
 
 
 @pytest.mark.asyncio

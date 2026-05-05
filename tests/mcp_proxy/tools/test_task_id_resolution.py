@@ -213,8 +213,12 @@ class TestMCPUpdateTaskWithHashFormat:
             update_task_func(task_id="#5", priority=1)
 
         mock_task_manager.resolve_task_reference.assert_called_with("#5", "proj-1")
+        assert mock_task_manager.resolve_task_reference.call_count >= 1
+        assert mock_task_manager.resolve_task_reference.call_args is not None
         # Update should be called with the resolved UUID
         mock_task_manager.update_task.assert_called_once()
+        assert mock_task_manager.update_task.call_count == 1
+        assert mock_task_manager.update_task.call_args is not None
 
 
 class TestMCPCloseTaskWithHashFormat:
@@ -246,6 +250,8 @@ class TestMCPCloseTaskWithHashFormat:
             )
 
         mock_task_manager.resolve_task_reference.assert_called_with("#10", "proj-1")
+        assert mock_task_manager.resolve_task_reference.call_count >= 1
+        assert mock_task_manager.resolve_task_reference.call_args is not None
 
 
 class TestIntegrationMCPTaskIdResolution:

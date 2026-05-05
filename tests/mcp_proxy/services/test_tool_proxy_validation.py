@@ -331,6 +331,8 @@ class TestCallToolPreValidation:
 
         # Should pass through without validation
         mock_mcp_manager.call_tool.assert_called_once()
+        assert mock_mcp_manager.call_tool.call_count == 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_no_validation_for_empty_arguments(self, tool_proxy, mock_mcp_manager):
@@ -345,6 +347,8 @@ class TestCallToolPreValidation:
 
         # Should pass through - empty args don't trigger validation
         mock_mcp_manager.call_tool.assert_called_once()
+        assert mock_mcp_manager.call_tool.call_count == 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_schema_fetch_failure_allows_execution(self, tool_proxy, mock_mcp_manager):
@@ -364,6 +368,8 @@ class TestCallToolPreValidation:
 
         # Should still attempt execution when schema is unavailable
         mock_mcp_manager.call_tool.assert_called_once()
+        assert mock_mcp_manager.call_tool.call_count == 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
 
 class TestCallToolInternalServer:
@@ -742,7 +748,11 @@ class TestCallToolBlockedToolsEnforcement:
         )
 
         mock_tool_filter.is_tool_allowed.assert_called_once_with("Read", "session-123")
+        assert mock_tool_filter.is_tool_allowed.call_count == 1
+        assert mock_tool_filter.is_tool_allowed.call_args is not None
         mock_mcp_manager.call_tool.assert_called_once()
+        assert mock_mcp_manager.call_tool.call_count == 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_no_filter_check_without_session_id(
@@ -759,7 +769,11 @@ class TestCallToolBlockedToolsEnforcement:
         )
 
         mock_tool_filter.is_tool_allowed.assert_not_called()
+        assert mock_tool_filter.is_tool_allowed.call_count == 0
+        assert not mock_tool_filter.is_tool_allowed.called
         mock_mcp_manager.call_tool.assert_called_once()
+        assert mock_mcp_manager.call_tool.call_count == 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_no_filter_check_without_filter_service(
@@ -782,6 +796,8 @@ class TestCallToolBlockedToolsEnforcement:
         )
 
         mock_mcp_manager.call_tool.assert_called_once()
+        assert mock_mcp_manager.call_tool.call_count == 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_blocked_tool_not_allowed_reason_in_error(
@@ -1192,6 +1208,8 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         mock_hook_manager.handle.assert_not_called()
+        assert mock_hook_manager.handle.call_count == 0
+        assert not mock_hook_manager.handle.called
 
     @pytest.mark.asyncio
     async def test_web_chat_sessions_do_not_emit_synthetic_after_tool(
@@ -1212,6 +1230,8 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         mock_hook_manager.handle.assert_not_called()
+        assert mock_hook_manager.handle.call_count == 0
+        assert not mock_hook_manager.handle.called
 
     @pytest.mark.asyncio
     async def test_internal_dispatch_paths_skip_synthetic_after_tool(
@@ -1232,6 +1252,8 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         mock_hook_manager.handle.assert_not_called()
+        assert mock_hook_manager.handle.call_count == 0
+        assert not mock_hook_manager.handle.called
 
     @pytest.mark.asyncio
     async def test_proxy_schema_after_tool_injects_task_creation(

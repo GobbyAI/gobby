@@ -138,17 +138,23 @@ class TestListPipelineExecutions:
             limit=10,
             offset=5,
         )
+        assert mock_em.list_executions.call_count == 1
+        assert mock_em.list_executions.call_args is not None
         mock_em.count_executions.assert_called_once_with(
             status=ExecutionStatus.RUNNING,
             pipeline_name="deploy",
             session_id="sess-1",
             parent_execution_id="pe-parent",
         )
+        assert mock_em.count_executions.call_count == 1
+        assert mock_em.count_executions.call_args is not None
         mock_em.status_summary_for_executions.assert_called_once_with(
             pipeline_name="deploy",
             session_id="sess-1",
             parent_execution_id="pe-parent",
         )
+        assert mock_em.status_summary_for_executions.call_count == 1
+        assert mock_em.status_summary_for_executions.call_args is not None
 
     def test_empty_results(self, mock_em) -> None:
         result = list_pipeline_executions(mock_em)
@@ -225,12 +231,16 @@ class TestSearchPipelineExecutions:
             limit=5,
             offset=2,
         )
+        assert mock_em.search_executions.call_count == 1
+        assert mock_em.search_executions.call_args is not None
         mock_em.count_search_executions.assert_called_once_with(
             query="deploy",
             search_errors=False,
             search_outputs=True,
             status=ExecutionStatus.FAILED,
         )
+        assert mock_em.count_search_executions.call_count == 1
+        assert mock_em.count_search_executions.call_args is not None
 
     def test_search_invalid_pagination_returns_error_envelope(self, mock_em) -> None:
         mock_em.search_executions.side_effect = ValueError("offset must be >= 0, got -1")

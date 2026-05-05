@@ -343,6 +343,8 @@ class TestSearchMemoriesGraphIntegration:
         # Graph search methods should not have been called
         if manager._kg_service:
             manager._kg_service.search_entities_by_vector.assert_not_called()
+            assert manager._kg_service.search_entities_by_vector.call_count == 0
+            assert not manager._kg_service.search_entities_by_vector.called
 
     async def test_qdrant_only_when_no_kg_service(self) -> None:
         """search_memories uses Qdrant-only path when no KG service."""
@@ -572,6 +574,8 @@ class TestCreateMemoryPassesMemoryId:
 
         # Graph is now queued via mark_pending_graph, not fired as background task
         manager.storage.mark_pending_graph.assert_called_once_with("test-mem-id")
+        assert manager.storage.mark_pending_graph.call_count == 1
+        assert manager.storage.mark_pending_graph.call_args is not None
 
 
 class TestTemporalDecayIntegration:

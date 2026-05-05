@@ -386,7 +386,11 @@ async def test_call_tool_with_project_id_override(daemon_tools):
 
     assert result == {"ok": True}
     mock_ref.assert_called_once_with("other-project", mock_sm.db)
+    assert mock_ref.call_count == 1
+    assert mock_ref.call_args is not None
     mock_reset.assert_called_once_with(mock_token)
+    assert mock_reset.call_count == 1
+    assert mock_reset.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -470,6 +474,8 @@ async def test_call_tool_project_id_priority_over_session(daemon_tools):
     assert result == {"ok": True}
     # project_id path was used, not session path
     mock_ref.assert_called_once_with("override-project", mock_sm.db)
+    assert mock_ref.call_count == 1
+    assert mock_ref.call_args is not None
 
 
 @pytest.mark.asyncio

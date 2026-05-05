@@ -578,6 +578,8 @@ class TestStopCommand:
 
         assert result.exit_code == 0
         mock_stop_daemon.assert_called_once_with(quiet=False)
+        assert mock_stop_daemon.call_count == 1
+        assert mock_stop_daemon.call_args is not None
 
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.daemon.stop_daemon_util")
@@ -597,6 +599,8 @@ class TestStopCommand:
 
         assert result.exit_code == 1
         mock_stop_daemon.assert_called_once_with(quiet=False)
+        assert mock_stop_daemon.call_count == 1
+        assert mock_stop_daemon.call_args is not None
 
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=1.5)
     @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
@@ -912,6 +916,8 @@ class TestRestartCommand:
 
             assert result.exit_code == 0
             mock_setup_logging.assert_called_once_with(True)
+            assert mock_setup_logging.call_count == 1
+            assert mock_setup_logging.call_args is not None
 
 
 class TestStatusCommand:

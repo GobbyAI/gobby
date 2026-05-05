@@ -694,6 +694,8 @@ class TestShutdown:
         manager.shutdown()
 
         manager._health_monitor.stop.assert_called_once()
+        assert manager._health_monitor.stop.call_count == 1
+        assert manager._health_monitor.stop.call_args is not None
 
     def test_shutdown_closes_database(
         self,
@@ -706,6 +708,8 @@ class TestShutdown:
         manager.shutdown()
 
         manager._database.close.assert_called_once()
+        assert manager._database.close.call_count == 1
+        assert manager._database.close.call_args is not None
 
 
 class TestRunCoroBlocking:

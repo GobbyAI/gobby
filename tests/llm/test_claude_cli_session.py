@@ -187,6 +187,8 @@ class TestCLISession:
 
         await session.interrupt()
         mock_process.send_signal.assert_called_once_with(signal.SIGINT)
+        assert mock_process.send_signal.call_count == 1
+        assert mock_process.send_signal.call_args is not None
 
     @pytest.mark.asyncio
     async def test_stop_terminates_process(self) -> None:
@@ -204,7 +206,11 @@ class TestCLISession:
 
         await session.stop()
         mock_process.terminate.assert_called_once()
+        assert mock_process.terminate.call_count == 1
+        assert mock_process.terminate.call_args is not None
         mock_process.wait.assert_called_once()
+        assert mock_process.wait.call_count == 1
+        assert mock_process.wait.call_args is not None
 
     @pytest.mark.asyncio
     async def test_interrupt_noop_when_no_process(self) -> None:

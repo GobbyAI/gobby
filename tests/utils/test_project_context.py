@@ -90,6 +90,8 @@ class TestFindProjectRoot:
             result = find_project_root(None)
 
             mock_cwd.assert_called_once()
+            assert mock_cwd.call_count == 1
+            assert mock_cwd.call_args is not None
             assert result is None
 
     def test_find_project_root_gobby_dir_exists_but_no_project_json(

@@ -149,6 +149,8 @@ class TestSearchTasksProjectFilter:
 
         func(query="test", project="my-project", all_projects=True)
         ctx.resolve_project_filter.assert_called_once_with("my-project", True)
+        assert ctx.resolve_project_filter.call_count == 1
+        assert ctx.resolve_project_filter.call_args is not None
 
 
 class TestSearchTasksResults:
@@ -434,6 +436,8 @@ class TestReindexTasks:
         func(project="my-project")
 
         ctx.resolve_project_filter.assert_called_once_with("my-project", False)
+        assert ctx.resolve_project_filter.call_count == 1
+        assert ctx.resolve_project_filter.call_args is not None
 
     def test_reindex_all_projects(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
@@ -446,6 +450,8 @@ class TestReindexTasks:
         func(all_projects=True)
 
         ctx.resolve_project_filter.assert_called_once_with(None, True)
+        assert ctx.resolve_project_filter.call_count == 1
+        assert ctx.resolve_project_filter.call_args is not None
 
     def test_reindex_project_filter_error(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)

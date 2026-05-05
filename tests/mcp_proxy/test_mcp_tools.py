@@ -121,6 +121,8 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
             validation_criteria=None,
             created_in_session_id="test-session",
         )
+        assert mock_task_manager.create_task_with_decomposition.call_count >= 1
+        assert mock_task_manager.create_task_with_decomposition.call_args is not None
     assert result == {"id": "t1", "seq_num": 123, "ref": "#123"}
 
 
@@ -168,6 +170,8 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
             validation_criteria=None,
             created_in_session_id="session-abc123",
         )
+        assert mock_task_manager.create_task_with_decomposition.call_count >= 1
+        assert mock_task_manager.create_task_with_decomposition.call_args is not None
     assert result == {"id": "t1", "seq_num": 456, "ref": "#456"}
 
 

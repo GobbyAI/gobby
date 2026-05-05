@@ -1016,3 +1016,5 @@ class TestBackwardCompatibilityLayer:
         with unittest.mock.patch.object(test_logger, "warning") as mock_warning:
             get_effective_with_deprecation_check(yaml_variables, old_config_values, test_logger)
             mock_warning.assert_not_called()
+            assert mock_warning.call_count == 0
+            assert not mock_warning.called

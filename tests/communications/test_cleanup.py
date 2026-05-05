@@ -158,3 +158,5 @@ async def test_cleanup_zero_deleted_no_error():
         await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
 
     mock_store.delete_messages_before.assert_called_once()
+    assert mock_store.delete_messages_before.call_count == 1
+    assert mock_store.delete_messages_before.call_args is not None

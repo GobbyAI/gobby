@@ -435,6 +435,8 @@ class TestMCPClientManagerRemoveServer:
         await manager.remove_server("test-server")
 
         mock_db.remove_server.assert_called_once_with("test-server", "config-project")
+        assert mock_db.remove_server.call_count == 1
+        assert mock_db.remove_server.call_args is not None
 
     @pytest.mark.asyncio
     async def test_remove_server_uses_provided_project_id(self):
@@ -452,6 +454,8 @@ class TestMCPClientManagerRemoveServer:
         await manager.remove_server("test-server", project_id="override-project")
 
         mock_db.remove_server.assert_called_once_with("test-server", "override-project")
+        assert mock_db.remove_server.call_count == 1
+        assert mock_db.remove_server.call_args is not None
 
 
 class TestMCPClientManagerConnectAll:
@@ -1286,6 +1290,8 @@ class TestMCPClientManagerReconnect:
             await manager._reconnect("test-server")
 
         old_conn.disconnect.assert_awaited_once()
+        assert old_conn.disconnect.await_count == 1
+        assert old_conn.disconnect.await_args is not None
 
     @pytest.mark.asyncio
     async def test_reconnect_no_old_connection(self):
@@ -1303,6 +1309,8 @@ class TestMCPClientManagerReconnect:
             await manager._reconnect("test-server")
 
         mock_connect.assert_awaited_once()
+        assert mock_connect.await_count == 1
+        assert mock_connect.await_args is not None
 
     @pytest.mark.asyncio
     async def test_reconnect_old_disconnect_failure_does_not_block(self):
@@ -1324,6 +1332,8 @@ class TestMCPClientManagerReconnect:
             await manager._reconnect("test-server")
 
         mock_connect.assert_awaited_once()
+        assert mock_connect.await_count == 1
+        assert mock_connect.await_args is not None
 
     @pytest.mark.asyncio
     async def test_reconnect_handles_unknown_server(self):
@@ -1482,6 +1492,8 @@ class TestMCPClientManagerMonitorHealth:
             await manager._monitor_health()
 
         mock_connection.health_check.assert_called()
+        assert mock_connection.health_check.call_count >= 1
+        assert mock_connection.health_check.call_args is not None
 
     @pytest.mark.asyncio
     async def test_monitor_health_triggers_reconnect_on_unhealthy(self):

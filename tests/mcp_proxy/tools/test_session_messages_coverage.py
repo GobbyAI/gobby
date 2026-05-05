@@ -1002,6 +1002,8 @@ class TestMarkLoopComplete:
 
         assert result["success"] is True
         mock_svm.set_variable.assert_called_once_with("sess-123", "stop_reason", "completed")
+        assert mock_svm.set_variable.call_count == 1
+        assert mock_svm.set_variable.call_args is not None
 
 
 # ============================================================================

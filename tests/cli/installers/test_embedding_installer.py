@@ -336,6 +336,8 @@ class TestPersistEmbeddingConfig:
             "embeddings.dim": 0,
         }
         mock_db.__exit__.assert_called_once()
+        assert mock_db.__exit__.call_count == 1
+        assert mock_db.__exit__.call_args is not None
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
@@ -413,6 +415,8 @@ class TestPersistEmbeddingConfig:
             "embeddings.dim": 1536,
         }
         mock_db.__exit__.assert_called_once()
+        assert mock_db.__exit__.call_count == 1
+        assert mock_db.__exit__.call_args is not None
 
 
 class TestHealthCheck:

@@ -471,6 +471,8 @@ class TestLocalCloneManagerUpdate:
         manager.update("clone-123", last_sync_at="2026-01-22T12:00:00+00:00")
 
         mock_db.execute.assert_called_once()
+        assert mock_db.execute.call_count == 1
+        assert mock_db.execute.call_args is not None
 
 
 class TestLocalCloneManagerDelete:

@@ -212,6 +212,8 @@ class TestSpawnAgentTaskResolution:
             )
 
             mock_resolve.assert_called_once()
+            assert mock_resolve.call_count == 1
+            assert mock_resolve.call_args is not None
             assert result["success"] is True
 
 

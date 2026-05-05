@@ -419,7 +419,11 @@ class TestSessionStartAndHelpers:
             handler.handle_session_start(event)
 
             mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
+            assert mock_cis_cls.return_value.get_project_stats.call_count == 1
+            assert mock_cis_cls.return_value.get_project_stats.call_args is not None
             mock_sv_mgr.set_variable.assert_any_call("new-sess-1", "code_index_available", True)
+            assert mock_sv_mgr.set_variable.call_count >= 1
+            assert mock_sv_mgr.set_variable.call_args is not None
 
     def test_handle_session_start_no_index_skips_variable(self) -> None:
         """When project has no indexed symbols, code_index_available is NOT set."""
@@ -443,6 +447,8 @@ class TestSessionStartAndHelpers:
             handler.handle_session_start(event)
 
             mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
+            assert mock_cis_cls.return_value.get_project_stats.call_count == 1
+            assert mock_cis_cls.return_value.get_project_stats.call_args is not None
             # set_variable should NOT be called for code_index_available
             for call in mock_sv_mgr.set_variable.call_args_list:
                 assert call[0][1] != "code_index_available"
@@ -595,7 +601,11 @@ class TestSessionMoreCoverage:
         ) as mock_pre:
             handler.handle_session_start(event)
             handler._session_manager.update.assert_called_once()
+            assert handler._session_manager.update.call_count == 1
+            assert handler._session_manager.update.call_args is not None
             mock_pre.assert_called_once()
+            assert mock_pre.call_count == 1
+            assert mock_pre.call_args is not None
 
     def test_handle_session_start_codex_terminal(self) -> None:
         """Codex now joins the late-link path: SessionStart fires with the native
@@ -680,8 +690,12 @@ class TestSessionMoreCoverage:
                 agent_depth=0,
                 sandbox_enabled=None,
             )
+            assert handler._session_manager.register_session.call_count >= 1
+            assert handler._session_manager.register_session.call_args is not None
             # Should mark parent expired
             handler._session_manager.mark_session_expired.assert_called_with("parent-1")
+            assert handler._session_manager.mark_session_expired.call_count >= 1
+            assert handler._session_manager.mark_session_expired.call_args is not None
 
             # Should have handed off task
             handler._task_manager.claim_task.assert_called_with(
@@ -689,6 +703,8 @@ class TestSessionMoreCoverage:
                 session_id="new-sess-1",
                 force=True,
             )
+            assert handler._task_manager.claim_task.call_count >= 1
+            assert handler._task_manager.claim_task.call_args is not None
 
     def test_empty_parent_backoff(self) -> None:
         handler = _TestHandler()
@@ -712,6 +728,8 @@ class TestSessionMoreCoverage:
             mock_svm_cls.return_value.get_variables.return_value = {}
             handler.handle_session_start(event)
             mock_sleep.assert_called()
+            assert mock_sleep.call_count >= 1
+            assert mock_sleep.call_args is not None
 
 
 # ---------------------------------------------------------------------------

@@ -534,6 +534,8 @@ class TestInstallClaude:
 
         # Global hooks were installed
         mock_global_hooks.assert_called_once()
+        assert mock_global_hooks.call_count == 1
+        assert mock_global_hooks.call_args is not None
 
     @patch("gobby.cli.installers.claude.install_global_hooks")
     @patch("gobby.cli.installers.claude.get_install_dir")
@@ -565,6 +567,8 @@ class TestInstallClaude:
 
         assert result["success"] is True
         mock_global_hooks.assert_called_once()
+        assert mock_global_hooks.call_count == 1
+        assert mock_global_hooks.call_args is not None
 
 
 class TestUninstallClaude:

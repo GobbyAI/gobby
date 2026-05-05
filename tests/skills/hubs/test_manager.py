@@ -331,6 +331,8 @@ class TestSearchAll:
             results, errors = await manager.search_all("test")
             # asyncio.gather should be called
             mock_gather.assert_called_once()
+            assert mock_gather.call_count == 1
+            assert mock_gather.call_args is not None
 
     @pytest.mark.asyncio
     async def test_search_all_handles_provider_errors(self) -> None:

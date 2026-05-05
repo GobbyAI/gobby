@@ -105,6 +105,8 @@ class TestCloseTaskTool:
 
             assert "error" not in result
             mock_task_manager.close_task.assert_called_once()
+            assert mock_task_manager.close_task.call_count == 1
+            assert mock_task_manager.close_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_close_task_parent_with_open_children(self, mock_task_manager, mock_sync_manager):
@@ -419,6 +421,8 @@ class TestCloseTaskTool:
 
             assert result.get("error") == "missing_commits_for_edits"
             mock_task_manager.close_task.assert_not_called()
+            assert mock_task_manager.close_task.call_count == 0
+            assert not mock_task_manager.close_task.called
 
     @pytest.mark.asyncio
     async def test_close_task_out_of_repo_succeeds_without_session_edits(
@@ -472,6 +476,8 @@ class TestCloseTaskTool:
 
             assert result == {"success": True}
             mock_task_manager.close_task.assert_called_once()
+            assert mock_task_manager.close_task.call_count == 1
+            assert mock_task_manager.close_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_close_task_clears_task_claimed_variables(
@@ -549,6 +555,8 @@ class TestCloseTaskTool:
                     "claimed_tasks": {},
                 },
             )
+            assert mock_sv_manager.merge_variables.call_count == 1
+            assert mock_sv_manager.merge_variables.call_args is not None
 
 
 # =============================================================================
@@ -596,6 +604,8 @@ class TestReopenTaskTool:
         mock_task_manager.reopen_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", reason="Needs more work"
         )
+        assert mock_task_manager.reopen_task.call_count >= 1
+        assert mock_task_manager.reopen_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_reopen_task_error(self, mock_task_manager, mock_sync_manager):
@@ -637,7 +647,11 @@ class TestReopenTaskTool:
             await registry.call("reopen_task", {"task_id": "550e8400-e29b-41d4-a716-446655440000"})
 
             mock_wt_instance.get_by_task.assert_not_called()
+            assert mock_wt_instance.get_by_task.call_count == 0
+            assert not mock_wt_instance.get_by_task.called
             mock_wt_instance.update.assert_not_called()
+            assert mock_wt_instance.update.call_count == 0
+            assert not mock_wt_instance.update.called
 
 
 # =============================================================================
@@ -774,6 +788,8 @@ class TestSessionVariableMirroring:
                     "claimed_tasks": {},
                 },
             )
+            assert mock_sv_manager.merge_variables.call_count == 1
+            assert mock_sv_manager.merge_variables.call_args is not None
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_mirrors_to_session_variables(

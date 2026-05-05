@@ -465,6 +465,8 @@ async def test_remove_channel_not_found_noop():
     # Should not raise
     await manager.remove_channel("nonexistent")
     store.delete_channel.assert_not_called()
+    assert store.delete_channel.call_count == 0
+    assert not store.delete_channel.called
 
 
 def test_list_channels():
@@ -689,6 +691,8 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
     manager.reaction_handler.handle_reaction.assert_awaited_once_with(
         "test-channel", "msg-123", "+1", "user-1"
     )
+    assert manager.reaction_handler.handle_reaction.await_count == 1
+    assert manager.reaction_handler.handle_reaction.await_args is not None
 
 
 def test_thread_map_lru_eviction_order():

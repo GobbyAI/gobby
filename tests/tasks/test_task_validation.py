@@ -417,6 +417,8 @@ class TestGetValidationContextSmart:
         )
         # Should try to find files mentioned in criteria
         mock_find.assert_called()
+        assert mock_find.call_count >= 1
+        assert mock_find.call_args is not None
 
     @patch("subprocess.run")
     @patch("gobby.tasks.validation.get_multi_commit_diff")

@@ -666,6 +666,8 @@ class TestInstallCommand:
 
         assert result.exit_code == 0
         mock_install_claude.assert_called_once()
+        assert mock_install_claude.call_count == 1
+        assert mock_install_claude.call_args is not None
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_claude")
@@ -1218,7 +1220,11 @@ class TestUninstallCommand:
 
         assert result.exit_code == 0
         mock_uninstall_claude.assert_called_once()
+        assert mock_uninstall_claude.call_count == 1
+        assert mock_uninstall_claude.call_args is not None
         mock_uninstall_gemini.assert_called_once()
+        assert mock_uninstall_gemini.call_count == 1
+        assert mock_uninstall_gemini.call_args is not None
 
 
 class TestInstallCommandDirectInvocation:

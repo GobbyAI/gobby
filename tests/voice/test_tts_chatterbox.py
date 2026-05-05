@@ -583,6 +583,8 @@ class TestDepCheck:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        assert create_mock.await_count == 1
+        assert create_mock.await_args is not None
 
     @pytest.mark.asyncio
     async def test_install_packages_falls_back_to_uv_module(self) -> None:
@@ -614,6 +616,8 @@ class TestDepCheck:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        assert create_mock.await_count == 1
+        assert create_mock.await_args is not None
 
     @pytest.mark.asyncio
     async def test_install_packages_returns_false_when_uv_is_unavailable(

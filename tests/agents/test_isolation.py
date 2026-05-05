@@ -619,6 +619,8 @@ class TestWorktreeIsolationHandler:
                 "/path/to/main/repo",
                 handler._generate_worktree_path("my-branch", "repo"),
             )
+            assert mock_ensure.call_count == 1
+            assert mock_ensure.call_args is not None
 
     def test_is_isolation_handler_subclass(self) -> None:
         """Test WorktreeIsolationHandler is a subclass of IsolationHandler."""
@@ -1013,6 +1015,8 @@ class TestCloneIsolationHandler:
                 "/path/to/source/repo",
                 handler._generate_clone_path("my-branch", "repo"),
             )
+            assert mock_ensure.call_count == 1
+            assert mock_ensure.call_args is not None
 
     def test_is_isolation_handler_subclass(self) -> None:
         """Test CloneIsolationHandler is a subclass of IsolationHandler."""

@@ -87,6 +87,8 @@ async def test_openai_client_closed_after_success() -> None:
         await generate_embedding("close-success", model="close-success-model")
 
     mock_client.close.assert_awaited_once()
+    assert mock_client.close.await_count == 1
+    assert mock_client.close.await_args is not None
 
 
 @pytest.mark.asyncio

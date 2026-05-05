@@ -236,6 +236,8 @@ class TestListAgentRuns:
         await list_agent_runs(parent_session_id="sess-123", status="running")
 
         runner.list_runs.assert_called_once_with("sess-123", status="running", limit=20)
+        assert runner.list_runs.call_count == 1
+        assert runner.list_runs.call_args is not None
 
     @pytest.mark.asyncio
     async def test_respects_limit(self):
@@ -249,6 +251,8 @@ class TestListAgentRuns:
         await list_agent_runs(parent_session_id="sess-123", limit=50)
 
         runner.list_runs.assert_called_once_with("sess-123", status=None, limit=50)
+        assert runner.list_runs.call_count == 1
+        assert runner.list_runs.call_args is not None
 
 
 class TestStopAgent:

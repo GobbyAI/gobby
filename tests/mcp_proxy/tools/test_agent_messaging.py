@@ -682,7 +682,11 @@ class TestGetInterSessionMessages:
         )
 
         mock_message_manager.mark_delivered.assert_not_called()
+        assert mock_message_manager.mark_delivered.call_count == 0
+        assert not mock_message_manager.mark_delivered.called
         mock_message_manager.mark_read.assert_not_called()
+        assert mock_message_manager.mark_read.call_count == 0
+        assert not mock_message_manager.mark_read.called
 
     @pytest.mark.asyncio
     async def test_empty_list(self, messaging_registry, mock_message_manager) -> None:

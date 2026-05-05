@@ -419,6 +419,8 @@ class TestValidateTaskTool:
 
             # Should call smart context gathering
             mock_context.assert_called_once()
+            assert mock_context.call_count == 1
+            assert mock_context.call_args is not None
 
 
 # ============================================================================

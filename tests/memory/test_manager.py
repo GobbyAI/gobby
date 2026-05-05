@@ -589,6 +589,8 @@ class TestVectorStoreIntegration:
         # Should not raise
         await manager._embed_and_upsert("id", "content")
         mock_vs.upsert.assert_called_once()
+        assert mock_vs.upsert.call_count == 1
+        assert mock_vs.upsert.call_args is not None
 
     @pytest.mark.asyncio
     async def test_vectorstore_unavailable_does_not_disable_embeddings(
@@ -626,6 +628,8 @@ class TestVectorStoreIntegration:
         )
         await manager.create_memory(content="VectorStore test")
         mock_vs.upsert.assert_called_once()
+        assert mock_vs.upsert.call_count == 1
+        assert mock_vs.upsert.call_args is not None
 
 
 # =============================================================================
@@ -652,6 +656,8 @@ class TestDeleteMemoryExtended:
         result = await manager.delete_memory(memory.id)
         assert result is True
         mock_vs.delete.assert_called_once_with(memory.id)
+        assert mock_vs.delete.call_count == 1
+        assert mock_vs.delete.call_args is not None
 
     @pytest.mark.asyncio
     async def test_delete_vectorstore_error_handled(self, db, memory_config) -> None:

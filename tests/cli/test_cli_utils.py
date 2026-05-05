@@ -540,6 +540,8 @@ class TestKillAllGobbyDaemons:
                             result = kill_all_gobby_daemons()
                             assert result == 1
                             mock_proc.send_signal.assert_called_with(signal.SIGTERM)
+                            assert mock_proc.send_signal.call_count >= 1
+                            assert mock_proc.send_signal.call_args is not None
 
     def test_skips_cli_processes(self) -> None:
         """Test that CLI processes are not killed."""
@@ -617,6 +619,8 @@ class TestStopDaemon:
                         result = stop_daemon(quiet=True)
                         assert result is True
                         mock_kill.assert_called_with(12345, signal.SIGTERM)
+                        assert mock_kill.call_count >= 1
+                        assert mock_kill.call_args is not None
 
     def test_force_kills_stubborn_process(self, temp_dir: Path) -> None:
         """Test force killing when process doesn't stop gracefully."""
@@ -687,7 +691,11 @@ class TestInitLocalStorage:
                     mock_db_class.return_value = mock_db
                     init_local_storage()
                     mock_db_class.assert_called_once_with(db_path)
+                    assert mock_db_class.call_count == 1
+                    assert mock_db_class.call_args is not None
                     mock_migrations.assert_called_once_with(mock_db)
+                    assert mock_migrations.call_count == 1
+                    assert mock_migrations.call_args is not None
 
 
 # ==============================================================================

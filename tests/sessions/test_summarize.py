@@ -407,6 +407,8 @@ class TestGenerateSessionSummaries:
             "sess-1",
             summary_markdown="# Fallback Summary",
         )
+        assert sm.update_summary.call_count == 1
+        assert sm.update_summary.call_args is not None
 
 
 class TestGetClaimedTasks:

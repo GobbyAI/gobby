@@ -155,6 +155,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
+        assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
 
     def test_after_tool_edit_marks_had_edits_for_in_repo_path(
         self, mock_dependencies: dict
@@ -176,6 +178,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
+        assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
 
     def test_after_tool_notifies_code_index_with_project_root_path(
         self, mock_dependencies: dict, tmp_path: Path
@@ -207,11 +211,15 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         resolve_project_id.assert_called_once_with(None, str(repo_root.resolve()))
+        assert resolve_project_id.call_count == 1
+        assert resolve_project_id.call_args is not None
         code_index_trigger.notify_file_changed.assert_called_once_with(
             file_path="src/pkg/edited.py",
             project_id="proj-1",
             root_path=str(repo_root.resolve()),
         )
+        assert code_index_trigger.notify_file_changed.call_count == 1
+        assert code_index_trigger.notify_file_changed.call_args is not None
 
     def test_after_tool_edit_skips_gobby_internal_files(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for .gobby/ internal files."""
@@ -231,6 +239,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
+        assert not mock_dependencies["session_storage"].mark_had_edits.called
 
     def test_after_tool_edit_skips_out_of_repo_paths(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for edits outside cwd."""
@@ -250,6 +260,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
+        assert not mock_dependencies["session_storage"].mark_had_edits.called
 
     def test_after_tool_edit_skips_relative_gobby_path(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for relative .gobby/ paths."""
@@ -269,6 +281,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
+        assert not mock_dependencies["session_storage"].mark_had_edits.called
 
 
 class TestSkillToolInterception:

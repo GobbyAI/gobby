@@ -166,6 +166,8 @@ async def test_send_message_adaptive_card(
             json=expected_json,
             headers={"Authorization": "Bearer test-token", "Content-Type": "application/json"},
         )
+        assert mock_client.post.call_count >= 1
+        assert mock_client.post.call_args is not None
 
 
 def test_parse_webhook(adapter: TeamsAdapter) -> None:

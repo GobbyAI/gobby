@@ -262,6 +262,8 @@ class TestCheckDeadAgents:
             await mon.check_unhealthy_agents()
 
         mock_coordinator.release_session_worktrees.assert_called_once_with(child_session.id)
+        assert mock_coordinator.release_session_worktrees.call_count == 1
+        assert mock_coordinator.release_session_worktrees.call_args is not None
 
 
 class TestStartStop:
@@ -1335,6 +1337,8 @@ class TestCheckExpiredAgents:
             await mon.check_unhealthy_agents()
 
         mock_coordinator.release_session_worktrees.assert_called_once_with(child_session.id)
+        assert mock_coordinator.release_session_worktrees.call_count == 1
+        assert mock_coordinator.release_session_worktrees.call_args is not None
 
     @pytest.mark.asyncio
     async def test_expired_agent_releases_clones(
@@ -1379,6 +1383,8 @@ class TestCheckExpiredAgents:
             await mon.check_unhealthy_agents()
 
         mock_clone_storage.release.assert_called_once_with("clone-456")
+        assert mock_clone_storage.release.call_count == 1
+        assert mock_clone_storage.release.call_args is not None
 
 
 class TestCheckProviderStalls:
@@ -1977,6 +1983,8 @@ class TestRecoverTaskFromFailedAgent:
         )
         await mon._recover_task_from_failed_agent("nonexistent-run")
         mock_task_manager.update_task.assert_not_called()
+        assert mock_task_manager.update_task.call_count == 0
+        assert not mock_task_manager.update_task.called
 
 
 class TestSetSessionCoordinator:
@@ -2040,6 +2048,8 @@ class TestDeadAgentCompletionEvent:
             await mon.check_unhealthy_agents()
 
         mock_cr.notify.assert_called_once()
+        assert mock_cr.notify.call_count == 1
+        assert mock_cr.notify.call_args is not None
 
     @pytest.mark.asyncio
     async def test_releases_clones_on_dead_tmux_agent(
@@ -2069,6 +2079,8 @@ class TestDeadAgentCompletionEvent:
             await mon.check_unhealthy_agents()
 
         mock_clone_storage.release.assert_called_once_with("clone-789")
+        assert mock_clone_storage.release.call_count == 1
+        assert mock_clone_storage.release.call_args is not None
 
 
 class TestDeadAgentKillsOrphanedProcess:
@@ -2217,9 +2229,7 @@ class TestCleanupAgentFdClose:
             tmux_session_name="gobby-no-fd",
         )
 
-        result = await monitor._cleanup_agent(
-            run, terminal_payload="test cleanup", is_success=True
-        )
+        result = await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
 
         assert result is None
         assert run.id not in monitor._master_fds

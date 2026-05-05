@@ -38,7 +38,11 @@ class TestRunSubprocess:
             await _run_subprocess("sleep", "10", timeout=0.1)
 
         mock_proc.kill.assert_called_once()
+        assert mock_proc.kill.call_count == 1
+        assert mock_proc.kill.call_args is not None
         mock_proc.wait.assert_called_once()
+        assert mock_proc.wait.call_count == 1
+        assert mock_proc.wait.call_args is not None
 
 
 class TestValidateTerminalValue:

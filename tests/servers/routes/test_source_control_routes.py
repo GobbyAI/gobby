@@ -306,6 +306,8 @@ class TestGetProjectManager:
 
             _get_project_manager(mock_server)
             mock_cls.assert_called_once_with(mock_server.session_manager.db)
+            assert mock_cls.call_count == 1
+            assert mock_cls.call_args is not None
 
 
 # ---------------------------------------------------------------------------

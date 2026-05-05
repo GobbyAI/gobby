@@ -646,6 +646,8 @@ class TestDeEscalateTaskTool:
             reason="Resolved manually",
             reset_validation=False,
         )
+        assert mock_task_manager.de_escalate_task.call_count == 1
+        assert mock_task_manager.de_escalate_task.call_args is not None
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -703,6 +705,8 @@ class TestDeEscalateTaskTool:
             reason="Fixed",
             reset_validation=True,
         )
+        assert mock_task_manager.de_escalate_task.call_count == 1
+        assert mock_task_manager.de_escalate_task.call_args is not None
 
     @pytest.mark.integration
     @pytest.mark.asyncio

@@ -356,6 +356,8 @@ class TestApproveMethod:
         await executor.approve("test-token-xyz", approved_by="user@example.com")
 
         mock_execution_manager.get_step_by_approval_token.assert_called_once_with("test-token-xyz")
+        assert mock_execution_manager.get_step_by_approval_token.call_count == 1
+        assert mock_execution_manager.get_step_by_approval_token.call_args is not None
 
     @pytest.mark.asyncio
     async def test_approve_invalid_token_raises_error(
@@ -481,6 +483,8 @@ class TestRejectMethod:
         await executor.reject("test-token-xyz", rejected_by="user@example.com")
 
         mock_execution_manager.get_step_by_approval_token.assert_called_once_with("test-token-xyz")
+        assert mock_execution_manager.get_step_by_approval_token.call_count == 1
+        assert mock_execution_manager.get_step_by_approval_token.call_args is not None
 
     @pytest.mark.asyncio
     async def test_reject_invalid_token_raises_error(

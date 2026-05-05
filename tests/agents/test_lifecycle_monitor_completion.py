@@ -43,4 +43,8 @@ class TestCompletedRunIdleGuard:
 
         assert handled == 0
         mock_capture.assert_not_awaited()
+        assert mock_capture.await_count == 0
+        assert mock_capture.await_args is None
         mock_send.assert_not_awaited()
+        assert mock_send.await_count == 0
+        assert mock_send.await_args is None

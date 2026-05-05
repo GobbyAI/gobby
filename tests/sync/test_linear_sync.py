@@ -223,13 +223,19 @@ class TestLinearSyncServiceImport:
             linear_issue_id="lin-42",
             linear_team_id="team-123",
         )
+        assert mock_task_manager.update_task.call_count >= 1
+        assert mock_task_manager.update_task.call_args is not None
         mock_task_manager.reconcile_task_state.assert_called_with(
             "task-42",
             title="Existing Feature",
             description="Test body",
             priority=2,
         )
+        assert mock_task_manager.reconcile_task_state.call_count >= 1
+        assert mock_task_manager.reconcile_task_state.call_args is not None
         mock_task_manager.create_task.assert_not_called()
+        assert mock_task_manager.create_task.call_count == 0
+        assert not mock_task_manager.create_task.called
 
     @pytest.mark.asyncio
     async def test_import_issues_raises_when_unavailable(self, mock_mcp_manager, mock_task_manager):
@@ -303,6 +309,8 @@ class TestLinearSyncServiceSync:
         await sync_service.sync_task_to_linear(task_id="test-task-id")
 
         mock_mcp_manager.call_tool.assert_called()
+        assert mock_mcp_manager.call_tool.call_count >= 1
+        assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_sync_task_graphql_resolves_linear_state_id(self, sync_service, mock_mcp_manager):
@@ -331,6 +339,8 @@ class TestLinearSyncServiceSync:
         await sync_service.sync_task_to_linear(task_id="test-task-id")
 
         client.list_team_states.assert_awaited_once_with("team-123")
+        assert client.list_team_states.await_count == 1
+        assert client.list_team_states.await_args is not None
         client.update_issue.assert_awaited_once_with(
             issue_id="lin-42",
             title="#42: Updated Title",
@@ -338,7 +348,11 @@ class TestLinearSyncServiceSync:
             priority=2,
             state_id="state-progress",
         )
+        assert client.update_issue.await_count == 1
+        assert client.update_issue.await_args is not None
         mock_mcp_manager.call_tool.assert_not_called()
+        assert mock_mcp_manager.call_tool.call_count == 0
+        assert not mock_mcp_manager.call_tool.called
 
     @pytest.mark.asyncio
     async def test_sync_task_raises_when_no_issue_id(self, sync_service, mock_task_manager):
@@ -469,11 +483,15 @@ class TestLinearSyncServiceCreate:
         await service.create_issue_for_task(task_id="test-task-id")
 
         service.ensure_linear_project.assert_awaited_once_with("team-123", "gobby")
+        assert service.ensure_linear_project.await_count == 1
+        assert service.ensure_linear_project.await_args is not None
         project_manager.update.assert_called_with(
             "test-project",
             linear_team_id="team-123",
             linear_project_id="lin-proj",
         )
+        assert project_manager.update.call_count >= 1
+        assert project_manager.update.call_args is not None
         assert service.linear_project_id == "lin-proj"
 
     @pytest.mark.asyncio
@@ -494,6 +512,8 @@ class TestLinearSyncServiceCreate:
         await sync_service.create_issue_for_task(task_id="test-task-id")
 
         mock_task_manager.update_task.assert_called()
+        assert mock_task_manager.update_task.call_count >= 1
+        assert mock_task_manager.update_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_create_issue_raises_when_no_team_id(self, mock_mcp_manager, mock_task_manager):

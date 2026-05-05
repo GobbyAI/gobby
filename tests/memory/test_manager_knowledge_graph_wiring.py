@@ -180,7 +180,11 @@ class TestGraphDelegation:
         result = await manager.clear_knowledge_graph(project_id="proj-1")
 
         manager._kg_service.clear_graph.assert_awaited_once_with(project_id="proj-1")
+        assert manager._kg_service.clear_graph.await_count == 1
+        assert manager._kg_service.clear_graph.await_args is not None
         manager.storage.mark_pending_graphs.assert_called_once_with("proj-1")
+        assert manager.storage.mark_pending_graphs.call_count == 1
+        assert manager.storage.mark_pending_graphs.call_args is not None
         assert result == {
             "success": True,
             "memories_marked_pending": 3,
@@ -312,6 +316,8 @@ class TestGraphBackgroundTask:
 
         # Graph is now queued via mark_pending_graph, not fired as background task
         manager.storage.mark_pending_graph.assert_called_once()
+        assert manager.storage.mark_pending_graph.call_count == 1
+        assert manager.storage.mark_pending_graph.call_args is not None
 
     async def test_create_memory_no_graph_task_when_no_kg_service(self) -> None:
         """create_memory doesn't fire graph task when KnowledgeGraphService is unavailable."""

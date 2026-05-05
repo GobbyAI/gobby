@@ -497,6 +497,8 @@ class TestEnsureDaemonRunning:
 
                                 await ensure_daemon_running()
                                 mock_restart.assert_called_once()
+                                assert mock_restart.call_count == 1
+                                assert mock_restart.call_args is not None
 
     @pytest.mark.asyncio
     async def test_starts_daemon_if_not_running(self):
@@ -518,6 +520,8 @@ class TestEnsureDaemonRunning:
 
                         await ensure_daemon_running()
                         mock_start.assert_called_once()
+                        assert mock_start.call_count == 1
+                        assert mock_start.call_args is not None
 
 
 class TestDaemonProxy:
@@ -555,10 +559,14 @@ class TestDaemonProxy:
                 mock_request.assert_called_with(
                     "POST", "/api/mcp/server/tools/normal_tool", json={}, timeout=30.0
                 )
+                assert mock_request.call_count >= 1
+                assert mock_request.call_args is not None
                 await proxy.call_tool("server", "expand_task", {})
                 mock_request.assert_called_with(
                     "POST", "/api/mcp/server/tools/expand_task", json={}, timeout=300.0
                 )
+                assert mock_request.call_count >= 1
+                assert mock_request.call_args is not None
 
 
 class TestDaemonProxyMethods:
@@ -904,6 +912,8 @@ class TestMCPToolsWrapper:
         )
 
         ctx.report_progress.assert_not_awaited()
+        assert ctx.report_progress.await_count == 0
+        assert ctx.report_progress.await_args is None
 
 
 class TestEnsureDaemonRunningFailures:
@@ -926,6 +936,8 @@ class TestEnsureDaemonRunningFailures:
                             await ensure_daemon_running()
 
                         mock_exit.assert_called_with(1)
+                        assert mock_exit.call_count >= 1
+                        assert mock_exit.call_args is not None
 
     @pytest.mark.asyncio
     async def test_health_check_timeout_exits(self):
@@ -950,6 +962,8 @@ class TestEnsureDaemonRunningFailures:
                                     with pytest.raises(SystemExit):
                                         await ensure_daemon_running()
                                     mock_exit.assert_called_with(1)
+                                    assert mock_exit.call_count >= 1
+                                    assert mock_exit.call_args is not None
 
 
 class TestStripNone:

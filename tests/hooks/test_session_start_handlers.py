@@ -217,6 +217,8 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies["message_processor"].register_session.assert_called_once_with(
             "sess-123", "/path/to/transcript.jsonl", source="claude"
         )
+        assert mock_dependencies["message_processor"].register_session.call_count == 1
+        assert mock_dependencies["message_processor"].register_session.call_args is not None
 
     def test_pre_created_session_message_processor_error(self, mock_dependencies: dict) -> None:
         """Test error registering with message processor is handled gracefully."""
@@ -420,6 +422,8 @@ class TestSessionStartNewSession:
         mock_dependencies["message_processor"].register_session.assert_called_once_with(
             "new-sess-456", "/path/to/transcript.jsonl", source="claude"
         )
+        assert mock_dependencies["message_processor"].register_session.call_count == 1
+        assert mock_dependencies["message_processor"].register_session.call_args is not None
 
     def test_new_session_message_processor_error(self, mock_dependencies: dict) -> None:
         """Test error registering with message processor is handled."""

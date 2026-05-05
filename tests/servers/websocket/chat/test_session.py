@@ -130,8 +130,14 @@ class TestCancelActiveChat:
         await mixin._cancel_active_chat("conv-xyz")
 
         session.interrupt.assert_not_awaited()
+        assert session.interrupt.await_count == 0
+        assert session.interrupt.await_args is None
         session.drain_pending_response.assert_awaited_once()
+        assert session.drain_pending_response.await_count == 1
+        assert session.drain_pending_response.await_args is not None
         mixin._cancel_tts.assert_awaited_once_with("conv-xyz")
+        assert mixin._cancel_tts.await_count == 1
+        assert mixin._cancel_tts.await_args is not None
 
 
 class TestCreateChatSessionInner:
@@ -266,6 +272,8 @@ class TestCreateChatSessionInner:
             await mixin._create_chat_session_inner("conv-web")
 
             mixin.session_manager.register.assert_called_once()
+            assert mixin.session_manager.register.call_count == 1
+            assert mixin.session_manager.register.call_args is not None
             call_kwargs = mixin.session_manager.register.call_args
             assert call_kwargs.kwargs.get("session_type") == "web_chat"
 
@@ -296,6 +304,8 @@ class TestCreateChatSessionInner:
             await mixin._create_chat_session_inner("conv-model", model="opus")
 
             mixin.session_manager.update_model.assert_called_once_with("db-id-789", "opus")
+            assert mixin.session_manager.update_model.call_count == 1
+            assert mixin.session_manager.update_model.call_args is not None
 
     @pytest.mark.asyncio
     async def test_create_chat_session_persists_runtime_metadata(self, mixin: DummyMixin):
@@ -331,7 +341,11 @@ class TestCreateChatSessionInner:
                 external_id="sdk-session-123",
                 transcript_path="/tmp/runtime-session.jsonl",
             )
+            assert mixin.session_manager.update.call_count == 1
+            assert mixin.session_manager.update.call_args is not None
             mixin.session_manager.update_model.assert_called_once_with("db-id-meta", "opus")
+            assert mixin.session_manager.update_model.call_count == 1
+            assert mixin.session_manager.update_model.call_args is not None
 
     @pytest.mark.asyncio
     async def test_create_gemini_chat_session_uses_identity_only_prompt(self, mixin: DummyMixin):
@@ -496,6 +510,8 @@ class TestCreateChatSessionInner:
             model=None,
             reasoning_effort=None,
         )
+        assert mixin.web_chat_runtime_manager.create_session.call_count == 1
+        assert mixin.web_chat_runtime_manager.create_session.call_args is not None
 
     @pytest.mark.asyncio
     async def test_resume_reuses_existing_terminal_session_row(self, mixin: DummyMixin):
@@ -576,3 +592,5 @@ class TestCreateChatSessionInner:
         mixin._fire_lifecycle = AsyncMock()
         await mixin._fire_session_end("conv-end")
         mixin._fire_lifecycle.assert_awaited_once_with("conv-end", HookEventType.SESSION_END, {})
+        assert mixin._fire_lifecycle.await_count == 1
+        assert mixin._fire_lifecycle.await_args is not None

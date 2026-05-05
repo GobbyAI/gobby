@@ -241,6 +241,8 @@ async def test_no_gcode_warns_and_skips(trigger: CodeIndexTrigger, tmp_path: Pat
         await trigger._flush(trigger._root_key("/repo"), "proj-1")
 
         mock_exec.assert_not_called()
+        assert mock_exec.call_count == 0
+        assert not mock_exec.called
 
 
 # ── Empty flush ──────────────────────────────────────────────────────
@@ -252,6 +254,8 @@ async def test_empty_flush_is_noop(trigger: CodeIndexTrigger, tmp_path: Path) ->
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         await trigger._flush(str(tmp_path.resolve()), "nonexistent-project")
         mock_exec.assert_not_called()
+        assert mock_exec.call_count == 0
+        assert not mock_exec.called
 
 
 @pytest.mark.asyncio

@@ -92,6 +92,8 @@ async def test_broadcast_disabled(mock_websocket_server, disabled_config, sample
     await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
 
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -105,6 +107,8 @@ async def test_broadcast_filtered_event(mock_websocket_server, default_config, s
     await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
 
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -139,6 +143,8 @@ async def test_broadcast_no_config(mock_websocket_server, sample_input):
 
     # Should return early without broadcasting
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -409,6 +415,8 @@ async def test_broadcast_event_unknown_type(mock_websocket_server, default_confi
 
     # Should not broadcast unknown events
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -480,6 +488,8 @@ async def test_broadcast_event_subagent_id_fallback(mock_websocket_server, defau
     await broadcaster.broadcast_event(event)
 
     mock_websocket_server.broadcast.assert_called_once()
+    assert mock_websocket_server.broadcast.call_count == 1
+    assert mock_websocket_server.broadcast.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -571,6 +581,8 @@ async def test_broadcast_with_response_context_dict(mock_websocket_server, defau
     await broadcaster.broadcast_event(event, response)
 
     mock_websocket_server.broadcast.assert_called_once()
+    assert mock_websocket_server.broadcast.call_count == 1
+    assert mock_websocket_server.broadcast.call_args is not None
 
 
 @pytest.mark.asyncio

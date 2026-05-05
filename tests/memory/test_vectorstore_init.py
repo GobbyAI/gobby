@@ -86,6 +86,8 @@ class TestVectorStoreInitialization:
 
         await vs.close()
         vs.close.assert_called_once()
+        assert vs.close.call_count == 1
+        assert vs.close.call_args is not None
 
     @pytest.mark.asyncio
     async def test_rebuild_when_qdrant_empty_sqlite_has_memories(self) -> None:
@@ -137,6 +139,8 @@ class TestVectorStoreInitialization:
             await vs.rebuild([], AsyncMock())
 
         vs.rebuild.assert_not_called()
+        assert vs.rebuild.call_count == 0
+        assert not vs.rebuild.called
 
     @pytest.mark.asyncio
     async def test_no_rebuild_when_sqlite_empty(self) -> None:
@@ -157,6 +161,8 @@ class TestVectorStoreInitialization:
             await vs.rebuild([], AsyncMock())
 
         vs.rebuild.assert_not_called()
+        assert vs.rebuild.call_count == 0
+        assert not vs.rebuild.called
 
     def test_default_qdrant_url_config(self) -> None:
         """Config default for qdrant url should be http://localhost:6333."""

@@ -51,6 +51,8 @@ class TestGetMemoryManager:
         ):
             result = get_memory_manager(mock_ctx)
             mock_mm.assert_called_once()
+            assert mock_mm.call_count == 1
+            assert mock_mm.call_args is not None
             assert result == mock_mm.return_value
 
 

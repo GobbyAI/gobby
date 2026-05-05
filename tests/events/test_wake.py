@@ -108,6 +108,8 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Agent completed", {"status": "success"})
 
         tmux_sender.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
+        assert tmux_sender.await_count == 1
+        assert tmux_sender.await_args is not None
 
     @pytest.mark.asyncio
     async def test_terminal_agent_fallback_to_ism_when_tmux_fails(
@@ -131,7 +133,11 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Pipeline completed", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
+        assert ism_manager.create_message.call_count == 1
+        assert ism_manager.create_message.call_args is not None
         failing_tmux.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
+        assert failing_tmux.await_count == 1
+        assert failing_tmux.await_args is not None
 
     @pytest.mark.asyncio
     async def test_terminal_agent_no_tmux_sender_uses_ism(
@@ -153,6 +159,8 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
+        assert ism_manager.create_message.call_count == 1
+        assert ism_manager.create_message.call_args is not None
 
     @pytest.mark.asyncio
     async def test_parent_signoff_persists_durable_message_before_wake(
@@ -221,6 +229,8 @@ class TestWakeDispatch:
         )
 
         ism_manager.create_message.assert_not_called()
+        assert ism_manager.create_message.call_count == 0
+        assert not ism_manager.create_message.called
 
     @pytest.mark.asyncio
     async def test_interactive_tmux_session_gets_pane_wake_signal(
@@ -244,7 +254,11 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
+        assert ism_manager.create_message.call_count == 1
+        assert ism_manager.create_message.call_args is not None
         tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
+        assert tmux_pane_sender.await_count == 1
+        assert tmux_pane_sender.await_args is not None
 
     @pytest.mark.asyncio
     async def test_interactive_tmux_session_uses_stored_socket_path(
@@ -275,6 +289,8 @@ class TestWakeDispatch:
             CONTINUE_WAKE_SIGNAL,
             "/tmp/tmux-501/gobby",
         )
+        assert tmux_pane_sender.await_count == 1
+        assert tmux_pane_sender.await_args is not None
 
     @pytest.mark.asyncio
     async def test_unknown_session_logged_not_raised(
@@ -291,6 +307,8 @@ class TestWakeDispatch:
         # Should not raise
         await dispatcher.wake("nonexistent", "Done", {"status": "completed"})
         ism_manager.create_message.assert_not_called()
+        assert ism_manager.create_message.call_count == 0
+        assert not ism_manager.create_message.called
 
     @pytest.mark.asyncio
     async def test_agent_depth_zero_no_terminal_context_gets_ism(
@@ -311,6 +329,8 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
+        assert ism_manager.create_message.call_count == 1
+        assert ism_manager.create_message.call_args is not None
 
     @pytest.mark.asyncio
     async def test_pane_wake_coalesces_during_idle_window(

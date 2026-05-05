@@ -153,6 +153,8 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
             "session_created",
             session.id,
         )
+        assert ws_server.broadcast_session_event.await_count == 1
+        assert ws_server.broadcast_session_event.await_args is not None
 
 
 # =============================================================================

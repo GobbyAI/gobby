@@ -229,6 +229,8 @@ def test_success_does_not_invoke_public_close_task(monkeypatch: pytest.MonkeyPat
     )
 
     ctx.task_manager.close_task.assert_not_called()
+    assert ctx.task_manager.close_task.call_count == 0
+    assert not ctx.task_manager.close_task.called
 
 
 def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -326,11 +326,15 @@ class TestQwenBackend:
             "qwen3.6-35b-a3b-q8-local(openai)",
             project_path="/tmp/project",
         )
+        assert mock_warmup.await_count == 1
+        assert mock_warmup.await_args is not None
         client.create_session.assert_awaited_once_with(
             model="qwen3.6-35b-a3b-q8-local(openai)",
             cwd="/tmp/project",
             reasoning_effort=None,
         )
+        assert client.create_session.await_count == 1
+        assert client.create_session.await_args is not None
 
 
 class TestCodexBackend:
@@ -387,6 +391,8 @@ class TestCodexBackend:
             approval_policy="on-request",
             sandbox="read-only",
         )
+        assert client.start_thread.await_count == 1
+        assert client.start_thread.await_args is not None
 
     @pytest.mark.asyncio
     async def test_managed_session_delegates_send_message(self) -> None:
@@ -478,6 +484,8 @@ class TestCodexBackend:
         await backend.interrupt(session)
 
         client.interrupt_turn.assert_awaited_once_with("thread-1", "turn-9")
+        assert client.interrupt_turn.await_count == 1
+        assert client.interrupt_turn.await_args is not None
         assert session._turn_id is None
 
     @pytest.mark.asyncio
@@ -522,6 +530,8 @@ class TestCodexBackend:
 
         assert assistant_text == "Recovered from transcript"
         sleep.assert_awaited_once_with(0.25)
+        assert sleep.await_count == 1
+        assert sleep.await_args is not None
 
     @pytest.mark.asyncio
     async def test_handle_approval_request_accepts_decision_dict(self) -> None:
@@ -809,6 +819,8 @@ class TestCodexBackend:
                 "mcp_tool": "close_task",
             }
         )
+        assert session._on_post_tool.await_count == 1
+        assert session._on_post_tool.await_args is not None
 
     def test_translate_approval_request_parses_json_string_arguments_for_mcp_tool_call(
         self,

@@ -121,6 +121,8 @@ class TestSessionEndHandling:
         handlers.handle_session_end(event)
 
         mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once()
+        assert mock_dependencies["session_coordinator"].complete_agent_run.call_count == 1
+        assert mock_dependencies["session_coordinator"].complete_agent_run.call_args is not None
 
     def test_session_end_complete_agent_run_error(self, mock_dependencies: dict) -> None:
         """Test error completing agent run is handled gracefully."""
@@ -157,6 +159,8 @@ class TestSessionEndHandling:
         mock_dependencies["message_processor"].unregister_session.assert_called_once_with(
             "sess-123"
         )
+        assert mock_dependencies["message_processor"].unregister_session.call_count == 1
+        assert mock_dependencies["message_processor"].unregister_session.call_args is not None
 
     def test_session_end_unregister_uses_external_id_as_fallback(
         self, mock_dependencies: dict
@@ -176,6 +180,8 @@ class TestSessionEndHandling:
 
         # When session_id is None, external_id is used as fallback for unregister
         mock_dependencies["message_processor"].unregister_session.assert_called_once_with("ext-123")
+        assert mock_dependencies["message_processor"].unregister_session.call_count == 1
+        assert mock_dependencies["message_processor"].unregister_session.call_args is not None
 
     def test_session_end_unregister_error(self, mock_dependencies: dict) -> None:
         """Test error unregistering from message processor is handled."""

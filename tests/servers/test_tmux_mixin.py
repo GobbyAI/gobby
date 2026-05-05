@@ -381,6 +381,8 @@ class TestTmuxKillSession:
             )
 
         mock_session_mgr.update_status.assert_not_called()
+        assert mock_session_mgr.update_status.call_count == 0
+        assert not mock_session_mgr.update_status.called
         results = ws.messages_of_type("tmux_kill_result")
         assert results[0]["expired_session_ids"] == []
 
@@ -401,6 +403,8 @@ class TestTmuxResize:
         with patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock) as mock_resize:
             await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
             mock_resize.assert_called_once_with("s1", 24, 80)
+            assert mock_resize.call_count == 1
+            assert mock_resize.call_args is not None
 
 
 class TestTmuxClientCleanup:
@@ -461,3 +465,5 @@ class TestTerminalInputBridgeRouting:
             with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
                 await server._handle_terminal_input(ws, {"run_id": "some-agent", "data": "x"})
                 mock_arm.get.assert_called_once_with("some-agent")
+                assert mock_arm.get.call_count == 1
+                assert mock_arm.get.call_args is not None

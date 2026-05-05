@@ -233,6 +233,8 @@ class TestProcessSession:
 
         # get_state should not be called since we returned early
         processor.message_manager.get_state.assert_not_called()
+        assert processor.message_manager.get_state.call_count == 0
+        assert not processor.message_manager.get_state.called
 
     @pytest.mark.asyncio
     async def test_process_session_no_parser(self, processor, tmp_path):
@@ -249,6 +251,8 @@ class TestProcessSession:
 
         # store_messages should not be called since we returned early (no parser)
         processor.message_manager.store_messages.assert_not_called()
+        assert processor.message_manager.store_messages.call_count == 0
+        assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
     async def test_process_session_read_error(self, processor, tmp_path, caplog):
@@ -286,6 +290,8 @@ class TestProcessSession:
 
         # Should not store any messages (line is incomplete)
         processor.message_manager.store_messages.assert_not_called()
+        assert processor.message_manager.store_messages.call_count == 0
+        assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
     async def test_process_session_no_new_lines(self, processor, tmp_path):
@@ -302,6 +308,8 @@ class TestProcessSession:
 
         # Should not call store_messages
         processor.message_manager.store_messages.assert_not_called()
+        assert processor.message_manager.store_messages.call_count == 0
+        assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
     async def test_process_session_no_parsed_messages(self, processor, tmp_path):
@@ -539,6 +547,8 @@ class TestModelExtraction:
         mock_session_manager.update_model.assert_called_once_with(
             "session-1", "claude-opus-4-5-20251101"
         )
+        assert mock_session_manager.update_model.call_count == 1
+        assert mock_session_manager.update_model.call_args is not None
 
     @pytest.mark.asyncio
     async def test_process_session_skips_model_update_when_none(self, mock_db, tmp_path) -> None:
@@ -581,6 +591,8 @@ class TestModelExtraction:
 
         # Verify session model was NOT updated
         mock_session_manager.update_model.assert_not_called()
+        assert mock_session_manager.update_model.call_count == 0
+        assert not mock_session_manager.update_model.called
 
 
 class TestInitialization:
@@ -715,6 +727,8 @@ class TestProcessJsonSession:
 
         # Should not call get_state since we skipped
         processor.message_manager.get_state.assert_not_called()
+        assert processor.message_manager.get_state.call_count == 0
+        assert not processor.message_manager.get_state.called
 
     @pytest.mark.asyncio
     async def test_process_json_session_incremental(self, mock_db, tmp_path) -> None:
@@ -767,6 +781,8 @@ class TestProcessJsonSession:
 
         await processor._process_json_session("session-1", "/nonexistent/file.json")
         processor.message_manager.get_state.assert_not_called()
+        assert processor.message_manager.get_state.call_count == 0
+        assert not processor.message_manager.get_state.called
 
     @pytest.mark.asyncio
     async def test_process_json_session_invalid_json(self, mock_db, tmp_path, caplog) -> None:
@@ -967,6 +983,8 @@ class TestCodexMcpHookSynthesis:
         await processor._process_session("sid", str(transcript))
 
         hook_manager.handle.assert_not_called()
+        assert hook_manager.handle.call_count == 0
+        assert not hook_manager.handle.called
 
     @pytest.mark.asyncio
     async def test_no_hook_manager_is_noop(self, mock_db, tmp_path) -> None:

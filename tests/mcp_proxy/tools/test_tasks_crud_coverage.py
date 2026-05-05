@@ -262,6 +262,8 @@ class TestUpdateTaskTool:
             verification="Run tests",
             sequence_order=5,
         )
+        assert mock_task_manager.update_task.call_count >= 1
+        assert mock_task_manager.update_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_update_task_task_type(self, mock_task_manager, mock_sync_manager):
@@ -457,6 +459,8 @@ class TestUpdateTaskTool:
         mock_task_manager.update_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", title="Updated Title"
         )
+        assert mock_task_manager.update_task.call_count >= 1
+        assert mock_task_manager.update_task.call_args is not None
 
 
 # =============================================================================
@@ -580,6 +584,8 @@ class TestDeleteTaskTool:
         mock_task_manager.delete_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", cascade=False, unlink=False
         )
+        assert mock_task_manager.delete_task.call_count >= 1
+        assert mock_task_manager.delete_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_delete_task_with_unlink(self, mock_task_manager, mock_sync_manager):
@@ -680,6 +686,8 @@ class TestListTasksTool:
                 limit=10,
                 project_id="proj-1",
             )
+            assert mock_task_manager.list_tasks.call_count >= 1
+            assert mock_task_manager.list_tasks.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_tasks_all_projects(self, mock_task_manager, mock_sync_manager):
