@@ -686,7 +686,7 @@ class TestStop:
         assert wait_for_timeouts == [15.0, 15.0]
 
     @pytest.mark.asyncio
-    async def test_stop_terminate_timeout_escalates_to_kill_and_logs_context(self) -> None:
+    async def test_stop_idle_terminate_timeout_kills_and_logs_debug_context(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         proc.wait.side_effect = [TimeoutError(), TimeoutError(), None]
         wait_for_timeouts: list[float] = []
@@ -706,6 +706,49 @@ class TestStop:
                     new=_recording_wait_for(wait_for_timeouts),
                 ),
                 patch("gobby.adapters.gemini_acp_client.logger.warning") as warning,
+                patch("gobby.adapters.gemini_acp_client.logger.debug") as debug,
+            ):
+                await client.stop()
+
+        proc.stdin.close.assert_called_once()
+        proc.terminate.assert_called_once()
+        proc.kill.assert_called_once()
+        assert wait_for_timeouts == [15.0, 15.0]
+        warning.assert_not_called()
+        forced_cleanup_calls = [
+            call
+            for call in debug.call_args_list
+            if "did not exit after terminate; killing" in call.args[0]
+        ]
+        assert len(forced_cleanup_calls) == 1
+        message = forced_cleanup_calls[0].args[0] % forced_cleanup_calls[0].args[1:]
+        assert "provider=gemini" in message
+        assert "pid=12345" in message
+        assert "purpose=model-discovery" in message
+
+    @pytest.mark.asyncio
+    async def test_stop_active_terminate_timeout_kills_and_logs_warning_context(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
+        proc.wait.side_effect = [TimeoutError(), TimeoutError(), None]
+        wait_for_timeouts: list[float] = []
+
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient(purpose="runtime")
+                await client.start()
+                client._active_operations = 1
+
+            with (
+                patch(
+                    "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                    new=_recording_wait_for(wait_for_timeouts),
+                ),
+                patch("gobby.adapters.gemini_acp_client.logger.warning") as warning,
+                patch("gobby.adapters.gemini_acp_client.logger.debug") as debug,
             ):
                 await client.stop()
 
@@ -717,7 +760,10 @@ class TestStop:
         message = warning.call_args.args[0] % warning.call_args.args[1:]
         assert "provider=gemini" in message
         assert "pid=12345" in message
-        assert "purpose=model-discovery" in message
+        assert "purpose=runtime" in message
+        assert not any(
+            "did not exit after terminate; killing" in call.args[0] for call in debug.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_stop_when_not_started_is_noop(self) -> None:

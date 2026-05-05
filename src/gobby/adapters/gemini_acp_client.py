@@ -160,6 +160,7 @@ class GeminiACPClient:
         self._session_id: str | None = None
         self._session_info: dict[str, Any] = {}
         self._io_lock = asyncio.Lock()
+        self._active_operations = 0
 
     @property
     def is_started(self) -> bool:
@@ -319,66 +320,72 @@ class GeminiACPClient:
             return await self._send_request_locked(method, params)
 
     async def _send_request_locked(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        if not self._process or not self._process.stdin or not self._process.stdout:
-            raise RuntimeError("GeminiACPClient process not available")
+        self._active_operations += 1
+        try:
+            if not self._process or not self._process.stdin or not self._process.stdout:
+                raise RuntimeError("GeminiACPClient process not available")
 
-        request = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-            "id": _make_id(),
-        }
+            request = {
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params,
+                "id": _make_id(),
+            }
 
-        request_line = json.dumps(request) + "\n"
-        self._process.stdin.write(request_line.encode())
-        await self._process.stdin.drain()
-        logger.debug(f"Sent ACP request: {method}")
-        pending_session_id: str | None = None
+            request_line = json.dumps(request) + "\n"
+            self._process.stdin.write(request_line.encode())
+            await self._process.stdin.drain()
+            logger.debug(f"Sent ACP request: {method}")
+            pending_session_id: str | None = None
 
-        while True:
-            try:
-                line = await asyncio.wait_for(
-                    self._process.stdout.readline(),
-                    timeout=self._request_timeout,
+            while True:
+                try:
+                    line = await asyncio.wait_for(
+                        self._process.stdout.readline(),
+                        timeout=self._request_timeout,
+                    )
+                except TimeoutError as exc:
+                    raise TimeoutError(
+                        f"Timed out waiting for ACP {method} response "
+                        f"after {self._request_timeout:.1f}s"
+                    ) from exc
+                if not line:
+                    message = f"EOF while waiting for {method} response"
+                    stderr_text = await self._read_exit_stderr()
+                    if stderr_text:
+                        message = f"{message}; stderr: {stderr_text}"
+                    raise RuntimeError(message)
+
+                line_str = line.decode().strip()
+                if not line_str:
+                    continue
+
+                try:
+                    data = json.loads(line_str)
+                except json.JSONDecodeError:
+                    logger.warning(f"Non-JSON line during {method}: {line_str[:200]}")
+                    continue
+
+                if "id" in data:
+                    if "error" in data:
+                        err = data["error"]
+                        raise RuntimeError(f"ACP {method} error: {err.get('message', err)}")
+                    result = data.get("result", {})
+                    if not isinstance(result, dict):
+                        result = {}
+                    if pending_session_id and not _extract_session_id(result):
+                        result = {**result, "sessionId": pending_session_id}
+                    return result
+
+                if not pending_session_id:
+                    normalized = self._normalize_notification(data)
+                    if normalized.event_type == "init":
+                        pending_session_id = _extract_session_id(normalized.data)
+                logger.debug(
+                    f"Skipping notification during {method}: {data.get('method', 'unknown')}"
                 )
-            except TimeoutError as exc:
-                raise TimeoutError(
-                    f"Timed out waiting for ACP {method} response "
-                    f"after {self._request_timeout:.1f}s"
-                ) from exc
-            if not line:
-                message = f"EOF while waiting for {method} response"
-                stderr_text = await self._read_exit_stderr()
-                if stderr_text:
-                    message = f"{message}; stderr: {stderr_text}"
-                raise RuntimeError(message)
-
-            line_str = line.decode().strip()
-            if not line_str:
-                continue
-
-            try:
-                data = json.loads(line_str)
-            except json.JSONDecodeError:
-                logger.warning(f"Non-JSON line during {method}: {line_str[:200]}")
-                continue
-
-            if "id" in data:
-                if "error" in data:
-                    err = data["error"]
-                    raise RuntimeError(f"ACP {method} error: {err.get('message', err)}")
-                result = data.get("result", {})
-                if not isinstance(result, dict):
-                    result = {}
-                if pending_session_id and not _extract_session_id(result):
-                    result = {**result, "sessionId": pending_session_id}
-                return result
-
-            if not pending_session_id:
-                normalized = self._normalize_notification(data)
-                if normalized.event_type == "init":
-                    pending_session_id = _extract_session_id(normalized.data)
-            logger.debug(f"Skipping notification during {method}: {data.get('method', 'unknown')}")
+        finally:
+            self._active_operations = max(0, self._active_operations - 1)
 
     async def _read_exit_stderr(self) -> str | None:
         """Read stderr when the subprocess has already exited."""
@@ -436,8 +443,11 @@ class GeminiACPClient:
 
         # Acquire manually (not `async with`) because the lock must remain held
         # across the `yield` points of this async generator. Released in finally.
-        await self._io_lock.acquire()
+        self._active_operations += 1
+        lock_acquired = False
         try:
+            await self._io_lock.acquire()
+            lock_acquired = True
             request: dict[str, Any] = {
                 "jsonrpc": "2.0",
                 "method": "session/prompt",
@@ -460,7 +470,9 @@ class GeminiACPClient:
             async for event in self._read_stream():
                 yield event
         finally:
-            self._io_lock.release()
+            if lock_acquired:
+                self._io_lock.release()
+            self._active_operations = max(0, self._active_operations - 1)
 
     async def _read_stream(self) -> AsyncIterator[StreamEvent]:
         """Read and parse NDJSON lines from the subprocess stdout.
@@ -732,7 +744,10 @@ class GeminiACPClient:
                     try:
                         await asyncio.wait_for(process.wait(), timeout=15.0)
                     except TimeoutError:
-                        logger.warning(
+                        log_forced_cleanup = (
+                            logger.warning if self._active_operations > 0 else logger.debug
+                        )
+                        log_forced_cleanup(
                             "%s ACP process did not exit after terminate; killing "
                             "provider=%s pid=%s purpose=%s",
                             self._display_name,
@@ -751,4 +766,5 @@ class GeminiACPClient:
             self._started = False
             self._session_id = None
             self._session_info = {}
+            self._active_operations = 0
             logger.debug("%s ACP client stopped", self._display_name)
