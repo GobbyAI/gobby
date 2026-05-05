@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`DiffBlock — synthetic mode > snapshot of standard add+remove diff stays stable 1`] = `
+exports[`DiffBlock — inline variant from synthetic lines > snapshot of standard add+remove diff stays stable 1`] = `
 <div
   style="background: var(--code-bg); color: rgb(171, 178, 191); text-shadow: 0 1px rgba(0, 0, 0, 0.3); font-family: "Fira Code", "Fira Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; direction: ltr; text-align: left; white-space: pre-wrap; word-spacing: normal; word-break: normal; line-height: 1.5; tab-size: 2; hyphens: none; padding: 0.75rem; margin: 0px; overflow: auto; border-radius: 0.25rem; font-size: 0.75rem; max-height: 24rem; overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere;"
 >

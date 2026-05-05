@@ -1,6 +1,7 @@
 import { memo, useState, useCallback, useEffect } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { DiffBlock } from '../shared/DiffBlock'
+import { parseUnifiedDiffLines } from '../shared/DiffBlock.helpers'
 import type { ChangedFile } from '../../hooks/useFileChanges'
 
 interface FileChangesTabProps {
@@ -155,8 +156,9 @@ export const FileChangesTab = memo(function FileChangesTab({
             </div>
           ) : (
             <DiffBlock
-              mode="unified"
-              diff={diff}
+              lines={parseUnifiedDiffLines(diff)}
+              language="diff"
+              variant="inline"
               path={selectedPath}
               header
               onCopy={() => {

@@ -41,6 +41,7 @@ import {
 } from './ToolResultBlocks'
 import { ToolResultImage } from './ToolResultImage'
 import { DiffBlock } from '../shared/DiffBlock'
+import { computeSyntheticDiffLines } from '../shared/DiffBlock.helpers'
 import { TOOL_ERROR_PRE_CLASS, TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
 
 interface ToolCallCardProps {
@@ -93,7 +94,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
         <div className="text-muted-foreground mb-1 font-medium">
           Edit <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <DiffBlock mode="synthetic" oldStr={args.old_string as string} newStr={args.new_string as string} language={language} />
+        <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} />
       </div>
     )
   }

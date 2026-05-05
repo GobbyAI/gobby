@@ -1,38 +1,36 @@
 import React, { useCallback, useMemo } from 'react'
 
 import { CodeBlock } from './CodeBlock'
-import { computeLineDiff } from '../chat/ToolCallCard.helpers'
+import {
+  type DiffLine,
+  gutterColorForType,
+  tintForType,
+} from './DiffBlock.helpers'
 
-type DiffEntryType = 'add' | 'remove' | 'keep' | 'hunk' | 'meta'
+export type DiffVariant = 'inline' | 'side-by-side'
 
-type DiffEntry = { type: DiffEntryType; line: string }
+export type DiffLineStyleFn = (
+  lineNumber: number,
+  line: DiffLine,
+) => React.CSSProperties
 
-type SyntheticInput = {
-  mode: 'synthetic'
-  oldStr: string
-  newStr: string
+export type DiffBlockProps = {
+  lines: DiffLine[]
   language?: string
-}
-
-type UnifiedInput = {
-  mode: 'unified'
-  diff: string
-  path?: string
-  onCopy?: () => void
+  variant?: DiffVariant
   /**
-   * Render the path/copy header bar above the diff. Activity-panel surfaces
-   * pass `header` to mirror the previous DiffView chrome; chat-side callers
-   * omit it.
+   * Override the per-line gutter style. Return value is merged over the
+   * default type-based color (success-foreground for adds, error for
+   * removes, info for hunks, muted for everything else).
    */
-  header?: boolean
-}
-
-type CommonProps = {
+  lineNumberStyleFn?: DiffLineStyleFn
   customStyle?: React.CSSProperties
   className?: string
+  /** Activity-panel chrome: render the path/copy header bar. */
+  header?: boolean
+  path?: string
+  onCopy?: () => void
 }
-
-export type DiffBlockProps = CommonProps & (SyntheticInput | UnifiedInput)
 
 const TOOL_RESULT_DIFF_STYLE: React.CSSProperties = {
   margin: 0,
@@ -46,7 +44,7 @@ const TOOL_RESULT_DIFF_STYLE: React.CSSProperties = {
   overflowWrap: 'anywhere',
 }
 
-const UNIFIED_DIFF_STYLE: React.CSSProperties = {
+const FULL_HEIGHT_DIFF_STYLE: React.CSSProperties = {
   margin: 0,
   padding: 0,
   fontSize: '0.75rem',
@@ -55,118 +53,88 @@ const UNIFIED_DIFF_STYLE: React.CSSProperties = {
   overflow: 'auto',
 }
 
-function classifyUnifiedLine(line: string): DiffEntryType {
-  if (line.startsWith('@@')) return 'hunk'
-  if (
-    line.startsWith('+++') ||
-    line.startsWith('---') ||
-    line.startsWith('diff ') ||
-    line.startsWith('index ')
-  ) {
-    return 'meta'
-  }
-  if (line.startsWith('+')) return 'add'
-  if (line.startsWith('-')) return 'remove'
-  return 'keep'
-}
-
-function tintForType(type: DiffEntryType): string {
-  if (type === 'add') {
-    return 'color-mix(in srgb, var(--color-success-foreground) 15%, transparent)'
-  }
-  if (type === 'remove') {
-    return 'color-mix(in srgb, var(--color-error) 25%, transparent)'
-  }
-  if (type === 'hunk') {
-    return 'color-mix(in srgb, var(--color-info) 8%, transparent)'
-  }
-  return 'transparent'
-}
-
-function gutterColorForType(type: DiffEntryType): string {
-  if (type === 'add') return 'var(--color-success-foreground)'
-  if (type === 'remove') return 'var(--color-error)'
-  if (type === 'hunk') return 'var(--color-info)'
-  return 'var(--text-muted)'
-}
-
 /**
- * Shared diff renderer. Two input modes:
+ * Shared diff renderer. Pass a normalized `lines: DiffLine[]` array and
+ * a `variant`:
  *
- * - `mode="synthetic"` — caller supplies before/after strings; the component
- *   computes a longest-common-subsequence line diff and prefixes each row
- *   with `+ `/`- `/`  `.
- * - `mode="unified"` — caller supplies raw unified-diff text (e.g. from
- *   `git diff`); each row is classified by its leading prefix and rendered
- *   through Prism's `diff` language so meta/hunk lines pick up syntax color.
+ * - `variant="inline"` (default) — single column, each row tinted by
+ *   type via the underlying `CodeBlock`'s `lineProps` callback.
+ * - `variant="side-by-side"` — two columns: removes on the left, adds
+ *   on the right, keeps mirrored to both. Hunk/meta rows stretch the
+ *   full width above each section.
  *
- * Both modes share the same green/red gutter + per-row background tint via
- * `lineNumberStyleFn` and `lineProps` callbacks on the underlying `CodeBlock`.
+ * Use `computeSyntheticDiffLines` or `parseUnifiedDiffLines` from
+ * `./DiffBlock.helpers` to build the `lines` array from the two common
+ * input shapes.
  */
-export function DiffBlock(props: DiffBlockProps) {
-  const computed = useMemo(() => {
-    if (props.mode === 'unified') {
-      const lines = props.diff.split('\n')
-      const entries: DiffEntry[] = lines.map((line) => ({
-        type: classifyUnifiedLine(line),
-        line,
-      }))
-      return {
-        entries,
-        content: lines.join('\n'),
-        language: 'diff',
-      }
-    }
-    const raw = computeLineDiff(props.oldStr, props.newStr)
-    const entries: DiffEntry[] = raw.map(({ type, line }) => ({ type, line }))
-    const content = raw
-      .map((e) => {
-        const prefix = e.type === 'add' ? '+' : e.type === 'remove' ? '-' : ' '
-        return `${prefix} ${e.line}`
-      })
-      .join('\n')
-    return { entries, content, language: props.language ?? 'text' }
-  }, [props])
+export function DiffBlock({
+  lines,
+  language = 'text',
+  variant = 'inline',
+  lineNumberStyleFn,
+  customStyle,
+  className,
+  header,
+  path,
+  onCopy,
+}: DiffBlockProps) {
+  const content = useMemo(() => lines.map((l) => l.text).join('\n'), [lines])
 
   const lineProps = useCallback(
     (lineNumber: number): React.HTMLProps<HTMLElement> => {
-      const entry = computed.entries[lineNumber - 1]
+      const entry = lines[lineNumber - 1]
       if (!entry) return { style: { display: 'block' } }
       return {
         style: { background: tintForType(entry.type), display: 'block' },
       }
     },
-    [computed],
+    [lines],
   )
 
-  const lineNumberStyleFn = useCallback(
+  const resolvedLineNumberStyleFn = useCallback(
     (lineNumber: number) => {
-      const entry = computed.entries[lineNumber - 1]
-      return {
+      const entry = lines[lineNumber - 1]
+      const base: React.CSSProperties = {
         color: entry ? gutterColorForType(entry.type) : 'var(--text-muted)',
       }
+      if (lineNumberStyleFn && entry) {
+        return { ...base, ...lineNumberStyleFn(lineNumber, entry) }
+      }
+      return base
     },
-    [computed],
+    [lines, lineNumberStyleFn],
   )
 
-  const defaultStyle =
-    props.mode === 'unified' ? UNIFIED_DIFF_STYLE : TOOL_RESULT_DIFF_STYLE
+  const defaultStyle = header ? FULL_HEIGHT_DIFF_STYLE : TOOL_RESULT_DIFF_STYLE
+  const resolvedStyle = customStyle ?? defaultStyle
 
-  const block = (
+  const inline = (
     <CodeBlock
-      language={computed.language}
+      language={language}
       startingLineNumber={1}
       wrapLines
       lineProps={lineProps}
-      lineNumberStyleFn={lineNumberStyleFn}
-      customStyle={props.customStyle ?? defaultStyle}
-      className={props.className}
+      lineNumberStyleFn={resolvedLineNumberStyleFn}
+      customStyle={resolvedStyle}
+      className={className}
     >
-      {computed.content}
+      {content}
     </CodeBlock>
   )
 
-  if (props.mode === 'unified' && props.header) {
+  const body =
+    variant === 'side-by-side' ? (
+      <SideBySideDiff
+        lines={lines}
+        language={language}
+        customStyle={resolvedStyle}
+        className={className}
+      />
+    ) : (
+      inline
+    )
+
+  if (header) {
     return (
       <div className="flex flex-col h-full">
         <div
@@ -174,11 +142,11 @@ export function DiffBlock(props: DiffBlockProps) {
           style={{ height: 36, background: 'var(--bg-secondary)' }}
         >
           <span className="text-xs font-mono text-muted-foreground truncate flex-1">
-            {props.path}
+            {path}
           </span>
-          {props.onCopy && (
+          {onCopy && (
             <button
-              onClick={props.onCopy}
+              onClick={onCopy}
               className="text-xs text-muted-foreground hover:text-foreground shrink-0"
               title="Copy diff"
             >
@@ -186,10 +154,87 @@ export function DiffBlock(props: DiffBlockProps) {
             </button>
           )}
         </div>
-        <div className="flex-1 min-h-0 overflow-auto">{block}</div>
+        <div className="flex-1 min-h-0 overflow-auto">{body}</div>
       </div>
     )
   }
 
-  return block
+  return body
+}
+
+type SideBySideProps = {
+  lines: DiffLine[]
+  language: string
+  customStyle: React.CSSProperties
+  className?: string
+}
+
+/**
+ * Minimal side-by-side variant. Splits lines into a left column
+ * (removes + keeps + hunk/meta) and a right column (adds + keeps +
+ * hunk/meta), preserving the existing per-row tinting via lineProps.
+ * Row alignment relies on each side keeping its own ordering — this
+ * is intentionally simpler than a full LCS-aware aligner and is good
+ * enough for review at a glance.
+ */
+function SideBySideDiff({
+  lines,
+  language,
+  customStyle,
+  className,
+}: SideBySideProps) {
+  const oldLines = useMemo(
+    () => lines.filter((l) => l.type !== 'add'),
+    [lines],
+  )
+  const newLines = useMemo(
+    () => lines.filter((l) => l.type !== 'remove'),
+    [lines],
+  )
+
+  const sideLineProps = (sideLines: DiffLine[]) =>
+    (lineNumber: number): React.HTMLProps<HTMLElement> => {
+      const entry = sideLines[lineNumber - 1]
+      if (!entry) return { style: { display: 'block' } }
+      return {
+        style: { background: tintForType(entry.type), display: 'block' },
+      }
+    }
+
+  const sideLineNumberStyleFn = (sideLines: DiffLine[]) =>
+    (lineNumber: number): React.CSSProperties => {
+      const entry = sideLines[lineNumber - 1]
+      return {
+        color: entry ? gutterColorForType(entry.type) : 'var(--text-muted)',
+      }
+    }
+
+  return (
+    <div className={className} style={{ display: 'flex', gap: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, borderRight: '1px solid var(--border)' }}>
+        <CodeBlock
+          language={language}
+          startingLineNumber={1}
+          wrapLines
+          lineProps={sideLineProps(oldLines)}
+          lineNumberStyleFn={sideLineNumberStyleFn(oldLines)}
+          customStyle={customStyle}
+        >
+          {oldLines.map((l) => l.text).join('\n')}
+        </CodeBlock>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <CodeBlock
+          language={language}
+          startingLineNumber={1}
+          wrapLines
+          lineProps={sideLineProps(newLines)}
+          lineNumberStyleFn={sideLineNumberStyleFn(newLines)}
+          customStyle={customStyle}
+        >
+          {newLines.map((l) => l.text).join('\n')}
+        </CodeBlock>
+      </div>
+    </div>
+  )
 }
