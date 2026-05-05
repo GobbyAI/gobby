@@ -81,6 +81,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.quick is True
     assert opts.skip_stages == ["pr"]
     assert opts.isolation == "worktree"
+    assert opts.isolation_explicit is True
     assert opts.no_merge is False
     assert opts.pr == "123"
     assert [
@@ -98,6 +99,29 @@ def test_buildrequest_rejects_removed_fields() -> None:
 
     with pytest.raises(ValueError):
         BuildRequest(input_ref="#42", profile="quick")
+
+
+def test_post_api_build_omitted_isolation_is_not_an_override() -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build", new=AsyncMock(return_value=build_result)
+    ) as build:
+        response = _client().post("/api/build", json={"input_ref": "#42", "quick": True})
+
+    assert response.status_code == 200
+    opts = build.call_args.args[1]
+    assert opts.isolation == "worktree"
+    assert opts.isolation_explicit is False
 
 
 def test_post_api_build_returns_400_for_validation_errors() -> None:

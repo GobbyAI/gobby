@@ -37,7 +37,7 @@ class BuildRequest(BaseModel):
     input_ref: str
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
-    isolation: Isolation = "worktree"
+    isolation: Isolation | None = None
     no_merge: bool = False
     pr: str | None = None
     stage: list[str] = Field(default_factory=list)
@@ -61,7 +61,8 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
     return BuildOptions(
         quick=request_data.quick,
         skip_stages=request_data.skip_stages,
-        isolation=request_data.isolation,
+        isolation=request_data.isolation or "worktree",
+        isolation_explicit=request_data.isolation is not None,
         no_merge=request_data.no_merge,
         pr=request_data.pr,
         stage_caps=_parse_stage_options(request_data.stage),

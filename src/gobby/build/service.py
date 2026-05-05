@@ -33,6 +33,7 @@ class BuildOptions:
     quick: bool = False
     skip_stages: list[str] = field(default_factory=list)
     isolation: Isolation = "worktree"
+    isolation_explicit: bool = True
     no_merge: bool = False
     pr: str | None = None
     stage_caps: list[StageCapOverride] = field(default_factory=list)
@@ -149,6 +150,7 @@ async def build(
     skip_stages = _validate_skip_stages(opts.skip_stages)
     task_manager = LocalTaskManager(db)
     input_kind, task_or_plan = _resolve_input(input_ref, task_manager, project_id)
+    opts = _apply_task_ref_isolation_default(opts, task_or_plan)
 
     _validate_no_merge(opts)
     _validate_clones_dir(opts)
@@ -407,6 +409,14 @@ def _resolve_input(
     if not plan_file.exists() or not plan_file.is_file():
         raise ValueError(f"plan file not found: {input_ref}")
     return "plan_file", plan_file
+
+
+def _apply_task_ref_isolation_default(
+    opts: BuildOptions, task_or_plan: Task | Path
+) -> BuildOptions:
+    if opts.isolation_explicit or not isinstance(task_or_plan, Task):
+        return opts
+    return replace(opts, isolation=task_or_plan.isolation.value)
 
 
 def _validate_skip_stages(skip_stages: list[str]) -> list[str]:

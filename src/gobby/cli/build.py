@@ -117,11 +117,10 @@ def _echo_build_result(result: BuildResult) -> None:
 
 
 def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "input_ref": input_ref,
         "quick": opts.quick,
         "skip_stages": opts.skip_stages,
-        "isolation": opts.isolation,
         "no_merge": opts.no_merge,
         "pr": opts.pr,
         "stage": _stage_cap_options(opts.stage_caps),
@@ -129,6 +128,9 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "agent": opts.assigned_agent,
         "reset_expansion_output": opts.reset_expansion_output,
     }
+    if opts.isolation_explicit:
+        payload["isolation"] = opts.isolation
+    return payload
 
 
 def _result_from_payload(payload: dict[str, object]) -> BuildResult:
@@ -277,8 +279,7 @@ def _open_database() -> LocalDatabase:
 @click.option(
     "--isolation",
     type=click.Choice(["none", "worktree", "clone"]),
-    default="worktree",
-    show_default=True,
+    default=None,
     help="Execution isolation mode.",
 )
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
@@ -300,7 +301,7 @@ def build_command(
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
-    isolation: str,
+    isolation: str | None,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -332,7 +333,8 @@ def build_command(
     opts = BuildOptions(
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
-        isolation=cast(Isolation, isolation),
+        isolation=cast(Isolation, isolation) if isolation is not None else "worktree",
+        isolation_explicit=isolation is not None,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),

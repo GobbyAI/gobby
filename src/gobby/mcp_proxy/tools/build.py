@@ -33,7 +33,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         input_ref: str,
         quick: bool = False,
         skip_stages: list[str] | None = None,
-        isolation: BuildIsolation = "worktree",
+        isolation: BuildIsolation | None = None,
         no_merge: bool = False,
         pr: str | None = None,
         stage: list[str] | None = None,
@@ -51,7 +51,8 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         opts = BuildOptions(
             quick=quick,
             skip_stages=skip_stages or [],
-            isolation=isolation,
+            isolation=isolation or "worktree",
+            isolation_explicit=isolation is not None,
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),
@@ -92,7 +93,6 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "isolation": {
                     "type": "string",
                     "enum": ["none", "worktree", "clone"],
-                    "default": "worktree",
                 },
                 "no_merge": {"type": "boolean", "default": False},
                 "pr": {"type": "string"},

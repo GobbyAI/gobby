@@ -99,6 +99,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.quick is True
     assert opts.skip_stages == ["qa", "pr"]
     assert opts.isolation == "clone"
+    assert opts.isolation_explicit is True
     assert opts.no_merge is True
     assert opts.pr == "123"
     assert [
@@ -115,6 +116,54 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
         "db": db_cls.return_value,
         "project_id": "project-1",
     }
+
+
+def test_build_cli_omitted_isolation_is_not_an_override(tmp_path: Path) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build._try_daemon_build", return_value=None),
+        patch("gobby.cli.build.asyncio.run", return_value=build_result),
+        patch("gobby.cli.build.build", new=AsyncMock()) as build,
+    ):
+        result = CliRunner().invoke(cli, ["build", str(plan_file), "--quick"])
+
+    assert result.exit_code == 0
+    opts = build.call_args.args[1]
+    assert opts.quick is True
+    assert opts.isolation == "worktree"
+    assert opts.isolation_explicit is False
+    assert build.call_args.kwargs == {
+        "db": db_cls.return_value,
+        "project_id": "project-1",
+    }
+
+
+def test_build_payload_omits_isolation_when_not_explicit() -> None:
+    from gobby.build.service import BuildOptions
+    from gobby.cli.build import _build_payload
+
+    payload = _build_payload(
+        BuildOptions(quick=True, isolation="worktree", isolation_explicit=False),
+        "#42",
+    )
+
+    assert "isolation" not in payload
 
 
 def test_build_cli_without_input_invokes_interactive_build_skill() -> None:

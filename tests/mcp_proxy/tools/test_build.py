@@ -32,6 +32,7 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["properties"]["input_ref"]["type"] == "string"
     assert schema["properties"]["quick"]["type"] == "boolean"
     assert set(schema["properties"]["isolation"]["enum"]) == {"none", "worktree", "clone"}
+    assert "default" not in schema["properties"]["isolation"]
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
     assert schema["properties"]["no_merge"]["type"] == "boolean"
     assert schema["properties"]["pr"]["type"] == "string"
@@ -114,6 +115,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     assert opts.quick is True
     assert opts.skip_stages == ["qa"]
     assert opts.isolation == "none"
+    assert opts.isolation_explicit is True
     assert opts.no_merge is False
     assert opts.pr == "123"
     assert [
@@ -126,6 +128,31 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     assert call.kwargs["db"] is temp_db
     assert call.kwargs["project_id"] == "project-1"
     assert "services" in call.kwargs
+
+
+@pytest.mark.asyncio
+async def test_build_task_tool_omitted_isolation_is_not_an_override(temp_db) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+
+    registry = _registry(temp_db)
+    build_task = registry.get_tool("build_task")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with patch(
+        "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)
+    ) as build:
+        await build_task(input_ref="#42", quick=True, project_id="project-1")
+
+    opts = build.call_args.args[1]
+    assert opts.isolation == "worktree"
+    assert opts.isolation_explicit is False
 
 
 @pytest.mark.asyncio

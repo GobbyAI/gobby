@@ -352,6 +352,65 @@ async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
 
 
 @pytest.mark.asyncio
+async def test_build_existing_leaf_omitted_isolation_preserves_task_isolation(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    leaf = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs leaf",
+        category="docs",
+        task_type="task",
+    )
+    task_manager.update_task(leaf.id, isolation="none")
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["development"])
+
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(quick=True, isolation="worktree", isolation_explicit=False),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    updated = task_manager.get_task(leaf.id)
+    assert updated.isolation == "none"
+    assert [row.stage_name for row in task_manager.stage_states.list_for_task(leaf.id)] == [
+        "development"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_build_existing_leaf_explicit_isolation_overrides_task_isolation(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    leaf = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Explicit isolation leaf",
+        category="code",
+        task_type="task",
+    )
+    task_manager.update_task(leaf.id, isolation="none")
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["development", "merge"])
+
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(isolation="worktree", isolation_explicit=True),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    updated = task_manager.get_task(leaf.id)
+    assert updated.isolation == "worktree"
+
+
+@pytest.mark.asyncio
 async def test_build_rerun_same_manifest_preserves_active_stage(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
