@@ -17,6 +17,19 @@ interface BranchIndicatorProps {
   variant?: 'toolbar' | 'select'
 }
 
+async function readCheckoutError(response: Response, branchName: string): Promise<string> {
+  try {
+    const data: unknown = await response.json()
+    const detail = (data as { detail?: unknown } | null)?.detail
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail
+    }
+  } catch {
+    // Fall through to status text.
+  }
+  return response.statusText || `Failed to switch to ${branchName}`
+}
+
 export function BranchIndicator({
   currentBranch,
   worktreePath,
@@ -30,6 +43,7 @@ export function BranchIndicator({
   const [branches, setBranches] = useState<BranchInfo[]>([])
   const [mainRepoPath, setMainRepoPath] = useState<string | null>(null)
   const [apiBranch, setApiBranch] = useState<string | null>(null)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const buildParams = useCallback(() => {
@@ -90,20 +104,46 @@ export function BranchIndicator({
 
   const handleToggle = () => {
     if (disabled) return
-    if (!isOpen) fetchDropdownData()
+    if (!isOpen) {
+      setCheckoutError(null)
+      fetchDropdownData()
+    }
     setIsOpen(!isOpen)
   }
 
   const handleSelectWorktree = (path: string, id?: string) => {
+    setCheckoutError(null)
     onWorktreeChange(path, id)
     setIsOpen(false)
   }
 
-  const handleSelectBranch = (_branchName: string) => {
-    if (mainRepoPath) {
-      onWorktreeChange(mainRepoPath)
+  const handleSelectBranch = async (branchName: string) => {
+    setCheckoutError(null)
+    if (!mainRepoPath) {
+      setCheckoutError('Repository path unavailable')
+      return
     }
-    setIsOpen(false)
+
+    const params = buildParams()
+    try {
+      const response = await fetch(`/api/source-control/branches/checkout?${params}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch_name: branchName }),
+      })
+
+      if (!response.ok) {
+        setCheckoutError(await readCheckoutError(response, branchName))
+        return
+      }
+
+      const data = await response.json()
+      if (data.current_branch) setApiBranch(data.current_branch)
+      onWorktreeChange(data.repo_path || mainRepoPath)
+      setIsOpen(false)
+    } catch {
+      setCheckoutError(`Failed to switch to ${branchName}`)
+    }
   }
 
   const effectiveBranch = currentBranch ?? apiBranch
@@ -116,7 +156,7 @@ export function BranchIndicator({
   const worktreeBranches = new Set(worktrees.map(wt => wt.branch_name))
   // Local branches without worktrees, excluding current
   const standaloneBranches = branches.filter(
-    b => !worktreeBranches.has(b.name) && !b.is_current
+    b => !b.is_remote && !worktreeBranches.has(b.name) && !b.is_current
   )
 
   return (
@@ -159,6 +199,12 @@ export function BranchIndicator({
           role="listbox"
           aria-label="Switch branch or worktree"
         >
+          {checkoutError && (
+            <div role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive">
+              {checkoutError}
+            </div>
+          )}
+
           {/* Worktrees */}
           {worktrees.length > 0 && (
             <>
@@ -197,7 +243,7 @@ export function BranchIndicator({
                   role="option"
                   aria-selected={false}
                   className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted flex items-center gap-2"
-                  onClick={() => handleSelectBranch(b.name)}
+                  onClick={() => { void handleSelectBranch(b.name) }}
                 >
                   <BranchIcon />
                   <span className="truncate">{b.name}</span>

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -642,6 +642,143 @@ class TestListBranches:
         # Only the local "main", not the remote duplicate
         assert len(branches) == 1
         assert branches[0]["is_remote"] is False
+
+
+# ---------------------------------------------------------------------------
+# POST /api/source-control/branches/checkout
+# ---------------------------------------------------------------------------
+
+
+class TestCheckoutBranch:
+    def test_checkout_success_switches_existing_local_branch(self, client, mock_server) -> None:
+        show_ref_result = MagicMock(returncode=0, stdout="")
+        switch_result = MagicMock(returncode=0, stdout="", stderr="")
+        current_result = MagicMock(returncode=0, stdout="main\n")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                side_effect=[show_ref_result, switch_result, current_result],
+            ) as mock_git,
+        ):
+            response = client.post(
+                "/api/source-control/branches/checkout",
+                json={"branch_name": "main"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {
+            "success": True,
+            "current_branch": "main",
+            "repo_path": "/tmp/repo",
+        }
+        assert mock_git.await_args_list == [
+            call(["show-ref", "--verify", "refs/heads/main"], "/tmp/repo"),
+            call(["switch", "main"], "/tmp/repo", timeout=30),
+            call(["branch", "--show-current"], "/tmp/repo"),
+        ]
+
+    def test_checkout_invalid_ref_returns_400(self, client) -> None:
+        response = client.post(
+            "/api/source-control/branches/checkout",
+            json={"branch_name": "..evil"},
+        )
+
+        assert response.status_code == 400
+
+    def test_checkout_no_repo_returns_400(self, client) -> None:
+        with patch(
+            "gobby.servers.routes.source_control._resolve_project",
+            return_value=(None, None),
+        ):
+            response = client.post(
+                "/api/source-control/branches/checkout",
+                json={"branch_name": "main"},
+            )
+
+        assert response.status_code == 400
+
+    def test_checkout_missing_local_branch_returns_404(self, client) -> None:
+        show_ref_result = MagicMock(returncode=1, stdout="", stderr="")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                return_value=show_ref_result,
+            ) as mock_git,
+        ):
+            response = client.post(
+                "/api/source-control/branches/checkout",
+                json={"branch_name": "feature"},
+            )
+
+        assert response.status_code == 404
+        mock_git.assert_awaited_once_with(
+            ["show-ref", "--verify", "refs/heads/feature"],
+            "/tmp/repo",
+        )
+
+    def test_checkout_failed_switch_returns_409(self, client) -> None:
+        show_ref_result = MagicMock(returncode=0, stdout="")
+        switch_result = MagicMock(returncode=1, stdout="", stderr="dirty worktree\n")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                side_effect=[show_ref_result, switch_result],
+            ),
+        ):
+            response = client.post(
+                "/api/source-control/branches/checkout",
+                json={"branch_name": "feature"},
+            )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "dirty worktree"
+
+    def test_checkout_success_invalidates_branch_cache(self, client) -> None:
+        sc_module._cache["branches:proj-1"] = (time.time(), {"branches": ["stale"]})
+        sc_module._cache["prs:owner/repo:open"] = (time.time(), {"prs": ["cached"]})
+
+        show_ref_result = MagicMock(returncode=0, stdout="")
+        switch_result = MagicMock(returncode=0, stdout="", stderr="")
+        current_result = MagicMock(returncode=0, stdout="feature\n")
+
+        with (
+            patch(
+                "gobby.servers.routes.source_control._resolve_project",
+                return_value=("/tmp/repo", None),
+            ),
+            patch(
+                "gobby.servers.routes.source_control._run_git",
+                new_callable=AsyncMock,
+                side_effect=[show_ref_result, switch_result, current_result],
+            ),
+        ):
+            response = client.post(
+                "/api/source-control/branches/checkout?project_id=proj-1",
+                json={"branch_name": "feature"},
+            )
+
+        assert response.status_code == 200
+        assert "branches:proj-1" not in sc_module._cache
+        assert "prs:owner/repo:open" in sc_module._cache
 
 
 # ---------------------------------------------------------------------------
