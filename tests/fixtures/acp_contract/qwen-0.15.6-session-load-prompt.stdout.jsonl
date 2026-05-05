@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"serverInfo":{"name":"qwen","version":"0.15.6"},"capabilities":{"session":true}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"qwen-existing-session"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"qwen-existing-session","update":{"sessionUpdate":"agent_thought_chunk","messageId":"qwen-load-thought-1","content":{"text":"Checking the loaded Qwen fixture."}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"qwen-existing-session","update":{"sessionUpdate":"agent_message_chunk","messageId":"qwen-load-message-1","content":[{"type":"text","text":"Loaded Qwen fixture response."}]}}}
+{"jsonrpc":"2.0","id":3,"result":{"stats":{"inputTokens":17,"outputTokens":9}}}
