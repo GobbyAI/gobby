@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils'
 import { extractImageSrc } from '../../lib/imageSources'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ToolCallCards, ToolChainGroup } from './ToolCallCard'
+import { ToolCallCards } from './ToolCallCard'
 import { UnknownBlockCard } from './UnknownBlockCard'
 import type { A2UISurfaceState, UserAction } from '../canvas'
 import { splitProtocolContent } from './protocolContent'
@@ -70,7 +70,7 @@ function ProtocolAwareText({
         }
 
         return (
-          <ToolChainGroup
+          <ToolCallCards
             key={`${id}-p${index}`}
             toolCalls={[segment.call]}
             onRespond={onRespondToQuestion}
@@ -164,7 +164,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
               }
               if (block.type === 'tool_chain') {
                 return (
-                  <ToolChainGroup
+                  <ToolCallCards
                     key={`${message.id}-b${i}`}
                     toolCalls={block.tool_calls}
                     onRespond={onRespondToQuestion}

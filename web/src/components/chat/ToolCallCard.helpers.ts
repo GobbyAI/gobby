@@ -283,7 +283,7 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
       j++
     }
 
-    if (j - i >= 2) {
+    if (j - i >= 3) {
       const calls = toolCalls.slice(i, j)
       segments.push({
         kind: 'group',
@@ -295,7 +295,9 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
         hasInFlight: calls.some((entry) => entry.status === 'calling'),
       })
     } else {
-      segments.push({ kind: 'single', call })
+      for (let k = i; k < j; k++) {
+        segments.push({ kind: 'single', call: toolCalls[k] })
+      }
     }
 
     i = j
@@ -423,18 +425,6 @@ export function computeLineDiff(
 
 export function extractBase64Image(result: unknown): string | null {
   return extractImageSrc(result)
-}
-
-export function buildChainSummary(toolCalls: ToolCall[]): string {
-  const counts = new Map<string, number>()
-  for (const toolCall of toolCalls) {
-    const name = getToolDisplayName(toolCall)
-    counts.set(name, (counts.get(name) || 0) + 1)
-  }
-
-  return Array.from(counts.entries())
-    .map(([name, count]) => (count > 1 ? `${count} ${name}` : name))
-    .join(', ')
 }
 
 export interface GsqzMetadata {

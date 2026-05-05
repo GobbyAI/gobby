@@ -14,9 +14,6 @@ vi.mock('../ToolCallCard', () => ({
   ToolCallCards: ({ toolCalls }: { toolCalls: unknown[] }) => (
     <div data-testid="tool-calls">{toolCalls.length} tool calls</div>
   ),
-  ToolChainGroup: ({ toolCalls }: { toolCalls: unknown[] }) => (
-    <div data-testid="tool-chain">{toolCalls.length} tools</div>
-  ),
 }))
 
 function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -109,7 +106,7 @@ describe('MessageItem', () => {
 
     const markdowns = screen.getAllByTestId('markdown')
     expect(markdowns).toHaveLength(2)
-    expect(screen.getByTestId('tool-chain')).toBeTruthy()
+    expect(screen.getByTestId('tool-calls')).toBeTruthy()
   })
 
   it('renders protocol tags inside text as collapsed tool chains', () => {
@@ -126,8 +123,8 @@ describe('MessageItem', () => {
     expect(markdowns).toHaveLength(2)
     expect(markdowns[0].textContent).toContain('Visible text')
     expect(markdowns[1].textContent).toContain('Trailing text')
-    expect(screen.getByTestId('tool-chain')).toBeTruthy()
-    expect(screen.getByText('1 tools')).toBeTruthy()
+    expect(screen.getByTestId('tool-calls')).toBeTruthy()
+    expect(screen.getByText('1 tool calls')).toBeTruthy()
   })
 
   it('renders base64 image blocks', () => {

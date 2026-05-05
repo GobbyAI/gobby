@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
 import {
-  buildChainSummary,
   computeLineDiff,
   defaultExpandedForCall,
   extractResultContent,
@@ -567,63 +566,6 @@ describe('computeLineDiff', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// buildChainSummary
-// ---------------------------------------------------------------------------
-describe('buildChainSummary', () => {
-  it('returns empty string for no calls', () => {
-    expect(buildChainSummary([])).toBe('')
-  })
-
-  it('returns single tool name', () => {
-    const calls = [makeCall({ id: '1', tool_name: 'Read' })]
-    expect(buildChainSummary(calls)).toBe('Read')
-  })
-
-  it('counts multiple calls of same type', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'Read' }),
-      makeCall({ id: '2', tool_name: 'Read' }),
-      makeCall({ id: '3', tool_name: 'Read' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('3 Read')
-  })
-
-  it('lists different tools separated by commas', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'Read' }),
-      makeCall({ id: '2', tool_name: 'Bash' }),
-      makeCall({ id: '3', tool_name: 'Edit' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('Read, Bash, Edit')
-  })
-
-  it('mixes counted and single tools', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'Read' }),
-      makeCall({ id: '2', tool_name: 'Read' }),
-      makeCall({ id: '3', tool_name: 'Bash' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('2 Read, Bash')
-  })
-
-  it('formats MCP proxy tool names', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'mcp__gobby__list_tools' }),
-      makeCall({ id: '2', tool_name: 'mcp__gobby__call_tool' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('list_tools, call_tool')
-  })
-
-  it('canonicalizes exec_command groups as Bash', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'exec_command' }),
-      makeCall({ id: '2', tool_name: 'exec_command' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('2 Bash')
-  })
-})
-
 describe('getToolDisplayName', () => {
   it('canonicalizes exec_command to Bash', () => {
     const call = makeCall({ id: '1', tool_name: 'exec_command' })
@@ -888,14 +830,18 @@ describe('defaultExpandedForCall', () => {
 // groupToolCalls — regression: only consecutive same-type runs group
 // ---------------------------------------------------------------------------
 describe('groupToolCalls regression', () => {
-  it('groups consecutive same-tool calls and keeps cross-type sequences split', () => {
+  it('groups consecutive same-tool runs of 3+ and keeps shorter runs flat', () => {
+    // [Bash, Read, Read, Read, Bash, Bash, Bash, Read]
+    // Threshold is 3: Read run (3) groups, Bash run (3) groups, single Bash + trailing Read stay flat.
     const calls = [
       makeCall({ id: '1', tool_name: 'Bash' }),
       makeCall({ id: '2', tool_name: 'Read' }),
       makeCall({ id: '3', tool_name: 'Read' }),
-      makeCall({ id: '4', tool_name: 'Bash' }),
+      makeCall({ id: '4', tool_name: 'Read' }),
       makeCall({ id: '5', tool_name: 'Bash' }),
-      makeCall({ id: '6', tool_name: 'Read' }),
+      makeCall({ id: '6', tool_name: 'Bash' }),
+      makeCall({ id: '7', tool_name: 'Bash' }),
+      makeCall({ id: '8', tool_name: 'Read' }),
     ]
     const segments = groupToolCalls(calls)
     expect(segments).toHaveLength(4)
@@ -908,18 +854,18 @@ describe('groupToolCalls regression', () => {
     expect(segments[1].kind).toBe('group')
     if (segments[1].kind === 'group') {
       expect(segments[1].toolName).toBe('Read')
-      expect(segments[1].tool_calls.map((c) => c.id)).toEqual(['2', '3'])
+      expect(segments[1].tool_calls.map((c) => c.id)).toEqual(['2', '3', '4'])
     }
 
     expect(segments[2].kind).toBe('group')
     if (segments[2].kind === 'group') {
       expect(segments[2].toolName).toBe('Bash')
-      expect(segments[2].tool_calls.map((c) => c.id)).toEqual(['4', '5'])
+      expect(segments[2].tool_calls.map((c) => c.id)).toEqual(['5', '6', '7'])
     }
 
     expect(segments[3].kind).toBe('single')
     if (segments[3].kind === 'single') {
-      expect(segments[3].call.id).toBe('6')
+      expect(segments[3].call.id).toBe('8')
     }
   })
 

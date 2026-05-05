@@ -3,7 +3,7 @@ import { fireEvent } from '@testing-library/react'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
 import { renderWithProviders, screen } from '../../../test/helpers'
-import { ToolCallCards, ToolChainGroup } from '../ToolCallCard'
+import { ToolCallCards } from '../ToolCallCard'
 
 const DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
 
@@ -34,9 +34,41 @@ describe('ToolCallCard rendering', () => {
     expect(screen.getByText('git status --short')).toBeInTheDocument()
   })
 
-  it('uses canonical bash names in multi-call chain summaries', () => {
+  it('renders 3+ same-tool runs through the quieter ToolCallGroupHeader (canonical Bash name)', () => {
     renderWithProviders(
-      <ToolChainGroup
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git status --short' },
+          }),
+          makeCall({
+            id: 'tool-2',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git diff --stat' },
+          }),
+          makeCall({
+            id: 'tool-3',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git log --oneline -5' },
+          }),
+        ]}
+      />,
+    )
+
+    // Same-tool run of 3 collapses into one quieter group header (canonical "Bash" name + ×3 badge).
+    // Group is expanded by default for non-Protocol tools, so the header "Bash" plus 3 inner cards
+    // also showing "Bash" gives 4 occurrences total.
+    expect(screen.getAllByText('Bash')).toHaveLength(4)
+    expect(screen.getByText('×3')).toBeInTheDocument()
+    // No "N tool calls" outer wrapper text — the ToolChainGroup wrapper is gone.
+    expect(screen.queryByText(/^\d+ tool calls?$/)).toBeNull()
+  })
+
+  it('renders 2 same-tool calls flat with no grouping wrapper (threshold is 3)', () => {
+    renderWithProviders(
+      <ToolCallCards
         toolCalls={[
           makeCall({
             id: 'tool-1',
@@ -52,8 +84,9 @@ describe('ToolCallCard rendering', () => {
       />,
     )
 
-    expect(screen.getByText('2 tool calls')).toBeInTheDocument()
-    expect(screen.getByText('2 Bash')).toBeInTheDocument()
+    expect(screen.queryByText('×2')).toBeNull()
+    expect(screen.queryByText(/^\d+ tool calls?$/)).toBeNull()
+    expect(screen.getAllByText('Bash')).toHaveLength(2)
   })
 
   it('flattens MCP proxy wrappers in rendered tool results', () => {
@@ -225,6 +258,17 @@ describe('ToolCallCard rendering', () => {
             result: {
               content: { shell: 'zsh' },
               content_type: 'json',
+              truncated: false,
+            },
+          }),
+          makeCall({
+            id: 'tool-3',
+            tool_name: 'protocol_context',
+            tool_type: 'protocol',
+            arguments: { tag: 'collaboration_mode' },
+            result: {
+              content: 'Default',
+              content_type: 'text',
               truncated: false,
             },
           }),

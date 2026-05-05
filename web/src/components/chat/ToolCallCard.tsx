@@ -12,7 +12,6 @@ import type { A2UISurfaceState, UserAction } from '../canvas'
 import { A2UIRenderer } from '../canvas'
 import { useArtifactContext } from './artifacts/ArtifactContext'
 import {
-  buildChainSummary,
   COMPACT_HEADER_NAMES,
   COMPACT_HEADER_TOOL_TYPES,
   defaultExpandedForCall,
@@ -762,14 +761,16 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }) {
   const serverName = group.tool_calls[0]?.server_name
+  const accentClass = group.hasErrors
+    ? 'border-destructive-foreground/40'
+    : group.hasInFlight
+      ? 'border-accent/40'
+      : 'border-border'
 
   return (
-    <div className={cn(
-      'rounded-lg border overflow-hidden my-1.5',
-      group.hasErrors ? 'border-destructive-foreground/30' : group.hasInFlight ? 'border-accent/30' : 'border-border'
-    )}>
+    <div className={cn('border-l my-1', accentClass)}>
       <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors"
+        className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
         onClick={onToggle}
       >
         <GroupStatusIcon hasErrors={group.hasErrors} allCompleted={group.allCompleted} hasInFlight={group.hasInFlight} />
@@ -780,7 +781,7 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
         <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
       </div>
       {expanded && (
-        <div className="border-t border-border pl-4">
+        <div className="pl-3">
           {group.tool_calls.map(call => (
             <ToolCallItem
               key={call.id}
@@ -797,72 +798,6 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
     </div>
   )
 }
-
-// --- Tier 1: Tool Chain wrapper (collapsible group of all calls between text blocks) ---
-
-interface ToolChainGroupProps {
-  toolCalls: ToolCall[]
-  onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
-  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
-  canvasSurfaces?: Map<string, A2UISurfaceState>
-  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
-}
-
-export const ToolChainGroup = memo(function ToolChainGroup({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolChainGroupProps) {
-  const hasInFlight = toolCalls.some(tc => tc.status === 'calling')
-  const hasErrors = toolCalls.some(tc => tc.status === 'error')
-  const allCompleted = toolCalls.every(tc => tc.status === 'completed')
-  const [expanded, setExpanded] = useState(hasInFlight || !allCompleted)
-
-  const summary = useMemo(() => buildChainSummary(toolCalls), [toolCalls])
-  const count = toolCalls.length
-
-  if (!count) return null
-
-  // Single call — no point wrapping in a "1 tool call" group, render directly
-  if (count === 1) {
-    return (
-      <ToolCallCards
-        toolCalls={toolCalls}
-        onRespond={onRespond}
-        onRespondToApproval={onRespondToApproval}
-        canvasSurfaces={canvasSurfaces}
-        onCanvasInteraction={onCanvasInteraction}
-      />
-    )
-  }
-
-  return (
-    <div className={cn(
-      'rounded-lg border overflow-hidden my-1.5',
-      hasErrors ? 'border-destructive-foreground/30' : hasInFlight ? 'border-accent/30' : 'border-border'
-    )}>
-      <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <GroupStatusIcon hasErrors={hasErrors} allCompleted={allCompleted} hasInFlight={hasInFlight} />
-        <span className="text-muted-foreground">
-          {count} tool call{count !== 1 ? 's' : ''}
-        </span>
-        <span className="text-muted-foreground/60 text-xs truncate">{summary}</span>
-        <div className="flex-1" />
-        <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
-      </div>
-      {expanded && (
-        <div className="border-t border-border px-3">
-          <ToolCallCards
-            toolCalls={toolCalls}
-            onRespond={onRespond}
-            onRespondToApproval={onRespondToApproval}
-            canvasSurfaces={canvasSurfaces}
-            onCanvasInteraction={onCanvasInteraction}
-          />
-        </div>
-      )}
-    </div>
-  )
-})
 
 export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolCallCardProps) {
   const segments = useMemo(() => groupToolCalls(toolCalls), [toolCalls])

@@ -33,18 +33,14 @@ describe('groupToolCalls', () => {
     expect((result[0] as ToolCallSingle).call).toBe(call)
   })
 
-  it('groups 2 consecutive same-type calls', () => {
+  it('does not group only 2 consecutive same-type calls (threshold is 3)', () => {
     const calls = [
       makeCall({ id: '1', tool_name: 'Read' }),
       makeCall({ id: '2', tool_name: 'Read' }),
     ]
     const result = groupToolCalls(calls)
-    expect(result).toHaveLength(1)
-    expect(result[0].kind).toBe('group')
-    const group = result[0] as ToolCallGroup
-    expect(group.tool_calls).toHaveLength(2)
-    expect(group.toolName).toBe('Read')
-    expect(group.displayName).toBe('Read')
+    expect(result).toHaveLength(2)
+    expect(result.every(s => s.kind === 'single')).toBe(true)
   })
 
   it('groups 3 consecutive same-type calls', () => {
@@ -70,8 +66,8 @@ describe('groupToolCalls', () => {
     expect(result.every(s => s.kind === 'single')).toBe(true)
   })
 
-  it('groups interleaved runs correctly', () => {
-    // [Read, Read, Read, Bash, Bash, Edit]
+  it('groups interleaved runs correctly (threshold of 3)', () => {
+    // [Read, Read, Read, Bash, Bash, Edit] — Read run groups (3), Bash run stays flat (2), Edit single
     const calls = [
       makeCall({ id: '1', tool_name: 'Read' }),
       makeCall({ id: '2', tool_name: 'Read' }),
@@ -81,14 +77,13 @@ describe('groupToolCalls', () => {
       makeCall({ id: '6', tool_name: 'Edit' }),
     ]
     const result = groupToolCalls(calls)
-    expect(result).toHaveLength(3)
+    expect(result).toHaveLength(4)
     expect(result[0].kind).toBe('group')
     expect((result[0] as ToolCallGroup).tool_calls).toHaveLength(3)
     expect((result[0] as ToolCallGroup).displayName).toBe('Read')
-    expect(result[1].kind).toBe('group')
-    expect((result[1] as ToolCallGroup).tool_calls).toHaveLength(2)
-    expect((result[1] as ToolCallGroup).displayName).toBe('Bash')
+    expect(result[1].kind).toBe('single')
     expect(result[2].kind).toBe('single')
+    expect(result[3].kind).toBe('single')
   })
 
   it('never groups render_surface calls', () => {
@@ -122,22 +117,24 @@ describe('groupToolCalls', () => {
   })
 
   it('splits group when pending_approval appears mid-run', () => {
-    // [Read, Read, pending_approval Edit, Read, Read]
+    // [Read x3, pending_approval Edit, Read x3] — both Read runs hit threshold
     const calls = [
       makeCall({ id: '1', tool_name: 'Read' }),
       makeCall({ id: '2', tool_name: 'Read' }),
-      makeCall({ id: '3', tool_name: 'Edit', status: 'pending_approval' }),
-      makeCall({ id: '4', tool_name: 'Read' }),
+      makeCall({ id: '3', tool_name: 'Read' }),
+      makeCall({ id: '4', tool_name: 'Edit', status: 'pending_approval' }),
       makeCall({ id: '5', tool_name: 'Read' }),
+      makeCall({ id: '6', tool_name: 'Read' }),
+      makeCall({ id: '7', tool_name: 'Read' }),
     ]
     const result = groupToolCalls(calls)
     expect(result).toHaveLength(3)
     expect(result[0].kind).toBe('group')
-    expect((result[0] as ToolCallGroup).tool_calls).toHaveLength(2)
+    expect((result[0] as ToolCallGroup).tool_calls).toHaveLength(3)
     expect(result[1].kind).toBe('single')
     expect((result[1] as ToolCallSingle).call.status).toBe('pending_approval')
     expect(result[2].kind).toBe('group')
-    expect((result[2] as ToolCallGroup).tool_calls).toHaveLength(2)
+    expect((result[2] as ToolCallGroup).tool_calls).toHaveLength(3)
   })
 
   it('sets hasErrors when any call in group has error status', () => {
@@ -157,6 +154,7 @@ describe('groupToolCalls', () => {
     const calls = [
       makeCall({ id: '1', tool_name: 'Read', status: 'completed' }),
       makeCall({ id: '2', tool_name: 'Read', status: 'completed' }),
+      makeCall({ id: '3', tool_name: 'Read', status: 'completed' }),
     ]
     const result = groupToolCalls(calls)
     const group = result[0] as ToolCallGroup
@@ -168,7 +166,8 @@ describe('groupToolCalls', () => {
   it('sets hasInFlight when any call is still calling', () => {
     const calls = [
       makeCall({ id: '1', tool_name: 'Read', status: 'completed' }),
-      makeCall({ id: '2', tool_name: 'Read', status: 'calling' }),
+      makeCall({ id: '2', tool_name: 'Read', status: 'completed' }),
+      makeCall({ id: '3', tool_name: 'Read', status: 'calling' }),
     ]
     const result = groupToolCalls(calls)
     const group = result[0] as ToolCallGroup
@@ -180,6 +179,7 @@ describe('groupToolCalls', () => {
     const calls = [
       makeCall({ id: '1', tool_name: 'mcp__gobby__list_tools' }),
       makeCall({ id: '2', tool_name: 'mcp__gobby__list_tools' }),
+      makeCall({ id: '3', tool_name: 'mcp__gobby__list_tools' }),
     ]
     const result = groupToolCalls(calls)
     const group = result[0] as ToolCallGroup
@@ -191,6 +191,7 @@ describe('groupToolCalls', () => {
     const calls = [
       makeCall({ id: '1', tool_name: 'exec_command' }),
       makeCall({ id: '2', tool_name: 'exec_command' }),
+      makeCall({ id: '3', tool_name: 'exec_command' }),
     ]
     const result = groupToolCalls(calls)
     const group = result[0] as ToolCallGroup
@@ -199,13 +200,15 @@ describe('groupToolCalls', () => {
   })
 
   it('breaks group when ungroupable call interrupts same-type run', () => {
-    // [Read, Read, AskUserQuestion, Read, Read]
+    // [Read x3, AskUserQuestion, Read x3]
     const calls = [
       makeCall({ id: '1', tool_name: 'Read' }),
       makeCall({ id: '2', tool_name: 'Read' }),
-      makeCall({ id: '3', tool_name: 'AskUserQuestion', status: 'calling' }),
-      makeCall({ id: '4', tool_name: 'Read' }),
+      makeCall({ id: '3', tool_name: 'Read' }),
+      makeCall({ id: '4', tool_name: 'AskUserQuestion', status: 'calling' }),
       makeCall({ id: '5', tool_name: 'Read' }),
+      makeCall({ id: '6', tool_name: 'Read' }),
+      makeCall({ id: '7', tool_name: 'Read' }),
     ]
     const result = groupToolCalls(calls)
     expect(result).toHaveLength(3)
