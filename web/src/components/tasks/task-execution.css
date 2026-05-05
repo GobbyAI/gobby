@@ -212,7 +212,7 @@
 }
 
 .activity-task-row--selected {
-  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
