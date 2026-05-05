@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.adapters.acp_client import ACPClient
 from gobby.config.app import deep_merge
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 
@@ -626,19 +627,19 @@ class ProviderModelCatalog:
         return models
 
     async def _discover_gemini_models(self) -> list[dict[str, Any]]:
-        return await self._discover_acp_models(provider="gemini", display_name="Gemini")
+        from gobby.adapters.gemini_acp_client import GeminiACPClient
+
+        return await self._discover_acp_models(client_cls=GeminiACPClient)
 
     async def _discover_qwen_models(self) -> list[dict[str, Any]]:
-        if not shutil.which("qwen"):
+        from gobby.adapters.qwen_acp_client import QwenACPClient
+
+        if not shutil.which(QwenACPClient.cli_name):
             raise FileNotFoundError("qwen CLI not found in PATH")
 
         acp_error: Exception | None = None
         try:
-            acp_models = await self._discover_acp_models(
-                provider="qwen",
-                display_name="Qwen",
-                prompt_timeout_env="GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS",
-            )
+            acp_models = await self._discover_acp_models(client_cls=QwenACPClient)
         except Exception as exc:
             acp_models = []
             acp_error = exc
@@ -730,21 +731,12 @@ class ProviderModelCatalog:
     async def _discover_acp_models(
         self,
         *,
-        provider: str,
-        display_name: str,
-        prompt_timeout_env: str = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS",
+        client_cls: type[ACPClient],
     ) -> list[dict[str, Any]]:
-        if not shutil.which(provider):
-            raise FileNotFoundError(f"{provider} CLI not found in PATH")
+        if not shutil.which(client_cls.cli_name):
+            raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-        from gobby.adapters.gemini_acp_client import GeminiACPClient
-
-        client = GeminiACPClient(
-            cli_name=provider,
-            display_name=display_name,
-            prompt_timeout_env=prompt_timeout_env,
-            purpose="model-discovery",
-        )
+        client = client_cls(purpose="model-discovery")
         await client.start()
         try:
             session_info = client.session_info

@@ -166,7 +166,7 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_start_launches_subprocess_and_handshakes(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -205,7 +205,7 @@ class TestStart:
                 + "\n",
             ]
         )
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -222,7 +222,7 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_start_with_model_includes_cli_flag(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -255,7 +255,7 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_start_keeps_hooks_disabled_even_with_env_overrides(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -269,7 +269,7 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_start_with_resume_uses_load_session(self) -> None:
         proc = _mock_process(stdout_lines=_resume_handshake_lines("prev-123"))
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -290,7 +290,7 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_start_with_resume_preserves_requested_session_id_on_null_result(self) -> None:
         proc = _mock_process(stdout_lines=_resume_handshake_lines_without_session_id())
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -320,7 +320,7 @@ class TestStart:
             ]
         )
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -335,7 +335,7 @@ class TestStart:
 
     @pytest.mark.asyncio
     async def test_start_raises_when_cli_not_found(self) -> None:
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value=None):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value=None):
             client = GeminiACPClient()
             with pytest.raises(FileNotFoundError, match="Gemini CLI not found"):
                 await client.start()
@@ -343,7 +343,7 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_start_raises_when_already_started(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -371,7 +371,7 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_start_includes_stderr_when_initialize_hits_eof(self) -> None:
         proc = _mock_process(returncode=1, stderr_text="auth failed\ntry again\n")
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -397,7 +397,7 @@ class TestSend:
         prompt_response = json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {}}}) + "\n"
         proc = _mock_process(stdout_lines=_handshake_lines() + [prompt_response])
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -442,7 +442,7 @@ class TestSend:
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -478,7 +478,7 @@ class TestSend:
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -506,7 +506,7 @@ class TestSend:
         )
         proc = _mock_process(stdout_lines=_handshake_lines() + [error_response])
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -532,7 +532,7 @@ class TestSend:
     async def test_send_raises_when_process_exited(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines(), returncode=None)
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -554,7 +554,7 @@ class TestSend:
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + lines)
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -584,7 +584,7 @@ class TestSend:
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -612,7 +612,7 @@ class TestSend:
 
         proc.stdout.readline = AsyncMock(side_effect=_slow_readline)
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -636,7 +636,7 @@ class TestStop:
         proc = _mock_process(stdout_lines=_handshake_lines())
         wait_for_timeouts: list[float] = []
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -647,7 +647,7 @@ class TestStop:
                 assert client.is_started
 
             with patch(
-                "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                "gobby.adapters.acp_client.asyncio.wait_for",
                 new=_recording_wait_for(wait_for_timeouts),
             ):
                 await client.stop()
@@ -665,7 +665,7 @@ class TestStop:
         proc.wait.side_effect = [TimeoutError(), None]
         wait_for_timeouts: list[float] = []
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -675,7 +675,7 @@ class TestStop:
                 await client.start()
 
             with patch(
-                "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                "gobby.adapters.acp_client.asyncio.wait_for",
                 new=_recording_wait_for(wait_for_timeouts),
             ):
                 await client.stop()
@@ -691,7 +691,7 @@ class TestStop:
         proc.wait.side_effect = [TimeoutError(), TimeoutError(), None]
         wait_for_timeouts: list[float] = []
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -702,11 +702,11 @@ class TestStop:
 
             with (
                 patch(
-                    "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                    "gobby.adapters.acp_client.asyncio.wait_for",
                     new=_recording_wait_for(wait_for_timeouts),
                 ),
-                patch("gobby.adapters.gemini_acp_client.logger.warning") as warning,
-                patch("gobby.adapters.gemini_acp_client.logger.debug") as debug,
+                patch("gobby.adapters.acp_client.logger.warning") as warning,
+                patch("gobby.adapters.acp_client.logger.debug") as debug,
             ):
                 await client.stop()
 
@@ -732,7 +732,7 @@ class TestStop:
         proc.wait.side_effect = [TimeoutError(), TimeoutError(), None]
         wait_for_timeouts: list[float] = []
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
@@ -744,11 +744,11 @@ class TestStop:
 
             with (
                 patch(
-                    "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                    "gobby.adapters.acp_client.asyncio.wait_for",
                     new=_recording_wait_for(wait_for_timeouts),
                 ),
-                patch("gobby.adapters.gemini_acp_client.logger.warning") as warning,
-                patch("gobby.adapters.gemini_acp_client.logger.debug") as debug,
+                patch("gobby.adapters.acp_client.logger.warning") as warning,
+                patch("gobby.adapters.acp_client.logger.debug") as debug,
             ):
                 await client.stop()
 
@@ -775,7 +775,7 @@ class TestStop:
     async def test_stop_when_process_already_exited(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines(), returncode=None)
 
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,

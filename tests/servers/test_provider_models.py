@@ -302,21 +302,13 @@ class TestProviderModelCatalog:
             }
         }
 
-        with (
-            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
-            patch(
-                "gobby.adapters.gemini_acp_client.GeminiACPClient",
-                return_value=client,
-            ) as client_cls,
-        ):
-            models = await catalog._discover_acp_models(provider="gemini", display_name="Gemini")
+        client_cls = MagicMock(return_value=client)
+        client_cls.cli_name = "gemini"
 
-        client_cls.assert_called_once_with(
-            cli_name="gemini",
-            display_name="Gemini",
-            prompt_timeout_env="GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS",
-            purpose="model-discovery",
-        )
+        with patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"):
+            models = await catalog._discover_acp_models(client_cls=client_cls)
+
+        client_cls.assert_called_once_with(purpose="model-discovery")
         client.start.assert_awaited_once()
         client.stop.assert_awaited_once()
         assert models == [{"value": "gemini-test", "label": "Gemini Test"}]

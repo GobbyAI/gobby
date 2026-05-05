@@ -122,12 +122,13 @@ class TestWebChatRuntimeManager:
 
 class TestGeminiBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.backends.gemini.GeminiACPClient") as mock_client:
+        with patch.object(GeminiWebChatBackend, "acp_client_cls") as mock_client:
             GeminiWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
+        # Provider/display_name now come from class attributes on GeminiACPClient;
+        # the backend should not pass any sandbox-leaking process args.
+        assert mock_client.call_args is not None
         kwargs = mock_client.call_args.kwargs
-        assert kwargs["cli_name"] == "gemini"
-        assert kwargs["display_name"] == "Gemini"
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
 
@@ -244,13 +245,13 @@ class TestGeminiBackend:
 
 class TestQwenBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.backends.qwen.GeminiACPClient") as mock_client:
+        with patch.object(QwenWebChatBackend, "acp_client_cls") as mock_client:
             QwenWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
+        # cli_name / display_name / prompt_timeout_env are now class attributes
+        # on QwenACPClient; the backend should not pass sandbox-leaking process args.
+        assert mock_client.call_args is not None
         kwargs = mock_client.call_args.kwargs
-        assert kwargs["cli_name"] == "qwen"
-        assert kwargs["display_name"] == "Qwen"
-        assert kwargs["prompt_timeout_env"] == "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
 

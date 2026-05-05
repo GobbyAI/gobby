@@ -7,11 +7,11 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
+from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.gemini import GeminiAdapter
-from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
-from gobby.agents.sandbox import SandboxConfig
+from gobby.adapters.gemini_acp_client import GeminiACPClient
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -22,11 +22,9 @@ from gobby.llm.claude_models import (
 )
 from gobby.servers.chat_session_helpers import PendingApproval, build_compaction_context
 from gobby.servers.gemini_permissions import GeminiWebChatPermissionsMixin
+from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 from gobby.servers.websocket.chat.backends.base import (
-    _BACKEND_START_TIMEOUT_SECONDS,
     ManagedChatSessionBase,
-    ProviderBackendHealth,
-    _error_message,
     _extract_text,
     _log_upstream_error_event,
 )
@@ -262,170 +260,12 @@ class GeminiManagedChatSession(
         )
 
 
-class GeminiWebChatBackend:
+class GeminiWebChatBackend(ACPWebChatBackend):
     """Shared daemon-owned Gemini ACP backend."""
 
-    provider = "gemini"
-
-    def __init__(
-        self,
-        *,
-        client: GeminiACPClient | None = None,
-        default_model: str | None = None,
-        provider: str = "gemini",
-        display_name: str = "Gemini",
-        sandbox_config: SandboxConfig | None = None,
-        start_timeout_seconds: float = _BACKEND_START_TIMEOUT_SECONDS,
-    ) -> None:
-        self.provider = provider
-        self._display_name = display_name
-        self._sandbox_config = sandbox_config
-        self._start_timeout_seconds = start_timeout_seconds
-        # Gemini CLI ACP bootstrap currently hangs on macOS when launched with
-        # daemon-wide Seatbelt flags. Keep daemon-owned ACP
-        # startup unsandboxed and let Gemini's own tool sandboxing handle tool
-        # execution inside interactive sessions.
-        self._client = client or GeminiACPClient(
-            cli_name=provider,
-            display_name=display_name,
-        )
-        self._health = ProviderBackendHealth(provider=self.provider, available=False)
-        self._default_model = default_model
-        self._startup_task: asyncio.Task[None] | None = None
-
-    async def _start_inner(self) -> None:
-        if self._client.is_started:
-            self._health = ProviderBackendHealth(provider=self.provider, available=True)
-            return
-
-        try:
-            await asyncio.wait_for(
-                self._client.start(
-                    auto_session=False,
-                    model=self._default_model,
-                ),
-                timeout=self._start_timeout_seconds,
-            )
-        except Exception as exc:
-            startup_error = _error_message(exc)
-            if isinstance(exc, TimeoutError) and startup_error == "TimeoutError":
-                startup_error = (
-                    f"Timed out starting {self._display_name} ACP backend after "
-                    f"{self._start_timeout_seconds:.1f}s"
-                )
-            try:
-                await self._client.stop()
-            except Exception:
-                logger.debug(
-                    "%s backend cleanup after failed startup", self._display_name, exc_info=True
-                )
-            self._health = ProviderBackendHealth(
-                provider=self.provider,
-                available=False,
-                startup_error=startup_error,
-            )
-            logger.warning("%s ACP backend startup failed: %s", self._display_name, startup_error)
-            return
-
-        self._health = ProviderBackendHealth(provider=self.provider, available=True)
-
-    async def start(self, *, background: bool = False) -> None:
-        if self._health.available:
-            return
-        if self._startup_task and not self._startup_task.done():
-            if not background:
-                await self._startup_task
-            return
-
-        self._startup_task = asyncio.create_task(self._start_inner())
-        if not background:
-            await self._startup_task
-
-    async def stop(self) -> None:
-        if self._startup_task and not self._startup_task.done():
-            self._startup_task.cancel()
-            try:
-                await self._startup_task
-            except asyncio.CancelledError:
-                pass
-        self._startup_task = None
-        if self._client.is_started:
-            await self._client.stop()
-        self._health = ProviderBackendHealth(provider=self.provider, available=False)
-
-    def health(self) -> ProviderBackendHealth:
-        return self._health
-
-    async def attach_session(
-        self,
-        session: GeminiManagedChatSession,
-        *,
-        model: str | None = None,
-    ) -> None:
-        if model:
-            session._model = model
-        elif not session._model:
-            session._model = self._default_model
-
-        await self.start()
-        if not self._health.available:
-            raise RuntimeError(
-                self._health.startup_error or f"{self._display_name} backend unavailable"
-            )
-
-        session_id = session.sdk_session_id or session.resume_session_id
-        cwd = session.project_path or "."
-        if session_id:
-            session_info = await self._client.load_session(
-                session_id,
-                model=session._model,
-                cwd=cwd,
-                reasoning_effort=session.reasoning_effort,
-            )
-        else:
-            session_info = await self._client.create_session(
-                model=session._model,
-                cwd=cwd,
-                reasoning_effort=session.reasoning_effort,
-            )
-
-        resolved_session_id = (
-            session_info.get("sessionId")
-            or session_info.get("session_id")
-            or self._client.session_id
-            or session_id
-        )
-        if isinstance(resolved_session_id, str) and resolved_session_id:
-            session.sdk_session_id = resolved_session_id
-        session._connected = True
-        session.last_activity = datetime.now(UTC)
-
-    async def detach_session(self, session: GeminiManagedChatSession) -> None:
-        session._connected = False
-
-    async def send_message(
-        self,
-        session: GeminiManagedChatSession,
-        prompt: str,
-    ) -> AsyncIterator[StreamEvent]:
-        if not self._health.available:
-            raise RuntimeError(
-                self._health.startup_error or f"{self._display_name} backend unavailable"
-            )
-        if not session.sdk_session_id:
-            raise RuntimeError(f"{self._display_name} session missing sessionId")
-
-        async for event in self._client.send(
-            prompt,
-            session_id=session.sdk_session_id,
-            model=session._model,
-            reasoning_effort=session.reasoning_effort,
-        ):
-            yield event
-
-    async def switch_model(self, session: GeminiManagedChatSession, new_model: str) -> None:
-        session._model = new_model
-        session._connected = False
+    provider: ClassVar[str] = "gemini"
+    display_name: ClassVar[str] = "Gemini"
+    acp_client_cls: ClassVar[type[ACPClient]] = GeminiACPClient
 
 
 __all__ = [

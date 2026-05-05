@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
-from gobby.adapters.gemini_acp_client import GeminiACPClient
+from gobby.adapters.acp_client import ACPClient
 from gobby.adapters.qwen import QwenAdapter
-from gobby.agents.sandbox import SandboxConfig
+from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.servers.websocket.chat.backends.gemini import (
     GeminiManagedChatSession,
     GeminiWebChatBackend,
@@ -35,28 +35,10 @@ class QwenManagedChatSession(GeminiManagedChatSession):
 class QwenWebChatBackend(GeminiWebChatBackend):
     """Shared daemon-owned Qwen ACP backend."""
 
-    provider = "qwen"
-
-    def __init__(
-        self,
-        *,
-        client: GeminiACPClient | None = None,
-        default_model: str | None = None,
-        sandbox_config: SandboxConfig | None = None,
-    ) -> None:
-        super().__init__(
-            client=client
-            or GeminiACPClient(
-                cli_name="qwen",
-                display_name="Qwen",
-                prompt_timeout_env="GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS",
-            ),
-            default_model=default_model,
-            provider="qwen",
-            display_name="Qwen",
-            sandbox_config=sandbox_config,
-            start_timeout_seconds=_QWEN_BACKEND_START_TIMEOUT_SECONDS,
-        )
+    provider: ClassVar[str] = "qwen"
+    display_name: ClassVar[str] = "Qwen"
+    start_timeout_seconds: ClassVar[float] = _QWEN_BACKEND_START_TIMEOUT_SECONDS
+    acp_client_cls: ClassVar[type[ACPClient]] = QwenACPClient
 
     async def attach_session(
         self,
