@@ -5,8 +5,8 @@ automation aligned with the repo's rules. It is **CLI agnostic**: Claude,
 Codex, and Gemini sessions all flow through the same normalized hook events,
 session variables, rule engine, and MCP tool surface.
 
-This guide is the high-level map. Use it to decide whether a behavior belongs
-in a rule, an agent definition, a pipeline, or an orchestration flow.
+This guide is the high-level map. Use it to decide whether behavior belongs in
+a rule, an agent definition, a pipeline, or stage-driven dispatch.
 
 ## Mental Model
 
@@ -17,7 +17,7 @@ Gobby has four layers that compose together:
 | Rules | Enforce invariants on hook events | `workflow_definitions` / bundled YAML | `gobby-workflows` + rule engine |
 | Agents | Define persona, restrictions, and step workflows | `workflow_definitions` / bundled YAML | `gobby-workflows` definitions, `gobby-agents` runtime |
 | Pipelines | Run deterministic multi-step automation | `workflow_definitions` / bundled YAML | `gobby-workflows` pipeline tools |
-| Orchestration | Coordinate tasks, agents, isolation, and completion | Pipeline + task/agent tooling | `gobby-workflows`, `gobby-tasks`, `gobby-agents`, `gobby-worktrees`, `gobby-clones`, `gobby-merge` |
+| Dispatch | Coordinate task stages, agents, isolation, and completion | Stage manifests + task/agent tooling | `gobby-tasks`, `gobby-tasks-ops`, `gobby-agents`, `gobby-worktrees`, `gobby-clones`, `gobby-merge` |
 
 The shared state across all four layers is:
 
@@ -30,9 +30,11 @@ The shared state across all four layers is:
 
 ### Rules
 
-Rules are reactive. They fire on semantic workflow events such as
-`turn_start`, `turn_end`, `before_tool`, `after_tool`, and `session_start`,
-plus raw normalized escape-hatch events when needed.
+Rules are reactive. Author them against semantic workflow events such as
+`turn_start`, `turn_end`, `before_tool`, `after_tool`, and `session_start`
+first. Raw normalized events such as `before_agent`, `after_agent`, and `stop`
+exist for provider-specific escape hatches, but they are runtime transport
+details rather than the main authoring API.
 
 Rules are the right tool when you need to:
 
@@ -57,6 +59,10 @@ An agent definition can be applied to the current session with
 `gobby-agents:apply_persona`, or used to spawn a child session with
 `gobby-agents:spawn_agent` or `dispatch_batch`.
 
+Ending a turn is not the same as ending an agent run. Spawned agents finish by
+calling `gobby-agents:end_agent_run`; turn-end rules only govern the current
+model turn boundary.
+
 ### Pipelines
 
 Pipelines are deterministic automation. They execute ordered steps such as:
@@ -65,11 +71,14 @@ Pipelines are deterministic automation. They execute ordered steps such as:
 - `prompt` for LLM reasoning
 - `mcp` for direct tool calls
 - `invoke_pipeline` for nested pipelines
-- `activate_workflow` for step-workflow activation inside pipeline execution
 - `wait` for completion-event blocking
 
 Pipelines are the right tool when you need explicit sequencing, resumability,
 approval gates, or non-interactive orchestration.
+
+Pipeline `wait` steps block on completion IDs such as agent run IDs or nested
+pipeline execution IDs. Public completion waiting now happens through persisted
+IDs plus the relevant task, agent, or pipeline status tool.
 
 ### Dispatch
 
@@ -80,8 +89,9 @@ stage is ready.
 
 Dispatch composes:
 
-- Build state from `gobby build`: `allow_automation`, `yolo`, `isolation`,
-  resolved stage manifest, `assigned_agent`, and `additional_skills`
+- Build state from `gobby build`: `allow_automation`, `unattended`,
+  `isolation`, resolved stage manifest, `assigned_agent`,
+  `additional_skills`, target branch, and PR/merge controls
 - Task lifecycle from `gobby-tasks`
 - Sparse dispatch state from `task_artifacts`
 - Per-task leases from `task_dispatch_mutex`
@@ -97,7 +107,7 @@ behavior today:
 
 | Server | What it owns |
 | --- | --- |
-| `gobby-workflows` | Workflow, rule, variable, agent-definition, and pipeline definitions; pipeline execution and completion waiting |
+| `gobby-workflows` | Workflow, rule, variable, agent-definition, and pipeline definitions; pipeline execution and pipeline `wait` steps |
 | `gobby-agents` | Agent spawning, runtime inspection, persona application, inter-agent messaging, and commands |
 | `gobby-tasks` | Task lifecycle, dependencies, readiness, review states, close, and escalation |
 | `gobby-tasks-ops` | Build, artifact, audit-marker, expansion-run, and affected-file helpers |
@@ -113,7 +123,7 @@ behavior today:
 | Inject reminders or dynamic context into the next agent turn | Rule | `inject_context` and `load_skill` are event-driven |
 | Guide a worker through claim → implement → terminate | Agent | Inline step workflows model phased behavior |
 | Spawn child workers for ready tasks | Dispatch rule | Task lifecycle dispatch owns autonomous worker routing |
-| Wait for a spawned worker or nested run to finish | Pipeline | `wait` steps and `wait_for_completion` exist for this |
+| Wait for a spawned worker or nested run to finish | Pipeline | `wait` steps block on completion IDs and survive daemon restarts |
 | Keep task automation moving on a heartbeat | Dispatch | The dispatcher re-evaluates task state each heartbeat |
 | Run a deterministic approval sequence outside task dispatch | Pipeline | Pipelines still own explicit, resumable sequences |
 
@@ -128,15 +138,15 @@ At runtime, the control flow looks like this:
 4. The rule engine evaluates matching rules in priority order and returns a
    merged response: allow/block, context injections, rewritten input, variable
    updates, and deferred MCP calls.
-5. Dispatch rules or explicit callers use MCP tools to spawn agents, wait for
-   completion, inspect task state, and continue work.
+5. Dispatch rules or explicit callers use MCP tools to spawn agents, persist
+   completion IDs, inspect task/agent/pipeline state, and continue work.
 
 Two important abstractions here are `turn_start` and `turn_end`:
 
 - `turn_start` is the semantic workflow event for the beginning of a turn.
-- It fires alongside the raw `before_agent` hook.
+- It is resolved alongside the raw `before_agent` hook.
 - `turn_end` is a semantic workflow event.
-- It fires alongside the raw hook event when a session reaches the end of a
+- It is resolved alongside the raw hook event when a session reaches the end of a
   turn, whether that arrives as `after_agent` or `stop`.
 - That keeps stop gates and end-of-turn policies consistent across supported
   CLIs.
@@ -148,7 +158,8 @@ Keep this split clear:
 - **Definitions** are reusable YAML-backed objects synced into
   `workflow_definitions`.
 - **Runtime state** is session-specific: variables, active workflow instances,
-  agent runs, pipeline executions, completion subscriptions, and task claims.
+  agent runs, pipeline executions, completion subscriptions, task stage
+  manifests, and task claims.
 
 When a guide says "enable a rule" or "update an agent definition", that is a
 definition change. When it says "the step transitioned" or "the pipeline is
@@ -161,3 +172,5 @@ waiting for approval", that is runtime state.
 - [Pipelines](./pipelines.md) for execution semantics and pipeline tools
 - [Orchestration](./orchestration.md) for the current task/agent coordination model
 - [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules
+
+_Last verified: 2026-05-04_
