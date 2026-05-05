@@ -45,6 +45,7 @@ class BuildRequest(BaseModel):
     agent: str | None = None
     clones_dir: str | None = None
     reset_expansion_output: bool = False
+    max_active_agents: int | None = Field(default=None, ge=1)
 
 
 class BuildControlRequest(BaseModel):
@@ -70,6 +71,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         assigned_agent=request_data.agent,
         clones_dir=clones_dir,
         reset_expansion_output=request_data.reset_expansion_output,
+        max_active_agents=request_data.max_active_agents,
     )
 
 

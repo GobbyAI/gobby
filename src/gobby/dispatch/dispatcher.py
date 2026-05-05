@@ -80,10 +80,17 @@ class HeartbeatResult:
     executed: int = 0
     skipped: int = 0
     cap_reached: bool = False
+    reason: str | None = None
 
 
 def _skipped(result: HeartbeatResult) -> HeartbeatResult:
-    return HeartbeatResult(result.scanned, result.executed, result.skipped + 1)
+    return HeartbeatResult(
+        result.scanned,
+        result.executed,
+        result.skipped + 1,
+        result.cap_reached,
+        result.reason,
+    )
 
 
 def _cap_reached(result: HeartbeatResult) -> HeartbeatResult:
@@ -92,7 +99,12 @@ def _cap_reached(result: HeartbeatResult) -> HeartbeatResult:
         executed=result.executed,
         skipped=result.skipped,
         cap_reached=True,
+        reason=result.reason,
     )
+
+
+def _unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
+    return HeartbeatResult(result.scanned, result.executed, result.skipped + 1, False, reason)
 
 
 async def run_heartbeat(
@@ -173,6 +185,10 @@ async def run_heartbeat(
         except (TypeError, AttributeError, sqlite3.DatabaseError):
             mutex.release()
             raise
+        except DispatchSpawnUnavailable as exc:
+            mutex.release()
+            logger.info("Dispatcher heartbeat unavailable: %s", exc)
+            return _unavailable(result, str(exc))
         except Exception as exc:
             logger.exception("Dispatcher heartbeat candidate failed: task_id=%s", candidate.id)
             try:
@@ -447,7 +463,10 @@ async def _execute_spawn_action(
         raw_run_id: object = spawn_agent(action, db=db, context=context, services=services)
         if inspect.isawaitable(raw_run_id):
             raw_run_id = await cast(Awaitable[str | None], raw_run_id)
-    except (DispatchSpawnUnavailable, DispatchSpawnFailed) as exc:
+    except DispatchSpawnUnavailable:
+        mutex.release()
+        raise
+    except DispatchSpawnFailed as exc:
         _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error=str(exc))
         return None
     if raw_run_id:

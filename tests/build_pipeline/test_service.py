@@ -288,6 +288,42 @@ async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.service import DispatcherTickSummary
+    from gobby.config.build import StageCapOverride
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    tick_kwargs: list[dict[str, object]] = []
+
+    async def fake_tick(*_args: object, **kwargs: object) -> DispatcherTickSummary:
+        tick_kwargs.append(dict(kwargs))
+        return DispatcherTickSummary()
+
+    monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", fake_tick)
+
+    result = await _build(
+        str(plan_file),
+        _options(
+            isolation="none",
+            max_active_agents=4,
+            stage_caps=[StageCapOverride("planning", max_work_attempts=6)],
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    rows = LocalTaskManager(temp_db).stage_states.list_for_task(result.task_id)
+    assert rows[0].max_work_attempts == 6
+    assert tick_kwargs[0]["max_active_agents"] == 4
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stage_name", "cap_name"),
     [

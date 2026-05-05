@@ -127,6 +127,7 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "target_branch": opts.target_branch,
         "agent": opts.assigned_agent,
         "reset_expansion_output": opts.reset_expansion_output,
+        "max_active_agents": opts.max_active_agents,
     }
     if opts.isolation_explicit:
         payload["isolation"] = opts.isolation
@@ -292,6 +293,11 @@ def _open_database() -> LocalDatabase:
     default=False,
     help="Delete existing generated expansion output before rebuilding a task ref.",
 )
+@click.option(
+    "--max-active-agents",
+    type=int,
+    help="Maximum active automation agents allowed during the immediate dispatcher tick.",
+)
 @click.option("--dry-run", is_flag=True, default=False, help="Preview clean/restart effects.")
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
@@ -307,6 +313,7 @@ def build_command(
     target_branch: str | None,
     assigned_agent: str | None,
     reset_expansion_output: bool,
+    max_active_agents: int | None,
     dry_run: bool,
     force: bool,
     yes: bool,
@@ -341,6 +348,7 @@ def build_command(
         target_branch=target_branch,
         assigned_agent=assigned_agent,
         reset_expansion_output=reset_expansion_output,
+        max_active_agents=max_active_agents,
     )
     project_id = resolve_project_id()
     result = _try_daemon_build(input_ref, opts)

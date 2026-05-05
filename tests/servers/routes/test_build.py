@@ -55,6 +55,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "stage": ["pr:max_review_rounds=3"],
                 "target_branch": "main",
                 "agent": "backend-developer",
+                "max_active_agents": 4,
             },
         )
 
@@ -90,6 +91,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     ] == [("pr", None, 3)]
     assert opts.target_branch == "main"
     assert opts.assigned_agent == "backend-developer"
+    assert opts.max_active_agents == 4
     assert call.kwargs["project_id"] == "project-1"
     assert call.kwargs["services"] is not None
 

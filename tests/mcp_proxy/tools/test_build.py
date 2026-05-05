@@ -43,6 +43,7 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["properties"]["target_branch"]["type"] == "string"
     assert schema["properties"]["agent"]["type"] == "string"
     assert schema["properties"]["reset_expansion_output"]["type"] == "boolean"
+    assert schema["properties"]["max_active_agents"]["minimum"] == 1
 
 
 def test_removed_fields_are_not_exposed(temp_db) -> None:
@@ -90,6 +91,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
             target_branch="release/0.4",
             agent="backend-developer",
             reset_expansion_output=True,
+            max_active_agents=4,
             project_id="project-1",
         )
 
@@ -125,6 +127,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"
     assert opts.reset_expansion_output is True
+    assert opts.max_active_agents == 4
     assert call.kwargs["db"] is temp_db
     assert call.kwargs["project_id"] == "project-1"
     assert "services" in call.kwargs

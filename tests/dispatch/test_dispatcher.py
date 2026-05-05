@@ -407,6 +407,32 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     assert LocalAgentRunManager(temp_db).get("run-services") is None
 
 
+async def test_spawn_unavailable_does_not_mark_task_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 0
+    assert result.skipped == 1
+    assert result.reason == "services_missing:database,task_manager,session_manager,agent_runner"
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "development").state == "in_progress"
+    assert updated.dispatch_failure_count == 0
+    assert "### Dispatch spawn failed" not in (updated.description or "")
+
+
 async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

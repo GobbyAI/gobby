@@ -10,6 +10,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from gobby.build.dispatch_tick import (
+    DispatcherTickSummary,
+)
+from gobby.build.dispatch_tick import (
+    kick_dispatcher_tick as _kick_dispatcher_tick,
+)
 from gobby.config.build import Isolation, StageCapOverride
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.cron import CronJobStorage, compute_next_run
@@ -41,18 +47,7 @@ class BuildOptions:
     assigned_agent: str | None = None
     clones_dir: Path | None = None
     reset_expansion_output: bool = False
-
-
-@dataclass
-class DispatcherTickSummary:
-    """Structured dispatcher heartbeat summary returned by build entry points."""
-
-    ticks: int = 0
-    scanned: int = 0
-    executed: int = 0
-    skipped: int = 0
-    cap_reached: bool = False
-    reason: str | None = None
+    max_active_agents: int | None = None
 
 
 @dataclass
@@ -155,6 +150,7 @@ async def build(
     _validate_no_merge(opts)
     _validate_clones_dir(opts)
     _validate_retry_caps(opts)
+    _validate_max_active_agents(opts)
     target_branch = await _resolve_target_branch(db, project_id, opts, input_kind)
 
     if input_kind == "plan_file":
@@ -234,6 +230,7 @@ async def _build_plan_file(
         project_id,
         services=services,
         max_ticks=_quick_tick_limit(opts),
+        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -281,6 +278,7 @@ async def _build_leaf(
         project_id,
         services=services,
         max_ticks=_quick_tick_limit(opts),
+        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -328,6 +326,7 @@ async def _build_epic(
         project_id,
         services=services,
         max_ticks=_quick_tick_limit(opts),
+        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -456,6 +455,11 @@ def _validate_retry_caps(opts: BuildOptions) -> None:
             )
 
 
+def _validate_max_active_agents(opts: BuildOptions) -> None:
+    if opts.max_active_agents is not None and opts.max_active_agents < 1:
+        raise ValueError("max_active_agents must be greater than or equal to 1")
+
+
 async def _resume_existing_lifecycle(
     task_manager: LocalTaskManager,
     task: Task,
@@ -495,6 +499,7 @@ async def _resume_existing_lifecycle(
         project_id,
         services=services,
         max_ticks=_quick_tick_limit(opts),
+        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -874,50 +879,6 @@ def _canonical_stage_name_or_none(stage_name: str) -> str | None:
 
 def _specs_payload(specs: list[StageManifestSpec]) -> list[dict[str, str | int | None]]:
     return [asdict(spec) for spec in specs]
-
-
-async def _kick_dispatcher_tick(
-    db: DatabaseProtocol | None = None,
-    project_id: str | None = None,
-    *,
-    dispatcher_enabled: bool | None = None,
-    services: object | None = None,
-    max_ticks: int | None = None,
-) -> DispatcherTickSummary:
-    """Fire a bounded dispatcher heartbeat burst when the bundled cron row is enabled."""
-    if dispatcher_enabled is None:
-        if db is None or project_id is None:
-            dispatcher_enabled = True
-        else:
-            job = install_dispatcher_cron_row(db, project_id=project_id)
-            dispatcher_enabled = job.enabled
-
-    if not dispatcher_enabled:
-        logger.info(
-            "dispatcher_tick_skipped",
-            extra={"project_id": project_id, "reason": "dispatcher_cron_disabled"},
-        )
-        return DispatcherTickSummary(reason="dispatcher_cron_disabled")
-
-    if db is None:
-        return DispatcherTickSummary(ticks=0, reason="database_missing")
-
-    from gobby.dispatch.dispatcher import run_heartbeat
-
-    summary = DispatcherTickSummary()
-    for _ in range(max_ticks or 3):
-        result = await run_heartbeat(db=db, project_id=project_id, services=services)
-        summary = DispatcherTickSummary(
-            ticks=summary.ticks + 1,
-            scanned=summary.scanned + result.scanned,
-            executed=summary.executed + result.executed,
-            skipped=summary.skipped + result.skipped,
-            cap_reached=summary.cap_reached or result.cap_reached,
-            reason="cap_reached" if result.cap_reached else summary.reason,
-        )
-        if result.executed == 0 or result.cap_reached:
-            break
-    return summary
 
 
 def _record_project_build_event(
