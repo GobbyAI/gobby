@@ -101,17 +101,17 @@ describe('activity-panel typography ladder (#14245)', () => {
     )
   })
 
-  it('locks the activity-tab-empty body and provides heading helpers', () => {
+  it('locks the activity-tab-empty body and provides heading helpers (chat empty-state parity)', () => {
     const source = readSource('src/components/chat/styles/empty-state.css')
 
     expect(source).toMatch(
       /\.activity-tab-empty\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
     )
     expect(source).toMatch(
-      /\.activity-tab-empty__heading\s*{[^}]*font-size:\s*var\(--text-lg\)[^}]*font-weight:\s*var\(--font-weight-semibold\)/,
+      /\.activity-tab-empty__heading\s*{[^}]*font-size:\s*var\(--text-xl\)[^}]*color:\s*var\(--text-secondary\)/,
     )
     expect(source).toMatch(
-      /\.activity-tab-empty__body\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
+      /\.activity-tab-empty__body\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*color:\s*var\(--text-muted\)/,
     )
   })
 })

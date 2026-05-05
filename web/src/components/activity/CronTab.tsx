@@ -5,6 +5,7 @@ import { formatDateTime } from '../workflows/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'
 import type { CronJob, CronRun } from '../../hooks/useCronJobs'
 import { cronRunStatusKind } from './cronRunStatus'
+import { ActivityPanelEmpty, CronEmptyIcon } from './ActivityPanelEmpty'
 
 interface CronTabProps {
   projectId?: string | null
@@ -83,11 +84,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
   }, [filteredJobs, selectedJob, selectJob])
 
   if (isLoading && jobs.length === 0) {
-    return (
-      <div className="activity-tab-empty">
-        <p>Loading cron jobs...</p>
-      </div>
-    )
+    return <ActivityPanelEmpty body="Loading cron jobs…" />
   }
 
   return (
@@ -106,14 +103,15 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
         style={selectedJob ? { height: `${topHeight}%` } : undefined}
       >
         {filteredJobs.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>
-              No {statusFilter === 'all' ? '' : statusFilter + ' '}cron jobs
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Cron jobs will appear here
-            </p>
-          </div>
+          <ActivityPanelEmpty
+            icon={<CronEmptyIcon />}
+            heading="Cron Jobs"
+            body={
+              statusFilter === 'all'
+                ? 'Cron jobs appear here when scheduled'
+                : `No ${statusFilter} cron jobs yet`
+            }
+          />
         ) : (
           <>
             {visibleJobs.map((job) => (

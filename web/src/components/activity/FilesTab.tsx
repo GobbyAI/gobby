@@ -10,6 +10,7 @@ import {
   getGitStatusColorVar,
   getLanguageColorVar,
 } from '../../lib/languageColors'
+import { ActivityPanelEmpty, FilesEmptyIcon } from './ActivityPanelEmpty'
 
 interface FilesTabProps {
   projectId?: string | null
@@ -330,8 +331,8 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       : { flex: 'none', height: `${topHeight}%` }
   }, [selectedFile, useHorizontal, leftWidth, topHeight])
 
-  if (loading) return <div className="activity-tab-empty"><p>Loading files...</p></div>
-  if (!projectId) return <div className="activity-tab-empty"><p>No project selected</p></div>
+  if (loading) return <ActivityPanelEmpty body="Loading files…" />
+  if (!projectId) return <ActivityPanelEmpty body="No project selected" />
 
   const renderEntry = (entry: FileEntry, depth: number) => {
     const isDir = entry.is_dir
@@ -436,7 +437,11 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
         style={treePaneStyle}
       >
         {rootEntries.length === 0 ? (
-          <div className="activity-tab-empty"><p>No files</p></div>
+          <ActivityPanelEmpty
+            icon={<FilesEmptyIcon />}
+            heading="Files"
+            body="Project files appear here once a project is loaded"
+          />
         ) : (
           rootEntries.map((e) => renderEntry(e, 0))
         )}

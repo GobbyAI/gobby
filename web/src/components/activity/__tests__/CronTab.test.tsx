@@ -58,7 +58,7 @@ beforeEach(() => {
 describe('CronTab', () => {
   it('renders an empty state when no jobs are loaded', () => {
     render(<CronTab projectId="p" />)
-    expect(screen.getByText(/no cron jobs/i)).toBeInTheDocument()
+    expect(screen.getByText(/cron jobs appear here when scheduled/i)).toBeInTheDocument()
   })
 
   it('renders rows for each job and calls selectJob on click', async () => {

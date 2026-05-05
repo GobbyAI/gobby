@@ -224,11 +224,9 @@ describe("TasksTab — filters", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("No tasks match filters")).toBeTruthy();
+      expect(screen.getByText("Tasks")).toBeTruthy();
       expect(
-        screen.getByText(
-          "Tasks exist, but none match the current task filters.",
-        ),
+        screen.getByText("Tasks exist, but none match the current filters"),
       ).toBeTruthy();
     });
   });

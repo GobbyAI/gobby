@@ -34,6 +34,7 @@ import {
   type SessionsFilters,
 } from "./sessionsFilters";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import {
   type RunningAgent,
   type WatchingSessionEntry,
@@ -76,20 +77,22 @@ function FilterEmptyState({
   hint?: string;
 }) {
   return (
-    <div className="activity-tab-empty">
-      <p>{message}</p>
-      {hasActiveFilters && activeFilterCount > 0 ? (
-        <button
-          type="button"
-          className="text-xs text-accent hover:underline mt-1"
-          onClick={onClear}
-        >
-          Clear filters
-        </button>
-      ) : (
-        <p className="text-xs text-muted-foreground mt-1">{hint}</p>
-      )}
-    </div>
+    <ActivityPanelEmpty
+      icon={<SessionsEmptyIcon />}
+      heading="Sessions"
+      body={hasActiveFilters && activeFilterCount > 0 ? message : hint}
+      footer={
+        hasActiveFilters && activeFilterCount > 0 ? (
+          <button
+            type="button"
+            className="text-xs text-accent hover:underline"
+            onClick={onClear}
+          >
+            Clear filters
+          </button>
+        ) : null
+      }
+    />
   );
 }
 
@@ -689,13 +692,9 @@ export const SessionsTab = memo(function SessionsTab({
         style={selectedSessionId ? { height: `${topHeight}%` } : undefined}
       >
         {isLoading && entries.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>Loading sessions...</p>
-          </div>
+          <ActivityPanelEmpty body="Loading sessions…" />
         ) : fetchError && entries.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>{fetchError}</p>
-          </div>
+          <ActivityPanelEmpty body={fetchError} />
         ) : entries.length === 0 ? (
           <FilterEmptyState
             message={emptyListMessage}
@@ -855,21 +854,15 @@ export const SessionsTab = memo(function SessionsTab({
                     />
                   </div>
                 ) : (
-                  <div className="activity-tab-empty">
-                    <p>No summary available</p>
-                  </div>
+                  <ActivityPanelEmpty body="No summary available" />
                 )}
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto chat-scaled">
                 {isLoadingDetail ? (
-                  <div className="activity-tab-empty">
-                    <p>Loading messages...</p>
-                  </div>
+                  <ActivityPanelEmpty body="Loading messages…" />
                 ) : chatMessages.length === 0 ? (
-                  <div className="activity-tab-empty">
-                    <p>{transcriptEmptyStateMessage}</p>
-                  </div>
+                  <ActivityPanelEmpty body={transcriptEmptyStateMessage} />
                 ) : (
                   <>
                     {chatMessages.map((message) => (

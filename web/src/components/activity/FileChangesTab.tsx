@@ -3,6 +3,7 @@ import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { DiffBlock } from '../shared/DiffBlock'
 import { parseUnifiedDiffLines } from '../shared/DiffBlock.helpers'
 import type { ChangedFile } from '../../hooks/useFileChanges'
+import { ActivityPanelEmpty, ChangesEmptyIcon } from './ActivityPanelEmpty'
 
 interface FileChangesTabProps {
   changedFiles: ChangedFile[]
@@ -92,12 +93,11 @@ export const FileChangesTab = memo(function FileChangesTab({
 
   if (changedFiles.length === 0) {
     return (
-      <div className="activity-tab-empty">
-        <p>No file changes detected</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Changes will appear here as files are modified during the session
-        </p>
-      </div>
+      <ActivityPanelEmpty
+        icon={<ChangesEmptyIcon />}
+        heading="Changes"
+        body="Changes appear here as files are modified during the session"
+      />
     )
   }
 
@@ -151,9 +151,7 @@ export const FileChangesTab = memo(function FileChangesTab({
       {selectedPath && (
         <div className="flex-1 flex flex-col min-h-0">
           {loadingDiff ? (
-            <div className="activity-tab-empty">
-              <p>Loading diff...</p>
-            </div>
+            <ActivityPanelEmpty body="Loading diff…" />
           ) : (
             <DiffBlock
               lines={parseUnifiedDiffLines(diff)}

@@ -4,6 +4,7 @@ import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatTime } from '../workflows/executionFormatters'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'
 import type { TraceRecord, SpanRecord } from '../../hooks/useTraces'
+import { ActivityPanelEmpty, TracesEmptyIcon } from './ActivityPanelEmpty'
 
 interface TracesTabProps {
   projectId?: string | null
@@ -59,11 +60,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
   }
 
   if (isLoading && traces.length === 0) {
-    return (
-      <div className="activity-tab-empty">
-        <p>Loading traces...</p>
-      </div>
-    )
+    return <ActivityPanelEmpty body="Loading traces…" />
   }
 
   return (
@@ -82,14 +79,15 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
         style={selectedTrace ? { height: `${topHeight}%` } : undefined}
       >
         {filteredTraces.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>
-              No {statusFilter === 'all' ? '' : statusFilter + ' '}traces
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Traces will appear here
-            </p>
-          </div>
+          <ActivityPanelEmpty
+            icon={<TracesEmptyIcon />}
+            heading="Traces"
+            body={
+              statusFilter === 'all'
+                ? 'Tool-call traces appear here as agents work'
+                : `No ${statusFilter} traces yet`
+            }
+          />
         ) : (
           <>
             {visibleTraces.map((trace) => (

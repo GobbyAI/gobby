@@ -103,7 +103,9 @@ describe("TasksTab", () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("No tasks match filters")).toBeTruthy();
+      expect(
+        screen.getByText("Tasks exist, but none match the current filters"),
+      ).toBeTruthy();
     });
 
     fireEvent.click(screen.getByTitle("Filter by task state"));

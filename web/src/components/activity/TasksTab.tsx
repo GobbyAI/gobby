@@ -45,6 +45,7 @@ import {
   type ParentTaskRef,
 } from "./TasksTabDetailPanel";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 
 interface TasksTabProps {
   projectId?: string | null;
@@ -663,11 +664,7 @@ export const TasksTab = memo(function TasksTab({
   );
 
   if (loading) {
-    return (
-      <div className="activity-tab-empty">
-        <p>Loading tasks...</p>
-      </div>
-    );
+    return <ActivityPanelEmpty body="Loading tasks…" />;
   }
 
   return (
@@ -736,14 +733,15 @@ export const TasksTab = memo(function TasksTab({
         data-testid={filtered.length > 0 ? "task-tree" : undefined}
       >
         {filtered.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>No tasks match filters</p>
-            {tasks.length > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Tasks exist, but none match the current task filters.
-              </p>
-            )}
-          </div>
+          <ActivityPanelEmpty
+            icon={<TasksEmptyIcon />}
+            heading="Tasks"
+            body={
+              tasks.length > 0
+                ? "Tasks exist, but none match the current filters"
+                : "Tasks appear here as they are created"
+            }
+          />
         ) : (
           <>
             {visibleRows.map((row) => renderTaskRow(row))}

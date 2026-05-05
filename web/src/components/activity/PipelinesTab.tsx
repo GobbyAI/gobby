@@ -4,6 +4,7 @@ import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/exec
 import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
+import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
 import '../workflows/PipelinesPage.css'
 
 interface PipelinesTabProps {
@@ -172,7 +173,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   }, [detailExec?.steps])
 
   if (loading && executions.length === 0) {
-    return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>
+    return <ActivityPanelEmpty body="Loading pipelines…" />
   }
 
   return (
@@ -190,12 +191,15 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       {/* Execution list */}
       <div className={`overflow-y-auto ${selectedId ? 'border-b border-border' : 'flex-1'}`} style={selectedId ? { height: `${topHeight}%` } : undefined}>
         {executions.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>No {statusFilter === 'all' ? '' : statusFilter + ' '}pipelines</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Pipeline runs will appear here
-            </p>
-          </div>
+          <ActivityPanelEmpty
+            icon={<PipelinesEmptyIcon />}
+            heading="Pipelines"
+            body={
+              statusFilter === 'all'
+                ? 'Pipeline runs appear here when triggered'
+                : `No ${statusFilter} pipelines yet`
+            }
+          />
         ) : (
           <>
             {executions.map((exec) => (

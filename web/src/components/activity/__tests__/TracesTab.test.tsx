@@ -74,7 +74,9 @@ beforeEach(() => {
 describe('TracesTab', () => {
   it('renders an empty state when no traces are loaded', () => {
     render(<TracesTab projectId="p" />)
-    expect(screen.getByText(/no traces/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/tool-call traces appear here as agents work/i),
+    ).toBeInTheDocument()
   })
 
   it('sorts traces newest-first and calls setSelectedTraceId on click', async () => {
