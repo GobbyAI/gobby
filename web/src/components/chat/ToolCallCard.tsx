@@ -1,7 +1,6 @@
 import { memo, useCallback, useMemo, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { CodeBlock } from '../shared/CodeBlock'
+import { MarkdownBody } from '../shared/MarkdownBody'
 import type { ToolCall, ToolResult } from '../../types/chat'
 import type { ArtifactType } from '../../types/artifacts'
 import { cn } from '../../lib/utils'
@@ -278,7 +277,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   if (toolName === 'Agent' || toolName === 'Task') {
     return (
       <div className="max-h-96 overflow-y-auto text-xs p-2">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{resultStr}</ReactMarkdown>
+        <MarkdownBody content={resultStr} id={`tool-result-${call.id}`} />
       </div>
     )
   }

@@ -1,9 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { CodeBlock } from './shared/CodeBlock'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { markdownComponents } from './shared/MarkdownComponents'
+import { MarkdownBody } from './shared/MarkdownBody'
 import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
 import { undo, redo } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
@@ -586,9 +584,10 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
     return (
       <div className={CODE_VIEWER_CLS}>
         <div className={cn(MARKDOWN_VIEWER_CLS, 'message-content')}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {file.content}
-          </ReactMarkdown>
+          <MarkdownBody
+            content={file.content}
+            id={`files-page-md-${file.projectId}:${file.path}`}
+          />
         </div>
       </div>
     )

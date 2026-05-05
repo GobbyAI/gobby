@@ -3,9 +3,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { CodeBlock } from '../shared/CodeBlock'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { markdownComponents } from '../shared/MarkdownComponents'
+import { MarkdownBody } from '../shared/MarkdownBody'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
 import {
   FOLDER_ICON_COLOR_VAR,
@@ -480,9 +478,10 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
               />
             ) : language === 'markdown' ? (
               <div className="files-markdown-viewer message-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {fileContent ?? ''}
-                </ReactMarkdown>
+                <MarkdownBody
+                  content={fileContent ?? ''}
+                  id={`files-tab-md-${selectedFile ?? 'none'}`}
+                />
               </div>
             ) : (
               <CodeBlock
