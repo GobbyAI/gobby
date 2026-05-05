@@ -43,7 +43,7 @@ class TestDaemonRestartAgentCancellationReplay:
         assert replayed == 1
         runner.agent_runner.run_storage.list_by_status.assert_called_once_with(
             "cancelled",
-            limit=1000,
+            limit=500,
         )
         runner.completion_registry.register.assert_called_once_with(
             "run-1",

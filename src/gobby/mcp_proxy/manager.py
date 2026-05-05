@@ -719,7 +719,11 @@ class MCPClientManager:
         """
         results = {}
         if server_name:
-            return {server_name: await self._list_tools_for_server(server_name)}
+            try:
+                return {server_name: await self._list_tools_for_server(server_name)}
+            except Exception as e:
+                logger.warning("Failed to list tools for %s: %s", server_name, e)
+                return {server_name: []}
 
         for name in list(self._connections.keys()):
             try:

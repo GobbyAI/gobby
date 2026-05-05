@@ -34,6 +34,10 @@ def unwrap_result(result: dict) -> dict:
     return result
 
 
+def assert_task_closed(result: dict, label: str) -> None:
+    assert result.get("state", {}).get("is_closed") is True, f"{label} should be closed: {result}"
+
+
 class TestSequentialReviewLoopE2E:
     """E2E tests for sequential review loop orchestration."""
 
@@ -110,7 +114,7 @@ class TestSequentialReviewLoopE2E:
         assert len(subtask_ids) == 2, "Should have created 2 subtasks"
 
         # Step 3: Process first subtask (simulate spawn→wait→review→close)
-        # 3a: Set first subtask to in_progress (must use claim_task for this)
+        # 3a: Claim first subtask for this session.
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="claim_task",
@@ -119,14 +123,18 @@ class TestSequentialReviewLoopE2E:
         result = unwrap_result(raw_result)
         assert result.get("success") is not False, f"Claim subtask 1 failed: {result}"
 
-        # 3b: Verify first subtask is in_progress
+        # 3b: Verify first subtask is claimed.
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="get_task",
             arguments={"task_id": subtask_ids[0]},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "in_progress", f"Subtask 1 should be in_progress: {result}"
+        state = result.get("state", {})
+        assert state.get("is_claimed") is True, f"Subtask 1 should be claimed: {result}"
+        assert state.get("owner_session_id") == session_id, (
+            f"Subtask 1 should be owned by {session_id}: {result}"
+        )
 
         # 3c: Close first subtask (simulating agent completion)
         # Using reason="obsolete" bypasses commit check and closes directly
@@ -149,7 +157,7 @@ class TestSequentialReviewLoopE2E:
             arguments={"task_id": subtask_ids[0]},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "closed", f"Subtask 1 should be closed: {result}"
+        assert_task_closed(result, "Subtask 1")
 
         # Step 4: Process second subtask (same flow)
         # 4a: Set second subtask to in_progress (must use claim_task for this)
@@ -181,7 +189,7 @@ class TestSequentialReviewLoopE2E:
             arguments={"task_id": subtask_ids[1]},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "closed", f"Subtask 2 should be closed: {result}"
+        assert_task_closed(result, "Subtask 2")
 
         # Step 5: Verify both subtasks are closed via list_tasks
         raw_result = mcp_client.call_tool(
@@ -189,11 +197,12 @@ class TestSequentialReviewLoopE2E:
             tool_name="list_tasks",
             arguments={
                 "parent_task_id": epic_id,
-                "status": "closed",
             },
         )
         result = unwrap_result(raw_result)
-        closed_tasks = result.get("tasks", [])
+        closed_tasks = [
+            task for task in result.get("tasks", []) if task.get("state", {}).get("is_closed")
+        ]
         assert len(closed_tasks) >= 2, f"Should have 2 closed subtasks: {result}"
 
         # Step 6: Close the epic (all subtasks done)
@@ -216,7 +225,7 @@ class TestSequentialReviewLoopE2E:
             arguments={"task_id": epic_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "closed", f"Epic should be closed: {result}"
+        assert_task_closed(result, "Epic")
 
     def test_sequential_with_dependencies(
         self,
@@ -355,9 +364,7 @@ class TestSequentialReviewLoopE2E:
             arguments={"task_id": subtask1_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "closed", (
-            f"Subtask 1 should be closed: {result.get('status')}"
-        )
+        assert_task_closed(result, "Subtask 1")
 
         # Verify subtask 2's blocking dependency is now resolved (subtask 1 in review/closed)
         # Since subtask 1 is in review/closed, subtask 2 should now be unblocked
@@ -528,7 +535,7 @@ class TestReviewStepE2E:
             arguments={"task_id": task_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "closed", f"Task should be closed: {result}"
+        assert_task_closed(result, "Task")
 
     def test_review_task_can_be_approved(
         self,
@@ -575,6 +582,11 @@ class TestReviewStepE2E:
 
         mcp_client.call_tool(
             server_name="gobby-tasks-ops",
+            tool_name="initialize_task_manifest",
+            arguments={"task_id": task_id},
+        )
+        mcp_client.call_tool(
+            server_name="gobby-tasks-ops",
             tool_name="start_stage",
             arguments={"task_id": task_id, "stage_name": "development"},
         )
@@ -593,10 +605,14 @@ class TestReviewStepE2E:
             arguments={"task_id": task_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("state", {}).get("current_stage") == {
-            "name": "development",
-            "state": "needs_review",
-        }, f"Task should be in needs_review: {result}"
+        current_stage = result.get("state", {}).get("current_stage")
+        assert current_stage is not None, f"Task should have a current stage: {result}"
+        assert current_stage.get("name") == "development", (
+            f"Task should be in development: {result}"
+        )
+        assert current_stage.get("state") == "needs_review", (
+            f"Task should be in needs_review: {result}"
+        )
 
         mcp_client.call_tool(
             server_name="gobby-tasks-ops",
@@ -624,7 +640,7 @@ class TestReviewStepE2E:
             arguments={"task_id": task_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "closed", f"Task should be closed: {result}"
+        assert_task_closed(result, "Task")
 
 
 class TestWorkflowToolsAvailability:

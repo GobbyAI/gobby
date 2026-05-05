@@ -27,8 +27,18 @@ def _stage_state_filter_clause(
     states = (
         [current_stage_state] if isinstance(current_stage_state, str) else list(current_stage_state)
     )
-    placeholders = ", ".join("?" for _ in states)
-    return f"current_stage.state IN ({placeholders})", states
+    normalized = [str(state).strip().lower().replace("-", "_") for state in states]
+    placeholders = ", ".join("?" for _ in normalized)
+    clauses = [f"current_stage.state IN ({placeholders})"]
+    if "ready" in normalized:
+        clauses.append(
+            """
+            NOT EXISTS (
+                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+            )
+            """
+        )
+    return f"({' OR '.join(clauses)})", normalized
 
 
 def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
@@ -153,9 +163,14 @@ def count_ready_tasks(
     # ancestor chain and check if the blocked task (t.id) appears anywhere.
     query = f"""
     SELECT COUNT(*) as count FROM tasks t
-    {_current_stage_join_sql("t", join_type="JOIN")}
+    {_current_stage_join_sql("t")}
     WHERE {_not_closed_or_escalated_sql("t")}
-    AND current_stage.state IN ('ready', 'in_progress')
+    AND (
+        current_stage.state IN ('ready', 'in_progress')
+        OR NOT EXISTS (
+            SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+        )
+    )
     AND {_no_external_blocker_sql("t")}
     """
     params: list[Any] = []

@@ -61,16 +61,15 @@ def test_record_lifecycle_event_appends_ordered_audit_rows(temp_db, sample_proje
     )
 
     events = manager.list_lifecycle_events(task.id)
-    assert len(events) == 3
-    assert events[0].id < first.id < second.id
+    assert len(events) == 2
+    assert events[0].id == first.id
+    assert events[1].id == second.id
     assert [event.to_state for event in events] == [
-        "manifest:0:development:ready,1:pr:ready,2:merge:ready",
         "plan_review",
         "test_arch",
     ]
-    assert events[0].reason == "initialize_manifest"
-    assert events[1].reason == "operator requested build"
-    assert events[2].by_actor == "holistic-reviewer"
+    assert events[0].reason == "operator requested build"
+    assert events[1].by_actor == "holistic-reviewer"
     assert not hasattr(manager, "update_lifecycle_event")
     assert not hasattr(manager, "delete_lifecycle_event")
 
@@ -103,6 +102,5 @@ def test_module_helpers_return_id_and_list_newest_first(temp_db, sample_project)
     events = list_lifecycle_events(temp_db, task.id)
     assert isinstance(first_id, int)
     assert isinstance(second_id, int)
-    assert len(events) == 3
+    assert len(events) == 2
     assert [event.id for event in events[:2]] == [second_id, first_id]
-    assert events[2].reason == "initialize_manifest"

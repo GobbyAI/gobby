@@ -24,6 +24,11 @@ def _task(manager: LocalTaskManager, sample_project: dict, **kwargs):
     return manager.create_task(project_id=sample_project["id"], title=title, **kwargs)
 
 
+def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:
+    manager.initialize_task_manifest(task_id)
+    manager.stage_states.start_stage(task_id, "development", by_session_id=None)
+
+
 def _seq_ref(task) -> str:
     assert task.seq_num is not None
     return f"#{task.seq_num}"
@@ -61,14 +66,14 @@ class TestIsTaskComplete:
     def test_in_progress_is_not_complete(self, temp_db, sample_project) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
-        manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+        _start_development_stage(manager, task.id)
 
         assert is_task_complete(manager.get_task(task.id)) is False
 
     def test_needs_review_is_not_complete(self, temp_db, sample_project) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
-        manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+        _start_development_stage(manager, task.id)
         reviewed = manager.submit_for_review(task.id)
 
         assert is_task_complete(reviewed) is False
@@ -218,7 +223,7 @@ class TestTaskNeedsHumanReview:
     def test_needs_review_is_not_human_review(self, temp_db, sample_project) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
-        manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+        _start_development_stage(manager, task.id)
         manager.submit_for_review(task.id)
 
         assert task_needs_human_review(manager, task.id) is False

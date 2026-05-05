@@ -330,10 +330,12 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_qwen_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
+    @patch("gobby.cli.install._is_droid_cli_installed")
     @patch("gobby.cli.load_config")
     def test_install_no_clis_detected(
         self,
         mock_load_config: MagicMock,
+        mock_droid: MagicMock,
         mock_codex: MagicMock,
         mock_qwen: MagicMock,
         mock_gemini: MagicMock,
@@ -347,6 +349,7 @@ class TestInstallCommand:
         mock_gemini.return_value = False
         mock_qwen.return_value = False
         mock_codex.return_value = False
+        mock_droid.return_value = False
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
             result = runner.invoke(cli, ["install"])

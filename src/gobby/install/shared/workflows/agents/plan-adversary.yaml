@@ -111,6 +111,17 @@ instructions: |
      `approval_notes` that document the manifest outcome, e.g. "approved with N
      manifest entries".
 
+  YOLO MANIFEST FALLBACK:
+  - yolo: do NOT call `escalate_task` (top-level yolo invariant) after the
+    manifest-emission retry cap.
+  - In yolo mode, append a `## Yolo Fallbacks` audit section to the plan file,
+    call `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)`, then
+    re-run `parse_plan(plan_path, parse_mode="expansion")`.
+  - If `emit_stub_manifest` or the strict parse still fails, append a second
+    audit marker containing `force-approve`, then call `approve_review` with
+    notes stating that downstream gobby expand will reject the plan if the
+    manifest remains invalid.
+
   SIGNOFF SUMMARY:
   Both `reject_review` and `approve_review` accept an
   optional `signoff_summary` kwarg — a one-line tldr that surfaces to the

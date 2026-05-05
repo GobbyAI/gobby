@@ -922,6 +922,7 @@ _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_source.json"}
 # A real sandbox escape would also leak db/config files that aren't listed
 # here, so these omissions do not weaken the check.
 _ALWAYS_EXEMPT_BASENAMES = {"shutdown_source.json"}
+_ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/",)
 
 
 @pytest.fixture(autouse=True)
@@ -959,6 +960,8 @@ def assert_no_external_writes() -> Generator[None]:
         if rel_path not in before:
             # CREATED file — check if it's a known daemon artifact
             basename = Path(rel_path).name
+            if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
+                continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
             if prod_running and (

@@ -19,10 +19,15 @@ def _task(manager: LocalTaskManager, sample_project: dict):
     return manager.create_task(project_id=sample_project["id"], title="Task state helper")
 
 
+def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:
+    manager.initialize_task_manifest(task_id)
+    manager.stage_states.start_stage(task_id, "development", by_session_id=None)
+
+
 def test_task_state_in_matches_current_stage_state(temp_db, sample_project) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
-    manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+    _start_development_stage(manager, task.id)
     manager.submit_for_review(task.id)
 
     assert task_state_in(manager, task.id, "needs_review", "closed") is True
@@ -49,7 +54,7 @@ def test_task_state_in_uses_real_stage_native_task_fields(temp_db, sample_projec
     assert task.is_escalated is False
     assert task_state_in(manager, task.id, "ready") is True
 
-    manager.stage_states.start_stage(task.id, "development", by_session_id=None)
+    _start_development_stage(manager, task.id)
     in_progress = manager.get_task(task.id)
     assert not hasattr(in_progress, "status")
     assert task_state_in(manager, task.id, "in_progress") is True

@@ -16,7 +16,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable, is_task_closed
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -282,13 +282,29 @@ def _resolve_ready_tasks(
         limit=50,
         project_id=project_id,
     )
+    claimed_tasks = task_manager.list_tasks(
+        claimed=True,
+        closed=False,
+        limit=50,
+        project_id=project_id,
+    )
+    seen_active_ids = {task.id for task in in_progress_tasks}
+    for task in claimed_tasks:
+        if task.id not in seen_active_ids and is_task_actionable(task):
+            in_progress_tasks.append(task)
+            seen_active_ids.add(task.id)
+
     active_ancestry: list[str] = []
     if in_progress_tasks:
         active_ancestry = _get_ancestry_chain(task_manager, in_progress_tasks[0].id)
 
     # Filter out already-active work. A ready task should not be re-suggested if
     # it is already claimed or already projected as in_progress.
-    ready_tasks = [task for task in ready_tasks if not get_claimed_session_id(task)]
+    ready_tasks = [
+        task
+        for task in ready_tasks
+        if task.id not in seen_active_ids and not get_claimed_session_id(task)
+    ]
     if not ready_tasks:
         return {
             "early_return": {

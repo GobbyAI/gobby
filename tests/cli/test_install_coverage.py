@@ -299,6 +299,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
         ):
             result = runner.invoke(install, ["-C", str(tmp_path)], catch_exceptions=False)
         assert result.exit_code == 1

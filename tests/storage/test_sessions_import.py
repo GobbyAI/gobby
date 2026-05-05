@@ -43,6 +43,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "expire_empty_sessions": "(self, timeout_hours: 'int' = 2) -> 'int'",
     "expire_orphaned_handoff_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "expire_stale_sessions": "(self, timeout_hours: 'int' = 24) -> 'int'",
+    "fetch_task_refs_by_session": "(self, session_ids: 'Sequence[str]') -> "
+    "'dict[str, _TaskRefsByRole]'",
     "find_active_by_external_id": "(self, external_id: 'str', source: 'str') -> 'Session | None'",
     "find_by_external_id": "(self, external_id: 'str', machine_id: 'str', "
     "project_id: 'str | None', source: 'str', session_type: 'str | None' = None) "
@@ -65,7 +67,14 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "is_ancestor": "(self, ancestor_id: 'str', descendant_id: 'str') -> 'bool'",
     "list": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, limit: 'int' = 100, "
-    "exclude_subagents: 'bool' = False) -> 'list[Session]'",
+    "exclude_subagents: 'bool' = False, cursor_updated_at: 'str | None' = None, "
+    "cursor_id: 'str | None' = None, sources: 'Sequence[str] | None' = None, "
+    "statuses: 'Sequence[str] | None' = None, modes: 'Sequence[str] | None' = None, "
+    "models: 'Sequence[str] | None' = None, session_seq_min: 'int | None' = None, "
+    "session_seq_max: 'int | None' = None, task_ref_min: 'int | None' = None, "
+    "task_ref_max: 'int | None' = None, task_ref_roles: 'Sequence[str] | None' = None, "
+    "created_after: 'str | None' = None, created_before: 'str | None' = None) -> "
+    "'list[Session]'",
     "lookup_session_id": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None') -> 'str | None'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",

@@ -109,6 +109,8 @@ def set_stage_state(
     if review_round_count is not None:
         updates["review_round_count"] = review_round_count
     assignments = ", ".join(f"{column} = ?" for column in updates)
+    if stage_states_manager(db).get(task_id, stage_name) is None:
+        initialize_manifest(db, task_id, [spec(stage_name, 0)])
     db.execute(
         f"""
         UPDATE task_stage_states

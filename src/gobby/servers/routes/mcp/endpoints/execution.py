@@ -538,7 +538,13 @@ async def get_tool_schema(
     start_time = time.perf_counter()
 
     try:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": f"Invalid JSON: {exc.msg}"},
+            ) from exc
         server_name = body.get("server_name")
         tool_name = body.get("tool_name")
 
@@ -685,7 +691,13 @@ async def call_mcp_tool(
     inc_counter("mcp_tool_calls_total")
 
     try:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": f"Invalid JSON: {exc.msg}"},
+            ) from exc
         server_name = body.get("server_name")
         tool_name = body.get("tool_name")
         arguments = body.get("arguments", {})

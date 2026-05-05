@@ -117,6 +117,7 @@ def test_planner_path_blocks_until_task_reaches_review_approved(
         is True
     )
 
+    task_manager.initialize_task_manifest(task.id)
     task_manager.stage_states.start_stage(task.id, "development", by_session_id=None)
     task_manager.submit_for_review(task.id)
     task_manager.approve_review(task.id)

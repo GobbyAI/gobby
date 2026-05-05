@@ -4,7 +4,12 @@ import pytest
 
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, TaskIDCollisionError
-from gobby.tasks.state_semantics import current_stage_state, is_task_closed, serialize_task_state
+from gobby.tasks.state_semantics import (
+    current_stage_state,
+    is_task_closed,
+    projected_task_state,
+    serialize_task_state,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -28,12 +33,15 @@ def _start_current_stage(
     task_manager: LocalTaskManager, task_id: str, session_id: str | None = None
 ) -> None:
     current = task_manager.stage_states.current_stage(task_id)
+    if current is None:
+        task_manager.initialize_task_manifest(task_id)
+        current = task_manager.stage_states.current_stage(task_id)
     assert current is not None
     task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=session_id)
 
 
 def _assert_stage_state(task, state: str) -> None:
-    assert current_stage_state(task) == state
+    assert projected_task_state(task) == state
 
 
 @pytest.mark.integration
@@ -121,7 +129,8 @@ class TestLocalTaskManager:
         projected = task_manager.get_task(task.id)
         state = serialize_task_state(projected)
 
-        assert state["current_stage"] == {"name": "development", "state": "in_progress"}
+        assert state["current_stage"]["name"] == "development"
+        assert state["current_stage"]["state"] == "in_progress"
         assert "status" not in projected.to_dict()
 
     def test_close_task(self, task_manager, project_id) -> None:
@@ -142,7 +151,7 @@ class TestLocalTaskManager:
         closed = task_manager.close_task(reviewed.id, reason="Merged")
 
         assert is_task_closed(closed)
-        _assert_stage_state(closed, "review_approved")
+        assert current_stage_state(closed) == "review_approved"
         assert closed.closed_reason == "Merged"
 
     def test_delete_task(self, task_manager, project_id) -> None:
@@ -811,7 +820,7 @@ class TestLocalTaskManager:
         """Test reopening an already open task raises error."""
         task = task_manager.create_task(project_id, "Open Task")
 
-        with pytest.raises(ValueError, match="not closed or escalated"):
+        with pytest.raises(ValueError, match="already ready"):
             task_manager.reopen_task(task.id)
 
     def test_reopen_task_from_escalated(self, task_manager, project_id) -> None:
@@ -1459,7 +1468,7 @@ class TestLocalTaskManager:
         assert brief["id"] == task.id
         assert brief["title"] == "Full Task"
         assert "status" not in brief
-        assert brief["state"]["current_stage"] == {"name": "development", "state": "ready"}
+        assert brief["state"]["current_stage"] is None
         assert brief["priority"] == 1
         assert brief["task_type"] == "bug"
         assert brief["parent_task_id"] is None

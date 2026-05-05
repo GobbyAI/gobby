@@ -436,8 +436,7 @@ class TestParallelTaskProcessing:
             result = unwrap_result(raw_result)
             subtask_ids.append(result["id"])
 
-        # Simulate parallel processing: all tasks set to in_progress
-        # Note: Must use claim_task instead of update_task for status="in_progress"
+        # Simulate parallel processing: all tasks claimed by the session.
         for task_id in subtask_ids:
             mcp_client.call_tool(
                 server_name="gobby-tasks",
@@ -445,7 +444,7 @@ class TestParallelTaskProcessing:
                 arguments={"task_id": task_id},
             )
 
-        # Verify all are in_progress
+        # Verify all are claimed by the current session.
         for task_id in subtask_ids:
             raw_result = mcp_client.call_tool(
                 server_name="gobby-tasks",
@@ -453,7 +452,11 @@ class TestParallelTaskProcessing:
                 arguments={"task_id": task_id},
             )
             result = unwrap_result(raw_result)
-            assert result.get("status") == "in_progress", f"Task {task_id} should be in_progress"
+            state = result.get("state", {})
+            assert state.get("is_claimed") is True, f"Task {task_id} should be claimed"
+            assert state.get("owner_session_id") == session_id, (
+                f"Task {task_id} should be owned by {session_id}"
+            )
 
         # Complete all tasks (simulating agents finishing)
         for task_id in subtask_ids:
@@ -476,7 +479,9 @@ class TestParallelTaskProcessing:
                 arguments={"task_id": task_id},
             )
             result = unwrap_result(raw_result)
-            assert result.get("status") == "closed", f"Task {task_id} should be closed"
+            assert result.get("state", {}).get("is_closed") is True, (
+                f"Task {task_id} should be closed"
+            )
 
         # Verify no more ready tasks under epic
         raw_result = mcp_client.call_tool(
@@ -506,7 +511,7 @@ class TestParallelTaskProcessing:
             arguments={"task_id": epic_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("status") == "closed", f"Epic should be closed: {result}"
+        assert result.get("state", {}).get("is_closed") is True, f"Epic should be closed: {result}"
 
 
 class TestWorkflowActivation:

@@ -66,14 +66,13 @@ def test_invalid_projects(manager, sample_project):
     try:
         manager.db.execute(
             """
-            INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, project_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 "task_orphan_proj",
                 "invalid_proj",
                 "Orphan Project Task",
-                "open",
                 "2023-01-01",
                 "2023-01-01",
             ),

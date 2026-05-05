@@ -25,10 +25,10 @@ def test_stats_no_filters(test_app):
     db = server_mock.services.database
 
     def fetchall_mock(query, params):
+        if "FROM tasks" in query and "GROUP BY task_state" in query:
+            return [{"task_state": "ready", "cnt": 10}, {"task_state": "in_progress", "cnt": 2}]
         if "FROM tasks t" in query and "is_ready_sql" not in query:
             return [{"cnt": 5}]
-        if "FROM tasks" in query and "GROUP BY status" in query:
-            return [{"status": "open", "cnt": 10}, {"status": "in_progress", "cnt": 2}]
         if (
             "SELECT COUNT(*) as cnt FROM tasks" in query
             and "closed_at IS NULL" in query
@@ -82,7 +82,7 @@ def test_stats_no_filters(test_app):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["tasks"]["open"] == 10
+    assert data["tasks"]["ready"] == 10
     assert data["tasks"]["in_progress"] == 2
     assert data["sessions"]["active"] == 1
     assert data["sessions"]["by_source"]["cli"]["active"] == 1
@@ -117,6 +117,6 @@ def test_stats_exceptions(test_app):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["tasks"]["open"] == 0
+    assert data["tasks"]["ready"] == 0
     assert data["sessions"]["active"] == 0
     assert data["memory"]["count"] == 0

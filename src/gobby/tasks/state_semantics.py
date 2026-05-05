@@ -135,7 +135,13 @@ def is_task_actionable(task: Any) -> bool:
     if task is None or is_task_closed(task) or _task_is_escalated(task):
         return False
     stage_state = current_stage_state(task)
-    return stage_state in ACTIVE_STAGE_STATES
+    if stage_state in ACTIVE_STAGE_STATES:
+        return True
+
+    stages = _read_field(task, "stages")
+    if isinstance(stages, Sequence) and not isinstance(stages, str | bytes | bytearray):
+        return len(stages) == 0
+    return True
 
 
 def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:

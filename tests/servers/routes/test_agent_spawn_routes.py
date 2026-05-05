@@ -16,6 +16,7 @@ from gobby.config.app import DaemonConfig
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.state_semantics import current_stage_state
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -32,6 +33,12 @@ def _create_task(task_manager: LocalTaskManager, project_id: str, title: str = "
         task_type="task",
         project_id=project_id,
     )
+
+
+def _submit_for_development_review(task_manager: LocalTaskManager, task_id: str) -> None:
+    task_manager.initialize_task_manifest(task_id)
+    task_manager.stage_states.start_stage(task_id, "development", by_session_id=None)
+    task_manager.submit_for_review(task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +140,10 @@ class TestSpawnAgent:
         data = response.json()
         assert "runner" in data["detail"].lower() or "unavailable" in data["detail"].lower()
 
-    def test_spawn_updates_task_status(
+    def test_spawn_claims_task_for_web_chat(
         self, client: TestClient, task_manager: LocalTaskManager, test_project
     ) -> None:
-        """After web_chat spawn, task status should be in_progress."""
+        """After web_chat spawn, task should be claimed by the conversation."""
         task = _create_task(task_manager, test_project.id, "Status task")
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -150,7 +157,7 @@ class TestSpawnAgent:
 
         data = response.json()
         updated = task_manager.get_task(task.id)
-        assert updated.status == "in_progress"
+        assert updated.claimed_by_session_id == data["conversation_id"]
         assert updated.assignee == data["conversation_id"]
 
     def test_spawn_web_chat_preserves_review_status(
@@ -158,7 +165,7 @@ class TestSpawnAgent:
     ) -> None:
         """Web chat spawn on needs_review should set assignee without regressing status."""
         task = _create_task(task_manager, test_project.id, "Review task")
-        task_manager.submit_for_review(task.id)
+        _submit_for_development_review(task_manager, task.id)
 
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -172,7 +179,7 @@ class TestSpawnAgent:
         assert response.status_code == 200
         data = response.json()
         updated = task_manager.get_task(task.id)
-        assert updated.status == "needs_review"
+        assert current_stage_state(updated) == "needs_review"
         assert updated.assignee == data["conversation_id"]
 
     def test_spawn_web_chat_does_not_steal_claimed_review_task(
@@ -190,7 +197,7 @@ class TestSpawnAgent:
             project_id=test_project.id,
         )
         task = _create_task(task_manager, test_project.id, "Claimed review task")
-        task_manager.submit_for_review(task.id)
+        _submit_for_development_review(task_manager, task.id)
         task_manager.claim_task(task.id, existing_owner.id)
 
         with patch(
@@ -204,7 +211,7 @@ class TestSpawnAgent:
 
         assert response.status_code == 200
         updated = task_manager.get_task(task.id)
-        assert updated.status == "needs_review"
+        assert current_stage_state(updated) == "needs_review"
         assert updated.assignee == existing_owner.id
 
     def test_terminal_spawn_passes_daemon_config_for_sandbox_defaults(

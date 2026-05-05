@@ -219,6 +219,7 @@ def _create_in_progress_task(
             "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
             (assignee, task.id),
         )
+    task_manager.initialize_task_manifest(task.id)
     current_stage = task_manager.stage_states.current_stage(task.id)
     assert current_stage is not None
     task_manager.stage_states.start_stage(
@@ -322,6 +323,7 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         "UPDATE tasks SET assignee = ? WHERE id = ?",
         ("sess-does-not-exist", task.id),
     )
+    task_manager.initialize_task_manifest(task.id)
     current_stage = task_manager.stage_states.current_stage(task.id)
     assert current_stage is not None
     task_manager.stage_states.start_stage(

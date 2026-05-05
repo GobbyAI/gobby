@@ -20,6 +20,9 @@ pytestmark = pytest.mark.unit
 
 def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
     current = task_manager.stage_states.current_stage(task_id)
+    if current is None:
+        task_manager.initialize_task_manifest(task_id)
+        current = task_manager.stage_states.current_stage(task_id)
     assert current is not None
     task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=None)
 
@@ -204,7 +207,8 @@ class TestListCrossProjectTasks:
         assert result["count"] == 1
         tasks = result["tasks"]
         assert tasks, "expected at least one ready task"
-        assert tasks[0]["state"]["current_stage"]["state"] == "ready"
+        assert tasks[0]["state"]["current_stage"] is None
+        assert tasks[0]["state"]["is_closed"] is False
 
     def test_list_cross_project_tasks_with_limit(self, populated_hub_db: Path) -> None:
         """Test list_cross_project_tasks respects limit."""

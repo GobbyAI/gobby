@@ -342,7 +342,7 @@ class TestListTasksCommand:
         result = runner.invoke(cli, ["tasks", "list", "--active", "--closed"])
 
         assert result.exit_code == 0
-        assert "--active and --closed are mutually exclusive" in result.output
+        assert "--active, --closed, and --escalated are mutually exclusive" in result.output
 
     def test_list_ready_and_active_mutually_exclusive(self, runner: CliRunner) -> None:
         """Test that --ready is not combined with broader filters."""

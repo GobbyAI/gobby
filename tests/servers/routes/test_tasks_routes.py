@@ -97,6 +97,9 @@ def _start_current_stage(
     task_manager: LocalTaskManager, task_id: str, session_id: str | None = None
 ) -> None:
     current = task_manager.stage_states.current_stage(task_id)
+    if current is None:
+        task_manager.initialize_task_manifest(task_id)
+        current = task_manager.stage_states.current_stage(task_id)
     assert current is not None
     task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=session_id)
 
@@ -282,7 +285,7 @@ class TestCreateTask:
         assert response.status_code == 201
         data = response.json()
         assert data["title"] == "New task"
-        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
+        assert data["state"]["current_stage"] is None
         assert "state" in data
         assert "id" in data
 
@@ -703,7 +706,7 @@ class TestReopenTask:
         assert response.status_code == 200
         data = response.json()
         assert data["state"]["is_closed"] is False
-        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
+        assert data["state"]["current_stage"] is None
 
     def test_reopen_already_open(self, client: TestClient, sample_task: dict) -> None:
         """Reopening an already-open task returns 400."""
@@ -745,10 +748,8 @@ class TestDeEscalateTask:
         assert response.status_code == 200
         data = response.json()
         assert data["state"]["is_escalated"] is True
-        assert data["state"]["current_stage"] == {
-            "name": "development",
-            "state": "needs_review",
-        }
+        assert data["state"]["current_stage"]["name"] == "development"
+        assert data["state"]["current_stage"]["state"] == "needs_review"
 
     def test_de_escalate_task(
         self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
@@ -764,7 +765,7 @@ class TestDeEscalateTask:
         assert response.status_code == 200
         data = response.json()
         assert data["state"]["is_escalated"] is False
-        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
+        assert data["state"]["current_stage"] is None
         assert "User approved the approach" in data["description"]
 
     def test_de_escalate_task_rejects_legacy_target_status(

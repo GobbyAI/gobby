@@ -20,6 +20,9 @@ pytestmark = pytest.mark.integration
 
 def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
     current = task_manager.stage_states.current_stage(task_id)
+    if current is None:
+        task_manager.initialize_task_manifest(task_id)
+        current = task_manager.stage_states.current_stage(task_id)
     assert current is not None
     task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=None)
 
@@ -169,7 +172,8 @@ class TestHubQueryIntegration:
         assert result["count"] == 2  # 1 ready task per project
 
         for task in result["tasks"]:
-            assert task["state"]["current_stage"]["state"] == "ready"
+            assert task["state"]["current_stage"] is None
+            assert task["state"]["is_closed"] is False
 
     def test_list_cross_project_tasks_respects_limit(self, multi_project_hub) -> None:
         """Test that list_cross_project_tasks respects the limit parameter."""

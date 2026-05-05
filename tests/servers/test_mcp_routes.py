@@ -1035,6 +1035,17 @@ class TestCallMCPTool:
         assert response.status_code == 400
         assert "server_name" in response.json()["detail"]["error"]
 
+    def test_call_tool_invalid_json_returns_400(self, client: TestClient) -> None:
+        """Malformed JSON should be a client error."""
+        response = client.post(
+            "/api/mcp/tools/call",
+            content='{"server_name":"gobby-tasks"}{"tool_name":"list_tasks"}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["error"].startswith("Invalid JSON:")
+
     def test_call_tool_tool_proxy_failure_is_flattened(
         self, session_storage: SessionManager
     ) -> None:

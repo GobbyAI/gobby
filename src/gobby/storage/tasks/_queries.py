@@ -33,7 +33,7 @@ def _current_stage_state_filter_sql(
         return None, []
 
     placeholders = ", ".join("?" for _ in normalized_values)
-    return (
+    clauses = [
         f"""
         EXISTS (
             SELECT 1
@@ -48,14 +48,25 @@ def _current_stage_state_filter_sql(
                )
                AND current_stage_filter.state IN ({placeholders})
         )
-        """,
-        normalized_values,
-    )
+        """
+    ]
+    params = list(normalized_values)
+    if "ready" in normalized_values:
+        clauses.append(
+            """
+            NOT EXISTS (
+                SELECT 1
+                  FROM task_stage_states stage_any
+                 WHERE stage_any.task_id = tasks.id
+            )
+            """
+        )
+    return f"({' OR '.join(clauses)})", params
 
 
-def _current_stage_join_sql(task_alias: str = "t") -> str:
+def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
     return f"""
-    JOIN task_stage_states current_stage
+    {join_type} task_stage_states current_stage
       ON current_stage.task_id = {task_alias}.id
      AND current_stage.state != 'done'
      AND current_stage.position = (
@@ -249,7 +260,12 @@ def list_ready_tasks(
         SELECT t.id FROM tasks t
         {_current_stage_join_sql("t")}
         WHERE {_not_closed_or_escalated_sql("t")}
-        AND current_stage.state IN ('ready', 'in_progress')
+        AND (
+            current_stage.state IN ('ready', 'in_progress')
+            OR NOT EXISTS (
+                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+            )
+        )
         AND t.parent_task_id IS NULL
         AND {_no_external_blocker_sql("t")}
 
@@ -260,7 +276,12 @@ def list_ready_tasks(
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
         {_current_stage_join_sql("t")}
         WHERE {_not_closed_or_escalated_sql("t")}
-        AND current_stage.state IN ('ready', 'in_progress')
+        AND (
+            current_stage.state IN ('ready', 'in_progress')
+            OR NOT EXISTS (
+                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+            )
+        )
         AND {_no_external_blocker_sql("t")}
     )
     SELECT t.* FROM tasks t

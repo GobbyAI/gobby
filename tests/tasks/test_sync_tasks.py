@@ -5,6 +5,7 @@ import pytest
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
+from gobby.tasks.state_semantics import is_task_closed
 
 pytestmark = pytest.mark.unit
 
@@ -59,7 +60,7 @@ class TestTaskSyncManager:
         assert task2_data["title"] == "Task 2"
         assert task2_data["deps_on"] == [t1.id]
         assert task2_data["state"]["is_closed"] is False
-        assert task2_data["status"] == "open"
+        assert "status" not in task2_data
 
     @pytest.mark.integration
     def test_import_from_jsonl(self, sync_manager, task_manager, sample_project) -> None:
@@ -401,8 +402,6 @@ class TestImportEdgeCases:
 
         task = task_manager.get_task("task-canonical-state")
         assert task is not None
-        assert task.status == "needs_review"
-        assert task.lifecycle_stage == "needs_review"
         assert task.claimed_by_session_id == "session-123"
 
     @pytest.mark.integration
@@ -457,7 +456,6 @@ class TestClosedStateRoundTrip:
         # Simulate a fully closed task with all metadata
         sync_manager.db.execute(
             """UPDATE tasks SET
-                status = 'closed',
                 closed_at = '2026-01-15T10:00:00+00:00',
                 closed_reason = 'completed',
                 closed_commit_sha = 'abc123def456',
@@ -480,7 +478,7 @@ class TestClosedStateRoundTrip:
         # Verify JSONL has the closed fields
         lines = sync_manager.export_path.read_text().strip().split("\n")
         data = json.loads(lines[0])
-        assert data["status"] == "closed"
+        assert data["state"]["is_closed"] is True
         assert data["closed_at"] is not None
         assert data["closed_reason"] == "completed"
         assert data["closed_commit_sha"] == "abc123def456"
@@ -507,7 +505,7 @@ class TestClosedStateRoundTrip:
         # Verify all closed state fields survived
         reimported = task_manager.get_task(task.id)
         assert reimported is not None
-        assert reimported.status == "closed"
+        assert is_task_closed(reimported)
         # closed_at is normalized with microsecond precision during export
         assert reimported.closed_at == "2026-01-15T10:00:00.000000+00:00"
         assert reimported.closed_reason == "completed"
@@ -570,7 +568,7 @@ class TestClosedStateRoundTrip:
         # Verify synced fields were updated
         updated = task_manager.get_task(task.id)
         assert updated.title == "Updated title from JSONL"
-        assert updated.status == "closed"
+        assert is_task_closed(updated)
         assert updated.closed_at == "2026-02-01T00:00:00+00:00"
         assert updated.closed_reason == "done"
 
@@ -656,7 +654,7 @@ class TestExportEdgeCases:
         data = json.loads(lines[0])
 
         assert data["validation"] is not None
-        assert data["validation"]["status"] == "invalid"
+        assert data["validation"]["state"] == "invalid"
         assert data["validation"]["feedback"] == "Test failed"
         assert data["validation"]["fail_count"] == 2
         assert data["validation"]["criteria"] == "Must pass CI"

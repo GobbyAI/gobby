@@ -443,6 +443,9 @@ def show_pipeline_run(ctx: click.Context, execution_id: str, json_format: bool) 
             click.echo(f"  {status_icon} {step.step_id} ({step.status.value})")
 
 
+pipelines.add_command(show_pipeline_run, "status")
+
+
 @pipelines.command("approve")
 @click.argument("token")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
@@ -549,11 +552,13 @@ def history_pipeline(
     except ValueError as e:
         click.echo(f"Invalid pagination: {e}", err=True)
         raise SystemExit(1) from None
-    total = execution_manager.count_executions(pipeline_name=name)
+    raw_total = execution_manager.count_executions(pipeline_name=name)
+    total = raw_total if isinstance(raw_total, int) else len(executions)
 
     if json_format:
         result = {
             "pipeline_name": name,
+            "count": len(executions),
             "executions": [
                 {
                     "id": ex.id,

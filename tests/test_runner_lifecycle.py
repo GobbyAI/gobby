@@ -1015,7 +1015,7 @@ class TestAgentRestartRecoveryHelpers:
         recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
 
         assert recovered == 1
-        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=1000)
+        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=500)
         runner.completion_registry.register.assert_called_once_with(
             "run-1",
             subscribers=["sess-1"],

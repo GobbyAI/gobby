@@ -120,7 +120,7 @@ class TaskFTS5Searcher:
             ]
             if states:
                 placeholders = ", ".join("?" for _ in states)
-                conditions.append(
+                stage_clauses = [
                     f"""
                     EXISTS (
                         SELECT 1
@@ -136,7 +136,18 @@ class TaskFTS5Searcher:
                            AND current_stage.state IN ({placeholders})
                     )
                     """
-                )
+                ]
+                if "ready" in states:
+                    stage_clauses.append(
+                        """
+                        NOT EXISTS (
+                            SELECT 1
+                              FROM task_stage_states stage_any
+                             WHERE stage_any.task_id = t.id
+                        )
+                        """
+                    )
+                conditions.append(f"({' OR '.join(stage_clauses)})")
                 params.extend(states)
 
         if task_type:

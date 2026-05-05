@@ -8,6 +8,16 @@ from gobby.tasks.tree_builder import TaskTreeBuilder
 pytestmark = pytest.mark.unit
 
 
+def _task(**kwargs) -> Task:
+    status = kwargs.pop("status", "open")
+    if status == "closed":
+        kwargs.setdefault("closed_at", "now")
+    elif status == "escalated":
+        kwargs.setdefault("is_escalated", True)
+        kwargs.setdefault("escalated_at", "now")
+    return Task(**kwargs)
+
+
 @pytest.fixture
 def mock_task_manager():
     """Create a mock task manager."""
@@ -26,7 +36,7 @@ def builder(mock_task_manager):
 
 def test_build_simple_tree(builder, mock_task_manager) -> None:
     """Test building a simple tree with one node."""
-    mock_task = Task(
+    mock_task = _task(
         id="t1",
         project_id="p1",
         title="Root",
@@ -64,7 +74,7 @@ def test_build_simple_tree(builder, mock_task_manager) -> None:
 
 def test_build_nested_tree(builder, mock_task_manager) -> None:
     """Test building a tree with children."""
-    root_task = Task(
+    root_task = _task(
         id="t1",
         project_id="p1",
         title="Root",
@@ -75,7 +85,7 @@ def test_build_nested_tree(builder, mock_task_manager) -> None:
         created_at="now",
         updated_at="now",
     )
-    child_task = Task(
+    child_task = _task(
         id="t2",
         project_id="p1",
         title="Child",
@@ -123,7 +133,7 @@ def test_build_nested_tree(builder, mock_task_manager) -> None:
 @patch("gobby.storage.task_dependencies.TaskDependencyManager")
 def test_dependency_resolution_by_title(MockDepManager, builder, mock_task_manager):
     """Test resolving dependencies by title."""
-    t1 = Task(
+    t1 = _task(
         id="t1",
         project_id="p1",
         title="A",
@@ -133,7 +143,7 @@ def test_dependency_resolution_by_title(MockDepManager, builder, mock_task_manag
         created_at="now",
         updated_at="now",
     )
-    t2 = Task(
+    t2 = _task(
         id="t2",
         project_id="p1",
         title="B",
@@ -178,7 +188,7 @@ def test_dependency_resolution_by_title(MockDepManager, builder, mock_task_manag
 @patch("gobby.storage.task_dependencies.TaskDependencyManager")
 def test_dependency_resolution_by_index(MockDepManager, builder, mock_task_manager):
     """Test resolving dependencies by numeric sibling index."""
-    root = Task(
+    root = _task(
         id="root",
         project_id="p1",
         title="Root",
@@ -188,7 +198,7 @@ def test_dependency_resolution_by_index(MockDepManager, builder, mock_task_manag
         created_at="now",
         updated_at="now",
     )
-    c1 = Task(
+    c1 = _task(
         id="c1",
         project_id="p1",
         title="Child 1",
@@ -198,7 +208,7 @@ def test_dependency_resolution_by_index(MockDepManager, builder, mock_task_manag
         created_at="now",
         updated_at="now",
     )
-    c2 = Task(
+    c2 = _task(
         id="c2",
         project_id="p1",
         title="Child 2",
@@ -262,7 +272,7 @@ def test_task_creation_failure(builder, mock_task_manager) -> None:
 @patch("gobby.storage.task_dependencies.TaskDependencyManager")
 def test_duplicate_title_handling(MockDepManager, builder, mock_task_manager):
     """Test handling of duplicate task titles."""
-    t1 = Task(
+    t1 = _task(
         id="t1",
         project_id="p1",
         title="A",
@@ -272,7 +282,7 @@ def test_duplicate_title_handling(MockDepManager, builder, mock_task_manager):
         created_at="now",
         updated_at="now",
     )
-    t2 = Task(
+    t2 = _task(
         id="t2",
         project_id="p1",
         title="A",
@@ -299,7 +309,7 @@ def test_duplicate_title_handling(MockDepManager, builder, mock_task_manager):
 @patch("gobby.storage.task_dependencies.TaskDependencyManager")
 def test_invalid_dependency_format(MockDepManager, builder, mock_task_manager):
     """Test error handling for invalid dependency types."""
-    mock_task_manager.create_task.return_value = Task(
+    mock_task_manager.create_task.return_value = _task(
         id="t1",
         project_id="p1",
         title="A",
@@ -329,7 +339,7 @@ def test_invalid_dependency_format(MockDepManager, builder, mock_task_manager):
 @patch("gobby.storage.task_dependencies.TaskDependencyManager")
 def test_dependency_not_found(MockDepManager, builder, mock_task_manager):
     """Test error handling for missing named dependency."""
-    mock_task_manager.create_task.return_value = Task(
+    mock_task_manager.create_task.return_value = _task(
         id="t1",
         project_id="p1",
         title="A",
