@@ -64,6 +64,7 @@ export const lineNumberStyle = {
   textAlign: 'right' as const,
   userSelect: 'none' as const,
   color: 'var(--text-muted)',
+  fontStyle: 'italic' as const,
 }
 
 /**

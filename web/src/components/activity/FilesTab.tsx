@@ -351,7 +351,6 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             onClick={() => toggleDir(entry.path)}
             onContextMenu={(e) => handleContextMenu(e, entry)}
           >
-            <span className="files-tree-arrow">{isExpanded ? '\u25BE' : '\u25B8'}</span>
             <FolderIcon open={isExpanded} />
             {isRenaming ? (
               <input
@@ -381,7 +380,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       <div key={entry.path}>
         <div
           className={`files-tree-item files-tree-file${isSelected ? ' file-tree-entry--active' : ''}`}
-          style={{ paddingLeft: `${depth * 16 + 20}px` }}
+          style={{ paddingLeft: `${depth * 16 + 4}px` }}
           onClick={() => openFile(entry.path)}
           onContextMenu={(e) => handleContextMenu(e, entry)}
           draggable
