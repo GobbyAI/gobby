@@ -87,6 +87,33 @@ describe('protocolContent', () => {
     expect(visibleText.trim()).toBe('')
   })
 
+  it('collapses upstream <plugins_instructions> blocks (and the singular spelling) without visible leaks', () => {
+    for (const tag of ['plugins_instructions', 'plugin_instructions']) {
+      const content = [
+        `<${tag}>`,
+        'Missing/blocked: callable capabilities for the plugin host.',
+        `</${tag}>`,
+      ].join('\n')
+
+      const segments = splitProtocolContent(content, `msg-${tag}`)
+      const visibleText = segments
+        .map((segment) => (segment.type === 'text' ? segment.content : ''))
+        .join('\n')
+
+      expect(segments).toHaveLength(1)
+      const [segment] = segments
+      expect(segment.type).toBe('tool_call')
+      if (segment.type !== 'tool_call') {
+        throw new Error('Expected protocol tool call')
+      }
+      expect(segment.call.tool_name).toBe('protocol_context')
+      expect(String(segment.call.result?.content)).toContain(
+        'Missing/blocked: callable capabilities for the plugin host.',
+      )
+      expect(visibleText.trim()).toBe('')
+    }
+  })
+
   it('treats unterminated protocol tags as plain text', () => {
     const content = '<environment_context><workspace>'
     const [segment] = splitProtocolContent(content, 'msg-2')
