@@ -101,6 +101,16 @@ class TestLinearSyncServiceInit:
         )
         assert service.linear_team_id == "team-abc"
 
+    def test_init_with_project_id(self, mock_mcp_manager, mock_task_manager) -> None:
+        """LinearSyncService accepts linear_project_id parameter."""
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_project_id="lin-proj",
+        )
+        assert service.linear_project_id == "lin-proj"
+
 
 class TestLinearSyncServiceAvailability:
     """Test availability checking."""
@@ -211,6 +221,26 @@ class TestLinearSyncServiceImport:
         with pytest.raises(ValueError, match="team_id"):
             await service.import_linear_issues()
 
+    @pytest.mark.asyncio
+    async def test_import_issues_scopes_to_linear_project(
+        self, mock_mcp_manager, mock_task_manager
+    ):
+        """import_linear_issues passes projectId when project binding exists."""
+        mock_mcp_manager.call_tool.return_value = {"issues": []}
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_team_id="team-123",
+            linear_project_id="lin-proj",
+        )
+
+        await service.import_linear_issues()
+
+        call = mock_mcp_manager.call_tool.call_args
+        assert call.kwargs["arguments"]["teamId"] == "team-123"
+        assert call.kwargs["arguments"]["projectId"] == "lin-proj"
+
 
 class TestLinearSyncServiceSync:
     """Test sync_task_to_linear method."""
@@ -244,6 +274,27 @@ class TestLinearSyncServiceSync:
         with pytest.raises(ValueError, match="issue"):
             await sync_service.sync_task_to_linear(task_id="test-task-id")
 
+    @pytest.mark.asyncio
+    async def test_pull_updates_scopes_to_linear_project(self, mock_mcp_manager, mock_task_manager):
+        """pull_linear_updates passes projectId when project binding exists."""
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": "task-1", "linear_issue_id": "issue-1"}
+        ]
+        mock_mcp_manager.call_tool.return_value = {"issues": []}
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_team_id="team-123",
+            linear_project_id="lin-proj",
+        )
+
+        await service.pull_linear_updates()
+
+        call = mock_mcp_manager.call_tool.call_args
+        assert call.kwargs["arguments"]["teamId"] == "team-123"
+        assert call.kwargs["arguments"]["projectId"] == "lin-proj"
+
 
 class TestLinearSyncServiceCreate:
     """Test create_issue_for_task method."""
@@ -268,6 +319,32 @@ class TestLinearSyncServiceCreate:
 
         mock_mcp_manager.call_tool.assert_called()
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_create_issue_includes_linear_project(self, mock_mcp_manager, mock_task_manager):
+        """create_issue_for_task includes team and project binding."""
+        mock_task = MagicMock()
+        mock_task.title = "Feature"
+        mock_task.description = "Description"
+        mock_task.linear_team_id = None
+        mock_task.id = "test-task-id"
+        mock_task.priority = 2
+        mock_task_manager.get_task.return_value = mock_task
+        mock_mcp_manager.call_tool.return_value = {"id": "lin-456"}
+
+        service = LinearSyncService(
+            mcp_manager=mock_mcp_manager,
+            task_manager=mock_task_manager,
+            project_id="test-project",
+            linear_team_id="team-123",
+            linear_project_id="lin-proj",
+        )
+
+        await service.create_issue_for_task(task_id="test-task-id")
+
+        call = mock_mcp_manager.call_tool.call_args
+        assert call.kwargs["arguments"]["teamId"] == "team-123"
+        assert call.kwargs["arguments"]["projectId"] == "lin-proj"
 
     @pytest.mark.asyncio
     async def test_create_issue_updates_task_linear_id(

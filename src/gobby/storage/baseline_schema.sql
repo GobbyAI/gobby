@@ -10,6 +10,7 @@ CREATE TABLE projects (
     github_url TEXT,
     github_repo TEXT,
     linear_team_id TEXT,
+    linear_project_id TEXT,
     linear_synced_at TEXT,
     deleted_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -1835,10 +1836,10 @@ CREATE TRIGGER task_stage_states_state_bucket_ad
         END;
 
 -- Seed rows for projects
-INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
-INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000001', '_migrated', NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
-INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000002', '_global', NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
-INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
+INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_project_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000000', '_orphaned', NULL, NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
+INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_project_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000001', '_migrated', NULL, NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
+INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_project_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000002', '_global', NULL, NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
+INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_project_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NULL, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'));
 
 -- Seed rows for sessions
 INSERT INTO "sessions" ("id", "external_id", "machine_id", "source", "project_id", "title", "title_source", "status", "transcript_path", "summary_path", "summary_markdown", "git_branch", "parent_session_id", "transcript_processed", "agent_depth", "spawned_by_agent_id", "workflow_name", "agent_run_id", "context_injected", "original_prompt", "usage_input_tokens", "usage_output_tokens", "usage_cache_creation_tokens", "usage_cache_read_tokens", "context_window", "terminal_context", "seq_num", "model", "is_local", "had_edits", "digest_markdown", "last_turn_markdown", "chat_mode", "last_digest_input_hash", "message_count", "turn_count", "tool_call_count", "last_assistant_content", "approved_tools_json", "session_type", "sandbox_enabled", "sandbox_policy_hash", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000001', 'system', 'system', 'system', '00000000-0000-0000-0000-000000060887', '_system', NULL, 'active', NULL, NULL, NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, 0, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, 0, 0, NULL, NULL, 'plan', NULL, 0, 0, 0, NULL, NULL, 'terminal', 0, NULL, datetime('now'), datetime('now'));

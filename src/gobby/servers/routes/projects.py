@@ -33,6 +33,7 @@ class ProjectUpdate(BaseModel):
     github_url: str | None = None
     github_repo: str | None = None
     linear_team_id: str | None = None
+    linear_project_id: str | None = None
     approval_rules: list[str] | None = None
 
 

@@ -758,6 +758,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                         task_manager=runner.task_manager,
                         project_id=project.id,
                         team_id=project.linear_team_id,
+                        linear_project_id=project.linear_project_id,
                     )
                     handler_name = f"linear_sync:{project.id}"
                     cron_executor.register_handler(handler_name, handler)

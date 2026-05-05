@@ -435,6 +435,12 @@ def _apply_chat_message_content_blocks_schema(db: LocalDatabase) -> None:
         db.execute("ALTER TABLE chat_messages ADD COLUMN content_blocks_json TEXT")
 
 
+def _apply_linear_project_binding_schema(db: LocalDatabase) -> None:
+    columns = {row["name"] for row in db.fetchall("PRAGMA table_info(projects)")}
+    if "linear_project_id" not in columns:
+        db.execute("ALTER TABLE projects ADD COLUMN linear_project_id TEXT")
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         240,
@@ -450,6 +456,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (247, "Add managed native binary update state", _apply_bin_update_state_schema),
     (248, "Add dispatch mutex run id lookup index", _apply_dispatch_mutex_run_id_index),
     (249, "Persist rich web chat content blocks", _apply_chat_message_content_blocks_schema),
+    (250, "Add Linear project binding to projects", _apply_linear_project_binding_schema),
 ]
 
 

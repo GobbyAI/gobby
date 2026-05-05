@@ -238,6 +238,9 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
 
               <dt className={DT_CLS}>Linear Team</dt>
               <dd className={DD_CLS}>{project.linear_team_id || <span className={EMPTY_CLS}>Not linked</span>}</dd>
+
+              <dt className={DT_CLS}>Linear Project</dt>
+              <dd className={DD_CLS}>{project.linear_project_id || <span className={EMPTY_CLS}>Not linked</span>}</dd>
             </dl>
           </div>
         </div>

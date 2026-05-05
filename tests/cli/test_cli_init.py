@@ -208,6 +208,72 @@ class TestInitNewProject:
             or call_kwargs[1].get("name") == "my-custom-project"
         )
 
+    @patch("gobby.cli.init._maybe_run_linear_setup")
+    @patch("gobby.cli.init.initialize_project")
+    @patch("gobby.cli.load_config")
+    def test_init_skips_linear_setup_by_default(
+        self,
+        mock_load_config: MagicMock,
+        mock_initialize: MagicMock,
+        mock_linear_setup: MagicMock,
+        runner: CliRunner,
+        mock_config: MagicMock,
+        mock_init_result_new: InitResult,
+        temp_dir: Path,
+    ) -> None:
+        """init passes default skip branch to Linear setup helper."""
+        mock_load_config.return_value = mock_config
+        mock_initialize.return_value = mock_init_result_new
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            result = runner.invoke(cli, ["init"])
+
+        assert result.exit_code == 0
+        mock_linear_setup.assert_called_once_with(
+            mock_init_result_new.project_id,
+            linear_setup=None,
+            team_id=None,
+            linear_project_id=None,
+        )
+
+    @patch("gobby.cli.init._maybe_run_linear_setup")
+    @patch("gobby.cli.init.initialize_project")
+    @patch("gobby.cli.load_config")
+    def test_init_linear_setup_option(
+        self,
+        mock_load_config: MagicMock,
+        mock_initialize: MagicMock,
+        mock_linear_setup: MagicMock,
+        runner: CliRunner,
+        mock_config: MagicMock,
+        mock_init_result_new: InitResult,
+        temp_dir: Path,
+    ) -> None:
+        """init forwards explicit Linear setup options."""
+        mock_load_config.return_value = mock_config
+        mock_initialize.return_value = mock_init_result_new
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            result = runner.invoke(
+                cli,
+                [
+                    "init",
+                    "--linear-setup",
+                    "--linear-team-id",
+                    "team-1",
+                    "--linear-project-id",
+                    "lin-proj",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_linear_setup.assert_called_once_with(
+            mock_init_result_new.project_id,
+            linear_setup=True,
+            team_id="team-1",
+            linear_project_id="lin-proj",
+        )
+
 
 class TestInitExistingProject:
     """Tests for initializing when a project already exists."""

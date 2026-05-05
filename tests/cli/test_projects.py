@@ -39,6 +39,7 @@ def mock_project():
     project.github_url = "https://github.com/user/test-project"
     project.github_repo = "user/test-project"
     project.linear_team_id = None
+    project.linear_project_id = None
     project.deleted_at = None
     project.created_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     project.updated_at = datetime(2024, 1, 15, 14, 30, 0, tzinfo=UTC)
@@ -258,6 +259,7 @@ class TestShowProject:
         project.github_url = None
         project.github_repo = None
         project.linear_team_id = None
+        project.linear_project_id = None
         project.deleted_at = None
         project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         project.updated_at = datetime(2024, 1, 1, tzinfo=UTC)
@@ -498,6 +500,26 @@ class TestUpdateProject:
         mock_manager.update.assert_called_once_with(
             mock_project.id, github_repo="user/repo", linear_team_id="TEAM-123"
         )
+
+    @patch("gobby.cli.projects.get_project_manager")
+    def test_update_linear_project_id(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_project: MagicMock,
+    ) -> None:
+        mock_manager = MagicMock()
+        mock_manager.resolve_ref.return_value = mock_project
+        mock_manager.update.return_value = mock_project
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(
+            cli,
+            ["projects", "update", "test-project", "--linear-project-id", "LIN-PROJ"],
+        )
+
+        assert result.exit_code == 0
+        mock_manager.update.assert_called_once_with(mock_project.id, linear_project_id="LIN-PROJ")
 
 
 class TestRepairProject:

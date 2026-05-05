@@ -67,6 +67,27 @@ class LinearNotFoundError(LinearSyncError):
         self.resource_id = resource_id
 
 
+def _extract_records(result: Any, key: str) -> list[dict[str, Any]]:
+    if isinstance(result, list):
+        return [item for item in result if isinstance(item, dict)]
+    if not isinstance(result, dict):
+        return []
+
+    value = result.get(key) or result.get("nodes") or result.get("items")
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _extract_record(result: Any, key: str) -> dict[str, Any]:
+    if isinstance(result, dict):
+        value = result.get(key)
+        if isinstance(value, dict):
+            return cast(dict[str, Any], value)
+        return result
+    return {}
+
+
 class LinearSyncService:
     """Service for syncing gobby tasks with Linear issues.
 
@@ -86,12 +107,14 @@ class LinearSyncService:
         task_manager: LocalTaskManager,
         project_id: str,
         linear_team_id: str | None = None,
+        linear_project_id: str | None = None,
         project_manager: LocalProjectManager | None = None,
     ) -> None:
         self.mcp_manager = mcp_manager
         self.task_manager = task_manager
         self.project_id = project_id
         self.linear_team_id = linear_team_id
+        self.linear_project_id = linear_project_id
         self.linear = LinearIntegration(mcp_manager)
         self._project_manager = project_manager
 
@@ -113,10 +136,89 @@ class LinearSyncService:
         project = self.project_manager.get(self.project_id)
         return project.linear_synced_at if project else None
 
+    def _get_linear_project_id(self) -> str | None:
+        """Get the Linear project binding, preferring the service override."""
+        if self.linear_project_id:
+            return self.linear_project_id
+        project = self.project_manager.get(self.project_id)
+        return project.linear_project_id if project else None
+
     def _update_synced_at(self, timestamp: str | None = None) -> None:
         """Update the project's linear_synced_at cursor."""
         ts = timestamp or datetime.now(UTC).isoformat()
         self.project_manager.update(self.project_id, linear_synced_at=ts)
+
+    async def list_teams(self) -> list[dict[str, Any]]:
+        """List Linear teams available to the configured MCP auth."""
+        self.linear.require_available()
+        try:
+            result = await self.mcp_manager.call_tool(
+                server_name="linear",
+                tool_name="list_teams",
+                arguments={},
+            )
+        except Exception as e:
+            raise LinearSyncError(
+                "Linear MCP server does not expose list_teams. Configure a Linear MCP "
+                "server with team/project discovery support before running setup."
+            ) from e
+        return _extract_records(result, "teams")
+
+    async def list_projects(self, team_id: str) -> list[dict[str, Any]]:
+        """List Linear projects for a team."""
+        self.linear.require_available()
+        try:
+            result = await self.mcp_manager.call_tool(
+                server_name="linear",
+                tool_name="list_projects",
+                arguments={"teamId": team_id},
+            )
+        except Exception as e:
+            raise LinearSyncError(
+                "Linear MCP server does not expose list_projects. Configure a Linear MCP "
+                "server with project support or pass --project-id."
+            ) from e
+        return _extract_records(result, "projects")
+
+    async def ensure_linear_project(
+        self,
+        team_id: str,
+        project_name: str,
+        project_id: str | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Return an existing Linear project by name, or create it."""
+        if project_id:
+            return {"id": project_id, "name": project_name}, False
+
+        for project in await self.list_projects(team_id):
+            if project.get("name") == project_name:
+                return project, False
+
+        result = await self.mcp_manager.call_tool(
+            server_name="linear",
+            tool_name="create_project",
+            arguments={"teamId": team_id, "name": project_name},
+        )
+        project = _extract_record(result, "project")
+        if not project.get("id"):
+            raise LinearSyncError("Linear MCP create_project did not return a project id.")
+        return project, True
+
+    def _issue_list_args(
+        self,
+        team_id: str,
+        state: str | None = None,
+        labels: list[str] | None = None,
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {"teamId": team_id}
+        linear_project_id = self._get_linear_project_id()
+        if linear_project_id:
+            args["projectId"] = linear_project_id
+        if state:
+            args["state"] = state
+        if labels:
+            args["labels"] = labels
+        return args
 
     async def import_linear_issues(
         self,
@@ -143,11 +245,7 @@ class LinearSyncService:
         if not effective_team_id:
             raise ValueError("No team_id provided and no default linear_team_id configured.")
 
-        args: dict[str, Any] = {"teamId": effective_team_id}
-        if state:
-            args["state"] = state
-        if labels:
-            args["labels"] = labels
+        args = self._issue_list_args(effective_team_id, state=state, labels=labels)
 
         result = await self.mcp_manager.call_tool(
             server_name="linear",
@@ -221,6 +319,7 @@ class LinearSyncService:
         linear_state = self.map_gobby_state_to_linear(self._project_gobby_state_for_linear(task))
 
         update_args: dict[str, Any] = {
+            "id": task.linear_issue_id,
             "issueId": task.linear_issue_id,
             "title": task.title,
             "description": task.description or "",
@@ -229,6 +328,7 @@ class LinearSyncService:
         # Only set state if we have a valid mapping
         if linear_state:
             update_args["stateId"] = linear_state
+            update_args["status"] = linear_state
 
         result = await self.mcp_manager.call_tool(
             server_name="linear",
@@ -259,15 +359,20 @@ class LinearSyncService:
         if not effective_team_id:
             raise ValueError(f"Task {task_id} has no linear_team_id set and no default configured.")
 
+        arguments: dict[str, Any] = {
+            "teamId": effective_team_id,
+            "title": task.title,
+            "description": task.description or "",
+            "priority": task.priority,
+        }
+        linear_project_id = self._get_linear_project_id()
+        if linear_project_id:
+            arguments["projectId"] = linear_project_id
+
         result = await self.mcp_manager.call_tool(
             server_name="linear",
             tool_name="create_issue",
-            arguments={
-                "teamId": effective_team_id,
-                "title": task.title,
-                "description": task.description or "",
-                "priority": task.priority,
-            },
+            arguments=arguments,
         )
 
         result_dict = cast(dict[str, Any], result)
@@ -281,6 +386,23 @@ class LinearSyncService:
             logger.info(f"Created Linear issue {issue_id} for task {task_id}")
 
         return result_dict
+
+    async def create_missing_issues(self, team_id: str | None = None) -> list[dict[str, Any]]:
+        """Create Linear issues for open Gobby tasks that are not linked yet."""
+        effective_team_id = team_id or self.linear_team_id
+        if not effective_team_id:
+            raise ValueError("No team_id provided and no default linear_team_id configured.")
+
+        rows = self.task_manager.db.fetchall(
+            "SELECT id FROM tasks "
+            "WHERE project_id = ? AND linear_issue_id IS NULL AND closed_at IS NULL",
+            (self.project_id,),
+        )
+
+        created: list[dict[str, Any]] = []
+        for row in rows:
+            created.append(await self.create_issue_for_task(row["id"], team_id=effective_team_id))
+        return created
 
     async def pull_linear_updates(self, team_id: str | None = None) -> dict[str, int]:
         """Pull updates from Linear for all linked tasks.
@@ -318,7 +440,7 @@ class LinearSyncService:
             result = await self.mcp_manager.call_tool(
                 server_name="linear",
                 tool_name="list_issues",
-                arguments={"teamId": effective_team_id},
+                arguments=self._issue_list_args(effective_team_id),
             )
         except Exception as e:
             logger.error(f"Failed to fetch Linear issues: {e}")
@@ -469,6 +591,7 @@ def create_linear_sync_handler(
     task_manager: LocalTaskManager,
     project_id: str,
     team_id: str,
+    linear_project_id: str | None = None,
 ) -> Any:
     """Create a cron handler for periodic Linear sync.
 
@@ -482,6 +605,7 @@ def create_linear_sync_handler(
             task_manager=task_manager,
             project_id=project_id,
             linear_team_id=team_id,
+            linear_project_id=linear_project_id,
         )
 
         if not service.is_available():

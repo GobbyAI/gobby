@@ -51,6 +51,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
   const [githubUrl, setGithubUrl] = useState(project.github_url ?? '')
   const [githubRepo, setGithubRepo] = useState(project.github_repo ?? '')
   const [linearTeamId, setLinearTeamId] = useState(project.linear_team_id ?? '')
+  const [linearProjectId, setLinearProjectId] = useState(project.linear_project_id ?? '')
   const [approvalRules, setApprovalRules] = useState<ApprovalRuleRow[]>(
     () => toApprovalRuleRows(project.approval_rules ?? []),
   )
@@ -68,6 +69,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
       github_url: githubUrl || null,
       github_repo: githubRepo || null,
       linear_team_id: linearTeamId || null,
+      linear_project_id: linearProjectId || null,
       approval_rules: approvalRules.map((rule) => rule.value.trim()).filter(Boolean),
     })
     setSaving(false)
@@ -76,7 +78,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
       : { type: 'error', text: 'Failed to save settings' }
     )
     if (ok) setTimeout(() => setMessage(null), 3000)
-  }, [approvalRules, githubUrl, githubRepo, linearTeamId, onSave])
+  }, [approvalRules, githubUrl, githubRepo, linearTeamId, linearProjectId, onSave])
 
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) {
@@ -127,6 +129,17 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
             value={linearTeamId}
             onChange={e => setLinearTeamId(e.target.value)}
             placeholder="team-id"
+          />
+        </label>
+
+        <label className={LABEL_CLS}>
+          Linear Project ID
+          <input
+            type="text"
+            className={INPUT_CLS}
+            value={linearProjectId}
+            onChange={e => setLinearProjectId(e.target.value)}
+            placeholder="project-id"
           />
         </label>
 

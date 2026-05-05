@@ -635,6 +635,24 @@ class TestWriteProjectJson:
         assert content["name"] == "my-project"
         assert content["created_at"] == "2024-06-15T12:00:00Z"
 
+    def test_writes_linear_project_binding(self, tmp_path: Path) -> None:
+        """Project JSON preserves Linear team and project IDs."""
+        cwd = tmp_path / "project"
+        cwd.mkdir()
+
+        _write_project_json(
+            cwd,
+            "proj-123",
+            "my-project",
+            "2024-06-15T12:00:00Z",
+            linear_team_id="team-1",
+            linear_project_id="lin-proj",
+        )
+
+        content = json.loads((cwd / ".gobby" / "project.json").read_text())
+        assert content["linear_team_id"] == "team-1"
+        assert content["linear_project_id"] == "lin-proj"
+
     def test_overwrites_existing_project_json(self, tmp_path: Path) -> None:
         """Test that existing project.json is overwritten."""
         cwd = tmp_path / "project"

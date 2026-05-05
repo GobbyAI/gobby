@@ -16,6 +16,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 @dataclass
 class VerificationCommands:
     """Auto-detected verification commands for a project."""
@@ -268,7 +272,15 @@ def initialize_project(
             project_manager.update(existing.id, repo_path=str(cwd))
             logger.info(f"Updated repo_path for project '{name}' to {cwd}")
 
-        _write_project_json(cwd, existing.id, existing.name, existing.created_at, verification)
+        _write_project_json(
+            cwd,
+            existing.id,
+            existing.name,
+            existing.created_at,
+            verification,
+            linear_team_id=_optional_str(existing.linear_team_id),
+            linear_project_id=_optional_str(existing.linear_project_id),
+        )
         return InitResult(
             project_id=existing.id,
             project_name=existing.name,
@@ -336,12 +348,37 @@ def _update_project_json_verification(
     logger.debug(f"Updated verification in {project_file}")
 
 
+def update_project_json_fields(cwd: Path, **fields: Any) -> None:
+    """Update top-level fields in .gobby/project.json, preserving other fields."""
+    project_file = cwd / ".gobby" / "project.json"
+    if not project_file.exists():
+        return
+
+    try:
+        with open(project_file, encoding="utf-8") as f:
+            project_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to read project.json for field update: {e}")
+        return
+
+    for key, value in fields.items():
+        project_data[key] = value
+
+    with open(project_file, "w", encoding="utf-8") as f:
+        json.dump(project_data, f, indent=2)
+        f.write("\n")
+
+    logger.debug(f"Updated project.json fields in {project_file}")
+
+
 def _write_project_json(
     cwd: Path,
     project_id: str,
     name: str,
     created_at: str,
     verification: VerificationCommands | None = None,
+    linear_team_id: str | None = None,
+    linear_project_id: str | None = None,
 ) -> None:
     """Write the .gobby/project.json file.
 
@@ -361,6 +398,10 @@ def _write_project_json(
         "name": name,
         "created_at": created_at,
     }
+    if linear_team_id is not None:
+        project_data["linear_team_id"] = linear_team_id
+    if linear_project_id is not None:
+        project_data["linear_project_id"] = linear_project_id
 
     # Add verification config if provided and has commands
     if verification:
@@ -370,5 +411,6 @@ def _write_project_json(
 
     with open(project_file, "w") as f:
         json.dump(project_data, f, indent=2)
+        f.write("\n")
 
     logger.debug(f"Wrote project.json to {project_file}")

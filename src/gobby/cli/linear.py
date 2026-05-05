@@ -19,8 +19,13 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.linear import LinearSyncService
 from gobby.utils.project_context import get_project_context
+from gobby.utils.project_init import update_project_json_fields
 
 logger = logging.getLogger(__name__)
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def get_linear_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectManager, str]:
@@ -41,19 +46,225 @@ def get_linear_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectM
 def get_sync_service(team_id: str | None = None) -> LinearSyncService:
     """Create LinearSyncService for CLI commands."""
     task_manager, mcp_manager, project_manager, project_id = get_linear_deps()
+    project = project_manager.get(project_id)
     return LinearSyncService(
         mcp_manager=mcp_manager,
         task_manager=task_manager,
         project_id=project_id,
-        linear_team_id=team_id,
+        linear_team_id=team_id or (_optional_str(project.linear_team_id) if project else None),
+        linear_project_id=_optional_str(project.linear_project_id) if project else None,
         project_manager=project_manager,
     )
+
+
+def _project_linear_name(project_name: str, repo_path: str | None) -> str:
+    return Path(repo_path).name if repo_path else project_name
+
+
+def _team_identifier(team: dict[str, object]) -> str:
+    for key in ("id", "key", "identifier"):
+        value = _optional_str(team.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _team_key(team: dict[str, object]) -> str:
+    return _optional_str(team.get("key")) or _optional_str(team.get("identifier")) or ""
+
+
+def _select_team(teams: list[dict[str, object]], team_id: str | None) -> dict[str, object]:
+    if not teams:
+        raise click.ClickException("No Linear teams found for the configured Linear auth.")
+
+    if team_id:
+        for team in teams:
+            if team_id in {_optional_str(team.get("id")), _team_key(team)}:
+                return team
+        raise click.ClickException(f"Linear team not found: {team_id}")
+
+    if len(teams) == 1:
+        return teams[0]
+
+    raise click.ClickException(
+        f"Found {len(teams)} Linear teams. Re-run with --team-id to select one."
+    )
+
+
+def _persist_linear_binding(
+    project_manager: LocalProjectManager,
+    project_id: str,
+    team_id: str | None,
+    linear_project_id: str | None,
+) -> None:
+    updated = project_manager.update(
+        project_id,
+        linear_team_id=team_id,
+        linear_project_id=linear_project_id,
+    )
+    if updated and updated.repo_path:
+        update_project_json_fields(
+            Path(updated.repo_path),
+            linear_team_id=team_id,
+            linear_project_id=linear_project_id,
+        )
+
+
+def _linear_sync_job_name(project_id: str) -> str:
+    return f"gobby:linear-sync:{project_id}"
+
+
+def _linear_sync_handler_name(project_id: str) -> str:
+    return f"linear_sync:{project_id}"
+
+
+def _enable_linear_auto_sync(
+    task_manager: LocalTaskManager,
+    project_id: str,
+    interval: int,
+) -> str:
+    from gobby.storage.cron import CronJobStorage
+
+    cron_storage = CronJobStorage(task_manager.db)
+    job_name = _linear_sync_job_name(project_id)
+    handler_name = _linear_sync_handler_name(project_id)
+    existing = cron_storage.get_job_by_name(job_name)
+
+    if existing:
+        cron_storage.update_job(
+            existing.id,
+            interval_seconds=interval,
+            action_config={"handler": handler_name},
+            enabled=1,
+        )
+        return existing.id
+
+    job = cron_storage.create_job(
+        project_id=project_id,
+        name=job_name,
+        description="Periodic bidirectional sync with Linear",
+        schedule_type="interval",
+        interval_seconds=interval,
+        action_type="handler",
+        action_config={"handler": handler_name},
+        enabled=True,
+    )
+    return job.id
+
+
+async def _run_linear_setup(
+    task_manager: LocalTaskManager,
+    mcp_manager: MCPClientManager,
+    project_manager: LocalProjectManager,
+    project_id: str,
+    bootstrap: bool,
+    team_id: str | None,
+    linear_project_id: str | None,
+    project_name: str | None,
+    import_issues: bool,
+    create_missing: bool,
+) -> dict[str, object]:
+    project = project_manager.get(project_id)
+    if not project:
+        raise click.ClickException(f"Project not found: {project_id}")
+
+    service = LinearSyncService(
+        mcp_manager=mcp_manager,
+        task_manager=task_manager,
+        project_id=project_id,
+        linear_team_id=team_id,
+        linear_project_id=linear_project_id,
+        project_manager=project_manager,
+    )
+
+    teams = await service.list_teams()
+    team = _select_team(teams, team_id)
+    selected_team_id = _team_identifier(team)
+    if not selected_team_id:
+        raise click.ClickException("Selected Linear team did not include an id.")
+
+    resolved_project_name = project_name or _project_linear_name(project.name, project.repo_path)
+    if not bootstrap and not linear_project_id:
+        raise click.ClickException("Pass --bootstrap to create/reuse a Linear project.")
+
+    linear_project, created_project = await service.ensure_linear_project(
+        selected_team_id,
+        resolved_project_name,
+        project_id=linear_project_id,
+    )
+    resolved_linear_project_id = _optional_str(linear_project.get("id"))
+    if not resolved_linear_project_id:
+        raise click.ClickException("Linear project setup did not return a project id.")
+
+    service.linear_team_id = selected_team_id
+    service.linear_project_id = resolved_linear_project_id
+    _persist_linear_binding(
+        project_manager,
+        project_id,
+        selected_team_id,
+        resolved_linear_project_id,
+    )
+
+    imported = await service.import_linear_issues(team_id=selected_team_id) if import_issues else []
+    created_issues = (
+        await service.create_missing_issues(team_id=selected_team_id) if create_missing else []
+    )
+    sync_result = await service.sync_all(team_id=selected_team_id)
+
+    return {
+        "project_id": project_id,
+        "linear_team_id": selected_team_id,
+        "linear_project_id": resolved_linear_project_id,
+        "linear_project_name": linear_project.get("name") or resolved_project_name,
+        "created_linear_project": created_project,
+        "imported_count": len(imported),
+        "created_missing_count": len(created_issues),
+        "sync": sync_result,
+    }
 
 
 @click.group()
 def linear() -> None:
     """Linear integration commands."""
     pass
+
+
+@linear.command("teams")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def linear_teams(json_format: bool) -> None:
+    """List Linear teams available to the configured Linear auth."""
+    try:
+        task_manager, mcp_manager, project_manager, project_id = get_linear_deps()
+        project = project_manager.get(project_id)
+        service = LinearSyncService(
+            mcp_manager=mcp_manager,
+            task_manager=task_manager,
+            project_id=project_id,
+            linear_team_id=_optional_str(project.linear_team_id) if project else None,
+            linear_project_id=_optional_str(project.linear_project_id) if project else None,
+            project_manager=project_manager,
+        )
+        teams = asyncio.run(service.list_teams())
+
+        if json_format:
+            click.echo(json.dumps({"teams": teams, "count": len(teams)}, indent=2))
+            return
+
+        if not teams:
+            click.echo("No Linear teams found.")
+            return
+
+        click.echo(f"Found {len(teams)} Linear team(s):")
+        for team in teams:
+            name = _optional_str(team.get("name")) or "(unnamed)"
+            key = _team_key(team) or "-"
+            team_id = _optional_str(team.get("id")) or "-"
+            click.echo(f"  {name:<30} {key:<10} {team_id}")
+
+    except click.ClickException:
+        raise
+    except Exception as e:
+        raise click.ClickException(str(e)) from None
 
 
 @linear.command("status")
@@ -65,7 +276,8 @@ def linear_status(json_format: bool) -> None:
 
         # Get project info
         project = project_manager.get(project_id)
-        linear_team_id = project.linear_team_id if project else None
+        linear_team_id = _optional_str(project.linear_team_id) if project else None
+        linear_project_id = _optional_str(project.linear_project_id) if project else None
 
         # Check Linear MCP availability
         linear = LinearIntegration(mcp_manager)
@@ -85,6 +297,7 @@ def linear_status(json_format: bool) -> None:
                     {
                         "project_id": project_id,
                         "linear_team_id": linear_team_id,
+                        "linear_project_id": linear_project_id,
                         "linear_available": available,
                         "unavailable_reason": unavailable_reason,
                         "linked_tasks_count": linked_count,
@@ -97,6 +310,7 @@ def linear_status(json_format: bool) -> None:
             click.echo("=" * 40)
             click.echo(f"Project ID: {project_id}")
             click.echo(f"Linked team: {linear_team_id or '(not linked)'}")
+            click.echo(f"Linked project: {linear_project_id or '(not linked)'}")
             click.echo(f"Linear MCP available: {'✓' if available else '✗'}")
             if not available:
                 click.echo(f"  Reason: {unavailable_reason}")
@@ -118,7 +332,7 @@ def linear_link(team_id: str) -> None:
     try:
         _, _, project_manager, project_id = get_linear_deps()
 
-        project_manager.update(project_id, linear_team_id=team_id)
+        _persist_linear_binding(project_manager, project_id, team_id, None)
         click.echo(f"✓ Linked project to Linear team: {team_id}")
 
     except click.ClickException:
@@ -133,8 +347,71 @@ def linear_unlink() -> None:
     try:
         _, _, project_manager, project_id = get_linear_deps()
 
-        project_manager.update(project_id, linear_team_id=None)
-        click.echo("✓ Unlinked Linear team from project")
+        _persist_linear_binding(project_manager, project_id, None, None)
+        click.echo("✓ Unlinked Linear team and project from project")
+
+    except click.ClickException:
+        raise
+    except Exception as e:
+        raise click.ClickException(str(e)) from None
+
+
+@linear.command("setup")
+@click.option("--bootstrap", is_flag=True, help="Create or reuse a Linear project by name")
+@click.option("--team-id", help="Linear team ID")
+@click.option("--project-id", "linear_project_id", help="Existing Linear project ID")
+@click.option("--project-name", help="Linear project name to create or reuse")
+@click.option("--import", "import_issues", is_flag=True, help="Import Linear project issues")
+@click.option("--create-missing", is_flag=True, help="Create Linear issues for unlinked tasks")
+@click.option("--auto-sync", is_flag=True, help="Enable periodic Linear sync")
+@click.option("--interval", default=300, show_default=True, help="Auto-sync interval in seconds")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def linear_setup(
+    bootstrap: bool,
+    team_id: str | None,
+    linear_project_id: str | None,
+    project_name: str | None,
+    import_issues: bool,
+    create_missing: bool,
+    auto_sync: bool,
+    interval: int,
+    json_format: bool,
+) -> None:
+    """Set up this Gobby project for project-scoped Linear sync."""
+    try:
+        task_manager, mcp_manager, project_manager, project_id = get_linear_deps()
+        result = asyncio.run(
+            _run_linear_setup(
+                task_manager=task_manager,
+                mcp_manager=mcp_manager,
+                project_manager=project_manager,
+                project_id=project_id,
+                bootstrap=bootstrap,
+                team_id=team_id,
+                linear_project_id=linear_project_id,
+                project_name=project_name,
+                import_issues=import_issues,
+                create_missing=create_missing,
+            )
+        )
+
+        auto_sync_job_id = None
+        if auto_sync:
+            auto_sync_job_id = _enable_linear_auto_sync(task_manager, project_id, interval)
+            result["auto_sync_job_id"] = auto_sync_job_id
+            result["auto_sync_interval"] = interval
+
+        if json_format:
+            click.echo(json.dumps(result, indent=2, default=str))
+            return
+
+        click.echo("✓ Linear setup complete")
+        click.echo(f"  Team: {result['linear_team_id']}")
+        click.echo(f"  Project: {result['linear_project_name']} ({result['linear_project_id']})")
+        click.echo(f"  Imported issues: {result['imported_count']}")
+        click.echo(f"  Created missing issues: {result['created_missing_count']}")
+        if auto_sync_job_id:
+            click.echo(f"  Auto-sync: enabled every {interval}s ({auto_sync_job_id})")
 
     except click.ClickException:
         raise
@@ -158,13 +435,13 @@ def linear_import(
         task_manager, mcp_manager, project_manager, project_id = get_linear_deps()
 
         # Get team from argument or project config
+        project = project_manager.get(project_id)
         if not team_id:
-            project = project_manager.get(project_id)
-            team_id = project.linear_team_id if project else None
+            team_id = _optional_str(project.linear_team_id) if project else None
             if not team_id:
                 raise click.ClickException(
                     "No team specified and project not linked to a Linear team. "
-                    "Use 'gobby linear link <team_id>' first or specify the team."
+                    "Use 'gobby linear setup --bootstrap' first or specify the team."
                 )
 
         service = LinearSyncService(
@@ -172,6 +449,8 @@ def linear_import(
             task_manager=task_manager,
             project_id=project_id,
             linear_team_id=team_id,
+            linear_project_id=_optional_str(project.linear_project_id) if project else None,
+            project_manager=project_manager,
         )
 
         # Run async import
@@ -237,11 +516,11 @@ def linear_sync_all(team_id: str | None, json_format: bool) -> None:
 
         if not team_id:
             project = project_manager.get(project_id)
-            team_id = project.linear_team_id if project else None
+            team_id = _optional_str(project.linear_team_id) if project else None
             if not team_id:
                 raise click.ClickException(
                     "No team specified and project not linked to a Linear team. "
-                    "Use 'gobby linear link <team_id>' first or specify the team."
+                    "Use 'gobby linear setup --bootstrap' first or specify the team."
                 )
 
         service = get_sync_service(team_id)
@@ -277,16 +556,23 @@ def linear_sync_all(team_id: str | None, json_format: bool) -> None:
 def linear_auto_sync(interval: int, disable: bool) -> None:
     """Create or manage a cron job for periodic Linear sync.
 
-    Creates an interval-based cron job named 'gobby:linear-sync' that triggers
-    bidirectional sync on the given interval. Use --disable to turn it off.
+    Creates an interval-based project cron job that triggers bidirectional sync
+    on the given interval. Use --disable to turn it off.
     """
-    from gobby.storage.cron import CronJobStorage
-
     try:
-        task_manager, _, _, project_id = get_linear_deps()
+        task_manager, _, project_manager, project_id = get_linear_deps()
+        project = project_manager.get(project_id)
+        if not project or not _optional_str(project.linear_team_id):
+            raise click.ClickException(
+                "Project is not linked to Linear. Run 'gobby linear setup --bootstrap' first."
+            )
+
+        from gobby.storage.cron import CronJobStorage
+
         cron_storage = CronJobStorage(task_manager.db)
 
-        existing = cron_storage.get_job_by_name("gobby:linear-sync")
+        job_name = _linear_sync_job_name(project_id)
+        existing = cron_storage.get_job_by_name(job_name)
 
         if disable:
             if not existing:
@@ -296,24 +582,11 @@ def linear_auto_sync(interval: int, disable: bool) -> None:
             return
 
         if existing:
-            cron_storage.update_job(
-                existing.id,
-                interval_seconds=interval,
-                enabled=1,
-            )
+            _enable_linear_auto_sync(task_manager, project_id, interval)
             click.echo(f"✓ Updated Linear auto-sync job: interval={interval}s (id={existing.id})")
         else:
-            job = cron_storage.create_job(
-                project_id=project_id,
-                name="gobby:linear-sync",
-                description="Periodic bidirectional sync with Linear",
-                schedule_type="interval",
-                interval_seconds=interval,
-                action_type="handler",
-                action_config={"handler": "linear_sync"},
-                enabled=True,
-            )
-            click.echo(f"✓ Created Linear auto-sync job: interval={interval}s (id={job.id})")
+            job_id = _enable_linear_auto_sync(task_manager, project_id, interval)
+            click.echo(f"✓ Created Linear auto-sync job: interval={interval}s (id={job_id})")
 
     except click.ClickException:
         raise
