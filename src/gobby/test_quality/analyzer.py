@@ -352,7 +352,7 @@ def _is_strong_assertion_call(call_name: str) -> bool:
         return True
     if call_name.startswith("self.assert") or call_name.startswith("cls.assert"):
         return True
-    return leaf_name.startswith("assert_") and not _is_mock_assertion(call_name)
+    return leaf_name.startswith(("assert_", "_assert_")) and not _is_mock_assertion(call_name)
 
 
 def _is_mock_assertion(call_name: str) -> bool:

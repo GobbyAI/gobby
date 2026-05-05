@@ -37,15 +37,6 @@
       "test_name": "TestCodexAppServerClientNotificationHandlers.test_remove_nonexistent_handler"
     },
     {
-      "fingerprint": "tests/adapters/test_codex_call_tool_session_id.py::test_wrapper_context_only_session_resolution_does_not_emit_retry_block::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 35,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/adapters/test_codex_call_tool_session_id.py",
-      "severity": "high",
-      "test_name": "test_wrapper_context_only_session_resolution_does_not_emit_retry_block"
-    },
-    {
       "fingerprint": "tests/agents/test_idle_detector.py::TestClearState.test_clear_nonexistent_is_noop::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 171,
@@ -784,15 +775,6 @@
       "test_name": "test_call_hook"
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_rejected_calls_reject_review::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 174,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py",
-      "severity": "high",
-      "test_name": "test_rejected_calls_reject_review"
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_agents.py::TestFireSyntheticStop.test_catches_exceptions::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 872,
@@ -1011,7 +993,7 @@
     {
       "fingerprint": "tests/servers/routes/test_agent_spawn_routes.py::test_project::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
-      "line": 58,
+      "line": 65,
       "message": "test has no assertion or assertion-like outcome check",
       "path": "tests/servers/routes/test_agent_spawn_routes.py",
       "severity": "high",
@@ -1441,33 +1423,6 @@
       "test_name": "TestGetValidationContextSmartMerged.test_returns_none_when_no_context"
     },
     {
-      "fingerprint": "tests/test_no_stage_skip_labels.py::test_active_guides_do_not_describe_legacy_stage_skip_labels::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 61,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/test_no_stage_skip_labels.py",
-      "severity": "high",
-      "test_name": "test_active_guides_do_not_describe_legacy_stage_skip_labels"
-    },
-    {
-      "fingerprint": "tests/test_no_stage_skip_labels.py::test_grep_returns_empty_for_bundled_agent_instructions::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 55,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/test_no_stage_skip_labels.py",
-      "severity": "high",
-      "test_name": "test_grep_returns_empty_for_bundled_agent_instructions"
-    },
-    {
-      "fingerprint": "tests/test_no_stage_skip_labels.py::test_grep_returns_empty_for_full_runtime_scope::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 49,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/test_no_stage_skip_labels.py",
-      "severity": "high",
-      "test_name": "test_grep_returns_empty_for_full_runtime_scope"
-    },
-    {
       "fingerprint": "tests/test_runner_lifecycle.py::TestAgentEventBroadcastingCallback.test_broadcast_callback_handles_cancelled_error::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 702,
@@ -1835,96 +1790,6 @@
       "path": "tests/workflows/test_pipeline_webhooks.py",
       "severity": "high",
       "test_name": "TestWebhookErrors.test_logs_error_on_http_failure"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestBlockEffect.test_block_non_matching_tool_allows::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 154,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestBlockEffect.test_block_non_matching_tool_allows"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestBlockEffect.test_block_returns_deny::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 136,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestBlockEffect.test_block_returns_deny"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestBlockEffect.test_first_block_wins::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 172,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestBlockEffect.test_first_block_wins"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestRuleEngineLoadRules.test_loads_rules_by_event::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 89,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestRuleEngineLoadRules.test_loads_rules_by_event"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestRuleEngineLoadRules.test_skips_disabled_rules::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 115,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestRuleEngineLoadRules.test_skips_disabled_rules"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestSessionOverrides.test_session_override_disables_rule::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 438,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestSessionOverrides.test_session_override_disables_rule"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestSessionOverrides.test_session_override_only_affects_that_session::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 466,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestSessionOverrides.test_session_override_only_affects_that_session"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestVariableRebuild.test_later_rules_see_earlier_variable_changes::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 646,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestVariableRebuild.test_later_rules_see_earlier_variable_changes"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestWhenConditions.test_when_false_skips::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 358,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestWhenConditions.test_when_false_skips"
-    },
-    {
-      "fingerprint": "tests/workflows/test_rule_engine.py::TestWhenConditions.test_when_true_fires::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 339,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_rule_engine.py",
-      "severity": "high",
-      "test_name": "TestWhenConditions.test_when_true_fires"
     },
     {
       "fingerprint": "tests/workflows/test_session_variable_manager.py::test_delete_variables_nonexistent::NO_ASSERTION",
@@ -3018,7 +2883,7 @@
     {
       "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearCreate.test_create_json::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 255,
+      "line": 377,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_linear_coverage.py",
       "severity": "medium",
@@ -3027,7 +2892,7 @@
     {
       "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearCreate.test_create_value_error::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 285,
+      "line": 407,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_linear_coverage.py",
       "severity": "medium",
@@ -3036,7 +2901,7 @@
     {
       "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearSync.test_sync_json::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 199,
+      "line": 321,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_linear_coverage.py",
       "severity": "medium",
@@ -3045,7 +2910,7 @@
     {
       "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearSync.test_sync_text::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 179,
+      "line": 301,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/cli/test_linear_coverage.py",
       "severity": "medium",
@@ -6231,7 +6096,7 @@
     {
       "fingerprint": "tests/mcp_proxy/test_validation_integration.py::test_close_task_commit_diff_excludes_uncommitted_changes::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 873,
+      "line": 909,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/mcp_proxy/test_validation_integration.py",
       "severity": "medium",
@@ -6240,7 +6105,7 @@
     {
       "fingerprint": "tests/mcp_proxy/test_validation_integration.py::test_close_task_commit_diff_excludes_uncommitted_changes::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 873,
+      "line": 909,
       "message": "test only verifies mock interactions",
       "path": "tests/mcp_proxy/test_validation_integration.py",
       "severity": "medium",
@@ -6249,7 +6114,7 @@
     {
       "fingerprint": "tests/mcp_proxy/test_validation_integration.py::test_close_task_skip_reason_bypasses_commit_check::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 807,
+      "line": 843,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/mcp_proxy/test_validation_integration.py",
       "severity": "medium",
@@ -6258,7 +6123,7 @@
     {
       "fingerprint": "tests/mcp_proxy/test_validation_integration.py::test_close_task_with_commits_does_not_fallback_to_smart_context::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 928,
+      "line": 964,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/mcp_proxy/test_validation_integration.py",
       "severity": "medium",
@@ -6267,7 +6132,7 @@
     {
       "fingerprint": "tests/mcp_proxy/test_validation_integration.py::test_close_task_with_commits_does_not_fallback_to_smart_context::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 928,
+      "line": 964,
       "message": "test only verifies mock interactions",
       "path": "tests/mcp_proxy/test_validation_integration.py",
       "severity": "medium",
@@ -7059,7 +6924,7 @@
     {
       "fingerprint": "tests/mcp_proxy/tools/test_tasks_validation.py::TestValidateTaskTool.test_validate_task_auto_gathers_context::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 353,
+      "line": 389,
       "message": "test only verifies mock interactions",
       "path": "tests/mcp_proxy/tools/test_tasks_validation.py",
       "severity": "medium",
@@ -7887,7 +7752,7 @@
     {
       "fingerprint": "tests/servers/routes/test_source_control_routes.py::TestListPRs.test_prs_cached::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 951,
+      "line": 1088,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/routes/test_source_control_routes.py",
       "severity": "medium",
@@ -8328,7 +8193,7 @@
     {
       "fingerprint": "tests/servers/test_mcp_routes.py::TestHooksEndpoints.test_execute_hook_codex_uses_hooks_adapter_not_app_server_adapter::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 2797,
+      "line": 2808,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/test_mcp_routes.py",
       "severity": "medium",
@@ -8382,7 +8247,7 @@
     {
       "fingerprint": "tests/servers/test_provider_models.py::TestProviderModelCatalog.test_discover_qwen_models_can_fall_back_to_settings_catalog::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 397,
+      "line": 389,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/test_provider_models.py",
       "severity": "medium",
@@ -8391,7 +8256,7 @@
     {
       "fingerprint": "tests/servers/test_provider_models.py::TestProviderModelCatalog.test_discover_qwen_models_merges_acp_and_configured_models::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 336,
+      "line": 328,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/test_provider_models.py",
       "severity": "medium",
@@ -8589,7 +8454,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestCodexBackend.test_attach_session_passes_codex_sandbox_policy::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 364,
+      "line": 365,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -8598,7 +8463,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestCodexBackend.test_attach_session_passes_codex_sandbox_policy::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 364,
+      "line": 365,
       "message": "test only verifies mock interactions",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -8607,7 +8472,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestCodexBackend.test_handle_approval_request_accepts_decision_dict::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 526,
+      "line": 527,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -8616,7 +8481,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestCodexBackend.test_interrupt_uses_thread_and_turn_identity::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 463,
+      "line": 464,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -8625,7 +8490,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestCodexBackend.test_send_message_normalizes_realistic_completed_mcp_items::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 713,
+      "line": 714,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -8634,7 +8499,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestCodexBackend.test_transcript_retry_uses_configured_timing::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 483,
+      "line": 484,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -8643,7 +8508,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestQwenBackend.test_attach_session_warms_local_openai_models::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 305,
+      "line": 306,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -8652,7 +8517,7 @@
     {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestQwenBackend.test_attach_session_warms_local_openai_models::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 305,
+      "line": 306,
       "message": "test only verifies mock interactions",
       "path": "tests/servers/websocket/chat/test_runtime_manager.py",
       "severity": "medium",
@@ -9678,7 +9543,7 @@
     {
       "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceCreate.test_create_issue_updates_task_linear_id::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 273,
+      "line": 350,
       "message": "test only verifies mock interactions",
       "path": "tests/sync/test_linear_sync.py",
       "severity": "medium",
@@ -9687,7 +9552,7 @@
     {
       "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceSync.test_sync_task_calls_linear_mcp::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 219,
+      "line": 249,
       "message": "test only verifies mock interactions",
       "path": "tests/sync/test_linear_sync.py",
       "severity": "medium",
@@ -10578,7 +10443,7 @@
     {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_already_initialized_with_empty_id::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 756,
+      "line": 774,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",
@@ -10587,7 +10452,7 @@
     {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_auto_detects_github_url::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 859,
+      "line": 877,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",
@@ -10596,7 +10461,7 @@
     {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_directory_name_used_as_project_name::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1072,
+      "line": 1090,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",
@@ -10605,7 +10470,7 @@
     {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_new_project_without_verification_commands::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1029,
+      "line": 1047,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",
@@ -10614,7 +10479,7 @@
     {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_project_context_none_id::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 938,
+      "line": 956,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",
@@ -10623,7 +10488,7 @@
     {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_uses_provided_github_url::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 832,
+      "line": 850,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",
@@ -10632,7 +10497,7 @@
     {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_uses_provided_name::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 809,
+      "line": 827,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",

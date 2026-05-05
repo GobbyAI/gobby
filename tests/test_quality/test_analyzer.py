@@ -54,6 +54,22 @@ def test_rejects_value(value):
     assert codes == set()
 
 
+def test_private_assertion_helper_counts_as_assertion(tmp_path: Path) -> None:
+    codes = _issue_codes(
+        tmp_path,
+        """
+def _assert_payload(payload):
+    assert payload == {"ok": True}
+
+
+def test_uses_private_assertion_helper():
+    _assert_payload({"ok": True})
+""",
+    )
+
+    assert codes == set()
+
+
 def test_assert_true_is_reported(tmp_path: Path) -> None:
     codes = _issue_codes(
         tmp_path,
