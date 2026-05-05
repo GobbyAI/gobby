@@ -114,7 +114,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
     <div className={cn(
       MESSAGE_SPACING.body,
       message.role === 'user' && 'bg-[var(--color-info-soft)]',
-      message.role === 'system' && !isCommandResult && 'bg-muted/30',
+      message.role === 'system' && !isCommandResult && 'bg-[var(--color-warning-soft)]',
     )}>
       <div className="max-w-3xl mx-auto">
         <div className={MESSAGE_SPACING.headerRow}>
