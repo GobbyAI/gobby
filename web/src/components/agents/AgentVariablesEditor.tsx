@@ -1,4 +1,18 @@
 import { useState, useCallback } from 'react'
+import {
+  AGENT_BTN_CLS,
+  AGENT_BTN_PRIMARY_CLS,
+  AGENT_EDIT_INPUT_CLS,
+  AGENT_RULES_ADD_BTN_CLS,
+  AGENT_RULES_CHIP_REMOVE_CLS,
+  AGENT_RULES_EMPTY_CLS,
+  AGENT_VARS_ADD_ROW_CLS,
+  AGENT_VARS_EDITOR_CLS,
+  AGENT_VARS_KEY_CLS,
+  AGENT_VARS_LIST_CLS,
+  AGENT_VARS_ROW_CLS,
+  AGENT_VARS_VALUE_CLS,
+} from './agents-styles'
 
 interface AgentVariablesEditorProps {
   definitionId?: string | null
@@ -64,16 +78,16 @@ export function AgentVariablesEditor({ definitionId, variables, onVariablesChang
   }
 
   return (
-    <div className="agent-vars-editor">
+    <div className={AGENT_VARS_EDITOR_CLS}>
       {entries.length > 0 ? (
-        <div className="agent-vars-list">
+        <div className={AGENT_VARS_LIST_CLS}>
           {entries.map(([key, val]) => (
-            <div key={key} className="agent-vars-row">
-              <code className="agent-vars-key">{key}</code>
-              <span className="agent-vars-value">{typeof val === 'string' ? val : JSON.stringify(val)}</span>
+            <div key={key} className={AGENT_VARS_ROW_CLS}>
+              <code className={AGENT_VARS_KEY_CLS}>{key}</code>
+              <span className={AGENT_VARS_VALUE_CLS}>{typeof val === 'string' ? val : JSON.stringify(val)}</span>
               <button
                 type="button"
-                className="agent-rules-chip-remove"
+                className={AGENT_RULES_CHIP_REMOVE_CLS}
                 onClick={() => handleRemove(key)}
                 title={`Remove ${key}`}
               >
@@ -83,31 +97,31 @@ export function AgentVariablesEditor({ definitionId, variables, onVariablesChang
           ))}
         </div>
       ) : !adding && (
-        <span className="agent-rules-empty">No variables set</span>
+        <span className={AGENT_RULES_EMPTY_CLS}>No variables set</span>
       )}
       {adding ? (
-        <div className="agent-vars-add-row">
+        <div className={AGENT_VARS_ADD_ROW_CLS}>
           <input
-            className="agent-edit-input"
+            className={AGENT_EDIT_INPUT_CLS}
             value={newKey}
             onChange={e => setNewKey(e.target.value)}
             placeholder="Key"
             autoFocus
           />
           <input
-            className="agent-edit-input"
+            className={AGENT_EDIT_INPUT_CLS}
             value={newValue}
             onChange={e => setNewValue(e.target.value)}
             placeholder="Value"
             onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
           />
-          <button type="button" className="agent-defs-btn agent-defs-btn--primary" onClick={handleAdd} disabled={!newKey.trim()}>Add</button>
-          <button type="button" className="agent-defs-btn" onClick={() => setAdding(false)}>Cancel</button>
+          <button type="button" className={`${AGENT_BTN_CLS} ${AGENT_BTN_PRIMARY_CLS}`} onClick={handleAdd} disabled={!newKey.trim()}>Add</button>
+          <button type="button" className={AGENT_BTN_CLS} onClick={() => setAdding(false)}>Cancel</button>
         </div>
       ) : (
         <button
           type="button"
-          className="agent-defs-btn agent-rules-add-btn"
+          className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
           onClick={() => setAdding(true)}
         >
           + Add Variable

@@ -1,5 +1,24 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import '../agents/agents.css'
+import {
+  AGENT_DEF_BADGE_CHIP_CLS,
+  AGENT_DEF_BADGE_CHIP_LOCAL_CLS,
+  AGENT_DEF_BADGE_CLS,
+  AGENT_DEF_BADGE_DIM_CLS,
+  AGENT_DEF_BADGE_FILLED_CLS,
+  AGENT_DEF_BADGES_CLS,
+  AGENT_DEF_CARD_CLS,
+  AGENT_DEF_CARD_DELETED_CLS,
+  AGENT_DEF_CARD_FOOTER_PAD_CLS,
+  AGENT_DEF_DESC_CLS,
+  AGENT_DEF_HEADER_CLS,
+  AGENT_DEF_HEADER_TOP_CLS,
+  AGENT_DEF_IMPORT_RESULT_CLS,
+  AGENT_DEF_IMPORT_RESULT_ERR_CLS,
+  AGENT_DEF_IMPORT_RESULT_OK_CLS,
+  AGENT_DEF_NAME_CLS,
+  AGENT_DEF_NAME_DELETED_CLS,
+  AGENT_DEFS_TAB_CLS,
+} from '../agents/agents-styles'
 import {
   WORKFLOWS_CONTENT_CLS,
   WORKFLOWS_LOADING_CLS,
@@ -740,7 +759,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
   }
 
   return (
-    <div className="agent-defs-tab">
+    <div className={AGENT_DEFS_TAB_CLS}>
       {ConfirmDialogElement}
       {toastMessage && (
         <div
@@ -772,11 +791,12 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
               return (
                 <div
                   key={d.name}
-                  className={`agent-def-card${item.deleted_at ? ' agent-def-card--deleted' : ''}${isTemplate ? ' ' + WORKFLOWS_CARD_TEMPLATE_CLS : ''}`}
+                  data-testid="agent-def-card"
+                  className={`${AGENT_DEF_CARD_CLS}${item.deleted_at ? ' ' + AGENT_DEF_CARD_DELETED_CLS : ''}${isTemplate ? ' ' + WORKFLOWS_CARD_TEMPLATE_CLS : ''}`}
                 >
                   {/* Card header */}
                   <button
-                    className="agent-def-header"
+                    className={AGENT_DEF_HEADER_CLS}
                     onClick={() => {
                       if (item.deleted_at) return
                       if (isDb) {
@@ -787,44 +807,47 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                       }
                     }}
                   >
-                    <div className="agent-def-header-top">
-                      <span className={`agent-def-name${item.deleted_at ? ' agent-def-name--deleted' : ''}`}>{d.name}</span>
+                    <div className={AGENT_DEF_HEADER_TOP_CLS}>
+                      <span className={`${AGENT_DEF_NAME_CLS}${item.deleted_at ? ' ' + AGENT_DEF_NAME_DELETED_CLS : ''}`}>{d.name}</span>
                       <span className={`${WORKFLOWS_CARD_TYPE_CLS} ${WORKFLOWS_CARD_TYPE_VARIANT_CLS.agent}`}>agent</span>
                     </div>
                     {d.description && (
-                      <div className="agent-def-desc">
+                      <div className={AGENT_DEF_DESC_CLS}>
                         {d.description.split('\n')[0].slice(0, 100)}
                       </div>
                     )}
-                    <div className="agent-def-badges">
+                    <div className={AGENT_DEF_BADGES_CLS}>
                       <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_SOURCE_CLS}`}>
                         {SOURCE_LABELS[item.source] || item.source}
                       </span>
                       <span
-                        className="agent-def-badge agent-def-badge--filled"
+                        className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_FILLED_CLS}`}
                         style={{ background: getProviderColorVar(d.provider) }}
                       >
                         {d.provider}
                       </span>
                       {d.is_local && (
-                        <span className="agent-def-badge chip chip--local">
+                        <span
+                          data-testid="agent-local-chip"
+                          className={`${AGENT_DEF_BADGE_CHIP_CLS} ${AGENT_DEF_BADGE_CHIP_LOCAL_CLS}`}
+                        >
                           LOCAL
                         </span>
                       )}
                       {d.isolation && (
                         <span
-                          className="agent-def-badge agent-def-badge--filled"
+                          className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_FILLED_CLS}`}
                           style={{ background: getIsolationColorVar(d.isolation) }}
                         >
                           {d.isolation}
                         </span>
                       )}
                       {workflowCount > 0 && (
-                        <span className="agent-def-badge agent-def-badge--dim">
+                        <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>
                           {workflowCount} workflow{workflowCount !== 1 ? 's' : ''}
                         </span>
                       )}
-                      <span className="agent-def-badge agent-def-badge--dim">
+                      <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>
                         {d.timeout}s
                       </span>
                       {item.has_template_update && (
@@ -834,7 +857,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                   </button>
 
                   {/* Card footer - always visible */}
-                  <div className={WORKFLOWS_CARD_FOOTER_CLS}>
+                  <div className={`${WORKFLOWS_CARD_FOOTER_CLS} ${AGENT_DEF_CARD_FOOTER_PAD_CLS}`}>
                     {item.deleted_at ? (
                       <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                         {item.db_id && (
@@ -910,7 +933,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                             </button>
                           )}
                           {importResult?.name === d.name && (
-                            <span className={`agent-def-import-result ${importResult.ok ? 'agent-def-import-result--ok' : 'agent-def-import-result--err'}`}>
+                            <span className={`${AGENT_DEF_IMPORT_RESULT_CLS} ${importResult.ok ? AGENT_DEF_IMPORT_RESULT_OK_CLS : AGENT_DEF_IMPORT_RESULT_ERR_CLS}`}>
                               {importResult.ok ? 'OK' : 'Fail'}
                             </span>
                           )}

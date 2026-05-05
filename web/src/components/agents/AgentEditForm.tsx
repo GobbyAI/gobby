@@ -14,6 +14,41 @@ import {
   getReasoningOptionsForModel,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
+import {
+  AGENT_BTN_CLS,
+  AGENT_BTN_PRIMARY_CLS,
+  AGENT_DEF_BADGE_CLS,
+  AGENT_DEF_BADGE_DIM_CLS,
+  AGENT_DEF_DESCRIPTION_FULL_CLS,
+  AGENT_DEF_JSON_CLS,
+  AGENT_DEF_SOURCE_INFO_CLS,
+  AGENT_DEF_WORKFLOW_ITEM_CLS,
+  AGENT_DEF_WORKFLOW_LIST_CLS,
+  AGENT_DEF_WORKFLOW_NAME_CLS,
+  AGENT_DEF_WORKFLOW_DESC_CLS,
+  AGENT_EDIT_CHECKBOX_CLS,
+  AGENT_EDIT_CHECKBOX_GROUP_CLS,
+  AGENT_EDIT_CODEMIRROR_CLS,
+  AGENT_EDIT_FIELD_CLS,
+  AGENT_EDIT_INPUT_CLS,
+  AGENT_EDIT_LABEL_CLS,
+  AGENT_EDIT_LINK_BTN_CLS,
+  AGENT_EDIT_META_CLS,
+  AGENT_EDIT_META_LABEL_CLS,
+  AGENT_EDIT_META_ROW_CLS,
+  AGENT_EDIT_META_VALUE_CLS,
+  AGENT_EDIT_MODEL_FIELD_CLS,
+  AGENT_EDIT_MODEL_TOGGLE_CLS,
+  AGENT_EDIT_SECTION_CLS,
+  AGENT_EDIT_SECTION_TITLE_CLS,
+  AGENT_EDIT_TEXTAREA_CLS,
+  AGENT_EDIT_YAML_VIEW_CLS,
+  AGENT_RULES_CHIP_CLS,
+  AGENT_RULES_CHIP_EXCLUDE_CLS,
+  AGENT_RULES_CHIP_INCLUDE_CLS,
+  AGENT_RULES_CHIP_SELECTOR_CLS,
+  AGENT_RULES_CHIPS_CLS,
+} from './agents-styles'
 
 export interface AgentFormData {
   name: string
@@ -127,10 +162,10 @@ function FormInput({ label, value, onChange, placeholder, required }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; required?: boolean
 }) {
   return (
-    <label className="agent-edit-field">
-      <span className="agent-edit-label">{label}{required ? ' *' : ''}</span>
+    <label className={AGENT_EDIT_FIELD_CLS}>
+      <span className={AGENT_EDIT_LABEL_CLS}>{label}{required ? ' *' : ''}</span>
       <input
-        className="agent-edit-input"
+        className={AGENT_EDIT_INPUT_CLS}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
@@ -143,10 +178,10 @@ function FormTextarea({ label, value, onChange, placeholder, rows = 3 }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; rows?: number
 }) {
   return (
-    <label className="agent-edit-field">
-      <span className="agent-edit-label">{label}</span>
+    <label className={AGENT_EDIT_FIELD_CLS}>
+      <span className={AGENT_EDIT_LABEL_CLS}>{label}</span>
       <textarea
-        className="agent-edit-input agent-edit-textarea"
+        className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
@@ -159,9 +194,9 @@ function FormTextarea({ label, value, onChange, placeholder, rows = 3 }: {
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="agent-edit-meta-row">
-      <span className="agent-edit-meta-label">{label}</span>
-      <div className="agent-edit-meta-value">{children}</div>
+    <div className={AGENT_EDIT_META_ROW_CLS}>
+      <span className={AGENT_EDIT_META_LABEL_CLS}>{label}</span>
+      <div className={AGENT_EDIT_META_VALUE_CLS}>{children}</div>
     </div>
   )
 }
@@ -257,9 +292,9 @@ export function AgentEditForm({
 
   const footer = !readOnly ? (
     <>
-      <button className="agent-defs-btn" onClick={onCancel} type="button">Cancel</button>
+      <button className={AGENT_BTN_CLS} onClick={onCancel} type="button">Cancel</button>
       <button
-        className="agent-defs-btn agent-defs-btn--primary"
+        className={`${AGENT_BTN_CLS} ${AGENT_BTN_PRIMARY_CLS}`}
         onClick={view === 'yaml' && onYamlSave ? onYamlSave : onSave}
         disabled={saveDisabled}
         type="button"
@@ -278,7 +313,7 @@ export function AgentEditForm({
       footer={footer}
     >
       {view === 'yaml' ? (
-        <div className="agent-edit-yaml-view">
+        <div className={AGENT_EDIT_YAML_VIEW_CLS}>
           <CodeMirrorEditor
             content={yamlContent || ''}
             language="yaml"
@@ -289,7 +324,7 @@ export function AgentEditForm({
         </div>
       ) : readOnly && rd ? (
         <>
-          <div className="agent-edit-meta">
+          <div className={AGENT_EDIT_META_CLS}>
             <MetaRow label="Provider"><span>{rd.provider}</span></MetaRow>
             <MetaRow label="Model"><span>{rd.model || '(default)'}</span></MetaRow>
             <MetaRow label="Reasoning"><span>{rd.reasoning_effort || 'Auto'}</span></MetaRow>
@@ -311,50 +346,50 @@ export function AgentEditForm({
           </div>
 
           {rd.description && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Description</h4>
-              <pre className="agent-def-description-full">{rd.description}</pre>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Description</h4>
+              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.description}</pre>
             </div>
           )}
           {rd.role && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Role</h4>
-              <pre className="agent-def-description-full">{rd.role}</pre>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Role</h4>
+              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.role}</pre>
             </div>
           )}
           {rd.goal && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Goal</h4>
-              <pre className="agent-def-description-full">{rd.goal}</pre>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Goal</h4>
+              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.goal}</pre>
             </div>
           )}
           {rd.personality && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Personality</h4>
-              <pre className="agent-def-description-full">{rd.personality}</pre>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Personality</h4>
+              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.personality}</pre>
             </div>
           )}
           {rd.instructions && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Instructions</h4>
-              <pre className="agent-def-description-full">{rd.instructions}</pre>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</h4>
+              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.instructions}</pre>
             </div>
           )}
 
           {workflowEntries.length > 0 && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Workflows</h4>
-              <div className="agent-def-workflow-list">
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Workflows</h4>
+              <div className={AGENT_DEF_WORKFLOW_LIST_CLS}>
                 {workflowEntries.map(([wfName, wfRaw]) => {
                   const wf = wfRaw as { type?: string; file?: string; mode?: string; internal?: boolean; step_count?: number; description?: string }
                   return (
-                    <div key={wfName} className="agent-def-workflow-item">
-                      <span className="agent-def-workflow-name">{wfName}</span>
-                      {wf.type && <span className="agent-def-badge agent-def-badge--dim">{wf.type}</span>}
-                      {wf.file && <span className="agent-def-badge agent-def-badge--dim">{wf.file}</span>}
-                      {wf.internal && <span className="agent-def-badge agent-def-badge--dim">internal</span>}
-                      {wf.step_count != null && <span className="agent-def-badge agent-def-badge--dim">{wf.step_count} steps</span>}
-                      {wf.description && <span className="agent-def-workflow-desc">{wf.description}</span>}
+                    <div key={wfName} className={AGENT_DEF_WORKFLOW_ITEM_CLS}>
+                      <span className={AGENT_DEF_WORKFLOW_NAME_CLS}>{wfName}</span>
+                      {wf.type && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>{wf.type}</span>}
+                      {wf.file && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>{wf.file}</span>}
+                      {wf.internal && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>internal</span>}
+                      {wf.step_count != null && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>{wf.step_count} steps</span>}
+                      {wf.description && <span className={AGENT_DEF_WORKFLOW_DESC_CLS}>{wf.description}</span>}
                     </div>
                   )
                 })}
@@ -363,39 +398,39 @@ export function AgentEditForm({
           )}
 
           {rd.workflows?.rules && rd.workflows.rules.length > 0 && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Rules</h4>
-              <div className="agent-rules-chips">
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</h4>
+              <div className={AGENT_RULES_CHIPS_CLS}>
                 {(rd.workflows.rules as string[]).map(name => (
-                  <span key={name} className="agent-rules-chip">{name}</span>
+                  <span key={name} className={AGENT_RULES_CHIP_CLS}>{name}</span>
                 ))}
               </div>
             </div>
           )}
 
           {rd.workflows?.rule_selectors && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Rule Selectors</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Rule Selectors</h4>
               {(() => {
                 const rs = rd.workflows!.rule_selectors as { include?: string[]; exclude?: string[] }
                 return (
                   <>
                     {rs.include && rs.include.length > 0 && (
                       <div>
-                        <span className="agent-edit-label">Include</span>
-                        <div className="agent-rules-chips" style={{ marginTop: 4 }}>
+                        <span className={AGENT_EDIT_LABEL_CLS}>Include</span>
+                        <div className={AGENT_RULES_CHIPS_CLS} style={{ marginTop: 4 }}>
                           {rs.include.map(s => (
-                            <span key={s} className="agent-rules-chip agent-rules-chip--selector agent-rules-chip--include">{s}</span>
+                            <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_INCLUDE_CLS}`}>{s}</span>
                           ))}
                         </div>
                       </div>
                     )}
                     {rs.exclude && rs.exclude.length > 0 && (
                       <div style={{ marginTop: 6 }}>
-                        <span className="agent-edit-label">Exclude</span>
-                        <div className="agent-rules-chips" style={{ marginTop: 4 }}>
+                        <span className={AGENT_EDIT_LABEL_CLS}>Exclude</span>
+                        <div className={AGENT_RULES_CHIPS_CLS} style={{ marginTop: 4 }}>
                           {rs.exclude.map(s => (
-                            <span key={s} className="agent-rules-chip agent-rules-chip--selector agent-rules-chip--exclude">{s}</span>
+                            <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_EXCLUDE_CLS}`}>{s}</span>
                           ))}
                         </div>
                       </div>
@@ -407,13 +442,13 @@ export function AgentEditForm({
           )}
 
           {rd.workflows?.variables && Object.keys(rd.workflows.variables as Record<string, unknown>).length > 0 && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Variables</h4>
-              <div className="agent-vars-list">
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</h4>
+              <div className="flex flex-col gap-1">
                 {Object.entries(rd.workflows!.variables as Record<string, unknown>).map(([key, val]) => (
-                  <div key={key} className="agent-vars-row">
-                    <code className="agent-vars-key">{key}</code>
-                    <span className="agent-vars-value">{typeof val === 'string' ? val : JSON.stringify(val)}</span>
+                  <div key={key} className="flex items-center gap-2 text-[length:calc(var(--font-size-base)*0.75)]">
+                    <code className="font-semibold text-[var(--text-primary)] min-w-[80px]">{key}</code>
+                    <span className="text-[var(--text-muted)] flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{typeof val === 'string' ? val : JSON.stringify(val)}</span>
                   </div>
                 ))}
               </div>
@@ -421,19 +456,19 @@ export function AgentEditForm({
           )}
 
           {((rd.blocked_tools && rd.blocked_tools.length > 0) || (rd.blocked_mcp_tools && rd.blocked_mcp_tools.length > 0)) && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Tool Restrictions</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</h4>
               {rd.blocked_tools && rd.blocked_tools.length > 0 && (
-                <div className="agent-edit-field">
-                  <span className="agent-edit-label">Blocked Tools</span>
+                <div className={AGENT_EDIT_FIELD_CLS}>
+                  <span className={AGENT_EDIT_LABEL_CLS}>Blocked Tools</span>
                   <div className="step-chips">
                     {rd.blocked_tools.map(t => <span key={t} className="step-chip">{t}</span>)}
                   </div>
                 </div>
               )}
               {rd.blocked_mcp_tools && rd.blocked_mcp_tools.length > 0 && (
-                <div className="agent-edit-field">
-                  <span className="agent-edit-label">Blocked MCP Tools</span>
+                <div className={AGENT_EDIT_FIELD_CLS}>
+                  <span className={AGENT_EDIT_LABEL_CLS}>Blocked MCP Tools</span>
                   <div className="step-chips">
                     {rd.blocked_mcp_tools.map(t => <span key={t} className="step-chip">{t}</span>)}
                   </div>
@@ -443,8 +478,8 @@ export function AgentEditForm({
           )}
 
           {rd.steps && rd.steps.length > 0 && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Steps ({rd.steps.length})</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps ({rd.steps.length})</h4>
               <div className="step-readonly-list">
                 {rd.steps.map((s, i) => (
                   <div key={i} className="step-readonly-item">
@@ -460,21 +495,21 @@ export function AgentEditForm({
           )}
 
           {rd.sandbox && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Sandbox</h4>
-              <pre className="agent-def-json">{JSON.stringify(rd.sandbox, null, 2)}</pre>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Sandbox</h4>
+              <pre className={AGENT_DEF_JSON_CLS}>{JSON.stringify(rd.sandbox, null, 2)}</pre>
             </div>
           )}
           {rd.skill_profile && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Skill Profile</h4>
-              <pre className="agent-def-json">{JSON.stringify(rd.skill_profile, null, 2)}</pre>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Skill Profile</h4>
+              <pre className={AGENT_DEF_JSON_CLS}>{JSON.stringify(rd.skill_profile, null, 2)}</pre>
             </div>
           )}
 
-          <div className="agent-edit-section">
-            <h4 className="agent-edit-section-title">Source</h4>
-            <div className="agent-def-source-info">
+          <div className={AGENT_EDIT_SECTION_CLS}>
+            <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Source</h4>
+            <div className={AGENT_DEF_SOURCE_INFO_CLS}>
               {agentItem.source_path ? (
                 <code>{agentItem.source_path}</code>
               ) : (
@@ -486,14 +521,14 @@ export function AgentEditForm({
       ) : (
         <>
           {/* Name */}
-          <div className="agent-edit-section">
+          <div className={AGENT_EDIT_SECTION_CLS}>
             <FormInput label="Name" value={form.name} onChange={v => set('name', v)} placeholder="my-agent" required />
           </div>
 
           {/* Editable meta */}
-          <div className="agent-edit-meta">
+          <div className={AGENT_EDIT_META_CLS}>
             <MetaRow label="Provider">
-              <select className="agent-edit-input" value={form.provider} onChange={e => {
+              <select className={AGENT_EDIT_INPUT_CLS} value={form.provider} onChange={e => {
                 const v = e.target.value
                 if (v === 'inherit') {
                   setCustomModelInput(false)
@@ -531,20 +566,20 @@ export function AgentEditForm({
 
             <MetaRow label="Model">
               {showCustomModel ? (
-                <div className="agent-edit-model-field">
+                <div className={AGENT_EDIT_MODEL_FIELD_CLS}>
                   <input
-                    className="agent-edit-input"
+                    className={AGENT_EDIT_INPUT_CLS}
                     value={form.model}
                     onChange={e => set('model', e.target.value)}
                     placeholder="e.g. claude-sonnet-4-5-20250929"
                     autoFocus={customModelInput}
                   />
                   {models && (
-                    <button type="button" className="agent-edit-model-toggle" onClick={() => { setCustomModelInput(false); set('model', '') }}>&times;</button>
+                    <button type="button" className={AGENT_EDIT_MODEL_TOGGLE_CLS} onClick={() => { setCustomModelInput(false); set('model', '') }}>&times;</button>
                   )}
                 </div>
               ) : (
-                <select className="agent-edit-input" value={form.model} onChange={e => {
+                <select className={AGENT_EDIT_INPUT_CLS} value={form.model} onChange={e => {
                   if (e.target.value === '__custom__') { setCustomModelInput(true); set('model', '') }
                   else {
                     const nextModel = e.target.value
@@ -566,8 +601,8 @@ export function AgentEditForm({
 
             <MetaRow label="Fallback">
               {form.fallback_agent ? (
-                <div className="agent-edit-model-field">
-                  <select className="agent-edit-input" value={form.fallback_agent} onChange={e => {
+                <div className={AGENT_EDIT_MODEL_FIELD_CLS}>
+                  <select className={AGENT_EDIT_INPUT_CLS} value={form.fallback_agent} onChange={e => {
                     onChange({ ...form, fallback_agent: e.target.value || '' })
                   }}>
                     {agentNames.filter(n => n !== form.name).includes(form.fallback_agent) ? null : (
@@ -577,10 +612,10 @@ export function AgentEditForm({
                       <option key={n} value={n}>{n}</option>
                     ))}
                   </select>
-                  <button type="button" className="agent-edit-model-toggle" onClick={() => onChange({ ...form, fallback_agent: '' })}>&times;</button>
+                  <button type="button" className={AGENT_EDIT_MODEL_TOGGLE_CLS} onClick={() => onChange({ ...form, fallback_agent: '' })}>&times;</button>
                 </div>
               ) : (
-                <button type="button" className="agent-edit-link-btn" disabled={!agentNames.some(n => n !== form.name)} onClick={() => {
+                <button type="button" className={AGENT_EDIT_LINK_BTN_CLS} disabled={!agentNames.some(n => n !== form.name)} onClick={() => {
                   const first = agentNames.find(n => n !== form.name)
                   if (first) onChange({ ...form, fallback_agent: first })
                 }}>
@@ -591,7 +626,7 @@ export function AgentEditForm({
 
             <MetaRow label="Reasoning">
               <select
-                className="agent-edit-input"
+                className={AGENT_EDIT_INPUT_CLS}
                 value={form.reasoning_effort}
                 onChange={e => {
                   const nextReasoning = e.target.value
@@ -613,7 +648,7 @@ export function AgentEditForm({
             </MetaRow>
 
             <MetaRow label="Require support">
-              <label className="agent-edit-checkbox">
+              <label className={AGENT_EDIT_CHECKBOX_CLS}>
                 <input
                   type="checkbox"
                   checked={form.reasoning_required}
@@ -625,7 +660,7 @@ export function AgentEditForm({
             </MetaRow>
 
             <MetaRow label="Mode">
-              <select className="agent-edit-input" value={form.mode} onChange={e => set('mode', e.target.value)}>
+              <select className={AGENT_EDIT_INPUT_CLS} value={form.mode} onChange={e => set('mode', e.target.value)}>
                 <option value="inherit">(default)</option>
                 <option value="interactive">Interactive</option>
                 <option value="embedded">Embedded</option>
@@ -634,8 +669,8 @@ export function AgentEditForm({
             </MetaRow>
 
             <MetaRow label="Surfaces">
-              <div className="agent-edit-checkbox-group">
-                <label className="agent-edit-checkbox">
+              <div className={AGENT_EDIT_CHECKBOX_GROUP_CLS}>
+                <label className={AGENT_EDIT_CHECKBOX_CLS}>
                   <input
                     type="checkbox"
                     checked={form.surfaces.includes('spawn')}
@@ -643,7 +678,7 @@ export function AgentEditForm({
                   />
                   <span>Spawn</span>
                 </label>
-                <label className="agent-edit-checkbox">
+                <label className={AGENT_EDIT_CHECKBOX_CLS}>
                   <input
                     type="checkbox"
                     checked={form.surfaces.includes('persona')}
@@ -656,7 +691,7 @@ export function AgentEditForm({
 
             <MetaRow label="Isolation">
               <select
-                className="agent-edit-input"
+                className={AGENT_EDIT_INPUT_CLS}
                 value={isGitProject ? form.isolation : 'inherit'}
                 onChange={e => set('isolation', e.target.value)}
                 disabled={!isGitProject}
@@ -670,22 +705,22 @@ export function AgentEditForm({
 
             <MetaRow label="Base branch">
               {!isGitProject ? (
-                <select className="agent-edit-input" disabled value="inherit">
+                <select className={AGENT_EDIT_INPUT_CLS} disabled value="inherit">
                   <option value="inherit">(default)</option>
                 </select>
               ) : showCustomBranch ? (
-                <div className="agent-edit-model-field">
+                <div className={AGENT_EDIT_MODEL_FIELD_CLS}>
                   <input
-                    className="agent-edit-input"
+                    className={AGENT_EDIT_INPUT_CLS}
                     value={form.base_branch}
                     onChange={e => set('base_branch', e.target.value)}
                     placeholder="branch name"
                     autoFocus={customBranchInput}
                   />
-                  <button type="button" className="agent-edit-model-toggle" onClick={() => { setCustomBranchInput(false); set('base_branch', 'inherit') }}>&times;</button>
+                  <button type="button" className={AGENT_EDIT_MODEL_TOGGLE_CLS} onClick={() => { setCustomBranchInput(false); set('base_branch', 'inherit') }}>&times;</button>
                 </div>
               ) : (
-                <select className="agent-edit-input" value={form.base_branch} onChange={e => {
+                <select className={AGENT_EDIT_INPUT_CLS} value={form.base_branch} onChange={e => {
                   if (e.target.value === '__custom__') { setCustomBranchInput(true); set('base_branch', '') }
                   else set('base_branch', e.target.value)
                 }}>
@@ -698,7 +733,7 @@ export function AgentEditForm({
 
             {pipelines && (
               <MetaRow label="Pipeline">
-                <select className="agent-edit-input" value={form.pipeline} onChange={e => set('pipeline', e.target.value)}>
+                <select className={AGENT_EDIT_INPUT_CLS} value={form.pipeline} onChange={e => set('pipeline', e.target.value)}>
                   <option value="">(none)</option>
                   {pipelines.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
                 </select>
@@ -707,7 +742,7 @@ export function AgentEditForm({
 
             <MetaRow label="Timeout (s)">
               <input
-                className="agent-edit-input"
+                className={AGENT_EDIT_INPUT_CLS}
                 type="number"
                 min={0}
                 value={form.timeout}
@@ -717,7 +752,7 @@ export function AgentEditForm({
 
             <MetaRow label="Max turns">
               <input
-                className="agent-edit-input"
+                className={AGENT_EDIT_INPUT_CLS}
                 type="number"
                 min={0}
                 value={form.max_turns}
@@ -727,8 +762,8 @@ export function AgentEditForm({
           </div>
 
           {/* Identity */}
-          <div className="agent-edit-section">
-            <h4 className="agent-edit-section-title">Identity</h4>
+          <div className={AGENT_EDIT_SECTION_CLS}>
+            <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Identity</h4>
             <FormTextarea label="Description" value={form.description} onChange={v => set('description', v)} placeholder="What this agent does..." />
             <FormTextarea label="Role" value={form.role} onChange={v => set('role', v)} placeholder="e.g. Senior security engineer" />
             <FormTextarea label="Goal" value={form.goal} onChange={v => set('goal', v)} placeholder="What success looks like..." />
@@ -736,9 +771,9 @@ export function AgentEditForm({
           </div>
 
           {/* Instructions */}
-          <div className="agent-edit-section">
-            <h4 className="agent-edit-section-title">Instructions</h4>
-            <div className="agent-edit-codemirror">
+          <div className={AGENT_EDIT_SECTION_CLS}>
+            <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</h4>
+            <div className={AGENT_EDIT_CODEMIRROR_CLS}>
               <CodeMirrorEditor
                 content={form.instructions}
                 language="markdown"
@@ -749,8 +784,8 @@ export function AgentEditForm({
 
           {/* Rules */}
           {onRulesChange && rules !== undefined && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Rules</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</h4>
               <AgentRulesEditor
                 definitionId={editingId}
                 rules={rules}
@@ -764,8 +799,8 @@ export function AgentEditForm({
 
           {/* Skills */}
           {onSkillsChange && editSkills !== undefined && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Skills</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Skills</h4>
               <AgentSkillsEditor
                 skills={editSkills}
                 onSkillsChange={onSkillsChange}
@@ -776,8 +811,8 @@ export function AgentEditForm({
 
           {/* Variables */}
           {onVariablesChange && variables !== undefined && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Variables</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</h4>
               <AgentVariablesEditor
                 definitionId={editingId}
                 variables={variables}
@@ -788,8 +823,8 @@ export function AgentEditForm({
 
           {/* Tool Restrictions */}
           {(onBlockedToolsChange || onBlockedMcpToolsChange) && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Tool Restrictions</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</h4>
               <AgentToolBlocksEditor
                 blockedTools={blockedTools || []}
                 onBlockedToolsChange={onBlockedToolsChange}
@@ -801,8 +836,8 @@ export function AgentEditForm({
 
           {/* Steps */}
           {onStepsChange && steps !== undefined && (
-            <div className="agent-edit-section">
-              <h4 className="agent-edit-section-title">Steps</h4>
+            <div className={AGENT_EDIT_SECTION_CLS}>
+              <h4 className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps</h4>
               <AgentStepsEditor
                 steps={steps}
                 onChange={onStepsChange}

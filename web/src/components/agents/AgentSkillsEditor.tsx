@@ -1,4 +1,15 @@
 import { useState, useEffect } from 'react'
+import {
+  AGENT_BTN_CLS,
+  AGENT_EDIT_INPUT_CLS,
+  AGENT_RULES_ADD_BTN_CLS,
+  AGENT_RULES_ADD_SELECT_CLS,
+  AGENT_RULES_CHIP_CLS,
+  AGENT_RULES_CHIP_REMOVE_CLS,
+  AGENT_RULES_CHIPS_CLS,
+  AGENT_RULES_EDITOR_CLS,
+  AGENT_RULES_EMPTY_CLS,
+} from './agents-styles'
 
 interface SkillInfo {
   name: string
@@ -31,14 +42,14 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
   const addableSkills = availableSkills.filter(s => !skills.includes(s.name))
 
   return (
-    <div className="agent-rules-editor">
-      <div className="agent-rules-chips">
+    <div className={AGENT_RULES_EDITOR_CLS}>
+      <div className={AGENT_RULES_CHIPS_CLS}>
         {skills.map(name => (
-          <span key={name} className="agent-rules-chip">
+          <span key={name} className={AGENT_RULES_CHIP_CLS}>
             {name}
             <button
               type="button"
-              className="agent-rules-chip-remove"
+              className={AGENT_RULES_CHIP_REMOVE_CLS}
               onClick={() => onSkillsChange(skills.filter(s => s !== name))}
               title={`Remove ${name}`}
             >
@@ -47,12 +58,12 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
           </span>
         ))}
         {skills.length === 0 && !adding && (
-          <span className="agent-rules-empty">No skills assigned</span>
+          <span className={AGENT_RULES_EMPTY_CLS}>No skills assigned</span>
         )}
       </div>
       {adding ? (
         <select
-          className="agent-edit-input agent-rules-add-select"
+          className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULES_ADD_SELECT_CLS}`}
           autoFocus
           value=""
           onChange={e => {
@@ -74,7 +85,7 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
       ) : (
         <button
           type="button"
-          className="agent-defs-btn agent-rules-add-btn"
+          className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
           onClick={() => setAdding(true)}
           disabled={addableSkills.length === 0}
         >

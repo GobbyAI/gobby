@@ -68,15 +68,12 @@ describe('AgentsTab local chip', () => {
 
     await waitFor(() => expect(screen.getByText('local-agent')).toBeInTheDocument())
 
-    const localCard = screen.getByText('local-agent').closest('.agent-def-card')
-    const cloudCard = screen.getByText('cloud-agent').closest('.agent-def-card')
+    const localCard = screen.getByText('local-agent').closest('[data-testid="agent-def-card"]')
+    const cloudCard = screen.getByText('cloud-agent').closest('[data-testid="agent-def-card"]')
 
     expect(localCard).not.toBeNull()
     expect(cloudCard).not.toBeNull()
-    expect(within(localCard as HTMLElement).getByText('LOCAL')).toHaveClass(
-      'chip',
-      'chip--local',
-    )
-    expect(within(cloudCard as HTMLElement).queryByText('LOCAL')).not.toBeInTheDocument()
+    expect(within(localCard as HTMLElement).getByTestId('agent-local-chip')).toHaveTextContent('LOCAL')
+    expect(within(cloudCard as HTMLElement).queryByTestId('agent-local-chip')).toBeNull()
   })
 })
