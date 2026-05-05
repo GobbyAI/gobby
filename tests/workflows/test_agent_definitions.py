@@ -46,6 +46,7 @@ def _blocked_mcp_tools(step: dict[str, Any]) -> set[str]:
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
         "backend-developer": ("codex", "gpt-5.5", "xhigh"),
+        "tech-writer": ("codex", "gpt-5.5", "high"),
         "qa-reviewer": ("claude", "opus", "xhigh"),
         "holistic-reviewer": ("codex", "gpt-5.5", "xhigh"),
         "merge-orchestrator": ("claude", "opus", "xhigh"),
@@ -205,6 +206,18 @@ def test_backend_developer_documents_default_fallback_audit_marker() -> None:
     assert "default-agent fallback" in instructions
     assert "## Agent Selection" in instructions
     assert "Defaulted to `backend-developer`" in instructions
+
+
+def test_tech_writer_loads_methodology_skill_after_claim() -> None:
+    agent = _agent("tech-writer")
+    claim = _step(agent, "claim")
+    load_skill = _step(agent, "load_skill")
+    implement = _step(agent, "implement")
+
+    assert claim["transitions"] == [{"to": "load_skill", "when": "vars.task_claimed"}]
+    assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
+    assert "tool_input.name == 'tech-writer'" in str(load_skill.get("on_mcp_success"))
+    assert "submit_for_review" in implement["status_message"]
 
 
 def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> None:

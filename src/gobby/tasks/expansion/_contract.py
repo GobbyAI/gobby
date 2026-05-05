@@ -452,44 +452,65 @@ def _parse_contract_plan(self: Any, run: ExpansionRun, task: Task) -> PlanDocume
     else:
         repo_path = self._resolve_repo_path(task)
     registry_plan_id = _registry_plan_id_for_run(self, run, task, plan_path, repo_path)
-    if registry_plan_id is not None:
-        try:
-            return parse_plan(
-                plan_path,
-                parse_mode="expansion",
-                plan_id_override=registry_plan_id,
-            )
-        except (OSError, PlanParseError) as exc:
-            _log_contract_parse_failure(self, run, plan_path, exc)
-            raise ValueError(
-                f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
-            ) from exc
-
-    first_error: OSError | PlanParseError | None = None
-    try:
-        return parse_plan(plan_path, parse_mode="expansion")
-    except (OSError, PlanParseError) as exc:
-        first_error = exc
-
     root_fallback = str(task.seq_num) if task.seq_num is not None else None
-    if root_fallback is not None:
+    candidate_plan_ids = _candidate_plan_ids(registry_plan_id, root_fallback)
+    first_error: OSError | PlanParseError | None = None
+    manifest_marker_present = _plan_has_manifest_marker(plan_path)
+
+    for plan_id_override in candidate_plan_ids:
+        try:
+            draft_doc = parse_plan(
+                plan_path,
+                parse_mode="draft",
+                plan_id_override=plan_id_override,
+            )
+        except (OSError, PlanParseError) as exc:
+            first_error = first_error or exc
+            continue
+
+        if not draft_doc.manifest_entries:
+            if manifest_marker_present:
+                first_error = first_error or PlanParseError(
+                    [(max(len(draft_doc.source_lines), 1), "missing manifest entries")],
+                    plan_path,
+                )
+                continue
+            return None
+
         try:
             return parse_plan(
                 plan_path,
                 parse_mode="expansion",
-                plan_id_override=root_fallback,
+                plan_id_override=plan_id_override,
             )
         except (OSError, PlanParseError) as exc:
-            _log_contract_parse_failure(self, run, plan_path, exc, first_error=first_error)
-            raise ValueError(
-                f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
-            ) from exc
+            first_error = first_error or exc
+            continue
+
+    if not manifest_marker_present:
+        return None
 
     assert first_error is not None
     _log_contract_parse_failure(self, run, plan_path, first_error)
     raise ValueError(
         f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
     ) from first_error
+
+
+def _candidate_plan_ids(*values: str | None) -> list[str | None]:
+    candidates: list[str | None] = []
+    for value in (*values, None):
+        if value in candidates:
+            continue
+        candidates.append(value)
+    return candidates
+
+
+def _plan_has_manifest_marker(plan_path: Path) -> bool:
+    try:
+        return "kind: manifest" in plan_path.read_text(encoding="utf-8")
+    except OSError:
+        return True
 
 
 def _registry_plan_id_for_run(

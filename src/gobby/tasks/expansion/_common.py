@@ -24,7 +24,7 @@ from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 
 _TDD_CATEGORIES = TDD_ELIGIBLE_CATEGORIES
 AUTOMATED_LEAF_CATEGORIES = frozenset(
-    {"code", "config", "docs", "manual", "refactor", "research", "test"}
+    {"code", "config", "docs", "planning", "refactor", "research", "test"}
 )
 _DEFAULT_AGENT = "backend-developer"
 _DEFAULT_PHASE_ID = "phase-1"
@@ -60,10 +60,10 @@ _DETERMINISTIC_AGENT_BY_CATEGORY = {
     "code": "backend-developer",
     "refactor": "backend-developer",
     "test": "test-architect",
-    "config": "default",
-    "docs": "default",
-    "manual": "default",
-    "research": "default",
+    "config": "backend-developer",
+    "docs": "tech-writer",
+    "planning": "planner",
+    "research": "researcher",
 }
 _BACKEND_SIGNALS = frozenset(
     {
@@ -184,6 +184,9 @@ def _select_agent_from_registry(
         return None
 
     signal_text = _leaf_signal_text(task_item)
+    category = str(task_item.get("category", "code"))
+    if category == "docs" and "tech-writer" in available:
+        return "tech-writer"
     frontend_score = sum(1 for signal in _FRONTEND_SIGNALS if signal in signal_text)
     backend_score = sum(1 for signal in _BACKEND_SIGNALS if signal in signal_text)
 

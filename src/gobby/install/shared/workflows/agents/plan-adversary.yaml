@@ -103,31 +103,13 @@ instructions: |
      present, schema-correct, and that every acceptance item is covered.
   3. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
      3 retries.
-  4. After the cap, behavior splits by yolo state on the planning task:
+  4. After the cap, call
+     `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
+     with the parser error details. Do NOT approve.
 
-     - non-yolo: call `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
-       with the parser error details. Do NOT approve.
-     - yolo: do NOT call `escalate_task` (top-level yolo invariant — yolo
-       NEVER escalates on this path). Instead:
-       a. Append a `## Yolo Fallbacks` audit section to the planning anchor's
-          description (NOT the plan file) documenting the failure mode.
-       b. Fall back to the deterministic stub-manifest path by calling
-          `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path,
-          plan_id=<parent/root plan id>)` from §2.21a. Re-run
-          `parse_plan(plan_path, parse_mode="expansion",
-          plan_id_override=<same parent/root plan id>)`.
-       c. If the stub also fails (deliverable schema in the plan itself is
-          malformed beyond the emitter's reach), append a second
-          `## Yolo Fallbacks` audit marker and force-approve the plan with
-          `approve_review(stage_name="planning", approval_notes="yolo: manifest emission
-          exhausted; stub fallback also failed; force-approved with no
-          manifest — downstream gobby expand will reject this plan, requiring
-          human intervention at expansion time")`.
-
-  5. On success (any path that yields a parser-clean manifest, or the yolo
-     force-approve path), call `approve_review` with `stage_name="planning"` and
-     `approval_notes` that document the manifest outcome (e.g., "approved
-     with N manifest entries" or the force-approve note above).
+  5. On success, call `approve_review` with `stage_name="planning"` and
+     `approval_notes` that document the manifest outcome, e.g. "approved with N
+     manifest entries".
 
   SIGNOFF SUMMARY:
   Both `reject_review` and `approve_review` accept an

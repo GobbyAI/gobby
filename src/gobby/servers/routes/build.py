@@ -7,14 +7,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from gobby.build import (
     BuildControlResult,
     BuildOptions,
     BuildResult,
     BuildTargetControlResult,
-    StageInsertion,
     build,
     build_clean_target,
     build_restart_target,
@@ -30,27 +29,18 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 
-class StageCapOverride(BaseModel):
-    """Per-stage build cap override."""
-
-    stage_name: str
-    max_work_attempts: int | None = None
-    max_review_rounds: int | None = None
-
-
 class BuildRequest(BaseModel):
     """Request body for POST /api/build."""
 
+    model_config = ConfigDict(extra="forbid")
+
     input_ref: str
-    profile: str | None = None
+    quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
-    stages: list[str] | None = None
-    add_stages: list[str] = Field(default_factory=list)
     isolation: Isolation = "worktree"
-    unattended: bool = False
-    composer_yolo: bool = False
-    yolo: bool | None = Field(default=None, json_schema_extra={"deprecated": True})
-    stage_caps: list[StageCapOverride] = Field(default_factory=list)
+    no_merge: bool = False
+    pr: str | None = None
+    stage: list[str] = Field(default_factory=list)
     target_branch: str | None = None
     agent: str | None = None
     clones_dir: str | None = None
@@ -68,29 +58,13 @@ class BuildControlRequest(BaseModel):
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
-    unattended = request_data.unattended
-    if request_data.yolo is not None and not unattended:
-        unattended = request_data.yolo
-    try:
-        add_stages = [_parse_stage_insertion(value) for value in request_data.add_stages]
-    except ValueError as exc:
-        raise ValueError(f"Invalid stage insertion: {exc}") from exc
     return BuildOptions(
-        profile=request_data.profile,
+        quick=request_data.quick,
         skip_stages=request_data.skip_stages,
         isolation=request_data.isolation,
-        unattended=unattended,
-        composer_yolo=request_data.composer_yolo,
-        stages=request_data.stages,
-        add_stages=add_stages,
-        stage_caps=[
-            BuildStageCapOverride(
-                stage_name=item.stage_name,
-                max_work_attempts=item.max_work_attempts,
-                max_review_rounds=item.max_review_rounds,
-            )
-            for item in request_data.stage_caps
-        ],
+        no_merge=request_data.no_merge,
+        pr=request_data.pr,
+        stage_caps=_parse_stage_options(request_data.stage),
         target_branch=request_data.target_branch,
         assigned_agent=request_data.agent,
         clones_dir=clones_dir,
@@ -98,21 +72,35 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
     )
 
 
-def _parse_stage_insertion(value: str) -> StageInsertion:
-    stage_name, separator, position_text = value.partition("@")
-    stage_name = stage_name.strip()
-    if not stage_name:
-        raise ValueError("stage name is required")
-    position = None
-    if separator:
-        position_text = position_text.strip()
-        if not position_text:
-            raise ValueError("stage insertion position is required")
-        try:
-            position = int(position_text)
-        except ValueError as exc:
-            raise ValueError("stage insertion position must be an integer") from exc
-    return StageInsertion(stage_name=stage_name, position=position)
+def _parse_stage_options(values: list[str]) -> list[BuildStageCapOverride]:
+    parsed: dict[str, dict[str, int | None]] = {}
+    for raw in values:
+        stage_name, separator, settings_text = raw.partition(":")
+        stage_name = stage_name.strip()
+        if not stage_name:
+            raise ValueError("stage name is required")
+        settings = parsed.setdefault(stage_name, {})
+        if not separator:
+            continue
+        for item in (part.strip() for part in settings_text.split(",") if part.strip()):
+            key, key_separator, value_text = item.partition("=")
+            if not key_separator:
+                raise ValueError("stage setting must use name=value")
+            key = key.strip()
+            if key not in {"max_work_attempts", "max_review_rounds"}:
+                raise ValueError("stage setting must be max_work_attempts or max_review_rounds")
+            try:
+                settings[key] = int(value_text)
+            except ValueError as exc:
+                raise ValueError("stage setting value must be an integer") from exc
+    return [
+        BuildStageCapOverride(
+            stage_name=stage_name,
+            max_work_attempts=settings.get("max_work_attempts"),
+            max_review_rounds=settings.get("max_review_rounds"),
+        )
+        for stage_name, settings in parsed.items()
+    ]
 
 
 def _build_result_json(result: BuildResult) -> dict[str, Any]:

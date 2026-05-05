@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -14,16 +13,6 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 
-BuildProfileName = Literal[
-    "quick",
-    "review",
-    "full",
-    "default_unattended",
-    "full-unattended",
-    "default_yolo",
-    "full-yolo",
-    "auto",
-]
 BuildIsolation = Literal["none", "worktree", "clone"]
 
 DISPATCHER_CRON_DISABLED_MESSAGE = (
@@ -42,13 +31,12 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     async def build_task(
         input_ref: str,
-        profile: BuildProfileName = "auto",
+        quick: bool = False,
         skip_stages: list[str] | None = None,
         isolation: BuildIsolation = "worktree",
-        unattended: bool = False,
-        composer_yolo: bool = False,
-        yolo: bool | None = None,
-        stage_caps: list[dict[str, Any]] | None = None,
+        no_merge: bool = False,
+        pr: str | None = None,
+        stage: list[str] | None = None,
         target_branch: str | None = None,
         agent: str | None = None,
         reset_expansion_output: bool = False,
@@ -59,22 +47,14 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
-        if yolo is not None:
-            warnings.warn(
-                "build_task.yolo is deprecated; use unattended for dispatch automation",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if not unattended:
-                unattended = bool(yolo)
 
         opts = BuildOptions(
-            profile=profile,
+            quick=quick,
             skip_stages=skip_stages or [],
             isolation=isolation,
-            unattended=unattended,
-            composer_yolo=composer_yolo,
-            stage_caps=_stage_caps_from_payload(stage_caps or []),
+            no_merge=no_merge,
+            pr=pr,
+            stage_caps=_stage_caps_from_payload(stage or []),
             target_branch=target_branch,
             assigned_agent=agent,
             reset_expansion_output=reset_expansion_output,
@@ -103,20 +83,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "type": "object",
             "properties": {
                 "input_ref": {"type": "string"},
-                "profile": {
-                    "type": "string",
-                    "enum": [
-                        "quick",
-                        "review",
-                        "full",
-                        "default_unattended",
-                        "full-unattended",
-                        "default_yolo",
-                        "full-yolo",
-                        "auto",
-                    ],
-                    "default": "auto",
-                },
+                "quick": {"type": "boolean", "default": False},
                 "skip_stages": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -127,20 +94,12 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "enum": ["none", "worktree", "clone"],
                     "default": "worktree",
                 },
-                "unattended": {"type": "boolean", "default": False},
-                "composer_yolo": {"type": "boolean", "default": False},
-                "yolo": {"type": "boolean", "deprecated": True},
-                "stage_caps": {
+                "no_merge": {"type": "boolean", "default": False},
+                "pr": {"type": "string"},
+                "stage": {
                     "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "stage_name": {"type": "string"},
-                            "max_work_attempts": {"type": "integer", "minimum": 1},
-                            "max_review_rounds": {"type": "integer", "minimum": 1},
-                        },
-                        "required": ["stage_name"],
-                    },
+                    "items": {"type": "string"},
+                    "description": "Stage selector/settings, e.g. development:max_review_rounds=4",
                 },
                 "target_branch": {"type": "string"},
                 "agent": {"type": "string"},
@@ -155,14 +114,34 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
     return registry
 
 
-def _stage_caps_from_payload(payload: list[dict[str, Any]]) -> list[StageCapOverride]:
+def _stage_caps_from_payload(payload: list[str]) -> list[StageCapOverride]:
+    parsed: dict[str, dict[str, int | None]] = {}
+    for raw in payload:
+        stage_name, separator, settings_text = raw.partition(":")
+        stage_name = stage_name.strip()
+        if not stage_name:
+            raise ValueError("stage name is required")
+        settings = parsed.setdefault(stage_name, {})
+        if not separator:
+            continue
+        for item in (part.strip() for part in settings_text.split(",") if part.strip()):
+            key, key_separator, value_text = item.partition("=")
+            if not key_separator:
+                raise ValueError("stage setting must use name=value")
+            key = key.strip()
+            if key not in {"max_work_attempts", "max_review_rounds"}:
+                raise ValueError("stage setting must be max_work_attempts or max_review_rounds")
+            try:
+                settings[key] = int(value_text)
+            except ValueError as exc:
+                raise ValueError("stage setting value must be an integer") from exc
     return [
         StageCapOverride(
-            stage_name=str(item["stage_name"]),
-            max_work_attempts=item.get("max_work_attempts"),
-            max_review_rounds=item.get("max_review_rounds"),
+            stage_name=stage_name,
+            max_work_attempts=settings.get("max_work_attempts"),
+            max_review_rounds=settings.get("max_review_rounds"),
         )
-        for item in payload
+        for stage_name, settings in parsed.items()
     ]
 
 

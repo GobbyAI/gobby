@@ -18,15 +18,17 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
 
     assert result.exit_code == 0
     assert "Usage:" in result.output
-    assert "--profile" in result.output
+    assert "--quick" in result.output
     assert "--skip-stage" in result.output
     assert "--isolation" in result.output
-    assert "--unattended" in result.output
-    assert "--yolo" in result.output
-    assert "--no-yolo" in result.output
-    assert "--stages" in result.output
-    assert "--add-stage" in result.output
+    assert "--no-merge" in result.output
+    assert "--pr" in result.output
     assert "--stage" in result.output
+    assert "--profile" not in result.output
+    assert "--unattended" not in result.output
+    assert "--yolo" not in result.output
+    assert "--stages" not in result.output
+    assert "--add-stage" not in result.output
     assert "--max-expansion-attempts" not in result.output
     assert "--max-qa-rounds" not in result.output
     assert "--max-merge-attempts" not in result.output
@@ -65,18 +67,14 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
             [
                 "build",
                 str(plan_file),
-                "--profile",
-                "review",
+                "--quick",
                 "--skip-stage",
                 "qa,pr",
                 "--isolation",
                 "clone",
-                "--unattended",
-                "--yolo",
-                "--stages",
-                "planning,development,pr,merge",
-                "--add-stage",
-                "test_arch@2",
+                "--no-merge",
+                "--pr",
+                "123",
                 "--stage",
                 "development:max_review_rounds=5",
                 "--stage",
@@ -98,13 +96,11 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     call = build.call_args
     assert call.args[0] == str(plan_file)
     opts = call.args[1]
-    assert opts.profile == "review"
+    assert opts.quick is True
     assert opts.skip_stages == ["qa", "pr"]
     assert opts.isolation == "clone"
-    assert opts.unattended is True
-    assert opts.composer_yolo is True
-    assert opts.stages == ["planning", "development", "pr", "merge"]
-    assert [(item.stage_name, item.position) for item in opts.add_stages] == [("test_arch", 2)]
+    assert opts.no_merge is True
+    assert opts.pr == "123"
     assert [
         (item.stage_name, item.max_work_attempts, item.max_review_rounds)
         for item in opts.stage_caps

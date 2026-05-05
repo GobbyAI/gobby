@@ -15,7 +15,7 @@ register_contract_tests(
             "gobby build constructs StageManifestSpec rows carrying per-stage cap overrides"
         ),
         "test_build_flag_resolution": (
-            "gobby build --stages, --add-stage, --skip-stage, and per-stage cap flags "
+            "gobby build --stage, --skip-stage, and per-stage cap settings "
             "resolve to a deterministic manifest"
         ),
         "test_initialize_manifest_persists_caps_atomically": (

@@ -245,6 +245,25 @@ def test_dev_rule_fires_after_stage_start() -> None:
     assert action.agent_slug == "backend-developer"
 
 
+def test_docs_dev_rule_routes_to_tech_writer_when_available() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            category="docs",
+            assigned_agent=None,
+        ),
+        _context(
+            agents=_agents(**{"tech-writer": SimpleNamespace(name="tech-writer", enabled=True)})
+        ),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "tech-writer"
+
+
 def test_qa_rule_fires_with_cap() -> None:
     from gobby.dispatch.actions import EscalateAction, SpawnAgentAction
 

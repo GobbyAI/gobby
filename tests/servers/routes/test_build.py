@@ -47,14 +47,12 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
             "/api/build",
             json={
                 "input_ref": "plan.md",
-                "profile": "review",
+                "quick": True,
                 "skip_stages": ["pr"],
                 "isolation": "worktree",
-                "unattended": True,
-                "composer_yolo": False,
-                "stage_caps": [
-                    {"stage_name": "pr", "max_review_rounds": 3},
-                ],
+                "no_merge": False,
+                "pr": "123",
+                "stage": ["pr:max_review_rounds=3"],
                 "target_branch": "main",
                 "agent": "backend-developer",
             },
@@ -80,11 +78,11 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     call = build.call_args
     assert call.args[0] == "plan.md"
     opts = call.args[1]
-    assert opts.profile == "review"
+    assert opts.quick is True
     assert opts.skip_stages == ["pr"]
     assert opts.isolation == "worktree"
-    assert opts.unattended is True
-    assert opts.composer_yolo is False
+    assert opts.no_merge is False
+    assert opts.pr == "123"
     assert [
         (item.stage_name, item.max_work_attempts, item.max_review_rounds)
         for item in opts.stage_caps
@@ -95,33 +93,25 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert call.kwargs["services"] is not None
 
 
-def test_buildrequest_unattended_and_composer_yolo() -> None:
+def test_buildrequest_rejects_removed_fields() -> None:
     from gobby.servers.routes.build import BuildRequest
 
-    request = BuildRequest(
-        input_ref="#42",
-        unattended=True,
-        composer_yolo=False,
-        yolo=True,
-    )
-
-    assert request.unattended is True
-    assert request.composer_yolo is False
-    assert request.yolo is True
+    with pytest.raises(ValueError):
+        BuildRequest(input_ref="#42", profile="quick")
 
 
 def test_post_api_build_returns_400_for_validation_errors() -> None:
     with patch(
         "gobby.servers.routes.build.build",
-        new=AsyncMock(side_effect=ValueError("quick profile requires a leaf task ref")),
+        new=AsyncMock(side_effect=ValueError("--no-merge requires isolated work")),
     ):
         response = _client().post(
             "/api/build",
-            json={"input_ref": "plan.md", "profile": "quick"},
+            json={"input_ref": "plan.md", "quick": True},
         )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "quick profile requires a leaf task ref"
+    assert response.json()["detail"] == "--no-merge requires isolated work"
 
 
 def test_post_api_build_stop_preserves_project_wide_control() -> None:

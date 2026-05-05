@@ -12,7 +12,7 @@ register_contract_tests(
     globals(),
     {
         "test_build_task_forwards_to_shared_service": (
-            "MCP build_task forwards stage_caps through the shared build service"
+            "MCP build_task forwards --stage settings through the shared build service"
         ),
         "test_inputschema_excludes_max_expansion_attempts": (
             "MCP build_task schema removes max_expansion_attempts"
@@ -28,7 +28,7 @@ register_contract_tests(
             "MCP build_task schema removes max_review_rounds"
         ),
         "test_stage_caps_array_property_present": (
-            "MCP build_task schema exposes stage_caps array items with per-stage cap fields"
+            "MCP build_task schema exposes the stage string array"
         ),
     },
     required_symbols=("gobby.mcp_proxy.tools.build:StageCapOverride",),

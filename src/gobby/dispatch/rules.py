@@ -197,9 +197,7 @@ def development_rule(task: object, context: object) -> Action | None:
         return None
     if _stage_work_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="development_max_work_attempts")
-    agent_slug = (
-        _default_agent(stage, context) or _field(task, "assigned_agent") or "backend-developer"
-    )
+    agent_slug = _development_agent(task, stage, context)
     return _spawn_stage_agent(task, stage, context, str(agent_slug))
 
 
@@ -586,6 +584,15 @@ def _default_agent(
     registry_entry = _registry_entry(context, resolved_stage_name, stage)
     value = _field(registry_entry, "default_agent", _field(stage, "default_agent"))
     return str(value) if value else None
+
+
+def _development_agent(task: object, stage: object, context: object) -> str:
+    assigned_agent = _field(task, "assigned_agent")
+    if assigned_agent:
+        return str(assigned_agent)
+    if _field(task, "category") == "docs" and _has_agent(context, "tech-writer"):
+        return "tech-writer"
+    return _default_agent(stage, context) or "backend-developer"
 
 
 def _registry_entry(

@@ -27,11 +27,11 @@ def _options(**overrides: object) -> BuildOptions:
     from gobby.build.service import BuildOptions
 
     values = {
-        "profile": "auto",
+        "quick": False,
         "skip_stages": [],
         "isolation": "worktree",
-        "unattended": False,
-        "composer_yolo": False,
+        "no_merge": False,
+        "pr": None,
         "target_branch": None,
         "assigned_agent": None,
     }
@@ -72,7 +72,7 @@ async def test_build_rejects_unknown_skip_stage_with_valid_values(
 
 
 @pytest.mark.asyncio
-async def test_build_rejects_quick_profile_for_plan_file_input(
+async def test_plan_file_quick_initializes_planning_pulse(
     temp_db,
     tmp_path: Path,
 ) -> None:
@@ -80,17 +80,20 @@ async def test_build_rejects_quick_profile_for_plan_file_input(
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
-    with pytest.raises(ValueError, match="quick profile.*plan files.*review or full"):
-        await _build(
-            str(plan_file),
-            _options(profile="quick", isolation="none"),
-            db=temp_db,
-            project_id=project_id,
-        )
+    result = await _build(
+        str(plan_file),
+        _options(quick=True, isolation="none"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    assert result.initial_lifecycle == "planning"
+    assert result.manifest is not None
+    assert [row["stage_name"] for row in result.manifest] == ["planning"]
 
 
 @pytest.mark.asyncio
-async def test_build_rejects_non_none_isolation_for_single_leaf(
+async def test_build_accepts_isolation_for_single_leaf_and_merges_by_default(
     temp_db,
     sample_project,
 ) -> None:
@@ -101,13 +104,15 @@ async def test_build_rejects_non_none_isolation_for_single_leaf(
         task_type="task",
     )
 
-    with pytest.raises(ValueError, match="isolation requires an epic.*leaf.*none"):
-        await _build(
-            f"#{leaf.seq_num}",
-            _options(isolation="worktree"),
-            db=temp_db,
-            project_id=sample_project["id"],
-        )
+    result = await _build(
+        f"#{leaf.seq_num}",
+        _options(isolation="worktree"),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert result.manifest is not None
+    assert [row["stage_name"] for row in result.manifest] == ["development", "merge"]
 
 
 @pytest.mark.asyncio
@@ -185,6 +190,27 @@ async def test_build_validates_clones_dir_when_clone_isolation(
 
 
 @pytest.mark.asyncio
+async def test_build_rejects_no_merge_without_isolation(
+    temp_db,
+    sample_project,
+) -> None:
+    leaf = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="No merge leaf",
+        category="code",
+        task_type="task",
+    )
+
+    with pytest.raises(ValueError, match="--no-merge requires"):
+        await _build(
+            f"#{leaf.seq_num}",
+            _options(isolation="none", no_merge=True),
+            db=temp_db,
+            project_id=sample_project["id"],
+        )
+
+
+@pytest.mark.asyncio
 async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kicks_tick(
     temp_db,
     tmp_path: Path,
@@ -195,7 +221,7 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
 
     result = await _build(
         str(plan_file),
-        _options(skip_stages=["plan_review", "pr"], isolation="worktree", target_branch="main"),
+        _options(skip_stages=["pr"], isolation="worktree", target_branch="main"),
         db=temp_db,
         project_id=project_id,
     )
@@ -206,8 +232,8 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
     events = task_manager.lifecycle_events.list_events(task.id)
 
     assert result.created is True
-    assert result.initial_lifecycle == "ideation"
-    assert result.applied_stages_skipped == ["planning", "pr"]
+    assert result.initial_lifecycle == "planning"
+    assert result.applied_stages_skipped == ["pr"]
     assert result.tick_dispatched >= 0
     assert task.task_type == "epic"
     assert task.category == "planning"
@@ -218,11 +244,7 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
     assert artifacts.target_branch == "main"
     assert events[-1].reason == "gobby build"
     assert [row.stage_name for row in task_manager.stage_states.list_for_task(task.id)] == [
-        "ideation",
-        "research",
-        "architecture",
-        "prd",
-        "test_arch",
+        "planning",
         "expansion",
         "development",
         "holistic_qa",
@@ -300,7 +322,7 @@ async def test_build_rejects_stage_caps_below_one(
 
 
 @pytest.mark.asyncio
-async def test_build_leaf_forces_none_isolation_and_sets_agent(
+async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
     temp_db,
     sample_project,
 ) -> None:
@@ -314,7 +336,7 @@ async def test_build_leaf_forces_none_isolation_and_sets_agent(
 
     result = await _build(
         f"#{leaf.seq_num}",
-        _options(profile="quick", isolation="none", assigned_agent="backend-developer"),
+        _options(isolation="none", assigned_agent="backend-developer"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -323,7 +345,7 @@ async def test_build_leaf_forces_none_isolation_and_sets_agent(
     rows = task_manager.stage_states.list_for_task(leaf.id)
     assert result.created is False
     assert result.initial_lifecycle == "development"
-    assert [row.stage_name for row in rows] == ["development", "pr", "merge"]
+    assert [row.stage_name for row in rows] == ["development"]
     assert updated.allow_automation is True
     assert updated.isolation == "none"
     assert updated.assigned_agent == "backend-developer"
@@ -345,7 +367,7 @@ async def test_build_rerun_same_manifest_preserves_active_stage(
     )
     await _build(
         f"#{leaf.seq_num}",
-        _options(profile="quick", isolation="none"),
+        _options(isolation="none"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -359,7 +381,7 @@ async def test_build_rerun_same_manifest_preserves_active_stage(
 
     await _build(
         f"#{leaf.seq_num}",
-        _options(profile="quick", isolation="none"),
+        _options(isolation="none"),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -372,7 +394,7 @@ async def test_build_rerun_same_manifest_preserves_active_stage(
 
 
 @pytest.mark.asyncio
-async def test_build_rejects_active_different_manifest_with_restart_guidance(
+async def test_build_rejects_skip_stage_on_existing_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -387,27 +409,29 @@ async def test_build_rejects_active_different_manifest_with_restart_guidance(
     )
     await _build(
         f"#{leaf.seq_num}",
-        _options(profile="quick", isolation="none"),
+        _options(isolation="none"),
         db=temp_db,
         project_id=sample_project["id"],
     )
     task_manager.stage_states.start_stage(leaf.id, "development", by_session_id=None)
 
-    with pytest.raises(ValueError, match="gobby build restart.*gobby build clean"):
+    with pytest.raises(ValueError, match="--skip-stage can only shape a new lifecycle"):
         await _build(
             f"#{leaf.seq_num}",
-            _options(profile="quick", isolation="none", stages=["development"]),
+            _options(isolation="none", skip_stages=["merge"]),
             db=temp_db,
             project_id=sample_project["id"],
         )
 
 
 @pytest.mark.asyncio
-async def test_build_reseeds_pristine_manifest_to_requested_shape(
+async def test_build_existing_lifecycle_stage_caps_update_rows(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    from gobby.config.build import StageCapOverride
+
     _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     leaf = task_manager.create_task(
@@ -420,13 +444,17 @@ async def test_build_reseeds_pristine_manifest_to_requested_shape(
 
     await _build(
         f"#{leaf.seq_num}",
-        _options(profile="quick", isolation="none", stages=["development"]),
+        _options(
+            isolation="none",
+            stage_caps=[StageCapOverride("development", max_review_rounds=4)],
+        ),
         db=temp_db,
         project_id=sample_project["id"],
     )
 
     rows = task_manager.stage_states.list_for_task(leaf.id)
-    assert [row.stage_name for row in rows] == ["development"]
+    assert [row.stage_name for row in rows] == ["development", "pr", "merge"]
+    assert rows[0].max_review_rounds == 4
 
 
 @pytest.mark.asyncio
@@ -454,9 +482,7 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
     await _build(
         f"#{epic.seq_num}",
         _options(
-            profile="quick",
             isolation="none",
-            stages=["development"],
             stage_caps=[StageCapOverride("development", max_review_rounds=8)],
         ),
         db=temp_db,
@@ -515,7 +541,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
 
     result = await build(
         f"#{leaf.seq_num}",
-        _options(profile="quick", isolation="none", assigned_agent="backend-developer"),
+        _options(quick=True, isolation="none", assigned_agent="backend-developer"),
         db=temp_db,
         project_id=sample_project["id"],
         services=services,
@@ -536,15 +562,15 @@ async def test_build_leaf_rejects_non_automated_category(
 ) -> None:
     leaf = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
-        title="Planning is not an automated leaf category",
-        category="planning",
+        title="Manual is not an automated leaf category",
+        category="manual",
         task_type="task",
     )
 
-    with pytest.raises(ValueError, match="category.*planning.*code.*config.*docs.*test"):
+    with pytest.raises(ValueError, match="manual leaf tasks are not automatable"):
         await _build(
             f"#{leaf.seq_num}",
-            _options(profile="quick", isolation="none"),
+            _options(isolation="none"),
             db=temp_db,
             project_id=sample_project["id"],
         )

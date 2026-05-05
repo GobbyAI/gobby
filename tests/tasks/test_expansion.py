@@ -63,14 +63,14 @@ def test_automated_leaf_categories_are_explicit() -> None:
         "code",
         "config",
         "docs",
-        "manual",
+        "planning",
         "refactor",
         "research",
         "test",
     }
 
 
-def test_validate_compiled_spec_rejects_planning_leaves(
+def test_validate_compiled_spec_rejects_manual_leaves(
     service: ExpansionService,
     sample_project,
 ) -> None:
@@ -82,8 +82,8 @@ def test_validate_compiled_spec_rejects_planning_leaves(
                 {
                     "id": "plan-leaf",
                     "phase_id": "phase-1",
-                    "title": "Plan more",
-                    "category": "planning",
+                    "title": "Manual QA",
+                    "category": "manual",
                 }
             ],
             "dependencies": [],
@@ -95,7 +95,7 @@ def test_validate_compiled_spec_rejects_planning_leaves(
     validation = service.validate_compiled_spec(spec)
 
     assert validation["valid"] is False
-    assert any("category:planning" in error for error in validation["errors"])
+    assert any("category:manual" in error for error in validation["errors"])
 
 
 def test_normalize_preserves_registry_agent_selection_and_additional_skills(

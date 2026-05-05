@@ -281,10 +281,10 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
     assert by_section["1.7"].tdd is False
 
     assert by_section["1.1"].assigned_agent == "backend-developer"
-    assert by_section["1.2"].assigned_agent == "backend-developer"
+    assert by_section["1.2"].assigned_agent == "tech-writer"
     assert by_section["1.3"].assigned_agent == "backend-developer"
     assert by_section["1.4"].assigned_agent == "backend-developer"
-    assert by_section["1.5"].assigned_agent == "backend-developer"
+    assert by_section["1.5"].assigned_agent == "researcher"
     assert by_section["1.6"].assigned_agent == "test-architect"
     assert by_section["1.7"].assigned_agent == "backend-developer"
 

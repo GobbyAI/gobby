@@ -47,6 +47,13 @@ instructions: |
   acceptance item per table data row with stable IDs; this is the table-row
   decomposition rule.
 
+  TASK MANIFEST:
+  When the plan is sufficiently concrete, include a `## M1 Task Manifest`
+  section with `kind: manifest` and a YAML block containing one entry per
+  `kind: deliverable` section. This is the contracted manifest expansion will
+  prefer. If review feedback changes deliverables, update the manifest in the
+  same revision before resubmitting.
+
   WORKFLOW:
   - Read the parent task first, then any referenced supporting docs, then
     draft or revise the plan artifact requested in your prompt. If this is a

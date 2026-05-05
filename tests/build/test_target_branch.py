@@ -16,20 +16,15 @@ pytestmark = pytest.mark.unit
 def _options(**overrides: object) -> object:
     from gobby.build.service import BuildOptions
 
-    fields = set(BuildOptions.__dataclass_fields__)
     values = {
-        "profile": "auto",
+        "quick": False,
         "skip_stages": [],
         "isolation": "worktree",
+        "no_merge": False,
+        "pr": None,
         "target_branch": None,
         "assigned_agent": None,
     }
-    if "unattended" in fields:
-        values["unattended"] = False
-    else:
-        values["yolo"] = False
-    if "composer_yolo" in fields:
-        values["composer_yolo"] = False
     values.update(overrides)
     return BuildOptions(**values)
 

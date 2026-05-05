@@ -12,14 +12,14 @@ register_contract_tests(
     globals(),
     {
         "test_buildoptions_carries_typed_stagecapoverride_list": (
-            "HTTP BuildOptions exposes typed stage_caps overrides"
+            "HTTP BuildRequest exposes stage strings that resolve to typed stage cap overrides"
         ),
         "test_buildoptions_excludes_legacy_flat_fields": (
             "HTTP BuildOptions removes legacy flat cap fields"
         ),
         "test_route_forwards_to_shared_service": (
-            "HTTP build route forwards stage_caps to the shared build service"
+            "HTTP build route forwards stage settings to the shared build service"
         ),
     },
-    required_symbols=("gobby.servers.routes.build:StageCapOverride",),
+    required_symbols=("gobby.servers.routes.build:BuildRequest",),
 )

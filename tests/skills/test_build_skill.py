@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -22,9 +21,8 @@ def test_build_skill_exists_and_delegates_to_shared_build_surface() -> None:
     assert "task ref" in content.lower()
     assert "/gobby plan" in content
     assert "quick" in content
-    assert "review" in content
-    assert re.search(r"\bfull\b", content) is not None
-    assert "full-yolo" in content
     assert "--skip-stage" in content
+    assert "--stage" in content
     assert "--isolation" in content
-    assert "--yolo" in content
+    assert "--no-merge" in content
+    assert "--yolo" not in content

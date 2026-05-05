@@ -16,11 +16,11 @@ async def _build(input_ref: str, opts: BuildOptions, db: object, project_id: str
 
 def _options(**overrides: object) -> BuildOptions:
     values = {
-        "profile": "full-unattended",
+        "quick": False,
         "skip_stages": ["test_arch", "qa"],
         "isolation": "clone",
-        "unattended": True,
-        "composer_yolo": False,
+        "no_merge": False,
+        "pr": None,
         "target_branch": "main",
         "assigned_agent": None,
     }
@@ -91,7 +91,7 @@ async def test_build_epic_cascades_resolved_dispatch_state_to_subtree(
     ]:
         assert task.allow_automation is True
         assert task.isolation == "clone"
-        assert task.unattended is True
+        assert task.unattended is False
         assert not any(label.startswith("stage-:") for label in task.labels or [])
 
     child_epic = task_manager.get_task(descendants[0].id)

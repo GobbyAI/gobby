@@ -44,7 +44,11 @@ _PHASE_REF_RE = re.compile(r"^P\d+$")
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "backend-developer",
+    "config": "backend-developer",
+    "docs": "tech-writer",
+    "planning": "planner",
     "refactor": "backend-developer",
+    "research": "researcher",
     "test": "test-architect",
 }
 _DEFAULT_AGENT_FALLBACK = "backend-developer"

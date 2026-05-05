@@ -30,43 +30,34 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["type"] == "object"
     assert schema["required"] == ["input_ref"]
     assert schema["properties"]["input_ref"]["type"] == "string"
-    assert set(schema["properties"]["profile"]["enum"]) == {
-        "quick",
-        "review",
-        "full",
-        "default_unattended",
-        "full-unattended",
-        "default_yolo",
-        "full-yolo",
-        "auto",
-    }
+    assert schema["properties"]["quick"]["type"] == "boolean"
     assert set(schema["properties"]["isolation"]["enum"]) == {"none", "worktree", "clone"}
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
-    assert schema["properties"]["unattended"]["type"] == "boolean"
-    assert schema["properties"]["composer_yolo"]["type"] == "boolean"
-    assert schema["properties"]["yolo"]["type"] == "boolean"
-    assert schema["properties"]["yolo"]["deprecated"] is True
+    assert schema["properties"]["no_merge"]["type"] == "boolean"
+    assert schema["properties"]["pr"]["type"] == "string"
     assert "max_review_rounds" not in schema["properties"]
     assert "max_qa_rounds" not in schema["properties"]
-    assert schema["properties"]["stage_caps"]["type"] == "array"
-    assert (
-        schema["properties"]["stage_caps"]["items"]["properties"]["stage_name"]["type"] == "string"
-    )
+    assert schema["properties"]["stage"]["type"] == "array"
+    assert schema["properties"]["stage"]["items"]["type"] == "string"
     assert schema["properties"]["target_branch"]["type"] == "string"
     assert schema["properties"]["agent"]["type"] == "string"
     assert schema["properties"]["reset_expansion_output"]["type"] == "boolean"
 
 
-def test_unattended_with_composer_yolo_distinct_fields(temp_db) -> None:
+def test_removed_fields_are_not_exposed(temp_db) -> None:
     registry = _registry(temp_db)
 
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
     schema = tool["inputSchema"]
 
-    assert schema["properties"]["unattended"]["type"] == "boolean"
-    assert schema["properties"]["composer_yolo"]["type"] == "boolean"
-    assert schema["properties"]["yolo"]["type"] == "boolean"
-    assert schema["properties"]["yolo"]["deprecated"] is True
+    assert {
+        "profile",
+        "stages",
+        "add_stages",
+        "unattended",
+        "yolo",
+        "composer_yolo",
+    }.isdisjoint(schema["properties"])
 
 
 @pytest.mark.asyncio
@@ -89,12 +80,12 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     ) as build:
         result = await build_task(
             input_ref="#42",
-            profile="quick",
+            quick=True,
             skip_stages=["qa"],
             isolation="none",
-            unattended=True,
-            composer_yolo=False,
-            stage_caps=[{"stage_name": "pr", "max_review_rounds": 2}],
+            no_merge=False,
+            pr="123",
+            stage=["pr:max_review_rounds=2"],
             target_branch="release/0.4",
             agent="backend-developer",
             reset_expansion_output=True,
@@ -120,11 +111,11 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     call = build.call_args
     assert call.args[0] == "#42"
     opts = call.args[1]
-    assert opts.profile == "quick"
+    assert opts.quick is True
     assert opts.skip_stages == ["qa"]
     assert opts.isolation == "none"
-    assert opts.unattended is True
-    assert opts.composer_yolo is False
+    assert opts.no_merge is False
+    assert opts.pr == "123"
     assert [
         (item.stage_name, item.max_work_attempts, item.max_review_rounds)
         for item in opts.stage_caps

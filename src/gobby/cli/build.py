@@ -14,7 +14,6 @@ from gobby.build import (
     BuildOptions,
     BuildResult,
     DispatcherTickSummary,
-    StageInsertion,
     build,
     build_clean_target,
     build_restart_target,
@@ -45,13 +44,6 @@ def invoke_build_skill() -> None:
     click.echo("No build input provided. Invoke the build skill from your active Gobby session.")
 
 
-def _parse_stage_list(raw: str | None) -> list[str] | None:
-    if not raw:
-        return None
-    stages = [stage.strip() for stage in raw.split(",") if stage.strip()]
-    return stages or None
-
-
 def _parse_skip_stages(raw_values: tuple[str, ...]) -> list[str]:
     stages: list[str] = []
     for raw in raw_values:
@@ -59,41 +51,30 @@ def _parse_skip_stages(raw_values: tuple[str, ...]) -> list[str]:
     return stages
 
 
-def _parse_add_stage(raw_values: tuple[str, ...]) -> list[StageInsertion]:
-    insertions: list[StageInsertion] = []
-    for raw in raw_values:
-        stage_name, separator, position_text = raw.partition("@")
-        stage_name = stage_name.strip()
-        if not stage_name:
-            raise click.ClickException("--add-stage requires a stage name")
-        position = None
-        if separator:
-            try:
-                position = int(position_text)
-            except ValueError as exc:
-                raise click.ClickException("--add-stage position must be an integer") from exc
-        insertions.append(StageInsertion(stage_name=stage_name, position=position))
-    return insertions
-
-
 def _parse_stage_cap(raw_values: tuple[str, ...]) -> list[StageCapOverride]:
     by_stage: dict[str, dict[str, int | None]] = {}
     for raw in raw_values:
         stage_name, separator, cap_text = raw.partition(":")
-        if not separator or not stage_name.strip():
-            raise click.ClickException("--stage must use <stage>:<cap>=<value>")
-        cap_name, cap_separator, value_text = cap_text.partition("=")
-        if not cap_separator:
-            raise click.ClickException("--stage cap must use <name>=<value>")
-        cap_name = cap_name.strip()
-        if cap_name not in {"max_work_attempts", "max_review_rounds"}:
-            raise click.ClickException("--stage cap must be max_work_attempts or max_review_rounds")
-        try:
-            value = int(value_text)
-        except ValueError as exc:
-            raise click.ClickException("--stage cap value must be an integer") from exc
-        stage_caps = by_stage.setdefault(stage_name.strip(), {})
-        stage_caps[cap_name] = value
+        stage_name = stage_name.strip()
+        if not stage_name:
+            raise click.ClickException("--stage requires a stage name")
+        stage_caps = by_stage.setdefault(stage_name, {})
+        if not separator:
+            continue
+        for cap_item in (item.strip() for item in cap_text.split(",") if item.strip()):
+            cap_name, cap_separator, value_text = cap_item.partition("=")
+            if not cap_separator:
+                raise click.ClickException("--stage setting must use <name>=<value>")
+            cap_name = cap_name.strip()
+            if cap_name not in {"max_work_attempts", "max_review_rounds"}:
+                raise click.ClickException(
+                    "--stage setting must be max_work_attempts or max_review_rounds"
+                )
+            try:
+                value = int(value_text)
+            except ValueError as exc:
+                raise click.ClickException("--stage setting value must be an integer") from exc
+            stage_caps[cap_name] = value
     return [
         StageCapOverride(
             stage_name=stage_name,
@@ -102,6 +83,19 @@ def _parse_stage_cap(raw_values: tuple[str, ...]) -> list[StageCapOverride]:
         )
         for stage_name, values in by_stage.items()
     ]
+
+
+def _stage_cap_options(stage_caps: list[StageCapOverride]) -> list[str]:
+    options: list[str] = []
+    for cap in stage_caps:
+        settings = []
+        if cap.max_work_attempts is not None:
+            settings.append(f"max_work_attempts={cap.max_work_attempts}")
+        if cap.max_review_rounds is not None:
+            settings.append(f"max_review_rounds={cap.max_review_rounds}")
+        suffix = f":{','.join(settings)}" if settings else ""
+        options.append(f"{cap.stage_name}{suffix}")
+    return options
 
 
 def _echo_build_result(result: BuildResult) -> None:
@@ -125,24 +119,12 @@ def _echo_build_result(result: BuildResult) -> None:
 def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
     return {
         "input_ref": input_ref,
-        "profile": opts.profile,
+        "quick": opts.quick,
         "skip_stages": opts.skip_stages,
-        "stages": opts.stages,
-        "add_stages": [
-            (f"{item.stage_name}@{item.position}" if item.position is not None else item.stage_name)
-            for item in opts.add_stages
-        ],
         "isolation": opts.isolation,
-        "unattended": opts.unattended,
-        "composer_yolo": opts.composer_yolo,
-        "stage_caps": [
-            {
-                "stage_name": cap.stage_name,
-                "max_work_attempts": cap.max_work_attempts,
-                "max_review_rounds": cap.max_review_rounds,
-            }
-            for cap in opts.stage_caps
-        ],
+        "no_merge": opts.no_merge,
+        "pr": opts.pr,
+        "stage": _stage_cap_options(opts.stage_caps),
         "target_branch": opts.target_branch,
         "agent": opts.assigned_agent,
         "reset_expansion_output": opts.reset_expansion_output,
@@ -282,9 +264,7 @@ def _open_database() -> LocalDatabase:
 @click.command("build")
 @click.argument("input_ref", required=False, metavar="[INPUT|ACTION]")
 @click.argument("target_ref", required=False, metavar="[REF]")
-@click.option("--profile", help="Build profile to apply.")
-@click.option("--stages", help="Comma-separated explicit stage manifest.")
-@click.option("--add-stage", multiple=True, help="Add a stage, optionally as name@position.")
+@click.option("--quick", is_flag=True, default=False, help="Run one lifecycle step.")
 @click.option(
     "--skip-stage", multiple=True, help="Stage to skip. May be repeated or comma-separated."
 )
@@ -292,7 +272,7 @@ def _open_database() -> LocalDatabase:
     "--stage",
     "stage_cap",
     multiple=True,
-    help="Per-stage cap override, e.g. development:max_review_rounds=4.",
+    help="Stage selector/cap override, e.g. development:max_review_rounds=4.",
 )
 @click.option(
     "--isolation",
@@ -301,19 +281,8 @@ def _open_database() -> LocalDatabase:
     show_default=True,
     help="Execution isolation mode.",
 )
-@click.option(
-    "--unattended",
-    is_flag=True,
-    default=False,
-    show_default=True,
-    help="Run dispatch automation without interactive review gates.",
-)
-@click.option(
-    "--yolo/--no-yolo",
-    default=False,
-    show_default=True,
-    help="Enable composer yolo mode.",
-)
+@click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
+@click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
 @click.option("--target-branch", help="Target branch for the build.")
 @click.option("--agent", "assigned_agent", help="Agent to assign to build work.")
 @click.option(
@@ -328,14 +297,12 @@ def _open_database() -> LocalDatabase:
 def build_command(
     input_ref: str | None,
     target_ref: str | None,
-    profile: str | None,
-    stages: str | None,
-    add_stage: tuple[str, ...],
+    quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
     isolation: str,
-    unattended: bool,
-    yolo: bool,
+    no_merge: bool,
+    pr: str | None,
     target_branch: str | None,
     assigned_agent: str | None,
     reset_expansion_output: bool,
@@ -363,13 +330,11 @@ def build_command(
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
 
     opts = BuildOptions(
-        profile=profile,
+        quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
         isolation=cast(Isolation, isolation),
-        unattended=unattended,
-        composer_yolo=yolo,
-        stages=_parse_stage_list(stages),
-        add_stages=_parse_add_stage(add_stage),
+        no_merge=no_merge,
+        pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),
         target_branch=target_branch,
         assigned_agent=assigned_agent,

@@ -11,11 +11,11 @@ pytestmark = pytest.mark.unit
 
 def _options(**overrides: object) -> BuildOptions:
     values = {
-        "profile": "full-unattended",
+        "quick": False,
         "skip_stages": ["test_arch"],
         "isolation": "clone",
-        "unattended": True,
-        "composer_yolo": False,
+        "no_merge": False,
+        "pr": None,
         "target_branch": "main",
         "assigned_agent": None,
     }
@@ -74,7 +74,7 @@ async def test_build_readiness_cascades_manifests_and_current_stage_projection(
     assert result.tick_dispatched == len(subtree)
     for task in subtree:
         assert task.allow_automation is True
-        assert task.unattended is True
+        assert task.unattended is False
         assert task.isolation == "clone"
         assert task_manager.artifacts.get_artifacts(task.id).target_branch == "main"
         rows = task_manager.stage_states.list_for_task(task.id)

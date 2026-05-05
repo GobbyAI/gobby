@@ -220,6 +220,7 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "qa-reviewer": _qa_reviewer,
     "reviewer": _holistic_reviewer,
     "researcher": _researcher,
+    "tech-writer": _developer,
     "test-architect": _test_architect,
 }
 

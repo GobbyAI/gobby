@@ -10,11 +10,11 @@ pytestmark = pytest.mark.unit
 
 def _options(**overrides: object) -> BuildOptions:
     values = {
-        "profile": "full",
+        "quick": False,
         "skip_stages": [],
         "isolation": "none",
-        "unattended": False,
-        "composer_yolo": False,
+        "no_merge": False,
+        "pr": None,
         "target_branch": None,
         "assigned_agent": "backend-developer",
     }

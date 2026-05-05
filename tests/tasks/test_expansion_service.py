@@ -117,7 +117,7 @@ async def test_compile_run_does_not_short_circuit_from_legacy_skip_labels(
 
     assert raw_spec.await_count == 1
     assert refreshed.status == "completed"
-    assert len(refreshed.created_task_ids) == 1
+    assert len(refreshed.created_task_ids) == 3
 
 
 def test_apply_run_persists_agent_selection_fields_to_created_leaf(
@@ -145,14 +145,14 @@ def test_apply_run_persists_agent_selection_fields_to_created_leaf(
     assert child.additional_skills == ["playwright-cli"]
 
 
-def test_apply_run_rejects_planning_leaf_without_creating_children(
+def test_apply_run_rejects_manual_leaf_without_creating_children(
     service: ExpansionService,
     run_manager: LocalExpansionRunManager,
     sample_project,
 ) -> None:
     epic = service.task_manager.create_task(
         project_id=sample_project["id"],
-        title="Planning leaf epic",
+        title="Manual leaf epic",
     )
     run = run_manager.create(
         parent_task_id=epic.id,
@@ -160,9 +160,9 @@ def test_apply_run_rejects_planning_leaf_without_creating_children(
         triggering_session_id=None,
         input_source="task",
     )
-    run_manager.save_compiled_spec(run.id, _compiled_spec(category="planning"))
+    run_manager.save_compiled_spec(run.id, _compiled_spec(category="manual"))
 
-    with pytest.raises(ValueError, match="category:planning"):
+    with pytest.raises(ValueError, match="category:manual"):
         service.apply_run(run.id, session_id=None)
 
     children = service.task_manager.list_tasks(parent_task_id=epic.id)

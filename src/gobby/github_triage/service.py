@@ -525,11 +525,8 @@ class GitHubIssueTriageService:
 
     async def _run_build(self, task: Task) -> None:
         options = BuildOptions(
-            profile="auto",
             skip_stages=[],
             isolation="none",
-            unattended=True,
-            composer_yolo=False,
         )
         build_func = self._build_func
         if build_func is None:

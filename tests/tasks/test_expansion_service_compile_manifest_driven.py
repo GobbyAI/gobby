@@ -384,7 +384,7 @@ def test_parse_contract_plan_uses_task_filename_plan_id_fallback(
     assert document.plan_id == "12761"
 
 
-def test_missing_manifest_raises(
+def test_missing_manifest_returns_none_for_llm_fallback(
     service: ExpansionService,
     sample_project,
     tmp_path: Path,
@@ -411,8 +411,7 @@ def test_missing_manifest_raises(
         plan_file=str(plan_path),
     )
 
-    with pytest.raises(ValueError, match="Plan file must conform to the Plan-Coverage Contract"):
-        service._parse_contract_plan(run, parent)
+    assert service._parse_contract_plan(run, parent) is None
 
 
 def test_deferrals_preserved(

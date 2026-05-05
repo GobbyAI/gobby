@@ -135,7 +135,7 @@ Implement the behavior.
 
 
 @pytest.mark.asyncio
-async def test_non_contract_plan_file_is_rejected_without_llm_fallback(
+async def test_non_contract_plan_file_uses_llm_fallback(
     service: ExpansionService,
     run_manager: LocalExpansionRunManager,
     sample_project,
@@ -166,7 +166,61 @@ async def test_non_contract_plan_file_is_rejected_without_llm_fallback(
         patch.object(service, "_generate_raw_spec", raw_spec),
         patch.object(service, "compile_plan_to_spec") as deterministic_compile,
     ):
-        with pytest.raises(ValueError, match=r"(Plan file must conform|no kind: deliverable)"):
+        refreshed = await service.compile_run(run.id)
+
+    assert refreshed.compiled_spec is not None
+    assert deterministic_compile.call_count == 0
+    assert raw_spec.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_manifest_plan_is_rejected_without_llm_fallback(
+    service: ExpansionService,
+    run_manager: LocalExpansionRunManager,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan = tmp_path / "bad-manifest.md"
+    plan.write_text(
+        """> **Plan ID:** bad-manifest
+
+# Bad Manifest Plan
+
+## P1 Phase
+`kind: framing`
+
+### 1.1 Build the thing
+`kind: deliverable`
+
+Implement the behavior.
+
+**Acceptance:**
+- 1.1.1 - Behavior exists. file: `src/example.py`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+not: a manifest list
+```
+""",
+        encoding="utf-8",
+    )
+    run = run_manager.create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="plan",
+        plan_file=str(plan),
+    )
+
+    raw_spec = AsyncMock(return_value=_valid_spec(parent.id, str(plan)))
+    with (
+        patch.object(service, "_generate_raw_spec", raw_spec),
+        patch.object(service, "compile_plan_to_spec") as deterministic_compile,
+    ):
+        with pytest.raises(ValueError, match="Plan file must conform"):
             await service.compile_run(run.id)
 
     assert deterministic_compile.call_count == 0

@@ -10,11 +10,11 @@ pytestmark = pytest.mark.unit
 
 def _options(**overrides: object) -> BuildOptions:
     values = {
-        "profile": "full",
+        "quick": False,
         "skip_stages": [],
         "isolation": "none",
-        "unattended": False,
-        "composer_yolo": False,
+        "no_merge": False,
+        "pr": None,
         "target_branch": None,
         "assigned_agent": "backend-developer",
     }
@@ -22,46 +22,43 @@ def _options(**overrides: object) -> BuildOptions:
     return BuildOptions(**values)
 
 
-async def test_quick_profile_skips_research_and_holistic_qa(temp_db, sample_project) -> None:
+async def test_quick_runs_one_step_and_disables_automation(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(
         project_id=sample_project["id"],
-        title="Quick profile epic",
+        title="Quick build epic",
         category="planning",
         task_type="epic",
     )
 
     result = await build(
         f"#{epic.seq_num}",
-        _options(profile="quick"),
+        _options(quick=True),
         db=temp_db,
         project_id=sample_project["id"],
     )
 
     stage_names = [row["stage_name"] for row in result.manifest or []]
-    assert result.applied_stages_skipped == ["research", "holistic_qa"]
-    assert "research" not in stage_names
-    assert "holistic_qa" not in stage_names
+    assert result.applied_stages_skipped == []
     assert {"ideation", "development", "merge"}.issubset(stage_names)
+    assert task_manager.get_task(epic.id).allow_automation is False
 
 
-@pytest.mark.parametrize("profile", ["review", "full"])
-async def test_review_and_full_profiles_skip_nothing(
+async def test_default_build_skips_nothing(
     temp_db,
     sample_project,
-    profile: str,
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(
         project_id=sample_project["id"],
-        title=f"{profile} profile epic",
+        title="Default build epic",
         category="planning",
         task_type="epic",
     )
 
     result = await build(
         f"#{epic.seq_num}",
-        _options(profile=profile),
+        _options(),
         db=temp_db,
         project_id=sample_project["id"],
     )
@@ -82,20 +79,20 @@ async def test_review_and_full_profiles_skip_nothing(
     ]
 
 
-async def test_full_yolo_profile_sets_unattended(temp_db, sample_project) -> None:
+async def test_research_leaf_defaults_to_research_stage(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     leaf = task_manager.create_task(
         project_id=sample_project["id"],
-        title="Full yolo leaf",
-        category="test",
+        title="Research leaf",
+        category="research",
         task_type="task",
     )
 
-    await build(
+    result = await build(
         f"#{leaf.seq_num}",
-        _options(profile="full-yolo"),
+        _options(),
         db=temp_db,
         project_id=sample_project["id"],
     )
 
-    assert task_manager.get_task(leaf.id).unattended is True
+    assert [row["stage_name"] for row in result.manifest or []] == ["research"]
