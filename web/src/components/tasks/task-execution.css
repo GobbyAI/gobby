@@ -159,12 +159,12 @@
   outline-offset: 2px;
 }
 
-/* Filled-accent pill — shared active-state treatment across the activity
-   panel filter row. Matches SegmentedControl's active option so a button
-   whose dropdown is open reads the same way as a selected segment. */
+/* Filled-accent pill — the single shared active-state treatment across
+   the activity panel filter row. Same shape used by SegmentedControl's
+   active option and Sessions' chip pills: accent fill + accent text,
+   neutral border (no per-component variation). */
 .activity-filter-button[aria-expanded="true"] {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
-  border-color: var(--accent);
   color: var(--accent);
 }
 

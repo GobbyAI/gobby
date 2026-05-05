@@ -545,10 +545,11 @@
    Single authoring site for the toolbar shell that hosts the optional
    ActivityPanelSearch on the left and a filter affordance (SegmentedControl
    for 2–3 options, or .activity-filter-button + dropdown for many) on the
-   right. Active-state treatment is locked: filled accent (var(--accent) at
-   15% bg + accent text; an accent border too when the element owns its own
-   border). Applied to the SegmentedControl active option and to
-   .activity-filter-button when its dropdown is open.
+   right. Active-state treatment is locked to the filled-accent pill:
+   background color-mix(in srgb, var(--accent) 15%, transparent) + color
+   var(--accent), neutral border. Applied uniformly to the SegmentedControl
+   active option, .activity-filter-button when its dropdown is open, and
+   Sessions' .chip--* pills.
    ============================================ */
 .activity-panel-toolbar {
   display: flex;
