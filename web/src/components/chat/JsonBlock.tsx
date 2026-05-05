@@ -1,10 +1,9 @@
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 import { cn } from '../../lib/utils'
+import { codeBlockTheme } from '../shared/codeBlockTheme'
 
-const JSON_BLOCK_CLASS =
-  'overflow-hidden whitespace-pre-wrap font-mono text-xs'
+const JSON_BLOCK_CLASS = 'overflow-hidden whitespace-pre-wrap'
 
 interface JsonBlockProps {
   value: unknown
@@ -41,26 +40,18 @@ export function JsonBlock({
     >
       <SyntaxHighlighter
         data-testid={testId}
-        style={oneDark}
+        style={codeBlockTheme}
         language="json"
         PreTag="div"
         wrapLongLines
         customStyle={{
           margin: 0,
-          background: 'transparent',
           borderRadius: 'inherit',
           maxHeight: 'inherit',
           overflowY: 'auto',
           overflowX: 'hidden',
           whiteSpace: 'pre-wrap',
           overflowWrap: breakMode === 'all' ? 'anywhere' : 'break-word',
-        }}
-        codeTagProps={{
-          style: {
-            background: 'transparent',
-            fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-            whiteSpace: 'pre-wrap',
-          },
         }}
       >
         {formatJsonValue(value)}

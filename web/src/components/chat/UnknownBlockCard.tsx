@@ -14,7 +14,7 @@ export function UnknownBlockCard({ blockType, raw }: UnknownBlockCardProps) {
         </summary>
         <JsonBlock
           value={raw}
-          className="border-t border-warning-foreground/20 px-3 py-2 text-muted-foreground/70 leading-relaxed"
+          className="border-t border-warning-foreground/20"
         />
       </details>
     </div>
