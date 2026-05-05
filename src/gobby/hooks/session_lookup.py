@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
@@ -79,14 +80,25 @@ class SessionLookupService:
         explicit_platform_session_id, explicit_session = self._resolve_metadata_platform_session(
             event
         )
-        if explicit_session:
-            event.project_id = explicit_session.project_id
+        explicit_project_id = getattr(explicit_session, "project_id", None)
+        if isinstance(explicit_project_id, str) and explicit_project_id:
+            apply_project_id_to_event(event, explicit_project_id)
 
         # Always resolve project_id, even if no session_id — downstream
         # code (_resolve_session_refs_in_tool_input) needs it for #N lookups.
         if not event.project_id:
-            cwd = event.cwd or event.data.get("cwd")
-            event.project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
+            project_resolution = resolve_hook_project_context(
+                event,
+                session_manager=self._session_manager,
+                resolve_project_id=self._resolve_project_id,
+                logger=self._logger,
+            )
+            if project_resolution.skipped:
+                self._logger.debug(
+                    "Skipping session lookup without project context: %s",
+                    project_resolution.reason,
+                )
+                return None
 
         if explicit_platform_session_id:
             self._backfill_terminal_context(explicit_platform_session_id, event)

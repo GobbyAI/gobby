@@ -245,6 +245,58 @@ class TestHandleSessionStart:
         assert event.project_id == PERSONAL_PROJECT_ID
         handler.assert_called_once()
 
+    def test_session_start_root_cwd_uses_platform_session_project(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Codex GUI cwd=/ must use platform session context instead of filesystem lookup."""
+        manager = manager_with_mocks
+        handler = MagicMock(return_value=HookResponse(decision="allow"))
+        manager._event_handlers.get_handler.return_value = handler
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+        manager._resolve_project_id = MagicMock(return_value="wrong-project")
+        session = MagicMock()
+        session.project_id = "project-from-session"
+        manager._session_manager.get.return_value = session
+
+        event = make_event(
+            event_type=HookEventType.SESSION_START,
+            source=SessionSource.CODEX,
+            data={"session_id": "codex-session", "cwd": "/"},
+        )
+        event.metadata["_platform_session_id"] = "platform-session"
+        manager._handle_internal(event)
+
+        manager._resolve_project_id.assert_not_called()
+        assert event.project_id == "project-from-session"
+        assert event.data["project_id"] == "project-from-session"
+        handler.assert_called_once()
+
+    def test_session_start_root_cwd_without_context_skips(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """No-context Codex GUI startup from cwd=/ is skipped without project lookup noise."""
+        manager = manager_with_mocks
+        handler = MagicMock(return_value=HookResponse(decision="allow"))
+        manager._event_handlers.get_handler.return_value = handler
+        manager._resolve_project_id = MagicMock(return_value="wrong-project")
+        manager._enricher.enrich = MagicMock()
+
+        event = make_event(
+            event_type=HookEventType.SESSION_START,
+            source=SessionSource.CODEX,
+            data={"session_id": "codex-session", "cwd": "/"},
+        )
+        response = manager._handle_internal(event)
+
+        assert response.decision == "allow"
+        manager._resolve_project_id.assert_not_called()
+        handler.assert_not_called()
+
 
 class TestHandleNonSessionStart:
     """Tests for non-SESSION_START handler ordering (rules before handler)."""

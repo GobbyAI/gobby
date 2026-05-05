@@ -172,6 +172,28 @@ def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
     return HOLD_OPEN_HOOK_TYPE_MAP.get(hook_type)
 
 
+def _is_codex_root_context_miss(
+    source: str | None,
+    payload: dict[str, Any],
+    error: ValueError,
+) -> bool:
+    if source != "codex" or "No .gobby/project.json found in /" not in str(error):
+        return False
+    input_data = payload.get("input_data")
+    if not isinstance(input_data, dict):
+        return False
+    if payload.get("_platform_session_id") or input_data.get("project_id"):
+        return False
+    terminal_context = input_data.get("terminal_context")
+    if isinstance(terminal_context, dict) and terminal_context.get("gobby_session_id"):
+        return False
+
+    from gobby.hooks.project_context import is_unusable_hook_cwd
+
+    cwd = input_data.get("cwd")
+    return isinstance(cwd, str) and is_unusable_hook_cwd(cwd)
+
+
 async def _maybe_hold_open(
     request: Request,
     session_id: str,
@@ -472,10 +494,16 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except ValueError as e:
                 # Invalid request - still return graceful response
                 inc_counter("hooks_failed_total")
-                logger.warning(
-                    f"Invalid hook request: {hook_type}",
-                    extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
-                )
+                if _is_codex_root_context_miss(source, payload, e):
+                    logger.debug(
+                        f"Skipping Codex hook without project context: {hook_type}",
+                        extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
+                    )
+                else:
+                    logger.warning(
+                        f"Invalid hook request: {hook_type}",
+                        extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
+                    )
                 return _graceful_error_response(hook_type, str(e), source=source)
 
             except Exception as e:

@@ -65,6 +65,54 @@ def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
     session_task_manager.get_session_tasks.assert_called_once_with("platform-session")
 
 
+def test_root_cwd_platform_session_metadata_sets_project_on_event_data() -> None:
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(
+        id="platform-session", project_id="project-1"
+    )
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    resolve_project_id = MagicMock(return_value="wrong-project")
+    service = _service(session_manager, session_task_manager, resolve_project_id)
+    event = _event({"_platform_session_id": "platform-session"})
+    event.source = SessionSource.CODEX
+    event.cwd = "/"
+    event.data["cwd"] = "/"
+
+    result = service.resolve(event)
+
+    assert result == "platform-session"
+    assert event.project_id == "project-1"
+    assert event.data["project_id"] == "project-1"
+    resolve_project_id.assert_not_called()
+
+
+def test_root_cwd_terminal_context_session_sets_project_before_lookup() -> None:
+    session_manager = MagicMock()
+    terminal_session = SimpleNamespace(id="terminal-session", project_id="project-1")
+    session_manager.get.return_value = terminal_session
+    session_manager.get_session_id.return_value = "mapped-platform-session"
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    resolve_project_id = MagicMock(return_value="wrong-project")
+    service = _service(session_manager, session_task_manager, resolve_project_id)
+    event = _event()
+    event.source = SessionSource.CODEX
+    event.cwd = "/"
+    event.data["cwd"] = "/"
+    event.data["terminal_context"]["gobby_session_id"] = "terminal-session"
+
+    result = service.resolve(event)
+
+    assert result == "mapped-platform-session"
+    assert event.project_id == "project-1"
+    assert event.data["project_id"] == "project-1"
+    resolve_project_id.assert_not_called()
+    session_manager.lookup_session_id.assert_not_called()
+
+
 def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = None
@@ -81,7 +129,7 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     assert result == "mapped-platform-session"
     assert event.project_id == "project-from-cwd"
     assert event.metadata["_platform_session_id"] == "mapped-platform-session"
-    session_manager.get_session_id.assert_called_once_with("claude-external", "claude")
+    session_manager.get_session_id.assert_any_call("claude-external", "claude")
 
 
 def test_task_context_uses_stage_native_state() -> None:

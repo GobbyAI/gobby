@@ -17,6 +17,7 @@ from gobby.hooks.event_handlers._session_responses import (
     get_claimed_task_info,
 )
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.sessions.compact_continuation import consume_and_schedule_compact_self_continuation
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
@@ -133,8 +134,21 @@ class SessionStartMixin(EventHandlersBase):
             transcript_path = self._derive_transcript_path(cli_source, input_data, external_id)
         session_source = input_data.get("source", "startup")
 
-        # Resolve project_id (auto-creates if needed)
-        project_id = self._resolve_project_id(input_data.get("project_id"), cwd)
+        project_resolution = resolve_hook_project_context(
+            event,
+            session_manager=self._session_manager,
+            resolve_project_id=self._resolve_project_id,
+            logger=self.logger,
+        )
+        if project_resolution.skipped:
+            self.logger.debug(
+                "Skipping SESSION_START without project context: %s",
+                project_resolution.reason,
+            )
+            return HookResponse(decision="allow")
+        project_id = project_resolution.project_id
+        if project_id is None:
+            return HookResponse(decision="allow")
         # Always use Gobby's machine_id for cross-CLI consistency
         machine_id = self._get_machine_id()
 

@@ -37,6 +37,7 @@ from gobby.hooks.dispatchers.webhook import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
+from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
@@ -343,10 +344,32 @@ class HookManager:
         # generic lookup here can auto-register a stray duplicate before the
         # handler gets a chance to bind the real session.
         if event.event_type == HookEventType.SESSION_START:
-            if not event.project_id:
-                cwd = event.cwd or event.data.get("cwd")
-                event.project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
+            project_resolution = resolve_hook_project_context(
+                event,
+                session_manager=self._session_manager,
+                resolve_project_id=self._resolve_project_id,
+                logger=self.logger,
+            )
+            if project_resolution.skipped:
+                self.logger.debug(
+                    "Skipping SESSION_START without project context: %s",
+                    project_resolution.reason,
+                )
+                return HookResponse(decision="allow")
         else:
+            project_resolution = resolve_hook_project_context(
+                event,
+                session_manager=self._session_manager,
+                resolve_project_id=self._resolve_project_id,
+                logger=self.logger,
+            )
+            if project_resolution.skipped:
+                self.logger.debug(
+                    "Skipping hook without project context: event=%s reason=%s",
+                    event.event_type.value,
+                    project_resolution.reason,
+                )
+                return HookResponse(decision="allow")
             # Resolve platform session_id from CLI external_id
             self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
             self._record_session_activity_pulse(event)

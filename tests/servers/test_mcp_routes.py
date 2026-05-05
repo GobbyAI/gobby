@@ -2507,6 +2507,45 @@ class TestHooksEndpoints:
             "input_data": {"session_id": "test-123", "cwd": "/tmp"},
         }
 
+    def test_execute_hook_codex_root_cwd_project_miss_logs_debug(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Benign Codex GUI root-cwd hooks must not emit invalid-hook warnings."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
+            patch("gobby.servers.routes.mcp.hooks.logger.debug") as debug,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.side_effect = ValueError(
+                "No .gobby/project.json found in /. "
+                "Run 'gobby init' in your project directory first."
+            )
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "SessionStart",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-123", "cwd": "/"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        warning.assert_not_called()
+        debug.assert_called()
+
     def test_execute_hook_codex_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Codex requests should normalize before adapter dispatch."""
         server = create_http_server(
