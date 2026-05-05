@@ -213,12 +213,13 @@ class TestSessionLifecycleManager:
             await manager._process_session_transcript("s1", str(transcript_path))
 
             parser_instance.parse_lines.assert_called_once()
+            assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_process_session_transcript_missing_file(self, manager):
         """Test handling of missing file."""
         await manager._process_session_transcript("s1", "/non/existent/file.jsonl")
-        # Should just return without error
+        assert manager.session_manager.get.call_count == 0
 
     @pytest.mark.asyncio
     async def test_process_session_transcript_read_error(self, tmp_path, manager):
@@ -239,6 +240,7 @@ class TestSessionLifecycleManager:
         transcript_path.touch()
 
         await manager._process_session_transcript("s1", str(transcript_path))
+        assert manager.session_manager.get.call_count == 0
 
     @pytest.mark.asyncio
     async def test_process_session_transcript_no_messages(self, tmp_path, manager):
@@ -251,6 +253,7 @@ class TestSessionLifecycleManager:
             MockParser.return_value.parse_lines.return_value = []
 
             await manager._process_session_transcript("s1", str(transcript_path))
+        assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_loop_error(self, manager):
@@ -322,6 +325,7 @@ class TestBackgroundLoops:
 
             manager._expire_stale_sessions.assert_awaited_once()
             mock_sleep.assert_awaited_once_with(manager.config.expire_check_interval_minutes * 60)
+            assert manager._running is False
 
     @pytest.mark.asyncio
     async def test_process_loop_runs_and_calls_delegate(self, manager):
@@ -341,6 +345,7 @@ class TestBackgroundLoops:
             mock_sleep.assert_awaited_once_with(
                 manager.config.transcript_processing_interval_minutes * 60
             )
+            assert manager._running is False
 
     @pytest.mark.asyncio
     async def test_loops_handle_exceptions(self, manager):
@@ -361,6 +366,7 @@ class TestBackgroundLoops:
                 await manager._expire_loop()
 
             mock_logger.assert_called_with("Error in expire loop: Boom")
+            assert manager._running is False
 
     @pytest.mark.asyncio
     async def test_loops_handle_cancellation(self, manager):
@@ -442,10 +448,13 @@ class TestPromptFileCleanup:
         manager.session_manager.pause_inactive_active_sessions.return_value = 0
         manager.session_manager.expire_orphaned_handoff_sessions.return_value = 0
         manager.session_manager.expire_stale_sessions.return_value = 0
+        manager.session_manager.expire_empty_sessions.return_value = 0
+        manager.session_manager.prune_empty_sessions.return_value = 0
 
         with patch.object(manager, "_cleanup_prompt_files") as mock_cleanup:
-            await manager._expire_stale_sessions()
+            expired_count = await manager._expire_stale_sessions()
 
+        assert expired_count == 0
         mock_cleanup.assert_called_once()
 
 
@@ -458,6 +467,7 @@ class TestGenerateSummariesIfNeeded:
         manager.llm_service = None
         await manager._generate_summaries_if_needed("sess-1")
         manager.session_manager.get.assert_not_called()
+        assert manager.session_manager.get.call_count == 0
 
     @pytest.mark.asyncio
     async def test_session_not_found(self, manager):
@@ -465,6 +475,7 @@ class TestGenerateSummariesIfNeeded:
         manager.llm_service = MagicMock()
         manager.session_manager.get.return_value = None
         await manager._generate_summaries_if_needed("sess-1")
+        assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
     async def test_session_already_has_summary(self, manager):
@@ -474,6 +485,7 @@ class TestGenerateSummariesIfNeeded:
         session.summary_markdown = "existing summary"
         manager.session_manager.get.return_value = session
         await manager._generate_summaries_if_needed("sess-1")
+        assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
     async def test_sentinel_summary_does_not_count_as_existing_summary(self, manager):
@@ -492,6 +504,7 @@ class TestGenerateSummariesIfNeeded:
             await manager._generate_summaries_if_needed("sess-1")
 
         mock_gen.assert_awaited_once()
+        assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
     async def test_session_no_transcript_path(self, manager):
@@ -502,6 +515,7 @@ class TestGenerateSummariesIfNeeded:
         session.transcript_path = None
         manager.session_manager.get.return_value = session
         await manager._generate_summaries_if_needed("sess-1")
+        assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
     async def test_summary_generation_exception(self, manager):
@@ -519,6 +533,7 @@ class TestGenerateSummariesIfNeeded:
         ):
             # Should not raise
             await manager._generate_summaries_if_needed("sess-1")
+        assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
     async def test_summary_generation_success(self, manager):
@@ -535,6 +550,7 @@ class TestGenerateSummariesIfNeeded:
         ) as mock_gen:
             await manager._generate_summaries_if_needed("sess-1")
             mock_gen.assert_awaited_once()
+            assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
 
 
 class TestPurgeSoftDeletedDefinitions:
@@ -546,6 +562,7 @@ class TestPurgeSoftDeletedDefinitions:
         with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as MockWFM:
             await manager._purge_soft_deleted_definitions()
             MockWFM.return_value.purge_deleted.assert_called_once_with(older_than_days=30)
+        assert MockWFM.return_value.purge_deleted.call_count == 1
 
     @pytest.mark.asyncio
     async def test_exception_handled(self, manager):
@@ -554,6 +571,7 @@ class TestPurgeSoftDeletedDefinitions:
             MockWFM.return_value.purge_deleted.side_effect = Exception("DB error")
             # Should not raise
             await manager._purge_soft_deleted_definitions()
+        assert MockWFM.return_value.purge_deleted.call_count == 1
 
 
 class TestProcessSessionTranscriptParsers:
@@ -573,6 +591,7 @@ class TestProcessSessionTranscriptParsers:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once()
+            assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_codex_parser_selected(self, tmp_path, manager):
@@ -588,6 +607,7 @@ class TestProcessSessionTranscriptParsers:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once()
+            assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_droid_parser_selected_with_transcript_path(self, tmp_path, manager):
@@ -607,6 +627,7 @@ class TestProcessSessionTranscriptParsers:
                 session_id="s1",
                 transcript_path=str(transcript_path),
             )
+            assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_droid_backfill_records_sidecar_token_usage(self, tmp_path, manager):
@@ -670,11 +691,13 @@ class TestProcessSessionTranscriptParsers:
 
         manager.session_manager.get.return_value = None
         await manager._process_session_transcript("s1", str(transcript_path))
+        assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_none_transcript_path(self, manager):
         """Handles None transcript_path."""
         await manager._process_session_transcript("s1", None)
+        assert manager.session_manager.get.call_count == 0
 
 
 class TestProcessSessionTranscriptJsonDispatch:
@@ -703,6 +726,7 @@ class TestProcessSessionTranscriptJsonDispatch:
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.return_value.parse_session_json.assert_called_once()
             MockParser.return_value.parse_lines.assert_not_called()
+            assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_jsonl_still_uses_parse_lines(self, tmp_path, manager):
@@ -718,6 +742,7 @@ class TestProcessSessionTranscriptJsonDispatch:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.return_value.parse_lines.assert_called_once()
+            assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_invalid_json_returns_early(self, tmp_path, manager):
@@ -732,6 +757,7 @@ class TestProcessSessionTranscriptJsonDispatch:
         # Should not raise
         await manager._process_session_transcript("s1", str(transcript_path))
         manager.session_manager.update_usage.assert_not_called()
+        assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_json_messages_aggregate_tokens(self, tmp_path, manager):
@@ -789,6 +815,7 @@ class TestProcessSessionTranscriptTokenPreservation:
 
         # update_usage should NOT be called — preserving existing values
         manager.session_manager.update_usage.assert_not_called()
+        assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
     async def test_zero_tokens_updates_when_existing_also_zero(self, tmp_path, manager):
@@ -816,6 +843,9 @@ class TestProcessSessionTranscriptTokenPreservation:
 
         # Both are 0, so no preservation needed — update proceeds (harmless write of zeros)
         manager.session_manager.update_usage.assert_called_once()
+        call_kwargs = manager.session_manager.update_usage.call_args.kwargs
+        assert call_kwargs["input_tokens"] == 0
+        assert call_kwargs["output_tokens"] == 0
 
     @pytest.mark.asyncio
     async def test_nonzero_tokens_always_updates(self, tmp_path, manager):

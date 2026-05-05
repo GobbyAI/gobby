@@ -1,24 +1,6 @@
 {
   "issues": [
     {
-      "fingerprint": "tests/adapters/test_codex.py::TestCodexAdapterApprovalAttach.test_attach_registers_approval_handler::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 3128,
-      "message": "test only verifies mock interactions",
-      "path": "tests/adapters/test_codex.py",
-      "severity": "medium",
-      "test_name": "TestCodexAdapterApprovalAttach.test_attach_registers_approval_handler"
-    },
-    {
-      "fingerprint": "tests/adapters/test_codex.py::TestCodexAdapterAttachDetach.test_attach_when_already_attached::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 949,
-      "message": "test only verifies mock interactions",
-      "path": "tests/adapters/test_codex.py",
-      "severity": "medium",
-      "test_name": "TestCodexAdapterAttachDetach.test_attach_when_already_attached"
-    },
-    {
       "fingerprint": "tests/adapters/test_codex.py::TestCodexAdapterAttachDetach.test_detach_when_not_attached::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 973,
@@ -46,15 +28,6 @@
       "test_name": "TestCodexAdapterHandleNotification.test_handle_notification_without_hook_manager"
     },
     {
-      "fingerprint": "tests/adapters/test_codex.py::TestCodexAppServerClientContextManager.test_context_manager_start_stop::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 445,
-      "message": "test only verifies mock interactions",
-      "path": "tests/adapters/test_codex.py",
-      "severity": "medium",
-      "test_name": "TestCodexAppServerClientContextManager.test_context_manager_start_stop"
-    },
-    {
       "fingerprint": "tests/adapters/test_codex.py::TestCodexAppServerClientNotificationHandlers.test_remove_nonexistent_handler::NO_ASSERTION",
       "issue_code": "NO_ASSERTION",
       "line": 258,
@@ -62,6 +35,699 @@
       "path": "tests/adapters/test_codex.py",
       "severity": "high",
       "test_name": "TestCodexAppServerClientNotificationHandlers.test_remove_nonexistent_handler"
+    },
+    {
+      "fingerprint": "tests/agents/test_idle_detector.py::TestClearState.test_clear_nonexistent_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 171,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_idle_detector.py",
+      "severity": "high",
+      "test_name": "TestClearState.test_clear_nonexistent_is_noop"
+    },
+    {
+      "fingerprint": "tests/agents/test_isolation.py::TestNoneIsolationHandler.test_cleanup_environment_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 285,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_isolation.py",
+      "severity": "high",
+      "test_name": "TestNoneIsolationHandler.test_cleanup_environment_is_noop"
+    },
+    {
+      "fingerprint": "tests/agents/test_lifecycle_monitor.py::TestCleanupAgentFdClose.test_cleanup_agent_no_fd_registered::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 2205,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_lifecycle_monitor.py",
+      "severity": "high",
+      "test_name": "TestCleanupAgentFdClose.test_cleanup_agent_no_fd_registered"
+    },
+    {
+      "fingerprint": "tests/agents/test_lifecycle_monitor.py::TestRecoverTaskFromFailedAgent.test_no_task_manager_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 1950,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_lifecycle_monitor.py",
+      "severity": "high",
+      "test_name": "TestRecoverTaskFromFailedAgent.test_no_task_manager_is_noop"
+    },
+    {
+      "fingerprint": "tests/agents/test_lifecycle_monitor_extra.py::TestRecoverTaskFromFailedAgent.test_recover_task_no_task_manager::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 188,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_lifecycle_monitor_extra.py",
+      "severity": "high",
+      "test_name": "TestRecoverTaskFromFailedAgent.test_recover_task_no_task_manager"
+    },
+    {
+      "fingerprint": "tests/agents/test_loop_tracker.py::TestClear.test_clear_unknown_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 91,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_loop_tracker.py",
+      "severity": "high",
+      "test_name": "TestClear.test_clear_unknown_is_noop"
+    },
+    {
+      "fingerprint": "tests/agents/test_prompt_detector.py::TestDismissedTracking.test_clear_nonexistent_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 179,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_prompt_detector.py",
+      "severity": "high",
+      "test_name": "TestDismissedTracking.test_clear_nonexistent_is_noop"
+    },
+    {
+      "fingerprint": "tests/agents/test_tmux.py::TestTmuxOutputReader.test_stop_all_empty::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 385,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_tmux.py",
+      "severity": "high",
+      "test_name": "TestTmuxOutputReader.test_stop_all_empty"
+    },
+    {
+      "fingerprint": "tests/agents/test_tmux.py::TestTmuxPTYBridge.test_detach_all_empty::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 510,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_tmux.py",
+      "severity": "high",
+      "test_name": "TestTmuxPTYBridge.test_detach_all_empty"
+    },
+    {
+      "fingerprint": "tests/agents/test_tmux.py::TestTmuxPTYBridge.test_detach_missing_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 505,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_tmux.py",
+      "severity": "high",
+      "test_name": "TestTmuxPTYBridge.test_detach_missing_is_noop"
+    },
+    {
+      "fingerprint": "tests/agents/test_tmux.py::TestTmuxPTYBridge.test_resize_missing_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 531,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/agents/test_tmux.py",
+      "severity": "high",
+      "test_name": "TestTmuxPTYBridge.test_resize_missing_is_noop"
+    },
+    {
+      "fingerprint": "tests/code_index/test_trigger.py::test_gcode_failure_does_not_propagate::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 212,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/code_index/test_trigger.py",
+      "severity": "high",
+      "test_name": "test_gcode_failure_does_not_propagate"
+    },
+    {
+      "fingerprint": "tests/communications/test_cleanup.py::test_cleanup_handles_cancelled_error::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 97,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/communications/test_cleanup.py",
+      "severity": "high",
+      "test_name": "test_cleanup_handles_cancelled_error"
+    },
+    {
+      "fingerprint": "tests/e2e/test_daemon_lifecycle.py::TestDaemonStop.test_no_orphan_processes_after_stop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 105,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/e2e/test_daemon_lifecycle.py",
+      "severity": "high",
+      "test_name": "TestDaemonStop.test_no_orphan_processes_after_stop"
+    },
+    {
+      "fingerprint": "tests/e2e/test_daemon_lifecycle.py::TestDaemonStop.test_stop_is_idempotent_on_non_running_daemon::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 137,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/e2e/test_daemon_lifecycle.py",
+      "severity": "high",
+      "test_name": "TestDaemonStop.test_stop_is_idempotent_on_non_running_daemon"
+    },
+    {
+      "fingerprint": "tests/events/test_completion_registry.py::TestCleanup.test_cleanup_unregistered_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 169,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/events/test_completion_registry.py",
+      "severity": "high",
+      "test_name": "TestCleanup.test_cleanup_unregistered_is_noop"
+    },
+    {
+      "fingerprint": "tests/events/test_completion_registry.py::TestRegisterAndNotify.test_notify_unregistered_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 63,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/events/test_completion_registry.py",
+      "severity": "high",
+      "test_name": "TestRegisterAndNotify.test_notify_unregistered_is_noop"
+    },
+    {
+      "fingerprint": "tests/events/test_subscriber_storage.py::TestCompletionSubscribers.test_remove_subscribers_noop_if_none::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 60,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/events/test_subscriber_storage.py",
+      "severity": "high",
+      "test_name": "TestCompletionSubscribers.test_remove_subscribers_noop_if_none"
+    },
+    {
+      "fingerprint": "tests/external_integrations/test_github.py::TestGitHubIntegrationErrorMessages.test_require_available_succeeds_when_available::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 166,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/external_integrations/test_github.py",
+      "severity": "high",
+      "test_name": "TestGitHubIntegrationErrorMessages.test_require_available_succeeds_when_available"
+    },
+    {
+      "fingerprint": "tests/external_integrations/test_linear.py::TestLinearIntegrationErrorMessages.test_require_available_succeeds_when_available::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 173,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/external_integrations/test_linear.py",
+      "severity": "high",
+      "test_name": "TestLinearIntegrationErrorMessages.test_require_available_succeeds_when_available"
+    },
+    {
+      "fingerprint": "tests/integration/sandbox/test_diagnose_schema.py::test_live_diagnose_output_validates_against_schema::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 17,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/integration/sandbox/test_diagnose_schema.py",
+      "severity": "high",
+      "test_name": "test_live_diagnose_output_validates_against_schema"
+    },
+    {
+      "fingerprint": "tests/integration/sandbox/test_runner_infrastructure.py::test_diagnose_schema_accepts_nullable_install_provenance::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 34,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/integration/sandbox/test_runner_infrastructure.py",
+      "severity": "high",
+      "test_name": "test_diagnose_schema_accepts_nullable_install_provenance"
+    },
+    {
+      "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestMergeManagerHelperMethods.test_get_active_resolution_returns_pending_resolution::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 341,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/integration/test_worktree_merge_integration.py",
+      "severity": "high",
+      "test_name": "TestMergeManagerHelperMethods.test_get_active_resolution_returns_pending_resolution"
+    },
+    {
+      "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestMergeManagerHelperMethods.test_get_conflict_by_path_finds_conflict::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 347,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/integration/test_worktree_merge_integration.py",
+      "severity": "high",
+      "test_name": "TestMergeManagerHelperMethods.test_get_conflict_by_path_finds_conflict"
+    },
+    {
+      "fingerprint": "tests/llm/test_claude_cli_session.py::TestCLISession.test_interrupt_noop_when_no_process::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 210,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/llm/test_claude_cli_session.py",
+      "severity": "high",
+      "test_name": "TestCLISession.test_interrupt_noop_when_no_process"
+    },
+    {
+      "fingerprint": "tests/llm/test_claude_cli_session.py::TestCLISession.test_stop_noop_when_no_process::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 217,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/llm/test_claude_cli_session.py",
+      "severity": "high",
+      "test_name": "TestCLISession.test_stop_noop_when_no_process"
+    },
+    {
+      "fingerprint": "tests/memory/test_knowledge_graph.py::TestGracefulDegradation.test_add_to_graph_handles_neo4j_down::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 417,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_knowledge_graph.py",
+      "severity": "high",
+      "test_name": "TestGracefulDegradation.test_add_to_graph_handles_neo4j_down"
+    },
+    {
+      "fingerprint": "tests/memory/test_knowledge_graph.py::TestRemoveMemoryFromGraph.test_remove_memory_from_graph_neo4j_unreachable::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 796,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_knowledge_graph.py",
+      "severity": "high",
+      "test_name": "TestRemoveMemoryFromGraph.test_remove_memory_from_graph_neo4j_unreachable"
+    },
+    {
+      "fingerprint": "tests/memory/test_knowledge_graph.py::TestRemoveMemoryFromGraph.test_remove_memory_from_graph_nonexistent_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 786,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_knowledge_graph.py",
+      "severity": "high",
+      "test_name": "TestRemoveMemoryFromGraph.test_remove_memory_from_graph_nonexistent_is_noop"
+    },
+    {
+      "fingerprint": "tests/memory/test_manager.py::TestAccessStats.test_update_access_stats_empty_list::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 255,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_manager.py",
+      "severity": "high",
+      "test_name": "TestAccessStats.test_update_access_stats_empty_list"
+    },
+    {
+      "fingerprint": "tests/memory/test_manager.py::TestAccessStats.test_update_access_stats_invalid_timestamp::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 259,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_manager.py",
+      "severity": "high",
+      "test_name": "TestAccessStats.test_update_access_stats_invalid_timestamp"
+    },
+    {
+      "fingerprint": "tests/memory/test_manager.py::TestEdgeCases.test_update_access_stats_exception_handling::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 486,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_manager.py",
+      "severity": "high",
+      "test_name": "TestEdgeCases.test_update_access_stats_exception_handling"
+    },
+    {
+      "fingerprint": "tests/memory/test_manager.py::TestVectorStoreIntegration.test_embed_and_upsert_no_vectorstore::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 567,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_manager.py",
+      "severity": "high",
+      "test_name": "TestVectorStoreIntegration.test_embed_and_upsert_no_vectorstore"
+    },
+    {
+      "fingerprint": "tests/memory/test_manager_knowledge_graph_wiring.py::TestGraphBackgroundTask.test_graph_task_failure_logged_not_raised::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 346,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_manager_knowledge_graph_wiring.py",
+      "severity": "high",
+      "test_name": "TestGraphBackgroundTask.test_graph_task_failure_logged_not_raised"
+    },
+    {
+      "fingerprint": "tests/memory/test_vectorstore.py::test_close::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 379,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_vectorstore.py",
+      "severity": "high",
+      "test_name": "test_close"
+    },
+    {
+      "fingerprint": "tests/memory/test_vectorstore.py::test_delete_nonexistent::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 273,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/memory/test_vectorstore.py",
+      "severity": "high",
+      "test_name": "test_delete_nonexistent"
+    },
+    {
+      "fingerprint": "tests/merge/test_merge_mcp_tools.py::TestMergeToolsImports.test_import_merge_tools_module::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 28,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/merge/test_merge_mcp_tools.py",
+      "severity": "high",
+      "test_name": "TestMergeToolsImports.test_import_merge_tools_module"
+    },
+    {
+      "fingerprint": "tests/plans/test_plan_coverage_ci.py::test_registered_active_plan_files_parse_with_declared_kind::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 65,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/plans/test_plan_coverage_ci.py",
+      "severity": "high",
+      "test_name": "test_registered_active_plan_files_parse_with_declared_kind"
+    },
+    {
+      "fingerprint": "tests/sessions/test_processor_renderer.py::TestRenderStateTracking.test_unregister_nonexistent_no_error::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 61,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/sessions/test_processor_renderer.py",
+      "severity": "high",
+      "test_name": "TestRenderStateTracking.test_unregister_nonexistent_no_error"
+    },
+    {
+      "fingerprint": "tests/sessions/test_sessions_processor_unit.py::TestCodexMcpHookSynthesis.test_no_hook_manager_is_noop::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 972,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/sessions/test_sessions_processor_unit.py",
+      "severity": "high",
+      "test_name": "TestCodexMcpHookSynthesis.test_no_hook_manager_is_noop"
+    },
+    {
+      "fingerprint": "tests/skills/test_scanner.py::TestTempFileHandling.test_temp_file_cleaned_up::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 209,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/skills/test_scanner.py",
+      "severity": "high",
+      "test_name": "TestTempFileHandling.test_temp_file_cleaned_up"
+    },
+    {
+      "fingerprint": "tests/storage/test_memory_fts_triggers.py::TestFTSTriggerScoping.test_access_stats_update_succeeds_without_fts::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 91,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/storage/test_memory_fts_triggers.py",
+      "severity": "high",
+      "test_name": "TestFTSTriggerScoping.test_access_stats_update_succeeds_without_fts"
+    },
+    {
+      "fingerprint": "tests/storage/test_memory_fts_triggers.py::TestFTSTriggerScoping.test_mark_graph_processed_succeeds_without_fts::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 115,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/storage/test_memory_fts_triggers.py",
+      "severity": "high",
+      "test_name": "TestFTSTriggerScoping.test_mark_graph_processed_succeeds_without_fts"
+    },
+    {
+      "fingerprint": "tests/storage/test_memory_fts_triggers.py::TestFTSTriggerScoping.test_updated_at_succeeds_without_fts::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 124,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/storage/test_memory_fts_triggers.py",
+      "severity": "high",
+      "test_name": "TestFTSTriggerScoping.test_updated_at_succeeds_without_fts"
+    },
+    {
+      "fingerprint": "tests/tasks/test_task_validation.py::TestGetValidationContextSmart.test_returns_none_when_no_context::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 423,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/tasks/test_task_validation.py",
+      "severity": "high",
+      "test_name": "TestGetValidationContextSmart.test_returns_none_when_no_context"
+    },
+    {
+      "fingerprint": "tests/tasks/test_validation.py::TestGetValidationContextSmartMerged.test_returns_none_when_no_context::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 1271,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/tasks/test_validation.py",
+      "severity": "high",
+      "test_name": "TestGetValidationContextSmartMerged.test_returns_none_when_no_context"
+    },
+    {
+      "fingerprint": "tests/utils/test_project_context.py::TestEnsureProjectJsonForIsolation.test_handles_errors_gracefully::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 777,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/utils/test_project_context.py",
+      "severity": "high",
+      "test_name": "TestEnsureProjectJsonForIsolation.test_handles_errors_gracefully"
+    },
+    {
+      "fingerprint": "tests/utils/test_utils_machine_id.py::TestClearCache.test_clear_cache_is_thread_safe::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 217,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/utils/test_utils_machine_id.py",
+      "severity": "high",
+      "test_name": "TestClearCache.test_clear_cache_is_thread_safe"
+    },
+    {
+      "fingerprint": "tests/utils/test_utils_project_init.py::TestUpdateProjectJsonVerification.test_noop_when_no_project_json::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 602,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/utils/test_utils_project_init.py",
+      "severity": "high",
+      "test_name": "TestUpdateProjectJsonVerification.test_noop_when_no_project_json"
+    },
+    {
+      "fingerprint": "tests/workflows/test_hook_evaluation_serialization.py::test_different_sessions_evaluate_concurrently::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 121,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_hook_evaluation_serialization.py",
+      "severity": "high",
+      "test_name": "test_different_sessions_evaluate_concurrently"
+    },
+    {
+      "fingerprint": "tests/workflows/test_instance_manager.py::test_delete_instance_nonexistent::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 186,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_instance_manager.py",
+      "severity": "high",
+      "test_name": "test_delete_instance_nonexistent"
+    },
+    {
+      "fingerprint": "tests/workflows/test_instance_manager.py::test_set_enabled_nonexistent::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 265,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_instance_manager.py",
+      "severity": "high",
+      "test_name": "test_set_enabled_nonexistent"
+    },
+    {
+      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_allows_inputs_reference::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 562,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_loader_pipeline.py",
+      "severity": "high",
+      "test_name": "TestValidatePipelineReferences.test_allows_inputs_reference"
+    },
+    {
+      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_multiple_refs_all_valid::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 575,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_loader_pipeline.py",
+      "severity": "high",
+      "test_name": "TestValidatePipelineReferences.test_multiple_refs_all_valid"
+    },
+    {
+      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_valid_back_reference::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 440,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_loader_pipeline.py",
+      "severity": "high",
+      "test_name": "TestValidatePipelineReferences.test_valid_back_reference"
+    },
+    {
+      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_condition_references::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 501,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_loader_pipeline.py",
+      "severity": "high",
+      "test_name": "TestValidatePipelineReferences.test_validates_condition_references"
+    },
+    {
+      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_input_references::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 518,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_loader_pipeline.py",
+      "severity": "high",
+      "test_name": "TestValidatePipelineReferences.test_validates_input_references"
+    },
+    {
+      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_output_references::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 531,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_loader_pipeline.py",
+      "severity": "high",
+      "test_name": "TestValidatePipelineReferences.test_validates_output_references"
+    },
+    {
+      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_prompt_references::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 481,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_loader_pipeline.py",
+      "severity": "high",
+      "test_name": "TestValidatePipelineReferences.test_validates_prompt_references"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestClosePipelineSession.test_close_session_error_suppressed::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 410,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_executor_outputs.py",
+      "severity": "high",
+      "test_name": "TestClosePipelineSession.test_close_session_error_suppressed"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestClosePipelineSession.test_no_session_id_does_nothing::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 368,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_executor_outputs.py",
+      "severity": "high",
+      "test_name": "TestClosePipelineSession.test_no_session_id_does_nothing"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestEmitEvent.test_emit_event_callback_error_suppressed::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 243,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_executor_outputs.py",
+      "severity": "high",
+      "test_name": "TestEmitEvent.test_emit_event_callback_error_suppressed"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestEmitEvent.test_emit_event_no_callback::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 230,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_executor_outputs.py",
+      "severity": "high",
+      "test_name": "TestEmitEvent.test_emit_event_no_callback"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestNotifyCompletion.test_no_registry_does_nothing::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 278,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_executor_outputs.py",
+      "severity": "high",
+      "test_name": "TestNotifyCompletion.test_no_registry_does_nothing"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestNotifyCompletion.test_notify_error_suppressed::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 331,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_executor_outputs.py",
+      "severity": "high",
+      "test_name": "TestNotifyCompletion.test_notify_error_suppressed"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestNotifyApprovalPending.test_handles_missing_webhooks_gracefully::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 153,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_webhooks.py",
+      "severity": "high",
+      "test_name": "TestNotifyApprovalPending.test_handles_missing_webhooks_gracefully"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestNotifyComplete.test_handles_missing_on_complete_webhook::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 208,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_webhooks.py",
+      "severity": "high",
+      "test_name": "TestNotifyComplete.test_handles_missing_on_complete_webhook"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestNotifyFailure.test_handles_missing_on_failure_webhook::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 262,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_webhooks.py",
+      "severity": "high",
+      "test_name": "TestNotifyFailure.test_handles_missing_on_failure_webhook"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestWebhookErrors.test_handles_network_error_gracefully::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 307,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_webhooks.py",
+      "severity": "high",
+      "test_name": "TestWebhookErrors.test_handles_network_error_gracefully"
+    },
+    {
+      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestWebhookErrors.test_logs_error_on_http_failure::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 285,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_pipeline_webhooks.py",
+      "severity": "high",
+      "test_name": "TestWebhookErrors.test_logs_error_on_http_failure"
+    },
+    {
+      "fingerprint": "tests/workflows/test_session_variable_manager.py::test_delete_variables_nonexistent::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 141,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_session_variable_manager.py",
+      "severity": "high",
+      "test_name": "test_delete_variables_nonexistent"
+    },
+    {
+      "fingerprint": "tests/workflows/test_summary_actions.py::TestRenameTmuxWindow.test_failure_does_not_propagate::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 402,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_summary_actions.py",
+      "severity": "high",
+      "test_name": "TestRenameTmuxWindow.test_failure_does_not_propagate"
+    },
+    {
+      "fingerprint": "tests/workflows/test_summary_actions.py::TestRenameTmuxWindow.test_skips_when_no_terminal_context::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 312,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_summary_actions.py",
+      "severity": "high",
+      "test_name": "TestRenameTmuxWindow.test_skips_when_no_terminal_context"
+    },
+    {
+      "fingerprint": "tests/workflows/test_summary_actions.py::TestRenameTmuxWindow.test_skips_when_no_tmux_pane::NO_ASSERTION",
+      "issue_code": "NO_ASSERTION",
+      "line": 322,
+      "message": "test has no assertion or assertion-like outcome check",
+      "path": "tests/workflows/test_summary_actions.py",
+      "severity": "high",
+      "test_name": "TestRenameTmuxWindow.test_skips_when_no_tmux_pane"
+    },
+    {
+      "fingerprint": "tests/adapters/test_codex.py::TestCodexAdapterApprovalAttach.test_attach_registers_approval_handler::ONLY_MOCK_ASSERTIONS",
+      "issue_code": "ONLY_MOCK_ASSERTIONS",
+      "line": 3128,
+      "message": "test only verifies mock interactions",
+      "path": "tests/adapters/test_codex.py",
+      "severity": "medium",
+      "test_name": "TestCodexAdapterApprovalAttach.test_attach_registers_approval_handler"
+    },
+    {
+      "fingerprint": "tests/adapters/test_codex.py::TestCodexAdapterAttachDetach.test_attach_when_already_attached::ONLY_MOCK_ASSERTIONS",
+      "issue_code": "ONLY_MOCK_ASSERTIONS",
+      "line": 949,
+      "message": "test only verifies mock interactions",
+      "path": "tests/adapters/test_codex.py",
+      "severity": "medium",
+      "test_name": "TestCodexAdapterAttachDetach.test_attach_when_already_attached"
+    },
+    {
+      "fingerprint": "tests/adapters/test_codex.py::TestCodexAppServerClientContextManager.test_context_manager_start_stop::ONLY_MOCK_ASSERTIONS",
+      "issue_code": "ONLY_MOCK_ASSERTIONS",
+      "line": 445,
+      "message": "test only verifies mock interactions",
+      "path": "tests/adapters/test_codex.py",
+      "severity": "medium",
+      "test_name": "TestCodexAppServerClientContextManager.test_context_manager_start_stop"
     },
     {
       "fingerprint": "tests/adapters/test_codex.py::TestCodexAppServerClientStart.test_start_appends_config_overrides_and_features::HEAVY_MOCK_LOW_ASSERT",
@@ -82,15 +748,6 @@
       "test_name": "TestCodexAppServerClientTurnManagement.test_interrupt_turn"
     },
     {
-      "fingerprint": "tests/agents/test_idle_detector.py::TestClearState.test_clear_nonexistent_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 171,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_idle_detector.py",
-      "severity": "high",
-      "test_name": "TestClearState.test_clear_nonexistent_is_noop"
-    },
-    {
       "fingerprint": "tests/agents/test_isolation.py::TestCloneIsolationHandler.test_prepare_calls_ensure_project_json::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 977,
@@ -107,15 +764,6 @@
       "path": "tests/agents/test_isolation.py",
       "severity": "medium",
       "test_name": "TestCloneIsolationHandler.test_prepare_calls_ensure_project_json"
-    },
-    {
-      "fingerprint": "tests/agents/test_isolation.py::TestNoneIsolationHandler.test_cleanup_environment_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 285,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_isolation.py",
-      "severity": "high",
-      "test_name": "TestNoneIsolationHandler.test_cleanup_environment_is_noop"
     },
     {
       "fingerprint": "tests/agents/test_isolation.py::TestWorktreeIsolationHandler.test_prepare_calls_ensure_project_json::HEAVY_MOCK_LOW_ASSERT",
@@ -190,15 +838,6 @@
       "test_name": "TestCheckExpiredAgents.test_expired_agent_releases_worktrees"
     },
     {
-      "fingerprint": "tests/agents/test_lifecycle_monitor.py::TestCleanupAgentFdClose.test_cleanup_agent_no_fd_registered::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 2205,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_lifecycle_monitor.py",
-      "severity": "high",
-      "test_name": "TestCleanupAgentFdClose.test_cleanup_agent_no_fd_registered"
-    },
-    {
       "fingerprint": "tests/agents/test_lifecycle_monitor.py::TestDeadAgentCompletionEvent.test_fires_completion_on_dead_tmux_agent::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 2016,
@@ -224,15 +863,6 @@
       "path": "tests/agents/test_lifecycle_monitor.py",
       "severity": "medium",
       "test_name": "TestRecoverTaskFromFailedAgent.test_no_db_run_is_noop"
-    },
-    {
-      "fingerprint": "tests/agents/test_lifecycle_monitor.py::TestRecoverTaskFromFailedAgent.test_no_task_manager_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 1950,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_lifecycle_monitor.py",
-      "severity": "high",
-      "test_name": "TestRecoverTaskFromFailedAgent.test_no_task_manager_is_noop"
     },
     {
       "fingerprint": "tests/agents/test_lifecycle_monitor_completion.py::TestCompletedRunIdleGuard.test_handle_idle_check_skips_run_completed_in_db::HEAVY_MOCK_LOW_ASSERT",
@@ -296,15 +926,6 @@
       "path": "tests/agents/test_lifecycle_monitor_extra.py",
       "severity": "medium",
       "test_name": "TestRecoverTaskFromFailedAgent.test_recover_task_fallback_assignee"
-    },
-    {
-      "fingerprint": "tests/agents/test_lifecycle_monitor_extra.py::TestRecoverTaskFromFailedAgent.test_recover_task_no_task_manager::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 188,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_lifecycle_monitor_extra.py",
-      "severity": "high",
-      "test_name": "TestRecoverTaskFromFailedAgent.test_recover_task_no_task_manager"
     },
     {
       "fingerprint": "tests/agents/test_lifecycle_monitor_extra.py::TestRecoverTaskFromFailedAgent.test_recover_task_not_in_progress::ONLY_MOCK_ASSERTIONS",
@@ -404,24 +1025,6 @@
       "path": "tests/agents/test_lifecycle_monitor_extra.py",
       "severity": "medium",
       "test_name": "TestTerminalizeCancelledRun.test_reopens_in_progress_task_and_notifies"
-    },
-    {
-      "fingerprint": "tests/agents/test_loop_tracker.py::TestClear.test_clear_unknown_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 91,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_loop_tracker.py",
-      "severity": "high",
-      "test_name": "TestClear.test_clear_unknown_is_noop"
-    },
-    {
-      "fingerprint": "tests/agents/test_prompt_detector.py::TestDismissedTracking.test_clear_nonexistent_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 179,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_prompt_detector.py",
-      "severity": "high",
-      "test_name": "TestDismissedTracking.test_clear_nonexistent_is_noop"
     },
     {
       "fingerprint": "tests/agents/test_reasoning.py::test_get_provider_models_rebuilds_fallback_catalog_on_config_change::HEAVY_MOCK_LOW_ASSERT",
@@ -539,42 +1142,6 @@
       "path": "tests/agents/test_spawn_executor.py",
       "severity": "medium",
       "test_name": "TestExecuteSpawnErrorPaths.test_claude_terminal_tmux_session_name_in_result"
-    },
-    {
-      "fingerprint": "tests/agents/test_tmux.py::TestTmuxOutputReader.test_stop_all_empty::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 385,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_tmux.py",
-      "severity": "high",
-      "test_name": "TestTmuxOutputReader.test_stop_all_empty"
-    },
-    {
-      "fingerprint": "tests/agents/test_tmux.py::TestTmuxPTYBridge.test_detach_all_empty::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 510,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_tmux.py",
-      "severity": "high",
-      "test_name": "TestTmuxPTYBridge.test_detach_all_empty"
-    },
-    {
-      "fingerprint": "tests/agents/test_tmux.py::TestTmuxPTYBridge.test_detach_missing_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 505,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_tmux.py",
-      "severity": "high",
-      "test_name": "TestTmuxPTYBridge.test_detach_missing_is_noop"
-    },
-    {
-      "fingerprint": "tests/agents/test_tmux.py::TestTmuxPTYBridge.test_resize_missing_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 531,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/agents/test_tmux.py",
-      "severity": "high",
-      "test_name": "TestTmuxPTYBridge.test_resize_missing_is_noop"
     },
     {
       "fingerprint": "tests/agents/tmux/test_pane_monitor.py::test_all_alive_noop::ONLY_MOCK_ASSERTIONS",
@@ -1414,285 +1981,6 @@
       "test_name": "TestUiStart.test_start_dev_spawn_fails"
     },
     {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_all_gobby_daemons_config_fallback::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 738,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_all_gobby_daemons_config_fallback"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_all_gobby_daemons_force_kill_on_timeout::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 790,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_all_gobby_daemons_force_kill_on_timeout"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_all_gobby_daemons_handles_process_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 889,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_all_gobby_daemons_handles_process_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_all_gobby_daemons_kills_runner_process::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 756,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_all_gobby_daemons_kills_runner_process"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_all_gobby_daemons_no_processes::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 715,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_all_gobby_daemons_no_processes"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_all_gobby_daemons_port_match::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 824,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_all_gobby_daemons_port_match"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_all_gobby_daemons_skips_self::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 861,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_all_gobby_daemons_skips_self"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_port_holder_finds_process::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 924,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_port_holder_finds_process"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_port_holder_finds_process::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 924,
-      "message": "test only verifies mock interactions",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_port_holder_finds_process"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_port_holder_kills_alive_procs::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 983,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_port_holder_kills_alive_procs"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_port_holder_kills_alive_procs::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 983,
-      "message": "test only verifies mock interactions",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_port_holder_kills_alive_procs"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_kill_port_holder_no_match::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 952,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_kill_port_holder_no_match"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_list_project_names::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 548,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_list_project_names"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_resolve_project_ref_by_name::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 380,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_resolve_project_ref_by_name"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_resolve_project_ref_by_uuid::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 360,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_resolve_project_ref_by_uuid"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_resolve_project_ref_not_found_exits::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 417,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_resolve_project_ref_not_found_exits"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_resolve_project_ref_not_found_returns_none::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 400,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_resolve_project_ref_not_found_returns_none"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_resolve_session_id_value_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 526,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_resolve_session_id_value_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_resolve_session_id_with_ref::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 509,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_resolve_session_id_with_ref"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_falls_back_to_sigterm_on_service_stop_failure::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1479,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_falls_back_to_sigterm_on_service_stop_failure"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_force_kill_fails::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1373,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_force_kill_fails"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_generic_exception::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1403,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_generic_exception"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_graceful_shutdown::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1254,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_graceful_shutdown"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_no_pid_file::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 180,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_no_pid_file"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_not_gobby_process::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 233,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_not_gobby_process"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_permission_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 273,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_permission_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_process_lookup_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 253,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_process_lookup_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_psutil_nosuchprocess_on_verify::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1235,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_psutil_nosuchprocess_on_verify"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_daemon_stale_pid::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 198,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_daemon_stale_pid"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_ui_server_generic_exception::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1131,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_ui_server_generic_exception"
-    },
-    {
-      "fingerprint": "tests/cli/test_utils_coverage.py::test_stop_ui_server_running_graceful::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1042,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_utils_coverage.py",
-      "severity": "medium",
-      "test_name": "test_stop_ui_server_running_graceful"
-    },
-    {
       "fingerprint": "tests/cli/test_validation_cli.py::TestDeEscalateCommand.test_de_escalate_non_escalated_task_fails::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 202,
@@ -1747,96 +2035,6 @@
       "test_name": "TestValidationHistoryCommand.test_validation_history_shows_iterations"
     },
     {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestCleanupWorktrees.test_cleanup_http_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 550,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestCleanupWorktrees.test_cleanup_http_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestCreateWorktreeErrors.test_create_failure_result::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 107,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestCreateWorktreeErrors.test_create_failure_result"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestCreateWorktreeErrors.test_create_task_not_resolved::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 121,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestCreateWorktreeErrors.test_create_task_not_resolved"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestDeleteWorktreeErrors.test_delete_connect_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 222,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestDeleteWorktreeErrors.test_delete_connect_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestDeleteWorktreeErrors.test_delete_failure_result::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 259,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestDeleteWorktreeErrors.test_delete_failure_result"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestDeleteWorktreeErrors.test_delete_http_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 237,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestDeleteWorktreeErrors.test_delete_http_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestDetectStale.test_stale_http_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 487,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestDetectStale.test_stale_http_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestSyncWorktree.test_sync_connect_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 347,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestSyncWorktree.test_sync_connect_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestSyncWorktree.test_sync_failure_result::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 383,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestSyncWorktree.test_sync_failure_result"
-    },
-    {
-      "fingerprint": "tests/cli/test_worktrees_coverage.py::TestWorktreeStats.test_stats_http_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 613,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_worktrees_coverage.py",
-      "severity": "medium",
-      "test_name": "TestWorktreeStats.test_stats_http_error"
-    },
-    {
       "fingerprint": "tests/code_index/test_trigger.py::test_empty_flush_is_noop::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 248,
@@ -1844,15 +2042,6 @@
       "path": "tests/code_index/test_trigger.py",
       "severity": "medium",
       "test_name": "test_empty_flush_is_noop"
-    },
-    {
-      "fingerprint": "tests/code_index/test_trigger.py::test_gcode_failure_does_not_propagate::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 212,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/code_index/test_trigger.py",
-      "severity": "high",
-      "test_name": "test_gcode_failure_does_not_propagate"
     },
     {
       "fingerprint": "tests/code_index/test_trigger.py::test_no_gcode_warns_and_skips::ONLY_MOCK_ASSERTIONS",
@@ -1987,15 +2176,6 @@
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/communications/test_cleanup.py",
       "severity": "medium",
-      "test_name": "test_cleanup_handles_cancelled_error"
-    },
-    {
-      "fingerprint": "tests/communications/test_cleanup.py::test_cleanup_handles_cancelled_error::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 97,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/communications/test_cleanup.py",
-      "severity": "high",
       "test_name": "test_cleanup_handles_cancelled_error"
     },
     {
@@ -2278,42 +2458,6 @@
       "test_name": "TestBackwardCompatibilityLayer.test_no_deprecation_warning_when_yaml_overrides"
     },
     {
-      "fingerprint": "tests/e2e/test_daemon_lifecycle.py::TestDaemonStop.test_no_orphan_processes_after_stop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 105,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/e2e/test_daemon_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestDaemonStop.test_no_orphan_processes_after_stop"
-    },
-    {
-      "fingerprint": "tests/e2e/test_daemon_lifecycle.py::TestDaemonStop.test_stop_is_idempotent_on_non_running_daemon::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 137,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/e2e/test_daemon_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestDaemonStop.test_stop_is_idempotent_on_non_running_daemon"
-    },
-    {
-      "fingerprint": "tests/events/test_completion_registry.py::TestCleanup.test_cleanup_unregistered_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 169,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/events/test_completion_registry.py",
-      "severity": "high",
-      "test_name": "TestCleanup.test_cleanup_unregistered_is_noop"
-    },
-    {
-      "fingerprint": "tests/events/test_completion_registry.py::TestRegisterAndNotify.test_notify_unregistered_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 63,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/events/test_completion_registry.py",
-      "severity": "high",
-      "test_name": "TestRegisterAndNotify.test_notify_unregistered_is_noop"
-    },
-    {
       "fingerprint": "tests/events/test_mcp_tool_changes.py::TestRemovedWaitTools.test_wait_for_completion_not_in_workflows_registry::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 94,
@@ -2339,15 +2483,6 @@
       "path": "tests/events/test_pipeline_integration.py",
       "severity": "medium",
       "test_name": "TestWaitStepExecution.test_wait_step_timeout_fails_pipeline"
-    },
-    {
-      "fingerprint": "tests/events/test_subscriber_storage.py::TestCompletionSubscribers.test_remove_subscribers_noop_if_none::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 60,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/events/test_subscriber_storage.py",
-      "severity": "high",
-      "test_name": "TestCompletionSubscribers.test_remove_subscribers_noop_if_none"
     },
     {
       "fingerprint": "tests/events/test_wake.py::TestWakeDispatch.test_agent_depth_zero_no_terminal_context_gets_ism::ONLY_MOCK_ASSERTIONS",
@@ -2510,24 +2645,6 @@
       "path": "tests/events/test_wiring.py",
       "severity": "medium",
       "test_name": "TestPipelineExecutorNotifiesRegistry.test_no_notification_without_registry"
-    },
-    {
-      "fingerprint": "tests/external_integrations/test_github.py::TestGitHubIntegrationErrorMessages.test_require_available_succeeds_when_available::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 166,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/external_integrations/test_github.py",
-      "severity": "high",
-      "test_name": "TestGitHubIntegrationErrorMessages.test_require_available_succeeds_when_available"
-    },
-    {
-      "fingerprint": "tests/external_integrations/test_linear.py::TestLinearIntegrationErrorMessages.test_require_available_succeeds_when_available::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 173,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/external_integrations/test_linear.py",
-      "severity": "high",
-      "test_name": "TestLinearIntegrationErrorMessages.test_require_available_succeeds_when_available"
     },
     {
       "fingerprint": "tests/hooks/event_handlers/test_activate_agent_override.py::TestActivateDefaultAgentEdgeCases.test_override_none_agent_name_skips::ONLY_MOCK_ASSERTIONS",
@@ -3232,51 +3349,6 @@
       "test_name": "TestToolHandlerEdgeCases.test_after_tool_notifies_code_index_with_project_root_path"
     },
     {
-      "fingerprint": "tests/integration/sandbox/test_diagnose_schema.py::test_live_diagnose_output_validates_against_schema::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 17,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/integration/sandbox/test_diagnose_schema.py",
-      "severity": "high",
-      "test_name": "test_live_diagnose_output_validates_against_schema"
-    },
-    {
-      "fingerprint": "tests/integration/sandbox/test_runner_infrastructure.py::test_diagnose_schema_accepts_nullable_install_provenance::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 34,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/integration/sandbox/test_runner_infrastructure.py",
-      "severity": "high",
-      "test_name": "test_diagnose_schema_accepts_nullable_install_provenance"
-    },
-    {
-      "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestMergeManagerHelperMethods.test_get_active_resolution_returns_pending_resolution::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 341,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/integration/test_worktree_merge_integration.py",
-      "severity": "high",
-      "test_name": "TestMergeManagerHelperMethods.test_get_active_resolution_returns_pending_resolution"
-    },
-    {
-      "fingerprint": "tests/integration/test_worktree_merge_integration.py::TestMergeManagerHelperMethods.test_get_conflict_by_path_finds_conflict::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 347,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/integration/test_worktree_merge_integration.py",
-      "severity": "high",
-      "test_name": "TestMergeManagerHelperMethods.test_get_conflict_by_path_finds_conflict"
-    },
-    {
-      "fingerprint": "tests/llm/test_claude_cli_session.py::TestCLISession.test_interrupt_noop_when_no_process::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 210,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/llm/test_claude_cli_session.py",
-      "severity": "high",
-      "test_name": "TestCLISession.test_interrupt_noop_when_no_process"
-    },
-    {
       "fingerprint": "tests/llm/test_claude_cli_session.py::TestCLISession.test_interrupt_sends_sigint::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 176,
@@ -3284,15 +3356,6 @@
       "path": "tests/llm/test_claude_cli_session.py",
       "severity": "medium",
       "test_name": "TestCLISession.test_interrupt_sends_sigint"
-    },
-    {
-      "fingerprint": "tests/llm/test_claude_cli_session.py::TestCLISession.test_stop_noop_when_no_process::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 217,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/llm/test_claude_cli_session.py",
-      "severity": "high",
-      "test_name": "TestCLISession.test_stop_noop_when_no_process"
     },
     {
       "fingerprint": "tests/llm/test_claude_cli_session.py::TestCLISession.test_stop_terminates_process::HEAVY_MOCK_LOW_ASSERT",
@@ -4780,15 +4843,6 @@
       "test_name": "TestGracefulDegradation.test_add_to_graph_handles_llm_failure"
     },
     {
-      "fingerprint": "tests/memory/test_knowledge_graph.py::TestGracefulDegradation.test_add_to_graph_handles_neo4j_down::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 417,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_knowledge_graph.py",
-      "severity": "high",
-      "test_name": "TestGracefulDegradation.test_add_to_graph_handles_neo4j_down"
-    },
-    {
       "fingerprint": "tests/memory/test_knowledge_graph.py::TestRelatesToCode.test_skips_when_no_project_id::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 575,
@@ -4796,24 +4850,6 @@
       "path": "tests/memory/test_knowledge_graph.py",
       "severity": "medium",
       "test_name": "TestRelatesToCode.test_skips_when_no_project_id"
-    },
-    {
-      "fingerprint": "tests/memory/test_knowledge_graph.py::TestRemoveMemoryFromGraph.test_remove_memory_from_graph_neo4j_unreachable::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 796,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_knowledge_graph.py",
-      "severity": "high",
-      "test_name": "TestRemoveMemoryFromGraph.test_remove_memory_from_graph_neo4j_unreachable"
-    },
-    {
-      "fingerprint": "tests/memory/test_knowledge_graph.py::TestRemoveMemoryFromGraph.test_remove_memory_from_graph_nonexistent_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 786,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_knowledge_graph.py",
-      "severity": "high",
-      "test_name": "TestRemoveMemoryFromGraph.test_remove_memory_from_graph_nonexistent_is_noop"
     },
     {
       "fingerprint": "tests/memory/test_maintenance_cleanup.py::TestFindDuplicateMemories.test_below_threshold_not_flagged::HEAVY_MOCK_LOW_ASSERT",
@@ -4832,24 +4868,6 @@
       "path": "tests/memory/test_maintenance_update.py",
       "severity": "medium",
       "test_name": "TestGetStatsBasicBehavior.test_project_id_passed_through"
-    },
-    {
-      "fingerprint": "tests/memory/test_manager.py::TestAccessStats.test_update_access_stats_empty_list::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 255,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_manager.py",
-      "severity": "high",
-      "test_name": "TestAccessStats.test_update_access_stats_empty_list"
-    },
-    {
-      "fingerprint": "tests/memory/test_manager.py::TestAccessStats.test_update_access_stats_invalid_timestamp::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 259,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_manager.py",
-      "severity": "high",
-      "test_name": "TestAccessStats.test_update_access_stats_invalid_timestamp"
     },
     {
       "fingerprint": "tests/memory/test_manager.py::TestCreateCrossrefs.test_crossrefs_with_vectorstore::HEAVY_MOCK_LOW_ASSERT",
@@ -4879,15 +4897,6 @@
       "test_name": "TestDeleteMemoryExtended.test_delete_with_vectorstore"
     },
     {
-      "fingerprint": "tests/memory/test_manager.py::TestEdgeCases.test_update_access_stats_exception_handling::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 486,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_manager.py",
-      "severity": "high",
-      "test_name": "TestEdgeCases.test_update_access_stats_exception_handling"
-    },
-    {
       "fingerprint": "tests/memory/test_manager.py::TestVectorStoreIntegration.test_create_memory_with_vectorstore::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 611,
@@ -4904,15 +4913,6 @@
       "path": "tests/memory/test_manager.py",
       "severity": "medium",
       "test_name": "TestVectorStoreIntegration.test_embed_and_upsert_failure_logged"
-    },
-    {
-      "fingerprint": "tests/memory/test_manager.py::TestVectorStoreIntegration.test_embed_and_upsert_no_vectorstore::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 567,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_manager.py",
-      "severity": "high",
-      "test_name": "TestVectorStoreIntegration.test_embed_and_upsert_no_vectorstore"
     },
     {
       "fingerprint": "tests/memory/test_manager_graph_search.py::TestCreateMemoryPassesMemoryId.test_fire_background_graph_receives_memory_id::HEAVY_MOCK_LOW_ASSERT",
@@ -5014,15 +5014,6 @@
       "test_name": "TestGraphBackgroundTask.test_graph_task_failure_logged_not_raised"
     },
     {
-      "fingerprint": "tests/memory/test_manager_knowledge_graph_wiring.py::TestGraphBackgroundTask.test_graph_task_failure_logged_not_raised::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 346,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_manager_knowledge_graph_wiring.py",
-      "severity": "high",
-      "test_name": "TestGraphBackgroundTask.test_graph_task_failure_logged_not_raised"
-    },
-    {
       "fingerprint": "tests/memory/test_manager_knowledge_graph_wiring.py::TestGraphDelegation.test_clear_knowledge_graph_requeues_affected_memories::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 166,
@@ -5066,24 +5057,6 @@
       "path": "tests/memory/test_neo4j_write_methods.py",
       "severity": "medium",
       "test_name": "TestMergeNode.test_merge_node_with_no_labels"
-    },
-    {
-      "fingerprint": "tests/memory/test_vectorstore.py::test_close::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 379,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_vectorstore.py",
-      "severity": "high",
-      "test_name": "test_close"
-    },
-    {
-      "fingerprint": "tests/memory/test_vectorstore.py::test_delete_nonexistent::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 273,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/memory/test_vectorstore.py",
-      "severity": "high",
-      "test_name": "test_delete_nonexistent"
     },
     {
       "fingerprint": "tests/memory/test_vectorstore_init.py::TestVectorStoreInitialization.test_no_rebuild_when_qdrant_has_data::HEAVY_MOCK_LOW_ASSERT",
@@ -5131,15 +5104,6 @@
       "test_name": "TestVectorStoreInitialization.test_vectorstore_close_called"
     },
     {
-      "fingerprint": "tests/merge/test_merge_mcp_tools.py::TestMergeToolsImports.test_import_merge_tools_module::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 28,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/merge/test_merge_mcp_tools.py",
-      "severity": "high",
-      "test_name": "TestMergeToolsImports.test_import_merge_tools_module"
-    },
-    {
       "fingerprint": "tests/merge/test_resolver.py::TestTier1GitAutoMerge.test_git_auto_merge_skips_ai_when_no_conflicts::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 84,
@@ -5165,15 +5129,6 @@
       "path": "tests/merge/test_resolver.py",
       "severity": "medium",
       "test_name": "TestTier3FullFileAI.test_full_file_ai_sends_entire_file"
-    },
-    {
-      "fingerprint": "tests/plans/test_plan_coverage_ci.py::test_registered_active_plan_files_parse_with_declared_kind::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 65,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/plans/test_plan_coverage_ci.py",
-      "severity": "high",
-      "test_name": "test_registered_active_plan_files_parse_with_declared_kind"
     },
     {
       "fingerprint": "tests/scheduler/test_cron_scheduler.py::test_backoff_on_consecutive_failures::ONLY_MOCK_ASSERTIONS",
@@ -6076,177 +6031,6 @@
       "test_name": "TestValidBearerToken.test_empty_string_token_still_passed"
     },
     {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcast.test_broadcast_multiple_clients::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 173,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcast.test_broadcast_multiple_clients"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcast.test_broadcast_sends_to_subscribed_clients::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 133,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcast.test_broadcast_sends_to_subscribed_clients"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcast.test_broadcast_skips_unsubscribed_clients::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 142,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcast.test_broadcast_skips_unsubscribed_clients"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_agent_command::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 264,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_agent_command"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_agent_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 228,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_agent_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_agent_message::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 255,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_agent_message"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_artifact_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 354,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_artifact_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_autonomous_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 336,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_autonomous_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_canvas_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 345,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_canvas_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_cron_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 318,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_cron_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_mcp_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 291,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_mcp_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_project_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 309,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_project_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_skill_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 282,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_skill_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_task_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 363,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_task_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_terminal_output::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 237,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_terminal_output"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_tmux_session_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 246,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_tmux_session_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_trace_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 273,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_trace_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_workflow_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 300,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_workflow_event"
-    },
-    {
-      "fingerprint": "tests/servers/websocket/test_broadcast.py::TestBroadcastEventMethods.test_broadcast_worktree_event::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 327,
-      "message": "test only verifies mock interactions",
-      "path": "tests/servers/websocket/test_broadcast.py",
-      "severity": "medium",
-      "test_name": "TestBroadcastEventMethods.test_broadcast_worktree_event"
-    },
-    {
       "fingerprint": "tests/servers/websocket/test_plan_approval.py::test_recovered_plan_approval_finds_droid_external_id_fallback::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 15,
@@ -6308,420 +6092,6 @@
       "path": "tests/servers/websocket/test_set_provider.py",
       "severity": "medium",
       "test_name": "TestSetProviderWithExistingSession.test_updates_db_session_status"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestBackgroundLoops.test_expire_loop_runs_and_calls_delegate::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 308,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestBackgroundLoops.test_expire_loop_runs_and_calls_delegate"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestBackgroundLoops.test_loops_handle_exceptions::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 346,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestBackgroundLoops.test_loops_handle_exceptions"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestBackgroundLoops.test_process_loop_runs_and_calls_delegate::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 327,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestBackgroundLoops.test_process_loop_runs_and_calls_delegate"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_no_llm_service::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 456,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestGenerateSummariesIfNeeded.test_no_llm_service"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_sentinel_summary_does_not_count_as_existing_summary::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 479,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestGenerateSummariesIfNeeded.test_sentinel_summary_does_not_count_as_existing_summary"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_session_already_has_summary::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 470,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestGenerateSummariesIfNeeded.test_session_already_has_summary"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_session_no_transcript_path::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 497,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestGenerateSummariesIfNeeded.test_session_no_transcript_path"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_session_not_found::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 463,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestGenerateSummariesIfNeeded.test_session_not_found"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_summary_generation_exception::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 507,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestGenerateSummariesIfNeeded.test_summary_generation_exception"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestGenerateSummariesIfNeeded.test_summary_generation_success::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 524,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestGenerateSummariesIfNeeded.test_summary_generation_success"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptJsonDispatch.test_gemini_json_uses_parse_session_json::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 684,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptJsonDispatch.test_gemini_json_uses_parse_session_json"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptJsonDispatch.test_invalid_json_returns_early::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 723,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptJsonDispatch.test_invalid_json_returns_early"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptJsonDispatch.test_jsonl_still_uses_parse_lines::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 708,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptJsonDispatch.test_jsonl_still_uses_parse_lines"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_codex_parser_selected::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 578,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptParsers.test_codex_parser_selected"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_droid_parser_selected_with_transcript_path::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 593,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptParsers.test_droid_parser_selected_with_transcript_path"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_gemini_parser_selected::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 563,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptParsers.test_gemini_parser_selected"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_none_transcript_path::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 675,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestProcessSessionTranscriptParsers.test_none_transcript_path"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptParsers.test_session_not_found_returns_early::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 666,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestProcessSessionTranscriptParsers.test_session_not_found_returns_early"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptTokenPreservation.test_zero_tokens_preserves_existing_nonzero::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 769,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptTokenPreservation.test_zero_tokens_preserves_existing_nonzero"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestProcessSessionTranscriptTokenPreservation.test_zero_tokens_updates_when_existing_also_zero::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 794,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestProcessSessionTranscriptTokenPreservation.test_zero_tokens_updates_when_existing_also_zero"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestPromptFileCleanup.test_expire_calls_cleanup::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 439,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestPromptFileCleanup.test_expire_calls_cleanup"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestPurgeSoftDeletedDefinitions.test_exception_handled::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 551,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestPurgeSoftDeletedDefinitions.test_exception_handled"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestPurgeSoftDeletedDefinitions.test_success::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 544,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestPurgeSoftDeletedDefinitions.test_success"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestSessionLifecycleManager.test_process_session_transcript_empty_file::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 236,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestSessionLifecycleManager.test_process_session_transcript_empty_file"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestSessionLifecycleManager.test_process_session_transcript_missing_file::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 218,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestSessionLifecycleManager.test_process_session_transcript_missing_file"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestSessionLifecycleManager.test_process_session_transcript_no_messages::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 244,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "high",
-      "test_name": "TestSessionLifecycleManager.test_process_session_transcript_no_messages"
-    },
-    {
-      "fingerprint": "tests/sessions/test_lifecycle.py::TestSessionLifecycleManager.test_process_session_transcript_real_parsing::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 198,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_lifecycle.py",
-      "severity": "medium",
-      "test_name": "TestSessionLifecycleManager.test_process_session_transcript_real_parsing"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_dead_pid_no_tmux_pane_expires::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 333,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_dead_pid_no_tmux_pane_expires"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_handles_empty_results::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 157,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_handles_empty_results"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_handles_invalid_json::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 146,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_handles_invalid_json"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_handles_missing_parent_pid::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 133,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_handles_missing_parent_pid"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_ignores_alive_pid::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 106,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_ignores_alive_pid"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_legacy_pane_only_live_tmux_pane_retained::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 351,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_legacy_pane_only_live_tmux_pane_retained"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_legacy_pane_only_missing_tmux_pane_expires::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 374,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_legacy_pane_only_missing_tmux_pane_expires"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_missing_tmux_pane_expires_even_when_parent_pid_alive::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 283,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_missing_tmux_pane_expires_even_when_parent_pid_alive"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_multiple_sessions_mixed::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 166,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_multiple_sessions_mixed"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_recently_handled_ttl_expiry::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 183,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_recently_handled_ttl_expiry"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_skips_recently_handled::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 119,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_skips_recently_handled"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestCheckSessions.test_tmux_command_failure_falls_back_to_live_pid::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 308,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestCheckSessions.test_tmux_command_failure_falls_back_to_live_pid"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestExpireSession.test_dispatches_summaries_and_expires::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 401,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestExpireSession.test_dispatches_summaries_and_expires"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestExpireSession.test_falls_back_to_generate_fn::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 433,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestExpireSession.test_falls_back_to_generate_fn"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestExpireSession.test_no_summary_fn_still_expires::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 449,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestExpireSession.test_no_summary_fn_still_expires"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestExpireSession.test_status_update_failure_logged::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 423,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "high",
-      "test_name": "TestExpireSession.test_status_update_failure_logged"
-    },
-    {
-      "fingerprint": "tests/sessions/test_liveness_monitor.py::TestExpireSession.test_summary_dispatch_failure_continues::ONLY_MOCK_ASSERTIONS",
-      "issue_code": "ONLY_MOCK_ASSERTIONS",
-      "line": 412,
-      "message": "test only verifies mock interactions",
-      "path": "tests/sessions/test_liveness_monitor.py",
-      "severity": "medium",
-      "test_name": "TestExpireSession.test_summary_dispatch_failure_continues"
-    },
-    {
-      "fingerprint": "tests/sessions/test_processor_renderer.py::TestRenderStateTracking.test_unregister_nonexistent_no_error::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 61,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_processor_renderer.py",
-      "severity": "high",
-      "test_name": "TestRenderStateTracking.test_unregister_nonexistent_no_error"
-    },
-    {
-      "fingerprint": "tests/sessions/test_sessions_processor_unit.py::TestCodexMcpHookSynthesis.test_no_hook_manager_is_noop::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 972,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/sessions/test_sessions_processor_unit.py",
-      "severity": "high",
-      "test_name": "TestCodexMcpHookSynthesis.test_no_hook_manager_is_noop"
     },
     {
       "fingerprint": "tests/sessions/test_sessions_processor_unit.py::TestCodexMcpHookSynthesis.test_non_codex_source_does_not_synthesize::ONLY_MOCK_ASSERTIONS",
@@ -6904,15 +6274,6 @@
       "test_name": "TestSearchAll.test_search_all_uses_asyncio_gather"
     },
     {
-      "fingerprint": "tests/skills/test_scanner.py::TestTempFileHandling.test_temp_file_cleaned_up::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 209,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/skills/test_scanner.py",
-      "severity": "high",
-      "test_name": "TestTempFileHandling.test_temp_file_cleaned_up"
-    },
-    {
       "fingerprint": "tests/storage/sessions/test_usage_and_bootstrap.py::test_bulk_update_wraps_safe_update_in_transaction::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 98,
@@ -6985,33 +6346,6 @@
       "test_name": "TestLocalCloneManagerUpdate.test_update_last_sync"
     },
     {
-      "fingerprint": "tests/storage/test_memory_fts_triggers.py::TestFTSTriggerScoping.test_access_stats_update_succeeds_without_fts::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 91,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/storage/test_memory_fts_triggers.py",
-      "severity": "high",
-      "test_name": "TestFTSTriggerScoping.test_access_stats_update_succeeds_without_fts"
-    },
-    {
-      "fingerprint": "tests/storage/test_memory_fts_triggers.py::TestFTSTriggerScoping.test_mark_graph_processed_succeeds_without_fts::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 115,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/storage/test_memory_fts_triggers.py",
-      "severity": "high",
-      "test_name": "TestFTSTriggerScoping.test_mark_graph_processed_succeeds_without_fts"
-    },
-    {
-      "fingerprint": "tests/storage/test_memory_fts_triggers.py::TestFTSTriggerScoping.test_updated_at_succeeds_without_fts::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 124,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/storage/test_memory_fts_triggers.py",
-      "severity": "high",
-      "test_name": "TestFTSTriggerScoping.test_updated_at_succeeds_without_fts"
-    },
-    {
       "fingerprint": "tests/storage/test_worktrees.py::TestLocalWorktreeManagerFindStale.test_find_stale_custom_hours::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 662,
@@ -7030,6 +6364,15 @@
       "test_name": "TestGitHubSyncServiceSync.test_sync_task_calls_github_mcp"
     },
     {
+      "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceCreate.test_create_issue_creates_same_named_project_when_missing::HEAVY_MOCK_LOW_ASSERT",
+      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
+      "line": 437,
+      "message": "test has heavy mock setup with too little observable assertion coverage",
+      "path": "tests/sync/test_linear_sync.py",
+      "severity": "medium",
+      "test_name": "TestLinearSyncServiceCreate.test_create_issue_creates_same_named_project_when_missing"
+    },
+    {
       "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceCreate.test_create_issue_updates_task_linear_id::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 480,
@@ -7039,6 +6382,15 @@
       "test_name": "TestLinearSyncServiceCreate.test_create_issue_updates_task_linear_id"
     },
     {
+      "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceImport.test_import_links_existing_task_by_gobby_ref_title::ONLY_MOCK_ASSERTIONS",
+      "issue_code": "ONLY_MOCK_ASSERTIONS",
+      "line": 201,
+      "message": "test only verifies mock interactions",
+      "path": "tests/sync/test_linear_sync.py",
+      "severity": "medium",
+      "test_name": "TestLinearSyncServiceImport.test_import_links_existing_task_by_gobby_ref_title"
+    },
+    {
       "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceSync.test_sync_task_calls_linear_mcp::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 290,
@@ -7046,6 +6398,24 @@
       "path": "tests/sync/test_linear_sync.py",
       "severity": "medium",
       "test_name": "TestLinearSyncServiceSync.test_sync_task_calls_linear_mcp"
+    },
+    {
+      "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceSync.test_sync_task_graphql_resolves_linear_state_id::HEAVY_MOCK_LOW_ASSERT",
+      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
+      "line": 308,
+      "message": "test has heavy mock setup with too little observable assertion coverage",
+      "path": "tests/sync/test_linear_sync.py",
+      "severity": "medium",
+      "test_name": "TestLinearSyncServiceSync.test_sync_task_graphql_resolves_linear_state_id"
+    },
+    {
+      "fingerprint": "tests/sync/test_linear_sync.py::TestLinearSyncServiceSync.test_sync_task_graphql_resolves_linear_state_id::ONLY_MOCK_ASSERTIONS",
+      "issue_code": "ONLY_MOCK_ASSERTIONS",
+      "line": 308,
+      "message": "test only verifies mock interactions",
+      "path": "tests/sync/test_linear_sync.py",
+      "severity": "medium",
+      "test_name": "TestLinearSyncServiceSync.test_sync_task_graphql_resolves_linear_state_id"
     },
     {
       "fingerprint": "tests/tasks/test_task_validation.py::TestGetValidationContextSmart.test_includes_file_analysis::HEAVY_MOCK_LOW_ASSERT",
@@ -7064,15 +6434,6 @@
       "path": "tests/tasks/test_task_validation.py",
       "severity": "medium",
       "test_name": "TestGetValidationContextSmart.test_includes_file_analysis"
-    },
-    {
-      "fingerprint": "tests/tasks/test_task_validation.py::TestGetValidationContextSmart.test_returns_none_when_no_context::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 423,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/tasks/test_task_validation.py",
-      "severity": "high",
-      "test_name": "TestGetValidationContextSmart.test_returns_none_when_no_context"
     },
     {
       "fingerprint": "tests/tasks/test_validation.py::TestGetValidationContextSmartEdgeCases.test_context_limited_remaining_chars_skips_commit_diff::HEAVY_MOCK_LOW_ASSERT",
@@ -7120,15 +6481,6 @@
       "test_name": "TestGetValidationContextSmartMerged.test_includes_file_analysis"
     },
     {
-      "fingerprint": "tests/tasks/test_validation.py::TestGetValidationContextSmartMerged.test_returns_none_when_no_context::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 1271,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/tasks/test_validation.py",
-      "severity": "high",
-      "test_name": "TestGetValidationContextSmartMerged.test_returns_none_when_no_context"
-    },
-    {
       "fingerprint": "tests/telemetry/test_instrumentors.py::test_capture_content_flag_propagation::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 54,
@@ -7154,105 +6506,6 @@
       "path": "tests/telemetry/test_logging.py",
       "severity": "medium",
       "test_name": "test_shutdown_telemetry_uninstruments_when_active"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_agent_runner_exception::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 307,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_agent_runner_exception"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_llm_service_exception::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 328,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_llm_service_exception"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_memory_manager_exception::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 105,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_memory_manager_exception"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_memory_sync_manager_exception::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 186,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_memory_sync_manager_exception"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_task_sync_manager_does_not_import_jsonl::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 160,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_task_sync_manager_does_not_import_jsonl"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_task_validator_exception::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 275,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_task_validator_exception"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_with_memory_manager::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 81,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_with_memory_manager"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_with_memory_sync_manager_does_not_import_jsonl::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 128,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_with_memory_sync_manager_does_not_import_jsonl"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_with_message_processor::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 216,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_with_message_processor"
-    },
-    {
-      "fingerprint": "tests/test_runner_init.py::TestGobbyRunnerInitialization.test_init_with_task_validator::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 243,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/test_runner_init.py",
-      "severity": "medium",
-      "test_name": "TestGobbyRunnerInitialization.test_init_with_task_validator"
-    },
-    {
-      "fingerprint": "tests/utils/test_project_context.py::TestEnsureProjectJsonForIsolation.test_handles_errors_gracefully::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 777,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/utils/test_project_context.py",
-      "severity": "high",
-      "test_name": "TestEnsureProjectJsonForIsolation.test_handles_errors_gracefully"
     },
     {
       "fingerprint": "tests/utils/test_project_context.py::TestFindProjectRoot.test_find_project_root_with_none_uses_cwd::HEAVY_MOCK_LOW_ASSERT",
@@ -7363,15 +6616,6 @@
       "test_name": "TestDaemonClientCallMcpTool.test_call_mcp_tool_endpoint_format"
     },
     {
-      "fingerprint": "tests/utils/test_utils_machine_id.py::TestClearCache.test_clear_cache_is_thread_safe::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 217,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/utils/test_utils_machine_id.py",
-      "severity": "high",
-      "test_name": "TestClearCache.test_clear_cache_is_thread_safe"
-    },
-    {
       "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_already_initialized_with_empty_id::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 774,
@@ -7433,15 +6677,6 @@
       "path": "tests/utils/test_utils_project_init.py",
       "severity": "medium",
       "test_name": "TestInitializeProject.test_uses_provided_name"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestUpdateProjectJsonVerification.test_noop_when_no_project_json::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 602,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "high",
-      "test_name": "TestUpdateProjectJsonVerification.test_noop_when_no_project_json"
     },
     {
       "fingerprint": "tests/voice/test_stt.py::TestMimeTypeMapping.test_mp3_extension::HEAVY_MOCK_LOW_ASSERT",
@@ -7660,33 +6895,6 @@
       "test_name": "TestGetRecentGitCommits.test_max_commits_large_number"
     },
     {
-      "fingerprint": "tests/workflows/test_hook_evaluation_serialization.py::test_different_sessions_evaluate_concurrently::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 121,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_hook_evaluation_serialization.py",
-      "severity": "high",
-      "test_name": "test_different_sessions_evaluate_concurrently"
-    },
-    {
-      "fingerprint": "tests/workflows/test_instance_manager.py::test_delete_instance_nonexistent::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 186,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_instance_manager.py",
-      "severity": "high",
-      "test_name": "test_delete_instance_nonexistent"
-    },
-    {
-      "fingerprint": "tests/workflows/test_instance_manager.py::test_set_enabled_nonexistent::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 265,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_instance_manager.py",
-      "severity": "high",
-      "test_name": "test_set_enabled_nonexistent"
-    },
-    {
       "fingerprint": "tests/workflows/test_loader.py::TestValidateWorkflowForAgent.test_validate_with_project_path::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 881,
@@ -7694,69 +6902,6 @@
       "path": "tests/workflows/test_loader.py",
       "severity": "medium",
       "test_name": "TestValidateWorkflowForAgent.test_validate_with_project_path"
-    },
-    {
-      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_allows_inputs_reference::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 562,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_loader_pipeline.py",
-      "severity": "high",
-      "test_name": "TestValidatePipelineReferences.test_allows_inputs_reference"
-    },
-    {
-      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_multiple_refs_all_valid::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 575,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_loader_pipeline.py",
-      "severity": "high",
-      "test_name": "TestValidatePipelineReferences.test_multiple_refs_all_valid"
-    },
-    {
-      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_valid_back_reference::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 440,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_loader_pipeline.py",
-      "severity": "high",
-      "test_name": "TestValidatePipelineReferences.test_valid_back_reference"
-    },
-    {
-      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_condition_references::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 501,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_loader_pipeline.py",
-      "severity": "high",
-      "test_name": "TestValidatePipelineReferences.test_validates_condition_references"
-    },
-    {
-      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_input_references::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 518,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_loader_pipeline.py",
-      "severity": "high",
-      "test_name": "TestValidatePipelineReferences.test_validates_input_references"
-    },
-    {
-      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_output_references::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 531,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_loader_pipeline.py",
-      "severity": "high",
-      "test_name": "TestValidatePipelineReferences.test_validates_output_references"
-    },
-    {
-      "fingerprint": "tests/workflows/test_loader_pipeline.py::TestValidatePipelineReferences.test_validates_prompt_references::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 481,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_loader_pipeline.py",
-      "severity": "high",
-      "test_name": "TestValidatePipelineReferences.test_validates_prompt_references"
     },
     {
       "fingerprint": "tests/workflows/test_mcp_step.py::TestExecuteMCPStep.test_mcp_step_no_arguments::ONLY_MOCK_ASSERTIONS",
@@ -7858,15 +7003,6 @@
       "test_name": "TestExecuteNestedPipelineDictForm.test_string_form_still_works"
     },
     {
-      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestClosePipelineSession.test_close_session_error_suppressed::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 410,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_executor_outputs.py",
-      "severity": "high",
-      "test_name": "TestClosePipelineSession.test_close_session_error_suppressed"
-    },
-    {
       "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestClosePipelineSession.test_closes_different_session::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 395,
@@ -7874,15 +7010,6 @@
       "path": "tests/workflows/test_pipeline_executor_outputs.py",
       "severity": "medium",
       "test_name": "TestClosePipelineSession.test_closes_different_session"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestClosePipelineSession.test_no_session_id_does_nothing::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 368,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_executor_outputs.py",
-      "severity": "high",
-      "test_name": "TestClosePipelineSession.test_no_session_id_does_nothing"
     },
     {
       "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestClosePipelineSession.test_same_session_does_nothing::ONLY_MOCK_ASSERTIONS",
@@ -7894,15 +7021,6 @@
       "test_name": "TestClosePipelineSession.test_same_session_does_nothing"
     },
     {
-      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestEmitEvent.test_emit_event_callback_error_suppressed::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 243,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_executor_outputs.py",
-      "severity": "high",
-      "test_name": "TestEmitEvent.test_emit_event_callback_error_suppressed"
-    },
-    {
       "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestEmitEvent.test_emit_event_calls_callback::ONLY_MOCK_ASSERTIONS",
       "issue_code": "ONLY_MOCK_ASSERTIONS",
       "line": 258,
@@ -7910,33 +7028,6 @@
       "path": "tests/workflows/test_pipeline_executor_outputs.py",
       "severity": "medium",
       "test_name": "TestEmitEvent.test_emit_event_calls_callback"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestEmitEvent.test_emit_event_no_callback::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 230,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_executor_outputs.py",
-      "severity": "high",
-      "test_name": "TestEmitEvent.test_emit_event_no_callback"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestNotifyCompletion.test_no_registry_does_nothing::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 278,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_executor_outputs.py",
-      "severity": "high",
-      "test_name": "TestNotifyCompletion.test_no_registry_does_nothing"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestNotifyCompletion.test_notify_error_suppressed::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 331,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_executor_outputs.py",
-      "severity": "high",
-      "test_name": "TestNotifyCompletion.test_notify_error_suppressed"
     },
     {
       "fingerprint": "tests/workflows/test_pipeline_executor_outputs.py::TestNotifyCompletion.test_notify_with_outputs::ONLY_MOCK_ASSERTIONS",
@@ -7957,48 +7048,12 @@
       "test_name": "TestNotifyApprovalPending.test_expands_env_vars_in_headers"
     },
     {
-      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestNotifyApprovalPending.test_handles_missing_webhooks_gracefully::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 153,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_webhooks.py",
-      "severity": "high",
-      "test_name": "TestNotifyApprovalPending.test_handles_missing_webhooks_gracefully"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestNotifyComplete.test_handles_missing_on_complete_webhook::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 208,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_webhooks.py",
-      "severity": "high",
-      "test_name": "TestNotifyComplete.test_handles_missing_on_complete_webhook"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestNotifyFailure.test_handles_missing_on_failure_webhook::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 262,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_webhooks.py",
-      "severity": "high",
-      "test_name": "TestNotifyFailure.test_handles_missing_on_failure_webhook"
-    },
-    {
       "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestWebhookErrors.test_handles_network_error_gracefully::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 307,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/workflows/test_pipeline_webhooks.py",
       "severity": "medium",
-      "test_name": "TestWebhookErrors.test_handles_network_error_gracefully"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestWebhookErrors.test_handles_network_error_gracefully::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 307,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_webhooks.py",
-      "severity": "high",
       "test_name": "TestWebhookErrors.test_handles_network_error_gracefully"
     },
     {
@@ -8009,51 +7064,6 @@
       "path": "tests/workflows/test_pipeline_webhooks.py",
       "severity": "medium",
       "test_name": "TestWebhookErrors.test_logs_error_on_http_failure"
-    },
-    {
-      "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestWebhookErrors.test_logs_error_on_http_failure::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 285,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_pipeline_webhooks.py",
-      "severity": "high",
-      "test_name": "TestWebhookErrors.test_logs_error_on_http_failure"
-    },
-    {
-      "fingerprint": "tests/workflows/test_session_variable_manager.py::test_delete_variables_nonexistent::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 141,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_session_variable_manager.py",
-      "severity": "high",
-      "test_name": "test_delete_variables_nonexistent"
-    },
-    {
-      "fingerprint": "tests/workflows/test_summary_actions.py::TestRenameTmuxWindow.test_failure_does_not_propagate::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 402,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_summary_actions.py",
-      "severity": "high",
-      "test_name": "TestRenameTmuxWindow.test_failure_does_not_propagate"
-    },
-    {
-      "fingerprint": "tests/workflows/test_summary_actions.py::TestRenameTmuxWindow.test_skips_when_no_terminal_context::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 312,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_summary_actions.py",
-      "severity": "high",
-      "test_name": "TestRenameTmuxWindow.test_skips_when_no_terminal_context"
-    },
-    {
-      "fingerprint": "tests/workflows/test_summary_actions.py::TestRenameTmuxWindow.test_skips_when_no_tmux_pane::NO_ASSERTION",
-      "issue_code": "NO_ASSERTION",
-      "line": 322,
-      "message": "test has no assertion or assertion-like outcome check",
-      "path": "tests/workflows/test_summary_actions.py",
-      "severity": "high",
-      "test_name": "TestRenameTmuxWindow.test_skips_when_no_tmux_pane"
     },
     {
       "fingerprint": "tests/workflows/test_summary_actions.py::TestRenameTmuxWindow.test_spawned_agent_renames_on_gobby_socket::ONLY_MOCK_ASSERTIONS",
