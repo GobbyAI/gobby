@@ -110,7 +110,7 @@ class StageStatesManager:
               JOIN tasks t ON t.id = s.task_id
              WHERE {" AND ".join(filters)}
              ORDER BY t.created_at, s.task_id
-            """,  # nosec B608 - filters are assembled from fixed clauses.
+            """,  # nosec B608 # filters are assembled from fixed clauses.
             tuple(params),
         )
         return [row["task_id"] for row in rows]

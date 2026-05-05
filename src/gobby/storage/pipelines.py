@@ -226,7 +226,7 @@ class LocalPipelineExecutionManager:
             parent_execution_id=parent_execution_id,
         )
         sql = (
-            f"SELECT * FROM pipeline_executions {where} "  # nosec B608 - fragment built from typed inputs
+            f"SELECT * FROM pipeline_executions {where} "  # nosec B608 # fragment built from typed inputs
             "ORDER BY created_at DESC LIMIT ? OFFSET ?"
         )
         params.extend([limit, offset])
@@ -287,7 +287,7 @@ class LocalPipelineExecutionManager:
             SELECT '__total__' AS status, cnt FROM total
             UNION ALL
             SELECT status, cnt FROM summary
-        """  # nosec B608 - WHERE fragment built from typed inputs.
+        """  # nosec B608 # WHERE fragment built from typed inputs.
         rows = self.db.fetchall(sql, (*params, status_value, status_value))
         total = 0
         summary: dict[str, int] = {}

@@ -189,7 +189,7 @@ class TaskArtifactManager:
                 ON CONFLICT(task_id) DO UPDATE SET
                     {update_clause},
                     updated_at = datetime('now')
-                """,  # nosec B608 - columns are validated static allowlist values.
+                """,  # nosec B608 # columns are validated static allowlist values.
                 tuple(params),
             )
         return self.get_artifacts(task_id)

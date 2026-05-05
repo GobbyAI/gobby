@@ -255,7 +255,7 @@ def reload_candidate(
         LEFT JOIN task_stage_states s ON s.task_id = t.id
         WHERE {where_clause}
         ORDER BY s.position, s.stage_name
-        """,  # nosec B608 - where_clause is selected from fixed templates.
+        """,  # nosec B608 # where_clause is selected from fixed templates.
         tuple(params),
     )
     if not rows:

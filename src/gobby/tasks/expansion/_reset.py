@@ -215,7 +215,7 @@ def _child_rows_by_parent(self: Any, parent_ids: set[str]) -> dict[str, list[Any
         SELECT id, seq_num, parent_task_id
           FROM tasks
          WHERE parent_task_id IN ({placeholders})
-        """,  # nosec B608 - placeholders are generated for a bound ID list.
+        """,  # nosec B608 # placeholders are generated for a bound ID list.
         tuple(ordered_parent_ids),
     )
     children: dict[str, list[Any]] = {parent_id: [] for parent_id in ordered_parent_ids}

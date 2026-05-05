@@ -47,6 +47,42 @@ async def test_bin_freshness_loop_initial_delay_interval_jitter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bin_freshness_loop_default_jitter_uses_system_random_source() -> None:
+    sleeps: list[float] = []
+    updates = 0
+    shutdown = False
+
+    async def fake_sleep(duration: float) -> None:
+        nonlocal shutdown
+        sleeps.append(duration)
+        shutdown = True
+
+    def update_once(db: object, config: BinFreshnessConfig) -> list[object]:
+        nonlocal updates
+        updates += 1
+        return []
+
+    with patch(
+        "gobby.runner_maintenance._JITTER_RANDOM",
+        SimpleNamespace(uniform=lambda _lower, _upper: 2),
+    ):
+        await bin_freshness_loop(
+            object(),
+            BinFreshnessConfig(
+                initial_delay_seconds=0,
+                interval_seconds=10,
+                jitter_seconds=5,
+            ),
+            lambda: shutdown,
+            update_once=update_once,
+            sleep=fake_sleep,
+        )
+
+    assert sleeps == [12]
+    assert updates == 1
+
+
+@pytest.mark.asyncio
 async def test_bin_freshness_loop_shutdown_exit_before_initial_delay() -> None:
     updates = 0
 

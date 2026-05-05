@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _capture_base_commit_sha(isolation_path: str) -> str:
-    result = subprocess.run(  # nosec B603, B607 - fixed git argv on local isolation path.
+    result = subprocess.run(  # nosec B603 B607 # fixed git argv on local isolation path.
         ["git", "-C", isolation_path, "rev-parse", "HEAD"],
         check=False,
         capture_output=True,

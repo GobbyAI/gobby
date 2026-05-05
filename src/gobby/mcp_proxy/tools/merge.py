@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import sqlite3
-import subprocess  # nosec B404 - used for a fixed git dry-run fallback.
+import subprocess  # nosec B404 # used for a fixed git dry-run fallback.
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse

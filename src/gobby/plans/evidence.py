@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess  # nosec B404 - resolver shells out to local git.
+import subprocess  # nosec B404 # resolver shells out to local git.
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -111,7 +111,7 @@ def _bundle(*rows: EvidenceRow) -> EvidenceBundle:
 
 
 def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # nosec B603, B607 - args are fixed git argv plus caller refs.
+    return subprocess.run(  # nosec B603 B607 # args are fixed git argv plus caller refs.
         ["git", "-C", str(repo_root), *args],
         check=False,
         capture_output=True,

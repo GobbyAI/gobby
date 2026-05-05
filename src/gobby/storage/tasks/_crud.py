@@ -308,7 +308,7 @@ def list_automation_candidates(
           )
           {project_filter}
         ORDER BY tasks.priority ASC, tasks.seq_num ASC, tasks.created_at ASC
-        """,  # nosec B608 - project_filter is static SQL selected above.
+        """,  # nosec B608 # project_filter is static SQL selected above.
         tuple(params),
     )
     tasks = [Task.from_row(row) for row in rows]

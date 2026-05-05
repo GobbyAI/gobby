@@ -146,7 +146,7 @@ class LocalPlanManager:
             SELECT * FROM plans
             {where}
             ORDER BY updated_at DESC, plan_id ASC
-            """,  # nosec B608 - WHERE clause is assembled from fixed fragments.
+            """,  # nosec B608 # WHERE clause is assembled from fixed fragments.
             tuple(params),
         )
         return [PlanRecord.from_row(row) for row in rows]
@@ -284,7 +284,7 @@ class LocalPlanManager:
             {project_clause}
             ORDER BY updated_at DESC
             LIMIT 1
-            """,  # nosec B608 - project_clause is fixed text.
+            """,  # nosec B608 # project_clause is fixed text.
             tuple(params),
         )
 

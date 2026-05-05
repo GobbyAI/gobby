@@ -202,7 +202,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
               FROM task_stage_states
              WHERE task_id IN ({placeholders})
              ORDER BY task_id, position, stage_name
-            """,  # nosec B608 - placeholders are generated from task_ids length only.
+            """,  # nosec B608 # placeholders are generated from task_ids length only.
             tuple(task_ids),
         )
         grouped: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}

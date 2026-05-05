@@ -65,7 +65,7 @@ async def _run_git(
     import asyncio
 
     return await asyncio.to_thread(
-        subprocess.run,  # nosec B603, B607
+        subprocess.run,  # nosec B603 B607
         ["git", *args],
         cwd=cwd,
         capture_output=True,

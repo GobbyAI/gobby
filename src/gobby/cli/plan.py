@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import subprocess  # nosec B404 - evidence resolution shells out to local git.
+import subprocess  # nosec B404 # evidence resolution shells out to local git.
 from dataclasses import asdict, dataclass
 from functools import cached_property
 from pathlib import Path
@@ -188,7 +188,7 @@ class _CliEvidenceContext:
         return raw
 
     def get_commit_range_diff(self, range_: str) -> str:
-        result = subprocess.run(  # nosec B603, B607 - fixed git argv plus caller ref.
+        result = subprocess.run(  # nosec B603 B607 # fixed git argv plus caller ref.
             ["git", "-C", str(self.repo_root), "diff", range_],
             check=False,
             capture_output=True,

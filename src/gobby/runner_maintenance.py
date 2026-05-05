@@ -10,11 +10,11 @@ import asyncio
 import json
 import logging
 import os
-import random
 import signal
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from random import SystemRandom
 from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
+_JITTER_RANDOM = SystemRandom()
 
 
 async def _sleep_until_next_bin_freshness_cycle(
@@ -55,7 +56,7 @@ async def bin_freshness_loop(
     from gobby.install.bin_freshness_updater import update_all_managed_bins
 
     updater = update_once or update_all_managed_bins
-    jitter_fn = jitter or (lambda upper: random.uniform(0, upper))
+    jitter_fn = jitter or (lambda upper: _JITTER_RANDOM.uniform(0, upper))
 
     try:
         await _sleep_until_next_bin_freshness_cycle(

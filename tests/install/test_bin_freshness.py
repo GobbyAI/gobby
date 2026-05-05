@@ -4,12 +4,19 @@ import io
 import json
 import os
 import tarfile
+from http.client import IncompleteRead
 from pathlib import Path
+from types import TracebackType
+from typing import Self
 
 import pytest
 
 from gobby.config.bin_freshness import BinFreshnessConfig
-from gobby.install.bin_freshness_github import GithubAPIError, SourceUnavailableError
+from gobby.install.bin_freshness_github import (
+    GithubAPIError,
+    GithubReleaseClient,
+    SourceUnavailableError,
+)
 from gobby.install.bin_freshness_inspector import inspect_managed_bin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, managed_bin_specs
@@ -86,6 +93,22 @@ class FakeClient:
         if self.download_error is not None:
             raise self.download_error
         return self.archive
+
+
+class _IncompleteReadResponse:
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        return None
+
+    def read(self) -> bytes:
+        raise IncompleteRead(b"partial", 1)
 
 
 def _asset(spec: ManagedBinSpec, version: str = "0.4.1") -> ReleaseAsset:
@@ -373,3 +396,29 @@ class TestBinUpdater:
 
         assert len(records) == len(managed_bin_specs())
         assert {record.last_status for record in records} == {"failed"}
+
+
+class TestGithubReleaseClient:
+    def test_fetch_releases_wraps_incomplete_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "gobby.install.bin_freshness_github._urlopen_https",
+            lambda _req, **_kwargs: _IncompleteReadResponse(),
+        )
+        client = GithubReleaseClient(timeout_seconds=1)
+
+        with pytest.raises(GithubAPIError) as exc_info:
+            client.fetch_releases()
+
+        assert isinstance(exc_info.value.__cause__, IncompleteRead)
+
+    def test_download_asset_wraps_incomplete_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "gobby.install.bin_freshness_github._urlopen_https",
+            lambda _req, **_kwargs: _IncompleteReadResponse(),
+        )
+        client = GithubReleaseClient(timeout_seconds=1)
+
+        with pytest.raises(GithubAPIError) as exc_info:
+            client.download_asset(_asset(_spec()))
+
+        assert isinstance(exc_info.value.__cause__, IncompleteRead)

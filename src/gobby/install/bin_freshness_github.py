@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import platform
 import sys
+from http.client import HTTPException
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlparse
@@ -83,7 +84,7 @@ class GithubReleaseClient:
         try:
             with _urlopen_https(req, timeout=self.timeout_seconds) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
-        except (URLError, OSError, ValueError, json.JSONDecodeError) as exc:
+        except (URLError, HTTPException, OSError, ValueError) as exc:
             raise GithubAPIError(str(exc)) from exc
         if not isinstance(payload, list):
             raise GithubAPIError("GitHub Releases API returned an unexpected payload")
@@ -120,7 +121,7 @@ class GithubReleaseClient:
         try:
             with _urlopen_https(req, timeout=self.timeout_seconds) as resp:
                 payload = resp.read()
-        except (URLError, OSError, ValueError) as exc:
+        except (URLError, HTTPException, OSError, ValueError) as exc:
             raise GithubAPIError(str(exc)) from exc
         if not isinstance(payload, bytes):
             raise GithubAPIError("GitHub asset download returned an unexpected payload")

@@ -106,7 +106,7 @@ class TaskDeliveryStateManager:
                 INSERT INTO task_delivery_campaigns ({", ".join(columns)})
                 VALUES ({placeholders})
                 ON CONFLICT(task_id) DO UPDATE SET {updates}
-                """,  # nosec B608 - columns are filtered against static allowlists.
+                """,  # nosec B608 # columns are filtered against static allowlists.
                 tuple(values[column] for column in columns),
             )
             result = conn.execute(
@@ -154,7 +154,7 @@ class TaskDeliveryStateManager:
                 INSERT INTO task_delivery_units ({", ".join(columns)})
                 VALUES ({placeholders})
                 ON CONFLICT(task_id, unit_key) DO UPDATE SET {updates}
-                """,  # nosec B608 - columns are filtered against static allowlists.
+                """,  # nosec B608 # columns are filtered against static allowlists.
                 tuple(values[column] for column in columns),
             )
             result = conn.execute(

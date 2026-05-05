@@ -58,7 +58,7 @@ def hydrate_task_stage_state(db: DatabaseProtocol, tasks: Sequence[Task]) -> Non
           LEFT JOIN task_stages_registry r ON r.name = s.stage_name
          WHERE s.task_id IN ({placeholders})
          ORDER BY s.task_id, s.position, s.stage_name
-        """,  # nosec B608 - placeholders are generated from task_ids length only.
+        """,  # nosec B608 # placeholders are generated from task_ids length only.
         tuple(task_ids),
     )
 
