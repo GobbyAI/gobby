@@ -10,6 +10,7 @@ JSON format: Single session file at ~/.gemini/tmp/{SHA256(cwd)}/chats/session-*.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -95,17 +96,27 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             logger_instance: Optional logger instance.
         """
         super().__init__(cli_name=cli_name, session_id=session_id, logger_instance=logger_instance)
-        # Counter for generating synthetic tool_use_ids when not present in data
-        self._tool_use_counter = 0
         # Track last generated tool_use_id for JSONL sequential pairing
         self._last_tool_use_id: str | None = None
 
-    def _next_tool_use_id(self, data_id: str | None = None) -> str:
-        """Generate or extract a tool_use_id for pairing tool_use with tool_result."""
+    def _next_tool_use_id(
+        self,
+        data_id: str | None = None,
+        *,
+        index: int,
+        tool_name: str | None,
+    ) -> str:
+        """Generate or extract a tool_use_id for pairing tool_use with tool_result.
+
+        When the upstream payload carries an explicit ID we propagate it as-is.
+        Otherwise we derive a deterministic hash of (cli_name, session_id, index,
+        tool_name) so re-parsing the same session twice produces identical IDs.
+        """
         if data_id:
             return str(data_id)
-        self._tool_use_counter += 1
-        return f"gemini-tu-{self._tool_use_counter}"
+        payload = "|".join((self.cli_name, self.session_id or "", str(index), tool_name or ""))
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+        return f"{self.cli_name}-tu-{digest}"
 
     def _message_id_for(self, prefix: str, index: int, raw_id: Any = None) -> str:
         """Generate a stable message identifier for deduping token events."""
@@ -262,7 +273,11 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             tool_input = data.get("parameters") or data.get("args") or data.get("input")
             content = f"Tool call: {tool_name}"
             # Extract or generate tool_use_id for pairing with tool_result
-            tool_use_id = self._next_tool_use_id(data.get("id") or data.get("tool_call_id"))
+            tool_use_id = self._next_tool_use_id(
+                data.get("id") or data.get("tool_call_id"),
+                index=index,
+                tool_name=tool_name,
+            )
             self._last_tool_use_id = tool_use_id
 
         elif event_type == "tool_result":
@@ -504,7 +519,11 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                 tool_name = tc.get("name", "unknown")
                 tool_args = tc.get("args")
                 # Use the tool call's own id for pairing
-                tc_id = self._next_tool_use_id(tc.get("id"))
+                tc_id = self._next_tool_use_id(
+                    tc.get("id"),
+                    index=idx,
+                    tool_name=tool_name,
+                )
 
                 # Tool use
                 results.append(
