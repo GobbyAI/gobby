@@ -20,7 +20,7 @@ Documentation guides for using Gobby's features.
 | [rules.md](rules.md) | Rule engine — events, effects, conditions, enforcement |
 | [pipelines.md](pipelines.md) | Pipeline workflows with data flow and approval gates |
 | [search.md](search.md) | Unified search with TF-IDF, embeddings, and hybrid modes |
-| [code-index.md](code-index.md) | AST-based symbol indexing with `gobby-code` MCP tools |
+| [code-index.md](code-index.md) | Native `gcode` code indexing, symbol search, and graph navigation |
 | [tdd-enforcement.md](tdd-enforcement.md) | TDD enforcement — test-first ordering, nudges, and block rules |
 | [testing.md](testing.md) | Targeted backend, frontend, coverage, and browser test workflows |
 
@@ -30,7 +30,7 @@ Documentation guides for using Gobby's features.
 |-------|-------------|
 | [agents.md](agents.md) | Subagent spawning and management |
 | [worktrees.md](worktrees.md) | Git worktrees, clones, and merge operations |
-| [orchestration.md](orchestration.md) | Task orchestration — pipeline-based (v3) and MCP tool-based (v2) |
+| [orchestration.md](orchestration.md) | Task orchestration with stage dispatch, agents, isolation, and review gates |
 
 ## Reference
 

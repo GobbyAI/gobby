@@ -1,76 +1,49 @@
-# Sandbox Configuration for Spawned Agents
+# Sandbox Configuration
 
-This guide explains how to enable OS-level sandbox isolation when spawning agents through Gobby.
+This guide explains Gobby's daemon-owned sandbox configuration for web chat and
+spawned agents. For the compatibility test matrix and public `ghook` artifact
+validation, see [sandbox-compatibility.md](./sandbox-compatibility.md).
 
 ## Overview
 
-Gobby supports opt-in sandbox configuration for spawned agents. When enabled, Gobby passes the appropriate flags to each CLI's built-in sandbox implementation. The actual sandboxing is handled by the CLI itself (Claude Code, Codex, or Gemini CLI) - Gobby just configures and passes the right parameters.
+Gobby resolves sandbox policy at the daemon layer, then translates that policy
+to the current provider-specific runtime surface. Web chat and spawned agents
+both default to daemon-owned sandboxing enabled through these config fields:
 
-**Key point**: Sandboxing is disabled by default to preserve existing behavior. You must explicitly enable it.
+- `web_chat_sandbox`
+- `agent_sandbox`
 
-## Enabling Sandbox via MCP Tool
+The resolved daemon-owned policy uses permissive mode with external network
+access enabled. The active workspace is writable, and `~/.gobby` is readable so
+sandboxed runtimes can resolve required daemon state.
 
-When using the `spawn_agent` MCP tool, you can enable sandboxing with these parameters:
+## Config Shape
 
-```python
-spawn_agent(
-    prompt="Implement the feature",
-    sandbox=True,                    # Enable sandbox
-    sandbox_mode="permissive",       # "permissive" or "restrictive"
-    sandbox_allow_network=True,      # Allow network access (default: True)
-    sandbox_extra_paths=["/data"],   # Additional writable paths
-)
+Configure daemon-owned sandbox defaults in Gobby's daemon config:
+
+```yaml
+web_chat_sandbox:
+  enabled: true
+  extra_read_paths: []
+  extra_write_paths: []
+
+agent_sandbox:
+  enabled: true
+  extra_read_paths: []
+  extra_write_paths: []
 ```
 
 ### Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `sandbox` | bool | `None` | Enable/disable sandbox. `None` inherits from agent definition |
-| `sandbox_mode` | str | `"permissive"` | Strictness level: `"permissive"` or `"restrictive"` |
-| `sandbox_allow_network` | bool | `True` | Allow external network access |
-| `sandbox_extra_paths` | list | `[]` | Additional paths for write access |
+| `enabled` | bool | `true` | Enables or disables daemon-owned sandboxing for the surface |
+| `extra_read_paths` | list | `[]` | Additional paths granted read access |
+| `extra_write_paths` | list | `[]` | Additional paths granted write access |
 
-## Enabling Sandbox via Agent Definition
-
-You can configure sandbox settings in agent YAML definitions:
-
-```yaml
-# .gobby/agents/my-sandboxed-agent.yaml
-name: my-sandboxed-agent
-description: Agent with sandbox enabled
-
-mode: headless
-provider: claude
-
-sandbox:
-  enabled: true
-  mode: permissive
-  allow_network: true
-  extra_read_paths: []
-  extra_write_paths: []
-```
-
-### Built-in Example
-
-Gobby includes a `sandboxed` agent definition with sandbox enabled:
-
-```yaml
-# src/gobby/install/shared/agents/sandboxed.yaml
-name: sandboxed
-description: |
-  Agent that runs in an OS-level sandbox.
-  Uses the CLI's built-in sandbox for isolation.
-
-mode: headless
-provider: claude
-sandbox:
-  enabled: true
-  mode: permissive
-  allow_network: true
-```
-
-Use it with: `spawn_agent(prompt="...", agent="sandboxed")`
+The daemon-owned resolver fixes mode to `permissive` and external network
+access to enabled. The lower-level `SandboxConfig` model still supports
+restrictive mode for provider translation tests and direct resolver use.
 
 ## CLI-Specific Sandbox Behavior
 
@@ -81,12 +54,12 @@ Each CLI implements sandboxing differently:
 Claude Code uses the `--settings` flag with a JSON configuration:
 
 ```bash
-claude --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}'
+claude --settings '{"allowManagedPermissionRulesOnly":true,"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":false,"allowUnsandboxedCommands":false}}'
 ```
 
-- Sandbox is all-or-nothing (enabled/disabled)
-- `autoAllowBashIfSandboxed: true` auto-approves bash commands when sandboxed
-- Network to localhost (Gobby daemon) is always allowed
+Gobby enables the sandbox, uses managed permission rules only, disables
+unsandboxed command fallback, and leaves undocumented outbound-network wildcard
+settings unset.
 
 ### Codex (OpenAI)
 
@@ -112,12 +85,12 @@ Gemini uses the `-s` flag and `SEATBELT_PROFILE` environment variable (macOS):
 SEATBELT_PROFILE=permissive-open gemini -s
 
 # Restrictive mode
-SEATBELT_PROFILE=restrictive-closed gemini -s
+SEATBELT_PROFILE=restrictive-open gemini -s
 ```
 
-For terminal-spawned Gemini/Qwen sessions, Gobby still uses that CLI-level
-`-s` path. Daemon-owned Gemini/Qwen ACP web chat is different: Gobby does not
-launch the ACP subprocess with daemon-applied Seatbelt flags because full-process
+For spawned Gemini/Qwen agent sessions, Gobby still uses that CLI-level `-s`
+path. Daemon-owned Gemini/Qwen ACP web chat is different: Gobby does not launch
+the ACP subprocess with daemon-applied Seatbelt flags because full-process
 Seatbelt blocked ACP startup on macOS. Those sessions still rely on ACP's
 proxied filesystem model and Gemini's tool-level sandboxing, but that is a
 different isolation layer than wrapping the entire ACP process in Gobby-managed
@@ -137,35 +110,36 @@ Seatbelt.
 - Read-only access to workspace
 - Minimal system path access
 - Limited network (if `allow_network=True`)
-- Better security but may break some operations
+- Available in the lower-level resolver model; daemon-owned defaults do not
+  expose restrictive mode as an operator setting
 
 ## Limitations and Caveats
 
-1. **CLI must support sandboxing**: The sandbox feature only works if the underlying CLI supports it. Unsupported CLIs will ignore sandbox configuration.
+1. **CLI must support sandboxing**: The sandbox feature only works if the
+   underlying CLI supports it. Unsupported CLIs ignore sandbox configuration.
 
-2. **Platform-specific**: Some sandbox features are platform-specific (e.g., Gemini's SEATBELT_PROFILE is macOS-only).
+2. **Platform-specific**: Some sandbox features are platform-specific, such as
+   Gemini and Qwen `SEATBELT_PROFILE` handling on macOS.
 
-3. **Gobby daemon access**: The sandbox always allows localhost access to the Gobby daemon port (60887 by default) for MCP communication.
+3. **Gobby daemon access**: Sandboxed runtimes need access to the local daemon
+   port, which defaults to `60887`.
 
-4. **Extra paths are CLI-dependent**: Not all CLIs support `extra_read_paths` or `extra_write_paths`. Codex supports `--add-dir`, but other CLIs may ignore extra paths.
+4. **Extra paths are CLI-dependent**: Not all CLIs support every extra path
+   concept. Codex supports `--add-dir` for extra write paths.
 
-5. **Sandbox is not a security boundary**: The CLI sandboxes provide isolation but should not be considered a hard security boundary. They help prevent accidental damage, not malicious actors.
+5. **Sandbox is not a security boundary**: CLI sandboxes reduce accidental
+   damage. They are not a hard boundary against malicious actors.
 
 ## Example: Spawning a Sandboxed Agent
 
 ```python
-# Via MCP tool with explicit sandbox params
 result = spawn_agent(
     prompt="Refactor the authentication module",
-    isolation="worktree",
-    sandbox=True,
-    sandbox_mode="permissive",
-)
-
-# Via agent definition
-result = spawn_agent(
-    prompt="Refactor the authentication module",
-    agent="sandboxed",
     isolation="worktree",
 )
 ```
+
+`spawn_agent` inherits daemon-owned sandbox defaults. It does not accept
+per-call sandbox parameters in the current MCP schema.
+
+_Last verified: 2026-05-04_
