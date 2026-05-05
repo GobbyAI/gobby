@@ -608,7 +608,7 @@ class LinearSyncService:
         )
 
     async def create_missing_issues(self, team_id: str | None = None) -> list[dict[str, Any]]:
-        """Create Linear issues for open Gobby tasks that are not linked yet."""
+        """Create Linear issues for active non-closed Gobby tasks not linked yet."""
         effective_team_id = team_id or self.linear_team_id
         if not effective_team_id:
             raise ValueError("No team_id provided and no default linear_team_id configured.")
@@ -623,6 +623,51 @@ class LinearSyncService:
         for row in rows:
             created.append(await self.create_issue_for_task(row["id"], team_id=effective_team_id))
         return created
+
+    async def _push_task_rows(self, rows: list[Any]) -> dict[str, int]:
+        stats = {"pushed": 0, "skipped": 0, "errors": 0}
+        for row in rows:
+            try:
+                await self.sync_task_to_linear(row["id"])
+                stats["pushed"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to push task {row['id']} to Linear: {e}")
+                stats["errors"] += 1
+        return stats
+
+    async def push_active_tasks(self) -> dict[str, int]:
+        """Push all linked active non-closed Gobby tasks to Linear."""
+        self.linear.require_available()
+        rows = self.task_manager.db.fetchall(
+            "SELECT id FROM tasks "
+            "WHERE project_id = ? AND linear_issue_id IS NOT NULL AND closed_at IS NULL",
+            (self.project_id,),
+        )
+        return await self._push_task_rows(rows)
+
+    async def sync_active_forward(self, team_id: str | None = None) -> dict[str, Any]:
+        """Forward-only initial sync from active Gobby tasks into Linear.
+
+        This deliberately avoids pull/import behavior and excludes closed local
+        task history so first setup does not flood Linear with stale work.
+        """
+        effective_team_id = team_id or self.linear_team_id
+        if not effective_team_id:
+            raise ValueError("No team_id provided and no default linear_team_id configured.")
+
+        created_issues = await self.create_missing_issues(team_id=effective_team_id)
+        push_stats = await self.push_active_tasks()
+
+        synced_at = datetime.now(UTC).isoformat()
+        self._update_synced_at(synced_at)
+
+        return {
+            "mode": "forward_active",
+            "created_count": len(created_issues),
+            "created_issues": created_issues,
+            "push": push_stats,
+            "synced_at": synced_at,
+        }
 
     async def pull_linear_updates(self, team_id: str | None = None) -> dict[str, int]:
         """Pull updates from Linear for all linked tasks.
@@ -726,8 +771,6 @@ class LinearSyncService:
         self.linear.require_available()
 
         synced_at = self._get_project_synced_at()
-        stats = {"pushed": 0, "skipped": 0, "errors": 0}
-
         # Query tasks that are linked and modified since last sync
         if synced_at:
             rows = self.task_manager.db.fetchall(
@@ -743,15 +786,7 @@ class LinearSyncService:
                 (self.project_id,),
             )
 
-        for row in rows:
-            try:
-                await self.sync_task_to_linear(row["id"])
-                stats["pushed"] += 1
-            except Exception as e:
-                logger.warning(f"Failed to push task {row['id']} to Linear: {e}")
-                stats["errors"] += 1
-
-        return stats
+        return await self._push_task_rows(rows)
 
     async def sync_all(self, team_id: str | None = None) -> dict[str, Any]:
         """Full bidirectional sync: pull first, then push.

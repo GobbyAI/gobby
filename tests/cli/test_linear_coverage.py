@@ -165,6 +165,33 @@ class TestLinearSetup:
         pm.update.assert_any_call(pid, linear_team_id="team-1", linear_project_id="lin-proj")
 
     @pytest.mark.asyncio
+    async def test_setup_create_missing_uses_forward_active_sync(self) -> None:
+        tm, mcp, pm, pid = _mock_linear_deps()
+        tm.db.fetchall.return_value = []
+        mcp.call_tool = AsyncMock(
+            side_effect=[
+                {"teams": [{"id": "team-1", "name": "Engineering", "key": "ENG"}]},
+                {"projects": [{"id": "lin-proj", "name": "gobby"}]},
+            ]
+        )
+
+        result = await _run_linear_setup(
+            task_manager=tm,
+            mcp_manager=mcp,
+            project_manager=pm,
+            project_id=pid,
+            bootstrap=True,
+            team_id=None,
+            linear_project_id=None,
+            project_name=None,
+            import_issues=False,
+            create_missing=True,
+        )
+
+        assert result["sync"]["mode"] == "forward_active"
+        assert result["created_missing_count"] == 0
+
+    @pytest.mark.asyncio
     async def test_setup_multiple_teams_requires_team_id(self) -> None:
         tm, mcp, pm, pid = _mock_linear_deps()
         mcp.call_tool = AsyncMock(
@@ -343,6 +370,49 @@ class TestLinearSync:
         mock_deps.return_value = (tm, mcp, pm, pid)
         result = runner.invoke(linear, ["sync", "bad-id"], catch_exceptions=False)
         assert result.exit_code == 0  # resolve returns None, command returns early
+
+    @patch(
+        "gobby.cli.linear.asyncio.run",
+        return_value={
+            "mode": "forward_active",
+            "created_count": 3,
+            "created_issues": [],
+            "push": {"pushed": 5, "skipped": 0, "errors": 0},
+            "synced_at": "2026-05-05T00:00:00+00:00",
+        },
+    )
+    @patch("gobby.cli.linear.get_sync_service")
+    @patch("gobby.cli.linear.get_linear_deps")
+    def test_sync_all_forward_active_text(
+        self,
+        mock_deps: MagicMock,
+        mock_svc: MagicMock,
+        _async: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        tm, mcp, pm, pid = _mock_linear_deps(linear_team_id="TEAM-1")
+        mock_deps.return_value = (tm, mcp, pm, pid)
+
+        result = runner.invoke(
+            linear, ["sync-all", "--forward", "--active"], catch_exceptions=False
+        )
+
+        assert result.exit_code == 0
+        assert "Forward active Linear sync complete" in result.output
+        assert "Created missing issues: 3" in result.output
+        mock_svc.return_value.sync_active_forward.assert_called_once_with(team_id="TEAM-1")
+
+    @patch("gobby.cli.linear.get_linear_deps")
+    def test_sync_all_forward_requires_active(
+        self, mock_deps: MagicMock, runner: CliRunner
+    ) -> None:
+        tm, mcp, pm, pid = _mock_linear_deps(linear_team_id="TEAM-1")
+        mock_deps.return_value = (tm, mcp, pm, pid)
+
+        result = runner.invoke(linear, ["sync-all", "--forward"], catch_exceptions=False)
+
+        assert result.exit_code != 0
+        assert "requires --active" in result.output
 
 
 # ---------------------------------------------------------------------------

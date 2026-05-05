@@ -515,6 +515,55 @@ class TestLinearSyncServiceCreate:
         with pytest.raises(ValueError, match="team_id"):
             await service.create_issue_for_task(task_id="test-task")
 
+    @pytest.mark.asyncio
+    async def test_create_missing_issues_filters_closed_tasks(
+        self, sync_service, mock_task_manager
+    ):
+        """create_missing_issues only selects unlinked non-closed tasks."""
+        mock_task_manager.db.fetchall.return_value = []
+
+        await sync_service.create_missing_issues()
+
+        sql = mock_task_manager.db.fetchall.call_args.args[0]
+        assert "linear_issue_id IS NULL" in sql
+        assert "closed_at IS NULL" in sql
+
+    @pytest.mark.asyncio
+    async def test_sync_active_forward_creates_missing_and_pushes_active(
+        self, sync_service, mock_task_manager
+    ):
+        """sync_active_forward creates missing active issues and skips pull."""
+        sync_service.create_missing_issues = AsyncMock(return_value=[{"id": "lin-1"}])
+        sync_service.push_active_tasks = AsyncMock(
+            return_value={"pushed": 2, "skipped": 0, "errors": 0}
+        )
+        sync_service.pull_linear_updates = AsyncMock()
+        sync_service._update_synced_at = MagicMock()
+
+        result = await sync_service.sync_active_forward(team_id="team-123")
+
+        assert result["mode"] == "forward_active"
+        assert result["created_count"] == 1
+        assert result["push"]["pushed"] == 2
+        sync_service.create_missing_issues.assert_awaited_once_with(team_id="team-123")
+        sync_service.push_active_tasks.assert_awaited_once_with()
+        sync_service.pull_linear_updates.assert_not_called()
+        sync_service._update_synced_at.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_push_active_tasks_filters_closed_tasks(self, sync_service, mock_task_manager):
+        """push_active_tasks only pushes linked non-closed tasks."""
+        mock_task_manager.db.fetchall.return_value = [{"id": "task-1"}, {"id": "task-2"}]
+        sync_service.sync_task_to_linear = AsyncMock()
+
+        result = await sync_service.push_active_tasks()
+
+        sql = mock_task_manager.db.fetchall.call_args.args[0]
+        assert "linear_issue_id IS NOT NULL" in sql
+        assert "closed_at IS NULL" in sql
+        assert result == {"pushed": 2, "skipped": 0, "errors": 0}
+        assert sync_service.sync_task_to_linear.await_count == 2
+
 
 class TestStateMapping:
     """Test state mapping functions."""

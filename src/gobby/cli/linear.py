@@ -215,10 +215,12 @@ async def _run_linear_setup(
     )
 
     imported = await service.import_linear_issues(team_id=selected_team_id) if import_issues else []
-    created_issues = (
-        await service.create_missing_issues(team_id=selected_team_id) if create_missing else []
-    )
-    sync_result = await service.sync_all(team_id=selected_team_id)
+    if create_missing:
+        sync_result = await service.sync_active_forward(team_id=selected_team_id)
+        created_missing_count = int(sync_result["created_count"])
+    else:
+        sync_result = await service.sync_all(team_id=selected_team_id)
+        created_missing_count = 0
 
     return {
         "project_id": project_id,
@@ -227,7 +229,7 @@ async def _run_linear_setup(
         "linear_project_name": linear_project.get("name") or resolved_project_name,
         "created_linear_project": created_project,
         "imported_count": len(imported),
-        "created_missing_count": len(created_issues),
+        "created_missing_count": created_missing_count,
         "sync": sync_result,
     }
 
@@ -514,13 +516,31 @@ def linear_sync(task_id: str, json_format: bool) -> None:
 @linear.command("sync-all")
 @click.argument("team_id", required=False)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def linear_sync_all(team_id: str | None, json_format: bool) -> None:
+@click.option("--forward", is_flag=True, help="Push from Gobby to Linear without pulling first")
+@click.option(
+    "--active",
+    "active_only",
+    is_flag=True,
+    help="With --forward, sync active non-closed tasks only",
+)
+def linear_sync_all(
+    team_id: str | None, json_format: bool, forward: bool, active_only: bool
+) -> None:
     """Bidirectional sync between gobby and Linear.
 
     Pulls updates from Linear first, then pushes dirty gobby tasks back.
-    If TEAM_ID is not specified, uses the linked team.
+    Use --forward --active for initial setup from Gobby into Linear without
+    pulling or syncing closed local task history. If TEAM_ID is not specified,
+    uses the linked team.
     """
     try:
+        if active_only and not forward:
+            raise click.ClickException("--active is only supported with --forward.")
+        if forward and not active_only:
+            raise click.ClickException(
+                "--forward currently requires --active to avoid syncing closed task history."
+            )
+
         _, _, project_manager, project_id = get_linear_deps()
 
         if not team_id:
@@ -533,8 +553,23 @@ def linear_sync_all(team_id: str | None, json_format: bool) -> None:
                 )
 
         service = get_sync_service(team_id)
-        result = asyncio.run(service.sync_all(team_id=team_id))
+        if forward:
+            result = asyncio.run(service.sync_active_forward(team_id=team_id))
+            push = result["push"]
 
+            if json_format:
+                click.echo(json.dumps(result, indent=2))
+            else:
+                click.echo("✓ Forward active Linear sync complete")
+                click.echo(f"  Created missing issues: {result['created_count']}")
+                click.echo(
+                    f"  Push: {push['pushed']} pushed, "
+                    f"{push['skipped']} skipped, "
+                    f"{push['errors']} errors"
+                )
+            return
+
+        result = asyncio.run(service.sync_all(team_id=team_id))
         pull = result["pull"]
         push = result["push"]
 
