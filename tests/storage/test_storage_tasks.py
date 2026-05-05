@@ -98,7 +98,7 @@ class TestLocalTaskManager:
                 assignee="sess-123",
             )
 
-    def test_reconcile_task_state_clears_owner_without_stage_mutation(
+    def test_reconcile_task_state_preserves_owner_without_stage_mutation(
         self, task_manager, project_id, session_manager
     ) -> None:
         session = session_manager.register(
@@ -118,8 +118,8 @@ class TestLocalTaskManager:
 
         assert updated.title == "From Linear"
         _assert_stage_state(updated, "in_progress")
-        assert updated.assignee is None
-        assert updated.claimed_by_session_id is None
+        assert updated.assignee == session.id
+        assert updated.claimed_by_session_id == session.id
 
     def test_state_projects_from_current_stage_rows(self, task_manager, project_id) -> None:
         """Stage rows drive task projection after legacy state columns are dropped."""

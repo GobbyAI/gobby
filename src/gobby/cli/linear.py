@@ -621,8 +621,14 @@ def linear_create(task_id: str, team_id: str | None, json_format: bool) -> None:
         if json_format:
             click.echo(json.dumps(result, indent=2))
         else:
-            issue_id = result.get("id", "unknown")
-            click.echo(f"✓ Created Linear issue {issue_id} for task {task_id}")
+            gobby_ref = result.get("gobby_ref") or task_id
+            linear_key = (
+                result.get("linear_identifier") or result.get("identifier") or result.get("id")
+            )
+            project_name = result.get("linear_project_name") or result.get("linear_project_id")
+            target = f"Linear project {project_name}" if project_name else "Linear"
+            suffix = f" (Linear {linear_key})" if linear_key else ""
+            click.echo(f"✓ Registered {gobby_ref} in {target}{suffix}")
 
     except click.ClickException:
         raise

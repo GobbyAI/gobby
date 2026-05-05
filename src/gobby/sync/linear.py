@@ -186,11 +186,59 @@ class LinearSyncService:
             raise LinearSyncError(f"Project not found: {self.project_id}")
         return Path(project.repo_path).name if project.repo_path else project.name
 
-    def _linear_issue_title(self, task: Any) -> str:
+    def _linear_project_display_name(self) -> str | None:
+        try:
+            return self._linear_project_name()
+        except Exception:
+            return None
+
+    def _task_ref(self, task: Any) -> str:
         seq_num = getattr(task, "seq_num", None)
-        ref = f"#{seq_num}" if seq_num else str(getattr(task, "id", ""))[:8]
+        return f"#{seq_num}" if seq_num else str(getattr(task, "id", ""))[:8]
+
+    def _linear_issue_title(self, task: Any) -> str:
+        ref = self._task_ref(task)
         title = str(getattr(task, "title", "") or "")
         return title if title.startswith(ref) else f"{ref}: {title}"
+
+    def _decorate_issue_result(
+        self,
+        result: dict[str, Any],
+        task: Any,
+        *,
+        team_id: str,
+        project_id: str,
+    ) -> dict[str, Any]:
+        decorated = dict(result)
+        decorated["gobby_ref"] = self._task_ref(task)
+        decorated["gobby_task_id"] = task.id
+        decorated["linear_team_id"] = team_id
+        decorated["linear_project_id"] = project_id
+        project_name = self._linear_project_display_name()
+        if project_name:
+            decorated["linear_project_name"] = project_name
+        identifier = decorated.get("identifier")
+        if isinstance(identifier, str):
+            decorated["linear_identifier"] = identifier
+        issue_id = decorated.get("id")
+        if isinstance(issue_id, str):
+            decorated["linear_issue_id"] = issue_id
+        return decorated
+
+    async def _linear_state_id_for_name(
+        self,
+        client: LinearGraphQLClient,
+        team_id: str | None,
+        state_name: str | None,
+    ) -> str | None:
+        if not team_id or not state_name:
+            return None
+        states = await client.list_team_states(team_id)
+        for state in states:
+            if state.get("name") == state_name:
+                state_id = state.get("id")
+                return state_id if isinstance(state_id, str) else None
+        return None
 
     def _update_synced_at(self, timestamp: str | None = None) -> None:
         """Update the project's linear_synced_at cursor."""
@@ -444,11 +492,18 @@ class LinearSyncService:
         issue_title = self._linear_issue_title(task)
         client = self._get_graphql_client()
         if client:
+            effective_team_id = task.linear_team_id or self.linear_team_id
+            state_id = await self._linear_state_id_for_name(
+                client,
+                effective_team_id,
+                linear_state,
+            )
             result = await client.update_issue(
                 issue_id=task.linear_issue_id,
                 title=issue_title,
                 description=task.description or "",
                 priority=task.priority,
+                state_id=state_id,
             )
             logger.info(f"Synced task {task_id} to Linear issue {task.linear_issue_id}")
             return result
@@ -512,8 +567,13 @@ class LinearSyncService:
                     linear_issue_id=issue_id,
                     linear_team_id=effective_team_id,
                 )
-                logger.info(f"Created Linear issue {issue_id} for task {task_id}")
-            return result_dict
+                logger.info(f"Registered {self._task_ref(task)} in Linear issue {issue_id}")
+            return self._decorate_issue_result(
+                result_dict,
+                task,
+                team_id=effective_team_id,
+                project_id=linear_project_id,
+            )
 
         arguments: dict[str, Any] = {
             "teamId": effective_team_id,
@@ -538,9 +598,14 @@ class LinearSyncService:
                 linear_issue_id=issue_id,
                 linear_team_id=effective_team_id,
             )
-            logger.info(f"Created Linear issue {issue_id} for task {task_id}")
+            logger.info(f"Registered {self._task_ref(task)} in Linear issue {issue_id}")
 
-        return result_dict
+        return self._decorate_issue_result(
+            result_dict,
+            task,
+            team_id=effective_team_id,
+            project_id=linear_project_id,
+        )
 
     async def create_missing_issues(self, team_id: str | None = None) -> list[dict[str, Any]]:
         """Create Linear issues for open Gobby tasks that are not linked yet."""

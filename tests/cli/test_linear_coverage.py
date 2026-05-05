@@ -349,7 +349,15 @@ class TestLinearSync:
 # linear create
 # ---------------------------------------------------------------------------
 class TestLinearCreate:
-    @patch("gobby.cli.linear.asyncio.run", return_value={"id": "LIN-123"})
+    @patch(
+        "gobby.cli.linear.asyncio.run",
+        return_value={
+            "id": "lin-uuid",
+            "gobby_ref": "#1",
+            "linear_identifier": "GOB-99",
+            "linear_project_name": "gobby",
+        },
+    )
     @patch("gobby.cli.linear.get_sync_service")
     @patch("gobby.cli.linear.resolve_task_id")
     @patch("gobby.cli.linear.get_linear_deps")
@@ -368,7 +376,8 @@ class TestLinearCreate:
         mock_resolve.return_value = task
         result = runner.invoke(linear, ["create", "#1"], catch_exceptions=False)
         assert result.exit_code == 0
-        assert "LIN-123" in result.output
+        assert "Registered #1 in Linear project gobby" in result.output
+        assert "GOB-99" in result.output
 
     @patch("gobby.cli.linear.asyncio.run", return_value={"id": "LIN-123"})
     @patch("gobby.cli.linear.get_sync_service")

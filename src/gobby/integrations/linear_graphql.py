@@ -122,6 +122,26 @@ class LinearGraphQLClient:
                 )
             ]
 
+    async def list_team_states(self, team_id: str) -> list[dict[str, Any]]:
+        data = await self.execute(
+            """
+            query TeamStates($teamId: String!) {
+              team(id: $teamId) {
+                states(first: 100) {
+                  nodes {
+                    id
+                    name
+                    type
+                  }
+                }
+              }
+            }
+            """,
+            {"teamId": team_id},
+        )
+        team = data.get("team") if isinstance(data.get("team"), dict) else {}
+        return _connection_nodes(cast(dict[str, Any], team).get("states"))
+
     async def create_project(self, team_id: str, name: str) -> dict[str, Any]:
         data = await self.execute(
             """
@@ -233,7 +253,16 @@ class LinearGraphQLClient:
         title: str,
         description: str,
         priority: int,
+        state_id: str | None = None,
     ) -> dict[str, Any]:
+        update_input: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "priority": priority,
+        }
+        if state_id:
+            update_input["stateId"] = state_id
+
         data = await self.execute(
             """
             mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
@@ -248,14 +277,7 @@ class LinearGraphQLClient:
               }
             }
             """,
-            {
-                "id": issue_id,
-                "input": {
-                    "title": title,
-                    "description": description,
-                    "priority": priority,
-                },
-            },
+            {"id": issue_id, "input": update_input},
         )
         payload = _payload(data, "issueUpdate")
         issue = payload.get("issue")

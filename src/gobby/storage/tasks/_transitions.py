@@ -485,7 +485,5 @@ def reconcile_task_state(
         title=title,
         description=description,
         priority=priority,
-        assignee=None,
-        claimed_by_session_id=None,
     )
     return get_task(db, task_id)

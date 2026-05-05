@@ -305,6 +305,42 @@ class TestLinearSyncServiceSync:
         mock_mcp_manager.call_tool.assert_called()
 
     @pytest.mark.asyncio
+    async def test_sync_task_graphql_resolves_linear_state_id(self, sync_service, mock_mcp_manager):
+        """GraphQL issue updates send Linear's workflow state id."""
+        mock_task = MagicMock()
+        mock_task.id = "test-task-id"
+        mock_task.seq_num = 42
+        mock_task.linear_issue_id = "lin-42"
+        mock_task.linear_team_id = "team-123"
+        mock_task.title = "Updated Title"
+        mock_task.description = "Updated description"
+        _set_task_state(mock_task, "in_progress")
+        mock_task.priority = 2
+
+        client = MagicMock()
+        client.list_team_states = AsyncMock(
+            return_value=[
+                {"id": "state-todo", "name": "Todo"},
+                {"id": "state-progress", "name": "In Progress"},
+            ]
+        )
+        client.update_issue = AsyncMock(return_value={"id": "lin-42", "title": "#42: Updated"})
+        sync_service._get_graphql_client = MagicMock(return_value=client)
+        sync_service.task_manager.get_task.return_value = mock_task
+
+        await sync_service.sync_task_to_linear(task_id="test-task-id")
+
+        client.list_team_states.assert_awaited_once_with("team-123")
+        client.update_issue.assert_awaited_once_with(
+            issue_id="lin-42",
+            title="#42: Updated Title",
+            description="Updated description",
+            priority=2,
+            state_id="state-progress",
+        )
+        mock_mcp_manager.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_sync_task_raises_when_no_issue_id(self, sync_service, mock_task_manager):
         """sync_task_to_linear raises ValueError when task has no linear_issue_id."""
         mock_task = MagicMock()
@@ -363,7 +399,9 @@ class TestLinearSyncServiceCreate:
         assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["title"] == (
             "#42: Feature: Add new thing"
         )
-        assert result is not None
+        assert result["gobby_ref"] == "#42"
+        assert result["gobby_task_id"] == "test-task-id"
+        assert result["linear_issue_id"] == "lin-123"
 
     @pytest.mark.asyncio
     async def test_create_issue_includes_linear_project(self, mock_mcp_manager, mock_task_manager):
@@ -386,12 +424,14 @@ class TestLinearSyncServiceCreate:
             linear_project_id="lin-proj",
         )
 
-        await service.create_issue_for_task(task_id="test-task-id")
+        result = await service.create_issue_for_task(task_id="test-task-id")
 
         call = mock_mcp_manager.call_tool.call_args
         assert call.kwargs["arguments"]["teamId"] == "team-123"
         assert call.kwargs["arguments"]["projectId"] == "lin-proj"
         assert call.kwargs["arguments"]["title"] == "#42: Feature"
+        assert result["gobby_ref"] == "#42"
+        assert result["linear_project_id"] == "lin-proj"
 
     @pytest.mark.asyncio
     async def test_create_issue_creates_same_named_project_when_missing(
