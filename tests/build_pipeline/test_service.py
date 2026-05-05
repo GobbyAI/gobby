@@ -554,6 +554,127 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
 
 
 @pytest.mark.asyncio
+async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.config.build import StageCapOverride
+
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Mixed epic",
+        category="planning",
+        task_type="epic",
+    )
+    closed_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Already closed docs child",
+        parent_task_id=epic.id,
+        category="docs",
+        task_type="task",
+    )
+    open_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Open docs child",
+        parent_task_id=epic.id,
+        category="docs",
+        task_type="task",
+    )
+    task_manager.update_task(closed_child.id, isolation="worktree")
+    task_manager.initialize_task_manifest(
+        closed_child.id,
+        stage_names=["development", "pr", "merge"],
+    )
+    task_manager.close_task(closed_child.id, reason="completed", force=True)
+
+    await _build(
+        f"#{epic.seq_num}",
+        _options(
+            quick=True,
+            isolation="none",
+            stage_caps=[StageCapOverride("development", max_work_attempts=6)],
+        ),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    closed_after = task_manager.get_task(closed_child.id)
+    closed_rows = task_manager.stage_states.list_for_task(closed_child.id)
+    open_rows = task_manager.stage_states.list_for_task(open_child.id)
+
+    assert closed_after.allow_automation is False
+    assert closed_after.isolation == "worktree"
+    assert [row.stage_name for row in closed_rows] == ["development", "pr", "merge"]
+    assert [row.stage_name for row in open_rows] == ["development"]
+    assert open_rows[0].max_work_attempts == 6
+
+
+@pytest.mark.asyncio
+async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.config.build import StageCapOverride
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Busy epic",
+        category="planning",
+        task_type="epic",
+    )
+    busy_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Busy docs child",
+        parent_task_id=epic.id,
+        category="docs",
+        task_type="task",
+    )
+    open_child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Open docs child",
+        parent_task_id=epic.id,
+        category="docs",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(
+        busy_child.id,
+        stage_names=["development", "pr", "merge"],
+    )
+    assert TaskDispatchMutexManager(temp_db).acquire_mutex(
+        busy_child.id,
+        holder="agent-run",
+        kind="development",
+        ttl_seconds=3600,
+        run_id="run-busy",
+    )
+
+    await _build(
+        f"#{epic.seq_num}",
+        _options(
+            quick=True,
+            isolation="none",
+            stage_caps=[StageCapOverride("development", max_work_attempts=6)],
+        ),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    busy_rows = task_manager.stage_states.list_for_task(busy_child.id)
+    open_rows = task_manager.stage_states.list_for_task(open_child.id)
+
+    assert [row.stage_name for row in busy_rows] == ["development", "pr", "merge"]
+    assert [row.stage_name for row in open_rows] == ["development"]
+    assert open_rows[0].max_work_attempts == 6
+
+
+@pytest.mark.asyncio
 async def test_build_leaf_with_services_creates_agent_run_by_completion(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

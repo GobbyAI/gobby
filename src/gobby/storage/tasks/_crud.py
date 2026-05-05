@@ -25,6 +25,7 @@ from gobby.storage.tasks._models import (
     TaskNotFoundError,
     validate_task_type,
 )
+from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -383,7 +384,7 @@ def cascade_build_state_to_subtree(
                 FROM tasks child
                 JOIN subtree parent ON child.parent_task_id = parent.id
             )
-            SELECT id, task_type
+            SELECT id, task_type, closed_at
             FROM tasks
             WHERE id IN (SELECT id FROM subtree)
             """,
@@ -395,13 +396,16 @@ def cascade_build_state_to_subtree(
 
         update_params: list[tuple[int, int, str, str, str]] = []
         for row in rows:
+            task_id = cast(str, row["id"])
+            if task_id != epic_id and row["closed_at"] is not None:
+                continue
             update_params.append(
                 (
                     int(allow_automation),
                     int(unattended),
                     normalized_isolation,
                     now,
-                    cast(str, row["id"]),
+                    task_id,
                 )
             )
 
@@ -427,14 +431,19 @@ def cascade_build_state_to_subtree(
         task_id = cast(str, row["id"])
         if task_id == epic_id:
             continue
+        if row["closed_at"] is not None:
+            continue
         specs = derive_child_manifest_specs(
             parent_specs,
             include_holistic_qa=cast(str, row["task_type"]) == "epic",
         )
         if specs:
-            stage_states.initialize_manifest(task_id, specs, by_session_id=None)
+            try:
+                stage_states.initialize_manifest(task_id, specs, by_session_id=None)
+            except DispatchMutexUnavailableError:
+                logger.info("Skipping busy task %s during build cascade", task_id)
 
-    return len(rows)
+    return len(update_params)
 
 
 def update_task(
