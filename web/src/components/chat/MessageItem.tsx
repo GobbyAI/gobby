@@ -86,7 +86,6 @@ function ProtocolAwareText({
 }
 
 export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: MessageItemProps) {
-  const isCommandResult = message.role === 'system' && message.toolCalls?.length && !message.content
   const isModelSwitch = message.role === 'system' && message.id.startsWith('model-switch-')
   const lastTextBlockIndex = message.contentBlocks?.reduce(
     (last, block, index) => (block.type === 'text' ? index : last),
@@ -114,7 +113,6 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
     <div className={cn(
       MESSAGE_SPACING.body,
       message.role === 'user' && 'bg-[var(--color-info-soft)]',
-      message.role === 'system' && !isCommandResult && 'bg-[var(--color-warning-soft)]',
     )}>
       <div className="max-w-3xl mx-auto">
         <div className={MESSAGE_SPACING.headerRow}>
