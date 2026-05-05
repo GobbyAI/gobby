@@ -26,7 +26,7 @@ export interface CodeBlockProps {
    */
   lineNumberStyleFn?: (lineNumber: number) => LineNumberStyle
   /**
-   * Per-line wrapper props. Used by InlineDiff to set full-line
+   * Per-line wrapper props. Used by DiffBlock to set full-line
    * background tints for added/removed rows.
    */
   lineProps?: (lineNumber: number) => React.HTMLProps<HTMLElement>

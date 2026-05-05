@@ -272,29 +272,3 @@
   color: var(--text-muted);
 }
 
-/* ── Diff View ── */
-.diff-line {
-  padding: 0 0.75rem;
-  white-space: pre;
-  min-height: 1.25rem;
-}
-
-.diff-add {
-  background: color-mix(in srgb, var(--color-success-foreground) 12%, transparent);
-  color: var(--color-success-foreground);
-}
-
-.diff-remove {
-  background: color-mix(in srgb, var(--color-error) 12%, transparent);
-  color: var(--color-error);
-}
-
-.diff-hunk {
-  background: color-mix(in srgb, var(--color-info) 8%, transparent);
-  color: var(--color-info);
-}
-
-.diff-meta {
-  color: var(--text-muted);
-  font-style: italic;
-}

@@ -1,6 +1,6 @@
 import { memo, useState, useCallback, useEffect } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
-import { DiffView } from './DiffView'
+import { DiffBlock } from '../shared/DiffBlock'
 import type { ChangedFile } from '../../hooks/useFileChanges'
 
 interface FileChangesTabProps {
@@ -154,7 +154,15 @@ export const FileChangesTab = memo(function FileChangesTab({
               <p>Loading diff...</p>
             </div>
           ) : (
-            <DiffView diff={diff} path={selectedPath} />
+            <DiffBlock
+              mode="unified"
+              diff={diff}
+              path={selectedPath}
+              header
+              onCopy={() => {
+                navigator.clipboard.writeText(diff).catch(console.error)
+              }}
+            />
           )}
         </div>
       )}
