@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 
 import {
+  CODE_CHROME_TYPOGRAPHY,
   CODE_CHROME_VARS,
   codeBlockTheme,
   lineNumberStyle as DEFAULT_LINE_NUMBER_STYLE,
@@ -104,12 +105,12 @@ export function CodeBlock({
           style={{
             background: CODE_CHROME_VARS.bg,
             margin: 0,
-            padding: '1rem',
-            fontSize: '0.9em',
-            fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
+            padding: CODE_CHROME_TYPOGRAPHY.padding,
+            fontSize: CODE_CHROME_TYPOGRAPHY.fontSize,
+            fontFamily: CODE_CHROME_TYPOGRAPHY.fontFamily,
             color: 'var(--text-primary)',
             overflow: 'auto',
-            borderRadius: 0,
+            borderRadius: CODE_CHROME_TYPOGRAPHY.borderRadius,
             ...(customStyle ?? {}),
           }}
         >

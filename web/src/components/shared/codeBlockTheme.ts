@@ -40,6 +40,20 @@ export const CODE_CHROME_VARS = {
 } as const
 
 /**
+ * Canonical typography + chrome geometry for code surfaces. Both the
+ * view-only `CodeBlock` (Prism via react-syntax-highlighter) and the
+ * editing `CodeMirrorEditor` widget read from this so an artifact opened
+ * in CodeMirror and the same code rendered inline via CodeBlock are
+ * visually indistinguishable except for editing affordances.
+ */
+export const CODE_CHROME_TYPOGRAPHY = {
+  fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
+  fontSize: '0.9em',
+  padding: '1rem',
+  borderRadius: '0',
+} as const
+
+/**
  * Canonical line-number gutter style for view-only code blocks. File
  * viewers (FilesTab, FilesPage) override `minWidth` to `3em` via the
  * `lineNumberMinWidth` prop on `CodeBlock` to fit 4-digit line numbers.
@@ -64,13 +78,13 @@ export const codeBlockTheme = {
     ...oneDark['pre[class*="language-"]'],
     background: CODE_CHROME_VARS.bg,
     margin: '0',
-    padding: '1rem',
-    borderRadius: '0',
-    fontSize: '0.9em',
+    padding: CODE_CHROME_TYPOGRAPHY.padding,
+    borderRadius: CODE_CHROME_TYPOGRAPHY.borderRadius,
+    fontSize: CODE_CHROME_TYPOGRAPHY.fontSize,
   },
   'code[class*="language-"]': {
     ...oneDark['code[class*="language-"]'],
     background: 'transparent',
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
+    fontFamily: CODE_CHROME_TYPOGRAPHY.fontFamily,
   },
 }
