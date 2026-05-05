@@ -9,6 +9,7 @@ from typing import Any
 
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.sessions.compact_continuation import COMPACT_SELF_CONTINUE_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,11 @@ class WebChatSessionRegistry:
                 "queued": True,
             }
 
-        result = await self._drain_compaction(session, command)
+        result = await self._drain_compaction(
+            session,
+            command,
+            continuation_prompt=COMPACT_SELF_CONTINUE_PROMPT,
+        )
         if not result.get("compacted"):
             return result
         return {
@@ -172,10 +177,38 @@ class WebChatSessionRegistry:
         self,
         session: ChatSessionProtocol,
         command: str,
+        *,
+        continuation_prompt: str | None = None,
+    ) -> dict[str, Any]:
+        compact_result = await self._drain_message_until_done(
+            session,
+            command,
+            action="web_chat compaction",
+        )
+        if not compact_result.get("ok"):
+            return {"compacted": False, "reason": compact_result["reason"]}
+
+        if continuation_prompt:
+            continuation_result = await self._drain_message_until_done(
+                session,
+                continuation_prompt,
+                action="web_chat continuation",
+            )
+            if not continuation_result.get("ok"):
+                return {"compacted": False, "reason": continuation_result["reason"]}
+
+        return {"compacted": True}
+
+    async def _drain_message_until_done(
+        self,
+        session: ChatSessionProtocol,
+        message: str,
+        *,
+        action: str,
     ) -> dict[str, Any]:
         stream: Any | None = None
         try:
-            stream = session.send_message(command)
+            stream = session.send_message(message)
             if inspect.isawaitable(stream):
                 stream = await stream
 
@@ -187,13 +220,13 @@ class WebChatSessionRegistry:
 
             if not done_seen:
                 return {
-                    "compacted": False,
-                    "reason": "web_chat compaction stream ended before DoneEvent",
+                    "ok": False,
+                    "reason": f"{action} stream ended before DoneEvent",
                 }
-            return {"compacted": True}
+            return {"ok": True}
         except Exception as exc:
-            logger.warning("web_chat compaction failed", exc_info=True)
-            return {"compacted": False, "reason": f"web_chat compaction failed: {exc}"}
+            logger.warning("%s failed", action, exc_info=True)
+            return {"ok": False, "reason": f"{action} failed: {exc}"}
         finally:
             aclose = getattr(stream, "aclose", None)
             if callable(aclose):

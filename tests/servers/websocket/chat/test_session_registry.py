@@ -46,7 +46,10 @@ class TestWebChatSessionRegistry:
             "via": "web_chat",
             "queued": False,
         }
-        session.send_message.assert_called_once_with("/compact")
+        assert [call.args[0] for call in session.send_message.call_args_list] == [
+            "/compact",
+            "Continue where you last left off.",
+        ]
 
     @pytest.mark.asyncio
     async def test_active_session_queues_compaction_until_turn_completes(self) -> None:
@@ -76,7 +79,10 @@ class TestWebChatSessionRegistry:
         queued_task = registry._queued_compaction_tasks.get("conv-1")
         assert queued_task is not None
         await queued_task
-        session.send_message.assert_called_once_with("/compact")
+        assert [call.args[0] for call in session.send_message.call_args_list] == [
+            "/compact",
+            "Continue where you last left off.",
+        ]
 
     @pytest.mark.asyncio
     async def test_drain_failure_returns_compacted_false(self) -> None:

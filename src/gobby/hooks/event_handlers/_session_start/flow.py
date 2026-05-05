@@ -18,6 +18,27 @@ def _compat_module() -> Any:
     return session_start
 
 
+def _consume_pending_compact_self_continuation(
+    handler: Any,
+    *,
+    pending_session_id: str | None,
+    target_session: Any,
+    fallback_pending_session_id: str | None = None,
+) -> bool:
+    """Consume compact_self markers for providers that do not tag compact restarts."""
+    if not handler._session_manager:
+        return False
+    return bool(
+        _compat_module().consume_and_schedule_compact_self_continuation(
+            handler._session_manager.db,
+            pending_session_id=pending_session_id,
+            fallback_pending_session_id=fallback_pending_session_id,
+            target_session=target_session,
+            loop=getattr(handler._session_coordinator, "_event_loop", None),
+        )
+    )
+
+
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
@@ -249,13 +270,12 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if session_id and handler._session_manager:
         session_obj = handler._session_manager.get(session_id)
 
-    if session_source == "compact" and session_obj and handler._session_manager:
-        _compat_module().consume_and_schedule_compact_self_continuation(
-            handler._session_manager.db,
+    if session_obj:
+        _consume_pending_compact_self_continuation(
+            handler,
             pending_session_id=session_id,
-            fallback_pending_session_id=parent_session_id,
+            fallback_pending_session_id=parent_session_id if session_source == "compact" else None,
             target_session=session_obj,
-            loop=getattr(handler._session_coordinator, "_event_loop", None),
         )
 
     claimed_tasks_info = handler._get_claimed_task_info(session_id, project_id)
@@ -410,13 +430,11 @@ def handle_pre_created_session(
 
     claimed_tasks_info = handler._get_claimed_task_info(session_id, session_obj.project_id)
 
-    if input_data.get("source") == "compact" and handler._session_manager:
-        _compat_module().consume_and_schedule_compact_self_continuation(
-            handler._session_manager.db,
-            pending_session_id=session_id,
-            target_session=session_obj,
-            loop=getattr(handler._session_coordinator, "_event_loop", None),
-        )
+    _consume_pending_compact_self_continuation(
+        handler,
+        pending_session_id=session_id,
+        target_session=session_obj,
+    )
 
     return cast(
         HookResponse,

@@ -394,7 +394,10 @@ class TestCompactSelfWebChatPath:
             "via": "web_chat",
             "queued": False,
         }
-        live_session.send_message.assert_called_once_with("/compact")
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
         mock_mark.assert_not_called()
 
     def test_web_chat_missing_live_session_returns_compacted_false(self) -> None:
@@ -426,7 +429,8 @@ class TestCompactSelfWebChatPath:
         )
 
         async def compact_stream(command: str):
-            precompact_outputs.append(await live_session._on_pre_compact({"trigger": "manual"}))
+            if command == "/compact":
+                precompact_outputs.append(await live_session._on_pre_compact({"trigger": "manual"}))
             yield DoneEvent(tool_calls_count=0)
 
         live_session.send_message.side_effect = compact_stream
@@ -440,7 +444,10 @@ class TestCompactSelfWebChatPath:
         result = asyncio.run(compact_self(session_id="db-id"))
 
         assert result["compacted"] is True
-        live_session.send_message.assert_called_once_with("/compact")
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
         live_session._on_pre_compact.assert_awaited_once_with({"trigger": "manual"})
         assert precompact_outputs == [{"decision": "allow", "context": "pipeline output"}]
 
@@ -466,7 +473,10 @@ class TestCompactSelfWebChatPath:
         result = asyncio.run(compact_self(session_id="db-id"))
 
         assert result["command"] == "/compact"
-        live_session.send_message.assert_called_once_with("/compact")
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
 
     @pytest.mark.asyncio
     async def test_active_web_chat_session_queues_post_turn_compaction(self) -> None:
@@ -509,7 +519,10 @@ class TestCompactSelfWebChatPath:
         queued_task = web_chat_registry._queued_compaction_tasks.get("conv-1")
         assert queued_task is not None
         await queued_task
-        live_session.send_message.assert_called_once_with("/compact")
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
 
     def test_web_chat_session_ref_resolves_before_registry_lookup(self) -> None:
         session = MagicMock()
@@ -534,7 +547,10 @@ class TestCompactSelfWebChatPath:
         result = asyncio.run(compact_self(session_id="#42"))
 
         assert result["compacted"] is True
-        live_session.send_message.assert_called_once_with("/compact")
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
 
 
 class TestCompactSelfUnsupportedSessionType:
