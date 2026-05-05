@@ -48,9 +48,9 @@ export const PRIORITY_TEXT_COLORS: Record<number, string> = {
 export const PRIORITY_TEXT_WEIGHTS: Record<number, string> = {
   0: 'var(--font-weight-semibold)',
   1: 'var(--font-weight-semibold)',
-  2: 'var(--font-weight-normal)',
-  3: 'var(--font-weight-normal)',
-  4: 'var(--font-weight-normal)',
+  2: 'var(--font-weight-medium)',
+  3: 'var(--font-weight-medium)',
+  4: 'var(--font-weight-medium)',
 }
 
 export function compareTasksForDisplay(a: GobbyTask, b: GobbyTask): number {

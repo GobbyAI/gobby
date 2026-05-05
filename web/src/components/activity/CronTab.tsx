@@ -125,10 +125,10 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <CronStatusDot enabled={job.enabled} />
-                  <span className="text-sm text-foreground truncate">{job.name}</span>
+                  <span className="activity-row-title">{job.name}</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                  <span className="activity-row-meta">
                     {formatNextFiring(job, now)}
                   </span>
                 </div>
@@ -167,10 +167,10 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
           <div className="pipeline-detail-header flex items-center gap-3 px-3 border-b border-border">
             <div className="flex items-center gap-2 min-w-0">
               <CronStatusDot enabled={selectedJob.enabled} />
-              <span className="text-xs font-medium text-foreground truncate">
+              <span className="activity-row-title">
                 {selectedJob.name}
               </span>
-              <span className="text-[10px] text-muted-foreground shrink-0">
+              <span className="activity-row-meta">
                 {selectedJob.schedule_type === 'cron'
                   ? selectedJob.cron_expr
                   : selectedJob.schedule_type === 'interval'

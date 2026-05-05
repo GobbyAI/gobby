@@ -207,10 +207,10 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <ExecutionStatusIcon status={exec.status} />
-                  <span className="text-sm text-foreground truncate">{exec.pipeline_name}</span>
+                  <span className="activity-row-title">{exec.pipeline_name}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-muted-foreground shrink-0">
+                  <span className="activity-row-meta">
                     {formatDateTime(exec.created_at)}
                   </span>
                 </div>
@@ -240,15 +240,15 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           <div className="pipeline-detail-header flex items-center justify-between gap-3 px-3 border-b border-border">
             <div className="flex items-center gap-2 min-w-0">
               <PipelineStatusDot status={detailExec.status} />
-              <span className="text-xs font-medium text-foreground truncate">{detailExec.pipeline_name}</span>
+              <span className="activity-row-title">{detailExec.pipeline_name}</span>
               {detailExec.completed_at && (
-                <span className="text-[10px] text-muted-foreground">
+                <span className="activity-row-meta">
                   {formatDuration(detailExec.created_at, detailExec.completed_at)}
                 </span>
               )}
             </div>
             {detailStepCount > 0 && (
-              <div className="flex items-center gap-3 text-[10px] text-muted-foreground shrink-0">
+              <div className="flex items-center gap-3 activity-row-meta shrink-0">
                 <span>{detailStepCount} step{detailStepCount !== 1 ? 's' : ''}</span>
                 {passedStepCount > 0 && (
                   <span className="text-success-foreground">

@@ -27,11 +27,34 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 0.5rem;
   height: 100%;
   color: var(--text-muted);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-normal);
   padding: 2rem;
   text-align: center;
+}
+
+.activity-tab-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.35;
+  margin-bottom: 0.25rem;
+}
+
+.activity-tab-empty__heading {
+  font-size: var(--text-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+}
+
+.activity-tab-empty__body {
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-normal);
+  color: var(--text-muted);
+  max-width: 26rem;
 }
 
 .chat-empty-state {

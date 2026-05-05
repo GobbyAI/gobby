@@ -727,7 +727,7 @@ export const SessionsTab = memo(function SessionsTab({
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <SourceIcon source={entry.provider} size={14} />
-                  <span className="text-sm text-foreground truncate">
+                  <span className="activity-row-title">
                     {displayLabel}
                   </span>
                 </div>

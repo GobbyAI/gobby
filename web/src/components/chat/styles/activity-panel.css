@@ -289,6 +289,31 @@
   flex-direction: column;
 }
 
+/* ============================================
+   Activity Panel — typography ladder
+   Locked tokens shared by every list panel (Tasks, Sessions, Pipelines,
+   Cron, Files, Changes). New surfaces compose from these classes rather
+   than reinventing sizes per panel. See task #14245.
+   ============================================ */
+.activity-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.activity-row-meta {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-normal);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 
 /* ============================================
    Tasks Tab — compact panel tree
