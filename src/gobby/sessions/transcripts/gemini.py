@@ -454,44 +454,36 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             results: list[ParsedMessage] = []
             idx = start_index
 
-            # Thoughts → subject as visible text, description as thinking
+            # Thoughts → one collapsed thinking block per turn (subject as
+            # bold heading, description as body) so Gemini transcripts don't
+            # appear to have extra messages relative to Claude/Codex.
             thoughts = msg.get("thoughts")
             if isinstance(thoughts, list) and thoughts:
+                segments: list[str] = []
                 for tp in _extract_thought_parts(thoughts):
-                    if tp.subject:
-                        results.append(
-                            ParsedMessage(
-                                index=idx,
-                                role="assistant",
-                                content=tp.subject,
-                                content_type="text",
-                                tool_name=None,
-                                tool_input=None,
-                                tool_result=None,
-                                timestamp=timestamp,
-                                raw_json=msg,
-                                usage=self._extract_usage(msg),
-                                message_id=self._message_id_for("json", idx, msg.get("id")),
-                            )
+                    if tp.subject and tp.description:
+                        segments.append(f"**{tp.subject}**\n\n{tp.description}")
+                    elif tp.subject:
+                        segments.append(f"**{tp.subject}**")
+                    elif tp.description:
+                        segments.append(tp.description)
+                if segments:
+                    results.append(
+                        ParsedMessage(
+                            index=idx,
+                            role="assistant",
+                            content="\n\n".join(segments),
+                            content_type="thinking",
+                            tool_name=None,
+                            tool_input=None,
+                            tool_result=None,
+                            timestamp=timestamp,
+                            raw_json=msg,
+                            usage=self._extract_usage(msg),
+                            message_id=self._message_id_for("json", idx, msg.get("id")),
                         )
-                        idx += 1
-                    if tp.description:
-                        results.append(
-                            ParsedMessage(
-                                index=idx,
-                                role="assistant",
-                                content=tp.description,
-                                content_type="thinking",
-                                tool_name=None,
-                                tool_input=None,
-                                tool_result=None,
-                                timestamp=timestamp,
-                                raw_json=msg,
-                                usage=self._extract_usage(msg),
-                                message_id=self._message_id_for("json", idx, msg.get("id")),
-                            )
-                        )
-                        idx += 1
+                    )
+                    idx += 1
 
             # Main text response (usually empty when tool calls are present)
             normalized_content = _normalize_content(content)
