@@ -3,8 +3,8 @@
 After Change 2b, _set_context_for_request delegates to the shared
 resolve_and_seed_contexts helper. These tests verify the HTTP-specific
 bootstrap (deriving project_id from the X-Gobby-Session-Id header when
-the incoming ref is #N/numeric) and that dispatchers always propagate the
-resolved platform UUID.
+the incoming ref is #N/numeric) and that wrapper session headers own
+workflow/session context when body arguments target another session.
 """
 
 from __future__ import annotations
@@ -104,6 +104,7 @@ class TestSetContextForRequest:
 
         mock_resolve.assert_called_once_with(server.session_manager.db, header_session_uuid)
         # The derived project_id is fed back into the helper
+        assert mock_helper.call_args.kwargs["session_ref"] == header_session_uuid
         assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
 
     def test_hash_n_no_project_header_bootstraps_from_unique_header_hash_ref(self) -> None:
@@ -121,6 +122,7 @@ class TestSetContextForRequest:
 
         db.fetchall.assert_called_once()
         assert db.fetchall.call_args.args[1] == (7,)
+        assert mock_helper.call_args.kwargs["session_ref"] == "#7"
         assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
 
     def test_hash_n_header_ref_without_unique_project_stays_unscoped(self) -> None:
@@ -169,6 +171,19 @@ class TestSetContextForRequest:
             _set_context_for_request(server, {}, request)
 
         assert mock_helper.call_args.kwargs["session_ref"] == "#7"
+
+    def test_header_session_wins_over_target_argument_session(self) -> None:
+        """Body session_id remains the tool target; header is workflow context."""
+        server = _make_server()
+        request = _make_request(project_id=PROJECT_ID, session_id="caller-session")
+
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(),
+        ) as mock_helper:
+            _set_context_for_request(server, {"session_id": "target-session"}, request)
+
+        assert mock_helper.call_args.kwargs["session_ref"] == "caller-session"
 
     def test_set_contexts_unresolvable_uuid_does_not_plant_session_context(self) -> None:
         """Helper returns empty tokens → no session ContextVar planted."""

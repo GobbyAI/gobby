@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import kill_agent as _kill_agent_process
 from gobby.agents.run_completion import complete_and_notify_agent_run
+from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import LocalAgentRunManager
 
@@ -68,6 +69,8 @@ def _fire_synthetic_stop(
 
 async def _cleanup_terminal_artifacts(
     *,
+    run_id: str | None,
+    db: Any | None,
     tmux_session_name: str | None,
     agent_session_id: str | None,
     debug: bool,
@@ -76,6 +79,17 @@ async def _cleanup_terminal_artifacts(
     result: dict[str, Any],
 ) -> None:
     """Clean up terminal/session state after an explicit agent termination."""
+    if not debug:
+        cleanup = cleanup_agent_runtime_state(
+            db,
+            run_id=run_id,
+            child_session_id=agent_session_id,
+        )
+        result["dispatch_mutex_released"] = cleanup.dispatch_mutex_rows
+        result["workflow_instances_deleted"] = cleanup.workflow_instance_rows
+        if cleanup.errors:
+            result["runtime_cleanup_errors"] = list(cleanup.errors)
+
     if not debug and tmux_session_name:
         try:
             import subprocess
@@ -161,6 +175,8 @@ async def _complete_self_terminated_run(
         result["status"] = "success"
 
     await _cleanup_terminal_artifacts(
+        run_id=run.id,
+        db=kill_db,
         tmux_session_name=run.tmux_session_name,
         agent_session_id=agent_session_id,
         debug=debug,
@@ -372,6 +388,8 @@ def create_agents_registry(
             )
 
         await _cleanup_terminal_artifacts(
+            run_id=run.id,
+            db=kill_db,
             tmux_session_name=run.tmux_session_name,
             agent_session_id=run.child_session_id,
             debug=False,
@@ -596,6 +614,8 @@ def create_agents_registry(
             result["terminal_reason"] = "user_cancelled"
 
         await _cleanup_terminal_artifacts(
+            run_id=run_id,
+            db=kill_db,
             tmux_session_name=tmux_session_name,
             agent_session_id=agent_session_id,
             debug=debug,

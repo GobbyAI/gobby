@@ -94,7 +94,7 @@ def _make_stdio_request(
 
 
 @pytest.mark.asyncio
-async def test_stdio_rest_path_resolves_arguments_session_id_before_dispatch() -> None:
+async def test_stdio_rest_path_resolves_target_session_but_uses_wrapper_context() -> None:
     server, mcp_manager = _make_server()
     request = _make_stdio_request()
 
@@ -107,7 +107,7 @@ async def test_stdio_rest_path_resolves_arguments_session_id_before_dispatch() -
         "gobby-sessions",
         "get_session",
         {"session_id": SESSION_UUID_3},
-        session_id=SESSION_UUID_3,
+        session_id=SESSION_UUID_4,
     )
     assert mcp_manager.call_tool.await_count == 1
     assert mcp_manager.call_tool.await_args is not None
@@ -127,7 +127,7 @@ async def test_stdio_resolves_hash_ref_from_header_hash_ref_without_project_head
         "gobby-sessions",
         "get_session",
         {"session_id": SESSION_UUID_3},
-        session_id=SESSION_UUID_3,
+        session_id=SESSION_UUID_4,
     )
     assert mcp_manager.call_tool.await_count == 1
     assert mcp_manager.call_tool.await_args is not None

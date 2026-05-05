@@ -1,4 +1,4 @@
-"""Regression coverage for session-targeted MCP calls after SESSION_END cleanup."""
+"""Regression coverage for parent-scoped MCP calls targeting child sessions."""
 
 from __future__ import annotations
 
@@ -178,14 +178,23 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     server.session_manager = session_manager
     request = _make_request(header_session_id=parent_session_id)
     tokens = _set_context_for_request(server, {"session_id": child_session_id}, request)
-    assert tokens.resolved_session_id == child_session_id
+    assert tokens.resolved_session_id == parent_session_id
 
     try:
-        _, _, _, blocked = await tool_proxy._apply_before_tool_enforcement(
+        _, _, _, parent_allowed = await tool_proxy._apply_before_tool_enforcement(
             server_name="gobby-sessions",
             tool_name=tool_name,
             arguments={"session_id": child_session_id},
             session_id=None,
+        )
+
+        assert parent_allowed is None
+
+        _, _, _, blocked = await tool_proxy._apply_before_tool_enforcement(
+            server_name="gobby-sessions",
+            tool_name=tool_name,
+            arguments={"session_id": child_session_id},
+            session_id=child_session_id,
         )
 
         assert blocked is not None
@@ -204,7 +213,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
             server_name="gobby-sessions",
             tool_name=tool_name,
             arguments={"session_id": child_session_id},
-            session_id=None,
+            session_id=child_session_id,
         )
 
         assert allowed is None

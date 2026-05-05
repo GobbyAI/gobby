@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pydantic
 
 from gobby.agents.run_completion import complete_and_notify_agent_run
+from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import DatabaseProtocol
@@ -636,6 +637,11 @@ class EnforcementMixin:
                 "workflow": workflow_name,
             },
             message=f"Agent {run_id} completed via workflow terminate",
+        )
+        cleanup_agent_runtime_state(
+            self.db,
+            run_id=run_id,
+            child_session_id=session_id,
         )
 
     async def _process_step_after_tool(

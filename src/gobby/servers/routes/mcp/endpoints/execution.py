@@ -55,6 +55,15 @@ def _get_requested_session_id(arguments: Any, request: Request | None = None) ->
     return header_session_id or None
 
 
+def _get_argument_session_id(arguments: Any) -> str | None:
+    """Return a target-tool session_id from the request body when present."""
+    if isinstance(arguments, dict):
+        session_id = arguments.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return session_id
+    return None
+
+
 def _get_discovery_session_id(arguments: Any, request: Request | None = None) -> str | None:
     """Return the session ref that should own HTTP discovery side effects.
 
@@ -122,8 +131,8 @@ def _set_context_for_request(
     """Set project and session context vars from the best available source.
 
     Priority:
-      1. session_id from tool arguments (most specific — tool knows its session)
-      2. X-Gobby-Session-Id header (injected by stdio proxy from learned session)
+      1. X-Gobby-Session-Id header (the caller/workflow context)
+      2. session_id from tool arguments (the target tool parameter)
       3. X-Gobby-Project-Id header (injected by stdio proxy from CWD project.json)
 
     The stdio process runs in the CLI's project directory, so its CWD-derived
@@ -134,9 +143,12 @@ def _set_context_for_request(
     """
     header_session_id = request.headers.get("x-gobby-session-id") if request else None
     project_id_header = request.headers.get("x-gobby-project-id") if request else None
+    argument_session_id = _get_argument_session_id(arguments)
 
-    # 1. Harvest the session ref from arguments, then header.
-    session_id = _get_requested_session_id(arguments, request)
+    # Header session is wrapper/caller context. Body session_id remains a
+    # target-tool parameter and must not make child-session workflow
+    # enforcement apply to the caller.
+    session_id = header_session_id or argument_session_id
 
     # HTTP-specific bootstrap: when the incoming session_id is #N/numeric and
     # the X-Gobby-Project-Id header is missing, derive a project scope from the
@@ -148,9 +160,9 @@ def _set_context_for_request(
     if (
         not canonical_project_ref
         and header_session_id
-        and session_id
+        and argument_session_id
         and server.session_manager
-        and session_id.lstrip("#").isdigit()
+        and argument_session_id.lstrip("#").isdigit()
     ):
         try:
             bootstrap_id = resolve_session_reference(server.session_manager.db, header_session_id)

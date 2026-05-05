@@ -103,6 +103,7 @@ class AgentLifecycleMonitor:
         )
         self._cleanup_handler = AgentCleanupHandler(
             agent_run_manager=agent_run_manager,
+            db=db,
             get_session_manager=lambda: self._session_manager,
             get_session_coordinator=lambda: self._session_coordinator,
             clone_storage=clone_storage,

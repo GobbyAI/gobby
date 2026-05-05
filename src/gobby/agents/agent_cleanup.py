@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         LocalAgentRunManager,
     )
     from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.database import DatabaseProtocol
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class AgentCleanupHandler:
     def __init__(
         self,
         agent_run_manager: LocalAgentRunManager,
+        db: DatabaseProtocol,
         get_session_manager: Callable[[], SessionManager | None],
         get_session_coordinator: Callable[[], SessionCoordinator | None],
         clone_storage: LocalCloneManager | None,
@@ -43,6 +45,7 @@ class AgentCleanupHandler:
         master_fds: dict[str, int],
     ) -> None:
         self._agent_run_manager = agent_run_manager
+        self._db = db
         self._get_session_manager = get_session_manager
         self._get_session_coordinator = get_session_coordinator
         self._clone_storage = clone_storage
@@ -71,6 +74,8 @@ class AgentCleanupHandler:
 
     async def post_terminal_cleanup(self, run: AgentRun) -> None:
         """Release in-memory and isolation state for a terminal agent run."""
+        from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
+
         session_id = run.child_session_id or run.parent_session_id
         session_manager = self._get_session_manager()
         session_coordinator = self._get_session_coordinator()
@@ -105,6 +110,20 @@ class AgentCleanupHandler:
                 logger.debug(f"Expired session {session_id} for agent {run.id}")
             except Exception as e:
                 logger.warning(f"Failed to expire session for agent {run.id}: {e}")
+
+        cleanup = await asyncio.to_thread(
+            cleanup_agent_runtime_state,
+            self._db,
+            run_id=run.id,
+            child_session_id=run.child_session_id,
+        )
+        if cleanup.dispatch_mutex_rows or cleanup.workflow_instance_rows:
+            logger.info(
+                "Cleaned runtime state for agent %s: dispatch_mutex=%s workflow_instances=%s",
+                run.id,
+                cleanup.dispatch_mutex_rows,
+                cleanup.workflow_instance_rows,
+            )
 
     async def terminalize_cancelled_run(
         self,
