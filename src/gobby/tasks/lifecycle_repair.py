@@ -161,14 +161,25 @@ class LifecycleRepair:
         if task.parent_task_id is None:
             return None
         parent_rows = self.task_manager.stage_states.list_for_task(task.parent_task_id)
+        rows = self.task_manager.stage_states.list_for_task(task.id)
         desired = derive_child_manifest_specs(
             parent_rows,
             include_holistic_qa=task.task_type == "epic",
         )
-        if not desired:
+        if (
+            desired
+            and _first_stage(rows) == "development"
+            and _first_stage(desired) != "development"
+        ):
             return None
+        if not desired:
+            desired = _historical_development_first_specs(
+                rows,
+                include_holistic_qa=task.task_type == "epic",
+            )
+            if not desired:
+                return None
 
-        rows = self.task_manager.stage_states.list_for_task(task.id)
         if _manifest_signature(rows) == _manifest_signature(desired):
             return None
 
@@ -306,6 +317,36 @@ def _is_pristine_manifest(rows: list[StageState]) -> bool:
         and row.notes is None
         for row in rows
     )
+
+
+def _first_stage(rows: Sequence[StageState | StageManifestSpec]) -> str | None:
+    if not rows:
+        return None
+    return min(rows, key=lambda item: item.position).stage_name
+
+
+def _historical_development_first_specs(
+    rows: list[StageState],
+    *,
+    include_holistic_qa: bool,
+) -> list[StageManifestSpec]:
+    if _first_stage(rows) == "development":
+        return []
+    by_name = {row.stage_name: row for row in rows}
+    inherited = [stage_name for stage_name in ("pr", "merge") if stage_name in by_name]
+    stage_names = ["development"]
+    if include_holistic_qa and "holistic_qa" in by_name:
+        stage_names.append("holistic_qa")
+    stage_names.extend(inherited)
+    return [
+        StageManifestSpec(
+            stage_name=stage_name,
+            position=position,
+            max_work_attempts=getattr(by_name.get(stage_name), "max_work_attempts", None),
+            max_review_rounds=getattr(by_name.get(stage_name), "max_review_rounds", None),
+        )
+        for position, stage_name in enumerate(stage_names)
+    ]
 
 
 def _manifest_signature(

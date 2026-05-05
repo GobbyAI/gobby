@@ -86,6 +86,57 @@ def test_repair_reseeds_expansion_child_from_parent_scope(temp_db, sample_projec
     )
 
 
+def test_repair_does_not_remove_development_from_historical_leaf(
+    temp_db,
+    sample_project,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    phase = manager.create_task(
+        project_id=sample_project["id"],
+        title="Historical phase",
+        task_type="epic",
+        labels=["expansion-run:abc"],
+    )
+    manager.initialize_task_manifest(phase.id, stage_names=["holistic_qa", "pr", "merge"])
+    leaf = manager.create_task(
+        project_id=sample_project["id"],
+        title="Historical leaf",
+        parent_task_id=phase.id,
+        task_type="task",
+        labels=["expansion-run:abc"],
+    )
+    manager.initialize_task_manifest(leaf.id, stage_names=["development", "pr", "merge"])
+
+    result = LifecycleRepair(manager).run(task_id=leaf.id)
+
+    assert result.candidates == []
+
+
+def test_repair_reseeds_historical_phase_wrapper_to_development_first(
+    temp_db,
+    sample_project,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Metadata-only expansion parent",
+        task_type="epic",
+    )
+    phase = manager.create_task(
+        project_id=sample_project["id"],
+        title="Historical phase",
+        parent_task_id=parent.id,
+        task_type="epic",
+        labels=["expansion-run:abc"],
+    )
+    manager.initialize_task_manifest(phase.id, stage_names=["holistic_qa", "pr", "merge"])
+
+    result = LifecycleRepair(manager).run(task_id=phase.id, apply=True)
+
+    assert result.candidates[0].applied is True
+    assert _stage_names(manager, phase.id) == ["development", "holistic_qa", "pr", "merge"]
+
+
 def test_repair_skips_active_expansion_rows_without_force(temp_db, sample_project) -> None:
     manager = LocalTaskManager(temp_db)
     parent = manager.create_task(
