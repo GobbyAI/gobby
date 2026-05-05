@@ -1,140 +1,192 @@
 # System Requirements
 
-Gobby is a local-first daemon. The runtime footprint depends on which optional components you enable: the daemon alone is light, but the full retrieval stack (PostgreSQL + pg_search, Qdrant, FalkorDB) plus a local embedding model in LM Studio wants modern hardware.
+Gobby runs as a local Python daemon with optional local services for semantic search and
+graph-augmented memory. The daemon is small; the optional stack is what drives most hardware
+and Docker requirements.
 
-This guide covers what to install and what hardware to plan for, broken out by platform and by component.
+Use this guide to decide what has to be installed before running Gobby 0.4.0.
 
-## Quick Start
+## Quick Matrix
 
-| Platform | Minimum | Recommended |
-|----------|---------|-------------|
-| **macOS** | Apple Silicon, macOS 14+, 16 GB RAM, Docker Desktop | M3 / M4 Mac mini class, 32 GB unified memory, 8+ cores, 50+ GB SSD |
-| **Windows** | Windows 11 23H2+ or Windows 10 22H2 Pro/Edu/Enterprise, WSL 2.1.5+, virtualization/SLAT, AVX2 x64, 16 GB RAM | Windows 11, 32 GB RAM, 8+ cores, 4+ GB discrete VRAM |
-| **Linux** | Ubuntu 22.04/24.04 LTS (or equivalent), Docker Engine + Compose, x86_64 or arm64, AVX2 on x64, 16 GB RAM | Ubuntu 22.04 LTS, 32 GB RAM, 8+ cores, NVMe SSD |
+| Setup | Required | Good default |
+|-------|----------|--------------|
+| Daemon only | Python 3.13+, 1 GB free disk, localhost ports 60887 and 60888 | 4+ CPU cores, 8 GB RAM |
+| Daemon + web UI | Daemon requirements plus localhost port 60889 | 8 GB RAM |
+| Full local search stack | Docker with Compose v2, Qdrant, Neo4j, embedding endpoint | 16 GB RAM minimum, 32 GB RAM preferred, SSD/NVMe storage |
+| Local embedding model | OpenAI-compatible local provider such as LM Studio or Ollama | 16 GB RAM, GPU or unified memory when also running a chat model |
 
-The minimums are the realistic floor for running the full stack locally — daemon, Postgres, Qdrant, FalkorDB, and LM Studio with `nomic-embed-text-v1.5`. If you only want the Gobby daemon talking to cloud LLMs, your machine is almost certainly already fine.
+If you only use cloud-hosted LLMs and embeddings, you can skip Docker services during install:
 
-## Components
+```bash
+uv run gobby install --no-ext-services
+```
 
-A full Gobby install runs as **one daemon plus a Docker Compose stack of three datastores**, with an optional local embedding server:
+## Platform Notes
 
-| Component | Where | Purpose |
-|-----------|-------|---------|
-| Gobby daemon | Native (Python 3.13+) | Sessions, tasks, hooks, MCP proxy, rules |
-| PostgreSQL + pg_search | Docker (`paradedb/paradedb`) | Relational + BM25 full-text search |
-| Qdrant | Docker (`qdrant/qdrant`) | Vector search |
-| FalkorDB | Docker (`falkordb/falkordb`) | Knowledge graph (GraphRAG) |
-| LM Studio + nomic-embed-text-v1.5 | Native (optional) | Local embeddings; replaceable with Ollama or a hosted provider |
+Gobby is packaged as a Python 3.13+ application and is developed for local developer machines.
+The practical platform requirements are mostly set by Python, Docker, and whichever embedding
+provider you choose.
 
-We ship the datastores as separate containers in a Compose file rather than one all-in-one image: upgrades, volumes, resource limits, and crash isolation all stay clean that way.
+| Platform | Notes |
+|----------|-------|
+| macOS | Docker Desktop provides the Linux VM for Qdrant and Neo4j. Apple Silicon is a practical target for the local full stack. |
+| Linux | Use Docker Engine plus the Docker Compose plugin. Linux avoids the Docker Desktop VM memory allocation step. |
+| Windows | Use Windows 10/11 with WSL2 for Docker-based services. Local shell tooling and filesystem paths should be verified in the target environment. |
+
+The daemon can run without Docker. Docker is only required for the local Qdrant and Neo4j
+services installed by the Gobby installer.
 
 ## Daemon
 
-The daemon itself is modest: a Python 3.13 process, a SQLite database, a FastAPI HTTP server, and a WebSocket server.
+The daemon is a native Python process with a SQLite database, FastAPI HTTP server, WebSocket
+server, and optional UI dev server.
 
-| Resource | Requirement |
-|----------|-------------|
-| Python | 3.13+ |
-| RAM | 512 MB idle, 1–2 GB under load |
-| CPU | 1 core idle; benefits from concurrency under heavy hook traffic |
-| Disk | 1 GB for code + dependencies, plus database growth |
+| Resource | Current value |
+|----------|---------------|
+| Python | 3.13+ (`requires-python = ">=3.13"`) |
+| Database | `~/.gobby/gobby-hub.db` by default |
+| HTTP API | `localhost:60887` by default |
+| WebSocket | `localhost:60888` by default |
+| Web UI | `localhost:60889` by default |
+| Bind host | `localhost` by default |
+| Disk | 1 GB for code/dependencies plus SQLite database and transcript growth |
+| RAM | Hundreds of MB idle; plan 1-2 GB when many sessions, hooks, or MCP calls are active |
 
-OS support: macOS 14+, Linux (Ubuntu 20.04+ or equivalent), Windows 10/11.
+Bootstrap settings live in `src/gobby/install/shared/config/bootstrap.yaml` and are copied into
+the user configuration area during setup. Most runtime configuration then moves into the local
+database and is managed by the UI or `gobby-config` MCP tools.
 
-## Backing Stack (Docker Compose)
+## Optional Services
 
-All three datastores publish multi-arch images (amd64 + arm64), so Apple Silicon runs them natively.
+Gobby 0.4.0 ships a unified Docker Compose service template with two local datastore profiles:
 
-| Service | Image | Notes |
-|---------|-------|-------|
-| PostgreSQL + pg_search | `paradedb/paradedb` | PG18 with pg_search preinstalled. Set `shm_size: 1g` in compose. |
-| Qdrant | `qdrant/qdrant` | POSIX block storage; SSD/NVMe when vectors offload to disk. |
-| FalkorDB | `falkordb/falkordb` | Bundled with Redis 7.4. For production, use the server-only image variant. |
+| Service | Image | Default endpoint | Purpose |
+|---------|-------|------------------|---------|
+| Qdrant | `qdrant/qdrant:latest` | `http://localhost:6333` | Vector storage for semantic search and code-symbol embeddings |
+| Neo4j | `neo4j:latest` | HTTP `http://localhost:8474`, Bolt `localhost:8687` | Graph storage for graph-augmented search and memory relationships |
 
-### Memory budgeting
+The installer writes the Compose file under `~/.gobby/services/docker-compose.yml`. `gobby start`
+uses Docker Compose profiles to start installed services.
 
-There is no fixed minimum — usage scales with your data. Working numbers for a small/dev deployment:
+Run the default installer to configure hooks, embedding provider, and optional services:
 
-| Service | Idle | Working | Notes |
-|---------|------|---------|-------|
-| PostgreSQL + pg_search | ~200 MB | 1–2 GB recommended | BM25 index size grows with text corpus. |
-| Qdrant | ~150 MB | scales with vectors | Memory ≈ `vectors × dimensions × 4 bytes × 1.5`. For nomic-embed-text-v1.5 (768d), that's **~4.6 GB per 1M vectors** in RAM. Quantization cuts 4–40×. |
-| FalkorDB | ~100 MB | 1–2 GB min, 4–8 GB for larger graphs | Use the [size calculator](https://www.falkordb.com/graph-database-graph-size-calculator/) to estimate from nodes/edges/properties. |
+```bash
+uv run gobby install
+```
 
-For Docker Desktop (Mac/Windows): allocate at least 12 GB to the VM for the floor tier, 16 GB for recommended. Docker Desktop's own floor is 8 GB but that's not enough headroom once all three containers are running. On Linux, Docker Engine has no allocation step — the host's RAM is available directly.
+Relevant installer flags:
 
-## Local Embeddings (LM Studio)
+```bash
+uv run gobby install --no-ext-services
+uv run gobby install --neo4j-password 'your-password'
+uv run gobby qdrant install --port 6333
+```
 
-The default local embedding model is `nomic-embed-text-v1.5` — 0.1B parameters, 768-dim by default with Matryoshka support down to 64-dim if you want to trade recall for footprint.
+## Embeddings
 
-| Resource | Requirement |
-|----------|-------------|
-| LM Studio | macOS 14+ (Apple Silicon only), Windows 10/11 (AVX2 x64 or Snapdragon X), Ubuntu 20.04+ (AVX2 x64 or arm64 AppImage) |
-| RAM | 16 GB recommended for LM Studio overall |
-| VRAM | 0.3–0.8 GB for nomic-embed-text-v1.5 (Q8 → fp16) |
-| GPU | Optional. Apple Silicon uses unified memory; on Win/Linux a discrete 4+ GB GPU is recommended for any larger local LLM you load alongside |
+Semantic search needs an embedding endpoint. Gobby uses OpenAI-compatible embedding APIs and
+stores vectors in Qdrant when the local vector stack is enabled.
 
-The embedding model itself is tiny (~262 MB at fp16). Most of LM Studio's RAM appetite comes from any chat model you load alongside it. LM Studio explicitly does **not** support Intel Macs.
+| Provider path | Typical model/config | Notes |
+|---------------|----------------------|-------|
+| Ollama | `nomic-embed-text`, `http://localhost:11434/v1` | Local default-style model, 768 dimensions |
+| LM Studio | `text-embedding-nomic-embed-text-v1.5@f16`, `http://localhost:1234/v1` | Installer can use LM Studio when detected |
+| OpenAI-compatible hosted endpoint | Provider-specific model and API key | Skips local embedding-model hardware needs |
+| None | No embedding provider | Installer skips Qdrant/Neo4j setup when embeddings are disabled |
 
-If you'd rather not run LM Studio, swap in Ollama or any OpenAI-compatible embedding endpoint via [search.md](search.md) — Gobby doesn't care which provider serves the embeddings.
+The default embedding config is `nomic-embed-text` with 768 dimensions. If you change models,
+make sure `databases.embeddings.dim` matches the model output.
 
-## Tested platforms
+For provider details, see [search.md](./search.md).
 
-Floor-tier confirmation we've actually shipped on:
+## Memory And Search Footprint
 
-- **Apple Silicon M3** — full stack runs comfortably
-- **Apple M4 Mac mini** — full stack runs comfortably
+The full local search footprint depends on your data volume.
 
-If you have a unified-memory machine in a higher tier, you get more headroom — useful when you want to run a local 30B–70B chat model alongside the embedding model and the Docker stack:
+| Component | Working requirement |
+|-----------|---------------------|
+| SQLite | Grows with sessions, tasks, transcripts, memories, and task history |
+| Qdrant | Grows with vector count and dimensions; SSD/NVMe storage is strongly preferred |
+| Neo4j | Grows with extracted entities and relationships |
+| Embedding provider | Small embedding models can run on CPU; local chat models loaded alongside them dominate RAM/VRAM |
 
-- **Apple M5 / M5 Pro / M5 Max** — up to 128 GB unified memory, 460–614 GB/s on M5 Max
-- **AMD Ryzen AI Max+ 395 (Strix Halo)** — up to 128 GB unified memory, up to 96 GB assignable as VRAM. Native Linux is the sweet spot
+Docker Desktop users should allocate enough VM memory for both Qdrant and Neo4j. A practical
+floor is 8 GB assigned to Docker for small local use; 12-16 GB gives better headroom once vector
+collections and graph data grow. Leave at least 4 GB for the host OS.
 
-Neither is required.
+On Linux, Docker Engine uses host memory directly, so there is no Docker Desktop allocation
+slider. You still need enough RAM for the daemon, Docker services, and any local embedding/chat
+models running at the same time.
 
-## Best Practices
+## Ports
 
-### Do
+Default ports are chosen to avoid common development-server conflicts.
 
-- Use SSD/NVMe storage. SQLite, Postgres, and Qdrant all hate spinning disks.
-- Run the datastores via Docker Compose with one service per container. Keeps upgrades, volumes, resource limits, and crash isolation clean.
-- Set Docker Desktop memory allocation explicitly (12–16 GB) rather than letting it default. Default is half of host RAM, which often isn't enough.
-- Quantize Qdrant vectors when the collection grows past a few hundred thousand entries — scalar quantization is usually transparent; binary quantization is dramatic.
-- On Apple Silicon, prefer arm64 images. All our defaults are multi-arch, so you don't need pinned tags.
-- On Linux servers, prefer Docker Engine + Compose over Docker Desktop. Lower overhead, no VM tax.
+| Port | Owner |
+|------|-------|
+| 60887 | Gobby HTTP API |
+| 60888 | Gobby WebSocket server |
+| 60889 | Gobby web UI |
+| 6333 | Qdrant HTTP |
+| 6334 | Qdrant gRPC |
+| 8474 | Neo4j HTTP, mapped from container port 7474 |
+| 8687 | Neo4j Bolt, mapped from container port 7687 |
 
-### Don't
+If a port is already in use, change the matching bootstrap/config value before starting the
+daemon or pass the relevant installer flag where one exists.
 
-- Run the full stack on 8 GB of RAM. The daemon alone is fine; the Docker side will thrash.
-- Mount Postgres or Qdrant data directories on macOS bind mounts for production-scale data — use named volumes for performance.
-- Allocate all your host RAM to Docker Desktop. Leave at least 4 GB for the host OS.
-- Try to install LM Studio on an Intel Mac. It will not run.
+## Storage
+
+Use SSD or NVMe storage for any full-stack local install. SQLite, Qdrant, and Neo4j all suffer on
+slow or networked filesystems under write-heavy use.
+
+Prefer Docker named volumes for Qdrant and Neo4j data. The shipped Compose template uses named
+volumes:
+
+| Volume | Purpose |
+|--------|---------|
+| `gobby_qdrant_data` | Qdrant vector storage |
+| `gobby_neo4j_data` | Neo4j graph data |
+| `gobby_neo4j_logs` | Neo4j logs |
 
 ## Troubleshooting
 
-### Postgres "could not resize shared memory segment"
+### `uv run gobby install` Cannot Start Docker Services
 
-Docker's default `shm_size` is 64 MB. Postgres needs more. Set `shm_size: 1g` in your compose file.
+Verify Docker is installed, running, and provides the `docker compose` command. Re-run with
+`--no-ext-services` when you only need the daemon and cloud-hosted providers.
 
-### Qdrant OOM under load
+### Qdrant Is Not Healthy
 
-Either (a) enable scalar/binary quantization, or (b) switch to memory-mapped storage for vectors and the HNSW graph. The latter trades latency for footprint.
+Check that port 6333 is free and that the `gobby_qdrant_data` volume is writable. You can install
+or reinstall Qdrant with:
 
-### LM Studio won't start on Linux/Windows
+```bash
+uv run gobby qdrant install --port 6333
+```
 
-Verify your CPU has AVX2 (`grep avx2 /proc/cpuinfo` on Linux). Most CPUs from the past decade do, but pre-2013 hardware may not.
+### Neo4j Authentication Fails
 
-### Docker Desktop won't start on Windows
+Set or rotate the password during install:
 
-Confirm WSL 2.1.5+ is installed (`wsl --version`) and that virtualization/SLAT is enabled in your BIOS. Docker Desktop on Windows runs containers through the WSL2 backend by default.
+```bash
+uv run gobby install --neo4j-password 'your-password'
+```
 
-### Apple Silicon: "image platform mismatch"
+The configured auth value is stored in Gobby configuration, and the Compose container receives
+the password through `GOBBY_NEO4J_PASSWORD`.
 
-All three backing-stack images are multi-arch — you should not see this for our defaults. If you do, you've pulled an `:amd64`-pinned tag. Use the unpinned tag and Docker will pick arm64.
+### Local Embeddings Are Slow
+
+Use a smaller embedding model, switch to a hosted embedding endpoint, or disable embeddings when
+semantic search is not required. If a local chat model is also loaded, it usually consumes far
+more RAM or VRAM than the embedding model.
 
 ## See Also
 
-- [configuration.md](configuration.md) — Daemon and project config
-- [search.md](search.md) — Search and embedding configuration
-- [memory.md](memory.md) — Memory backend configuration
-- [CONTRIBUTING.md](../../CONTRIBUTING.md) — Development environment setup
+- [configuration.md](./configuration.md) - Daemon and project configuration
+- [search.md](./search.md) - Search and embedding configuration
+- [memory.md](./memory.md) - Memory backend configuration
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development environment setup
+
+_Last verified: 2026-05-04_
