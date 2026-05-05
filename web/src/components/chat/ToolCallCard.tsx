@@ -41,6 +41,7 @@ import {
 import { ToolResultImage } from './ToolResultImage'
 import { DiffBlock } from '../shared/DiffBlock'
 import { computeSyntheticDiffLines } from '../shared/DiffBlock.helpers'
+import { TOOL_CARD_SPACING } from '../shared/spacing'
 import { TOOL_ERROR_PRE_CLASS, TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
 
 interface ToolCallCardProps {
@@ -71,7 +72,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
     const language = getLanguageFromPath(filePath)
     return (
       <div>
-        <div className="text-muted-foreground mb-1 font-medium">
+        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
           Write <span className="font-mono text-foreground">{filePath}</span>
         </div>
         <CodeBlock
@@ -90,7 +91,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
     const language = getLanguageFromPath(filePath)
     return (
       <div>
-        <div className="text-muted-foreground mb-1 font-medium">
+        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
           Edit <span className="font-mono text-foreground">{filePath}</span>
         </div>
         <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} />
@@ -101,7 +102,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
   // Fallback: syntax-highlighted JSON
   return (
     <div>
-      <div className="text-muted-foreground mb-1 font-medium">Arguments</div>
+      <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Arguments</div>
       <JsonBlock
         value={args}
         className="rounded max-h-96"
@@ -116,7 +117,7 @@ function ToolErrorBody({ error }: { error: string }) {
   const looksLikeJson = cleaned.startsWith('{') || cleaned.startsWith('[')
   return (
     <div>
-      <div className="text-destructive-foreground mb-1 font-medium">Error</div>
+      <div className={cn('text-destructive-foreground', TOOL_CARD_SPACING.label)}>Error</div>
       {looksLikeJson ? (
         <JsonResultBlock value={cleaned} variant="error" />
       ) : (
@@ -353,7 +354,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
       call.status === 'error' && 'border-destructive-foreground/30'
     )}>
       <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors"
+        className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors')}
         onClick={() => hasDetails && setExpanded(!expanded)}
       >
         <StatusIcon status={call.status} />
@@ -384,13 +385,13 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         )}
       </div>
       {expanded && hasDetails && (
-        <div className="border-t border-border px-3 py-2 text-xs space-y-2">
+        <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
           {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
             <ToolArgumentsContent args={call.arguments} />
           )}
           {call.status === 'completed' && call.result !== undefined && toolType !== 'edit' && (
             <div className="min-w-0 max-w-full overflow-hidden">
-              <div className="text-muted-foreground mb-1 font-medium">Result</div>
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Result</div>
               <ToolResultContent call={call} />
             </div>
           )}
@@ -423,14 +424,14 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
     const wasError = call.status === 'error'
     return (
       <div className="rounded-lg border border-border/30 bg-muted/5 overflow-hidden my-1.5 opacity-75">
-        <div className="flex items-center gap-2 px-3 py-2 text-sm">
+        <div className={cn(TOOL_CARD_SPACING.headerDense, 'text-sm')}>
           <span className="font-mono text-foreground">{displayName}</span>
           {wasApproved && <Badge variant="success">Approved</Badge>}
           {wasError && <Badge variant="error">Rejected</Badge>}
           {!wasApproved && !wasError && <Badge variant="warning">Pending</Badge>}
         </div>
         {call.arguments && Object.keys(call.arguments).length > 0 && (
-          <div className="px-3 pb-2 text-xs">
+          <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
             <ToolArgumentsContent args={call.arguments} />
           </div>
         )}
@@ -440,7 +441,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
 
   return (
     <div className="rounded-lg border border-warning-foreground/30 bg-warning/20 overflow-hidden my-1.5">
-      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+      <div className={cn(TOOL_CARD_SPACING.headerDense, 'text-sm')}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground shrink-0">
           <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
           <line x1="12" y1="9" x2="12" y2="13" />
@@ -450,7 +451,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         <Badge variant="warning">Approval Required</Badge>
       </div>
       {call.arguments && Object.keys(call.arguments).length > 0 && (
-        <div className="px-3 pb-2 text-xs">
+        <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
           <ToolArgumentsContent args={call.arguments} />
         </div>
       )}
@@ -466,7 +467,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         </Button>
       </div>
       {sendError && (
-        <div className="px-3 pb-2 text-xs text-warning-foreground">{sendError}</div>
+        <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs text-warning-foreground')}>{sendError}</div>
       )}
     </div>
   )
@@ -697,7 +698,7 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
       call.status === 'error' && 'border-destructive-foreground/30'
     )}>
       <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors bg-accent/5"
+        className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors bg-accent/5')}
         onClick={() => setExpanded(!expanded)}
       >
         <StatusIcon status={call.status} />
@@ -708,7 +709,7 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
         <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
       </div>
       {expanded && (
-        <div className="border-t border-border px-3 py-2 text-xs space-y-2">
+        <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
           {surfaceState && onCanvasInteraction ? (
             <A2UIRenderer surfaceState={surfaceState} onAction={onCanvasInteraction} />
           ) : (

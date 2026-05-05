@@ -2,6 +2,7 @@ import { memo } from 'react'
 import type { ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { extractImageSrc } from '../../lib/imageSources'
+import { MESSAGE_SPACING } from '../shared/spacing'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallCards } from './ToolCallCard'
@@ -111,12 +112,12 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
 
   return (
     <div className={cn(
-      'px-4 py-3',
+      MESSAGE_SPACING.body,
       message.role === 'user' && 'bg-[var(--color-info-soft)]',
       message.role === 'system' && !isCommandResult && 'bg-muted/30',
     )}>
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-2 mb-1.5">
+        <div className={MESSAGE_SPACING.headerRow}>
           {message.role === 'assistant' && (
             <img src="/logo.png" alt="App logo" loading="eager" decoding="async" className="w-5 h-5 rounded" onError={(e) => { e.currentTarget.style.display = 'none' }} />
           )}
@@ -132,7 +133,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
         </div>
 
         {isThinking && !message.content && !message.thinkingContent && (
-          <div className="flex items-center gap-2 py-2">
+          <div className={MESSAGE_SPACING.metaRow}>
             <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
             <span className="text-sm text-muted-foreground">Thinking...</span>
           </div>
