@@ -33,7 +33,7 @@ Hook Types (28 total):
 25. before-model: Triggered before model inference (Gemini)
 26. after-model: Triggered after model inference (Gemini)
 27. permission-request: Triggered when permission is requested (Claude)
-28. permission-denied: Triggered when auto mode denies a tool (Claude)
+28. permission-denied: Triggered when YOLO mode denies a tool (Claude)
 
 Example:
     ```python

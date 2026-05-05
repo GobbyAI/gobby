@@ -101,7 +101,7 @@ class GeminiWebChatPermissionsMixin:
             return (
                 '<plan-mode status="approved">\n'
                 "The user has approved your plan, but you are still in PLAN MODE.\n"
-                "Do not execute changes until the session is explicitly switched to Auto.\n"
+                "Do not execute changes until the session is explicitly switched to YOLO.\n"
                 "</plan-mode>"
             )
 

@@ -9,7 +9,7 @@ variables:
     description: Default chat_mode to bypass
   mode_level:
     value: 2
-    description: Default mode_level to 2 (Full Auto)
+    description: Default mode_level to 2 (YOLO)
   stop_attempts:
     value: 0
     description: Default stop_attempts to 0

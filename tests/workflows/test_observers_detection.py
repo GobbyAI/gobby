@@ -102,13 +102,13 @@ class TestDetectPlanModeFromContext:
         assert variables.get("plan_mode") is False
         assert variables.get("plan_skill_loaded") is False
 
-    def test_detects_claude_auto_mode_system_reminder(self, variables) -> None:
+    def test_detects_claude_yolo_mode_system_reminder(self, variables) -> None:
         variables["mode_level"] = 1
         variables["plan_mode"] = True
         variables["plan_skill_loaded"] = True
         prompt = (
             "<system-reminder>"
-            "Auto mode is active. Permission mode is bypassPermissions."
+            "YOLO mode is active. You may execute without approval prompts."
             "</system-reminder>"
         )
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
@@ -116,6 +116,13 @@ class TestDetectPlanModeFromContext:
         assert variables.get("mode_level") == 2
         assert variables.get("plan_mode") is False
         assert variables.get("plan_skill_loaded") is False
+
+    def test_detects_legacy_claude_auto_mode_system_reminder(self, variables) -> None:
+        variables["mode_level"] = 1
+        prompt = "<system-reminder>Auto mode is active.</system-reminder>"
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
+        assert variables.get("mode_level") == 2
 
     def test_detects_claude_act_mode_system_reminder(self, variables) -> None:
         variables["mode_level"] = 2
@@ -138,7 +145,7 @@ class TestDetectPlanModeFromContext:
         variables["chat_mode"] = "bypass"
         prompt = "Please fix the bug in the code."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
-        assert variables.get("mode_level") == 2  # reset to Full Auto
+        assert variables.get("mode_level") == 2  # reset to YOLO
 
     def test_no_heal_when_chat_mode_is_plan(self, variables) -> None:
         """Don't reset mode_level if chat_mode is genuinely plan (edge case)."""
@@ -236,7 +243,14 @@ class TestDetectPlanModeFromContext:
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 2
 
-    def test_detects_auto_chat_mode_tag(self, variables) -> None:
+    def test_detects_yolo_chat_mode_tag(self, variables) -> None:
+        variables["mode_level"] = 1
+        prompt = '<chat-mode status="yolo">\nYou are in YOLO MODE.\n</chat-mode>'
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
+        assert variables.get("mode_level") == 2
+
+    def test_detects_legacy_auto_chat_mode_tag(self, variables) -> None:
         variables["mode_level"] = 1
         prompt = '<chat-mode status="auto">\nYou are in AUTO MODE.\n</chat-mode>'
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)

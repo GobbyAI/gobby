@@ -124,7 +124,7 @@ class ChatSessionPermissionsMixin:
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Callback for tool permission checks.
 
-        Auto-approves all tools except AskUserQuestion (which blocks
+        Bypasses approval prompts for all tools except AskUserQuestion (which blocks
         until the user provides answers via provide_answer()) and tools
         matched by tool_approval policies (which block until approved).
         """
@@ -548,7 +548,7 @@ class ChatSessionPermissionsMixin:
         """Return mode context for additionalContext injection.
 
         Returns context for ALL modes so the agent always knows its current
-        mode. Critical for Plan → Act/Auto transitions: without explicit
+        mode. Critical for Plan → Act/YOLO transitions: without explicit
         counter-context, the agent retains stale plan mode instructions
         from earlier in the conversation.
 
@@ -559,9 +559,9 @@ class ChatSessionPermissionsMixin:
         if self.chat_mode != "plan":
             if self.chat_mode == "bypass":
                 return (
-                    '<chat-mode status="auto">\n'
-                    "You are in AUTO MODE. You may execute work, edit files, and use tools; "
-                    "Gobby will auto-approve tool requests.\n"
+                    '<chat-mode status="yolo">\n'
+                    "You are in YOLO MODE. You may execute work, edit files, and use tools; "
+                    "Gobby will not ask for approval before tool requests.\n"
                     "</chat-mode>"
                 )
             return (
@@ -575,7 +575,7 @@ class ChatSessionPermissionsMixin:
             return (
                 '<plan-mode status="approved">\n'
                 "The user has approved your plan, but you are still in PLAN MODE.\n"
-                "Do not execute changes until the session is explicitly switched to Act or Auto.\n"
+                "Do not execute changes until the session is explicitly switched to Act or YOLO.\n"
                 "</plan-mode>"
             )
 

@@ -93,7 +93,7 @@ class HookType(str, Enum):
     """Triggered when permission is requested (Claude only)"""
 
     PERMISSION_DENIED = "permission-denied"
-    """Triggered when auto mode denies a tool (Claude only)"""
+    """Triggered when YOLO mode denies a tool (Claude only)"""
 
 
 class SessionStartSource(str, Enum):

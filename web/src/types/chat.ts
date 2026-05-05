@@ -7,7 +7,7 @@ export interface ChatModeInfo {
   id: ChatMode;
   label: string;
   description: string;
-  level: number; // 0=plan, 1=act, 2=full-auto
+  level: number; // 0=plan, 1=act, 2=yolo
 }
 
 export const CHAT_MODES: ChatModeInfo[] = [
@@ -25,8 +25,8 @@ export const CHAT_MODES: ChatModeInfo[] = [
   },
   {
     id: "bypass",
-    label: "Auto",
-    description: "Auto-approve all tools",
+    label: "YOLO",
+    description: "Run without approval prompts",
     level: 2,
   },
 ];

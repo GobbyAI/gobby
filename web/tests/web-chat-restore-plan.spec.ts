@@ -470,7 +470,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     ).toBeVisible();
     await page.getByRole("button", { name: "Approve & Execute" }).click();
 
-    await expect(page.getByRole("radio", { name: "Auto", exact: true })).toHaveAttribute(
+    await expect(page.getByRole("radio", { name: "YOLO", exact: true })).toHaveAttribute(
       "aria-checked",
       "true",
     );

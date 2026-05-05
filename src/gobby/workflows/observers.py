@@ -84,7 +84,7 @@ def _looks_like_commit_success(output: str) -> bool:
 def compute_mode_level(chat_mode: str) -> int:
     """Derive numeric mode_level from chat_mode.
 
-    Returns 0 (Plan), 1 (Act), or 2 (Full Auto).
+    Returns 0 (Plan), 1 (Act), or 2 (YOLO).
     """
     return _MODE_LEVEL_MAP.get(chat_mode, 2)
 
@@ -418,6 +418,8 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
             [
                 "auto mode is active",
                 "you are in auto mode",
+                "yolo mode is active",
+                "you are in yolo mode",
                 "bypasspermissions",
                 "permission mode is bypasspermissions",
             ],
@@ -512,8 +514,12 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
             )
         return
 
+    if '<chat-mode status="yolo">' in cleaned:
+        set_mode("bypass", 'detected from <chat-mode status="yolo">')
+        return
+
     if '<chat-mode status="auto">' in cleaned:
-        set_mode("bypass", 'detected from <chat-mode status="auto">')
+        set_mode("bypass", 'detected from legacy <chat-mode status="auto">')
         return
 
     if '<chat-mode status="act">' in cleaned:
