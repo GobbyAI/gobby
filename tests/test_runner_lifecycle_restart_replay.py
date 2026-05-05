@@ -41,6 +41,7 @@ class TestDaemonRestartAgentCancellationReplay:
         replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
 
         assert replayed == 1
+        assert runner.completion_registry.notify.await_count == 1
         runner.agent_runner.run_storage.list_by_status.assert_called_once_with(
             "cancelled",
             limit=500,
@@ -90,6 +91,7 @@ class TestDaemonRestartAgentCancellationReplay:
         replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
 
         assert replayed == 0
+        assert runner.completion_registry.notify.await_count == 1
         runner.pipeline_execution_manager.remove_completion_subscribers.assert_not_called()
         runner.completion_registry.cleanup.assert_not_called()
 
@@ -115,5 +117,6 @@ class TestDaemonRestartAgentCancellationReplay:
         replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
 
         assert replayed == 0
+        assert runner.completion_registry.notify.await_count == 0
         runner.pipeline_execution_manager.get_completion_subscribers.assert_not_called()
         runner.completion_registry.notify.assert_not_awaited()

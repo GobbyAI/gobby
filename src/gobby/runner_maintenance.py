@@ -105,13 +105,14 @@ async def drain_hook_inbox_loop(
 async def metrics_cleanup_loop(
     metrics_manager: ToolMetricsManager,
     is_shutdown_requested: Callable[[], bool],
+    *,
+    interval_seconds: int = 24 * 60 * 60,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """Background loop for periodic metrics cleanup (every 24 hours)."""
-    interval_seconds = 24 * 60 * 60  # 24 hours
-
     while not is_shutdown_requested():
         try:
-            await asyncio.sleep(interval_seconds)
+            await sleep(interval_seconds)
             deleted = metrics_manager.cleanup_old_metrics()
             if deleted > 0:
                 logger.info(f"Periodic metrics cleanup: removed {deleted} old entries")
