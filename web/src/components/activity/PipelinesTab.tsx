@@ -2,9 +2,9 @@ import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
 import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
-import { SegmentedControl } from '../ui/SegmentedControl'
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
 import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
+import { ActivityFilterDropdown } from './ActivityFilterDropdown'
 import '../workflows/PipelinesPage.css'
 
 interface PipelinesTabProps {
@@ -37,6 +37,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   const [executions, setExecutions] = useState<PipelineExecution[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT)
   const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)
@@ -180,13 +181,40 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="activity-panel-toolbar">
-        <SegmentedControl<StatusFilter>
-          value={statusFilter}
-          onChange={setStatusFilter}
-          options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
-          ariaLabel="Pipeline status filter"
-          className="ml-auto"
-        />
+        <button
+          type="button"
+          className="activity-filter-button ml-auto"
+          onClick={() => setShowFilterDropdown((v) => !v)}
+          title="Filter pipelines"
+          aria-label="Filter pipelines"
+          aria-expanded={showFilterDropdown}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          {statusFilter !== 'all' && (
+            <span className="activity-filter-badge">1</span>
+          )}
+        </button>
+        {showFilterDropdown && (
+          <ActivityFilterDropdown<StatusFilter>
+            value={statusFilter}
+            options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
+            onChange={setStatusFilter}
+            onClose={() => setShowFilterDropdown(false)}
+            ariaLabel="Pipeline status filter"
+          />
+        )}
       </div>
 
       {/* Execution list */}

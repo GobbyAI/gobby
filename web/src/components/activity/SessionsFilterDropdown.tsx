@@ -14,6 +14,8 @@ interface SessionsFilterDropdownProps {
   filters: SessionsFilters;
   onChange: (next: SessionsFilters) => void;
   providerOptions: readonly string[];
+  statusMode: "live" | "expired";
+  onStatusModeChange: (mode: "live" | "expired") => void;
   onClose: () => void;
 }
 
@@ -70,10 +72,17 @@ function parseRefBound(raw: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+const STATUS_MODE_OPTIONS = [
+  { value: "live" as const, label: "Live" },
+  { value: "expired" as const, label: "Expired" },
+] as const;
+
 export function SessionsFilterDropdown({
   filters,
   onChange,
   providerOptions,
+  statusMode,
+  onStatusModeChange,
   onClose,
 }: SessionsFilterDropdownProps) {
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
@@ -145,6 +154,19 @@ export function SessionsFilterDropdown({
         aria-label="Session filters"
       >
         <div className="flex flex-col p-1.5 gap-0.5">
+          {/* Status (replaces the toolbar Live/Expired SegmentedControl —
+              keeps the panel toolbar to one filter affordance). */}
+          <Section label="Status">
+            <div className="px-2 py-1">
+              <SegmentedControl<"live" | "expired">
+                value={statusMode}
+                onChange={onStatusModeChange}
+                options={STATUS_MODE_OPTIONS}
+                ariaLabel="Session status filter"
+              />
+            </div>
+          </Section>
+
           {/* Mode */}
           <Section label="Mode">
             {MODE_OPTIONS.map((option) => (

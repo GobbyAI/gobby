@@ -13,7 +13,6 @@ import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { MessageItem } from "../chat/MessageItem";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import { SourceIcon } from "../shared/SourceIcon";
-import { SegmentedControl } from "../ui/SegmentedControl";
 import {
   ClipboardListIcon,
   PlayIcon,
@@ -59,7 +58,7 @@ interface SessionsTabProps {
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
   onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
-  chatSessionId?: string;
+  chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
   onSwapSession?: (target: SwappedSessionTarget) => void;
@@ -384,13 +383,22 @@ export const SessionsTab = memo(function SessionsTab({
           setSelectedSessionId(nextSelection);
         }
         if (hasFocusedEntry) {
+          setContentMode("transcript");
           onFocusHandled?.();
         }
         return;
       }
 
+      if (hasFocusedEntry && focusSessionId === selectedSessionId) {
+        selectionClearedRef.current = false;
+        setContentMode("transcript");
+        onFocusHandled?.();
+        return;
+      }
+
       if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
         selectionClearedRef.current = false;
+        setContentMode("transcript");
         setSelectedSessionId(focusSessionId);
         onFocusHandled?.();
         return;
@@ -628,6 +636,16 @@ export const SessionsTab = memo(function SessionsTab({
     setModalEntry(null);
   }, []);
 
+  const handleSwapSelectedSession = useCallback(() => {
+    if (!selectedSessionId || !selectedEntry) return;
+    setContentMode("transcript");
+    onSwapSession?.({
+      sessionId: selectedSessionId,
+      sessionType: selectedEntry.sessionType ?? null,
+      agentRunId: selectedEntry.agentRunId ?? null,
+    });
+  }, [onSwapSession, selectedEntry, selectedSessionId]);
+
   const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
   const emptyListMessage = hasActiveFilters
     ? "No sessions match these filters."
@@ -668,20 +686,13 @@ export const SessionsTab = memo(function SessionsTab({
             <span className="activity-filter-badge">{activeFilterCount}</span>
           )}
         </button>
-        <SegmentedControl<"live" | "expired">
-          value={statusMode}
-          onChange={setStatusMode}
-          options={[
-            { value: "live", label: "Live" },
-            { value: "expired", label: "Expired" },
-          ]}
-          ariaLabel="Session status filter"
-        />
         {showFilterDropdown && (
           <SessionsFilterDropdown
             filters={filters}
             onChange={setFilters}
             providerOptions={providerOptions}
+            statusMode={statusMode}
+            onStatusModeChange={setStatusMode}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}
@@ -837,15 +848,7 @@ export const SessionsTab = memo(function SessionsTab({
                 <button
                   type="button"
                   className="btn btn-accent btn-sm"
-                  onClick={() => {
-                    if (selectedSessionId) {
-                      onSwapSession?.({
-                        sessionId: selectedSessionId,
-                        sessionType: selectedEntry.sessionType ?? null,
-                        agentRunId: selectedEntry.agentRunId ?? null,
-                      });
-                    }
-                  }}
+                  onClick={handleSwapSelectedSession}
                 >
                   <SwapIcon />
                   Swap
@@ -955,7 +958,7 @@ export const SessionsTab = memo(function SessionsTab({
             runId: modalEntry.runId,
             seqNum: modalEntry.seqNum,
           }}
-          fromSessionId={chatSessionId}
+          fromSessionId={chatSessionId ?? undefined}
         />
       )}
     </div>

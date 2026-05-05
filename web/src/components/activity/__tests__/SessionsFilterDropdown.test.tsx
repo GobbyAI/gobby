@@ -7,18 +7,22 @@ import { defaultSessionsFilters, type SessionsFilters } from "../sessionsFilters
 function renderDropdown(overrides: Partial<{
   filters: SessionsFilters;
   providerOptions: readonly string[];
+  statusMode: "live" | "expired";
 }> = {}) {
   const onChange = vi.fn();
   const onClose = vi.fn();
+  const onStatusModeChange = vi.fn();
   const view = render(
     <SessionsFilterDropdown
       filters={overrides.filters ?? defaultSessionsFilters()}
       onChange={onChange}
       providerOptions={overrides.providerOptions ?? ["claude", "codex", "gemini"]}
+      statusMode={overrides.statusMode ?? "live"}
+      onStatusModeChange={onStatusModeChange}
       onClose={onClose}
     />,
   );
-  return { onChange, onClose, ...view };
+  return { onChange, onClose, onStatusModeChange, ...view };
 }
 
 describe("SessionsFilterDropdown", () => {

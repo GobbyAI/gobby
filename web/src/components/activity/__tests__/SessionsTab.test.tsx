@@ -83,6 +83,10 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
   };
 }
 
+function openStatusFilter(): void {
+  fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
+}
+
 const LIVE_SESSION = makeSession({
   id: "live-1",
   ref: "#201",
@@ -260,6 +264,7 @@ describe("SessionsTab", () => {
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
       target: { value: "" },
     });
+    openStatusFilter();
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
@@ -276,6 +281,7 @@ describe("SessionsTab", () => {
       expect(screen.getByText("#201: Live Terminal")).toBeInTheDocument();
     });
 
+    openStatusFilter();
     const liveRadio = screen.getByRole("radio", { name: "Live" });
     const expiredRadio = screen.getByRole("radio", { name: "Expired" });
     expect(liveRadio).toHaveAttribute("aria-checked", "true");
@@ -309,6 +315,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#209: Errored Agent Terminal")).toBeNull();
     expect(screen.queryByText("#210: Cancelled Agent Terminal")).toBeNull();
 
+    openStatusFilter();
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
@@ -387,9 +394,38 @@ describe("SessionsTab", () => {
       sessionType: "terminal",
       agentRunId: null,
     });
-
-    fireEvent.click(screen.getByRole("button", { name: "Transcript" }));
+    expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
     expect(screen.getByText("Transcript output")).toBeInTheDocument();
+  });
+
+  it("resets summary mode when focus targets the selected parked session", async () => {
+    const onFocusHandled = vi.fn();
+    const { rerender } = render(
+      <SessionsTab sessions={[PAUSED_SESSION]} onFocusHandled={onFocusHandled} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
+      "# Session Summary",
+    );
+
+    rerender(
+      <SessionsTab
+        sessions={[PAUSED_SESSION]}
+        focusSessionId="paused-1"
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+      expect(screen.getByText("Transcript output")).toBeInTheDocument();
+    });
+    expect(onFocusHandled).toHaveBeenCalled();
   });
 
   it("scrolls the watching transcript to bottom when selecting another session", async () => {
@@ -482,6 +518,7 @@ describe("SessionsTab", () => {
       />,
     );
 
+    openStatusFilter();
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
