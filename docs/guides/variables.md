@@ -38,7 +38,7 @@ sequenceDiagram
 Variables are defined in YAML files and stored in the database as `workflow_definitions` where `workflow_type = 'variable'`:
 
 ```yaml
-# src/gobby/install/shared/variables/gobby-default-variables.yaml
+# src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml
 tags: [session-defaults, initialization]
 
 variables:
@@ -297,7 +297,7 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `task_claimed` | `false` | bool | Whether a task is claimed in this session |
 | `claimed_tasks` | `{}` | dict | Map of claimed task UUIDs to refs (`{uuid: '#N'}`) |
 | `require_task_before_edit` | `true` | bool | Enforce task-before-edit gate |
-| `require_commit_before_close` | `true` | bool | Enforce commit-before-close gate |
+| `require_commit_before_status` | `true` | bool | Enforce commit-before-status gate |
 | `stop_attempts` | `0` | int | Consecutive turn-end attempts (auto-managed) |
 | `max_stop_attempts` | `8` | int | Threshold before escape hatch allows stop |
 | `mode_level` | `2` | int | Autonomy level (0=plan, 1=accept_edits, 2=full auto) |
@@ -351,9 +351,10 @@ gobby workflows set-var <name> <value> --session <ID>
 
 | Tool | Description |
 |------|-------------|
-| `set_variable` | Set a session variable (on `gobby-workflows`) |
+| `set_variable` | Set a session variable (top-level MCP tool) |
 | `get_variable` | Get a session variable value |
-| `list_variables` | List all session variables |
+| `get_workflow_status` | Show all session variables for a session |
+| `list_variables` | List variable definitions, not live session values |
 
 ---
 
@@ -361,7 +362,7 @@ gobby workflows set-var <name> <value> --session <ID>
 
 | Path | Purpose |
 |------|---------|
-| `src/gobby/install/shared/variables/` | Bundled variable definitions |
+| `src/gobby/install/shared/workflows/variables/` | Bundled variable definitions |
 | `src/gobby/workflows/state_manager.py` | Session variable persistence |
 | `src/gobby/workflows/safe_evaluator.py` | SafeExpressionEvaluator + LazyBool |
 | `src/gobby/workflows/condition_helpers.py` | Built-in condition helper functions |
@@ -372,3 +373,5 @@ gobby workflows set-var <name> <value> --session <ID>
 - [Workflows Overview](./workflows-overview.md) — How variables connect rules, agents, and pipelines
 - [Rules](./rules.md) — Rules that read and write variables
 - [Agents](./agents.md) — Agent selectors that control variable loading
+
+_Last verified: 2026-05-04_
