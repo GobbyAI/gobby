@@ -712,13 +712,35 @@ def _track_mcp_call(
     if is_error:
         return False
 
-    mcp_calls = variables.setdefault("mcp_calls", {})
-    server_calls = mcp_calls.setdefault(server_name, [])
+    mcp_calls_value = variables.get("mcp_calls")
+    if not isinstance(mcp_calls_value, dict):
+        mcp_calls: dict[str, Any] = {}
+        variables["mcp_calls"] = mcp_calls
+    else:
+        mcp_calls = mcp_calls_value
+
+    server_calls_value = mcp_calls.get(server_name)
+    if not isinstance(server_calls_value, list):
+        server_calls: list[Any] = []
+        mcp_calls[server_name] = server_calls
+    else:
+        server_calls = server_calls_value
     if inner_tool not in server_calls:
         server_calls.append(inner_tool)
 
-    mcp_results = variables.setdefault("mcp_results", {})
-    server_results = mcp_results.setdefault(server_name, {})
+    mcp_results_value = variables.get("mcp_results")
+    if not isinstance(mcp_results_value, dict):
+        mcp_results: dict[str, Any] = {}
+        variables["mcp_results"] = mcp_results
+    else:
+        mcp_results = mcp_results_value
+
+    server_results_value = mcp_results.get(server_name)
+    if not isinstance(server_results_value, dict):
+        server_results: dict[str, Any] = {}
+        mcp_results[server_name] = server_results
+    else:
+        server_results = server_results_value
     server_results[inner_tool] = _json_safe(result)
 
     logger.debug(

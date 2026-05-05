@@ -702,6 +702,44 @@ class TestDetectMcpCall:
         assert "tool-1" in calls
         assert "tool-2" in calls
 
+    def test_heals_null_mcp_calls(self, variables, make_after_tool_event) -> None:
+        variables["mcp_calls"] = None
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": "success"},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_calls"] == {"demo-server": ["demo-tool"]}
+
+    def test_heals_null_mcp_results(self, variables, make_after_tool_event) -> None:
+        variables["mcp_results"] = None
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": "success"},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
+
+    def test_heals_null_mcp_server_buckets(self, variables, make_after_tool_event) -> None:
+        variables["mcp_calls"] = {"demo-server": None}
+        variables["mcp_results"] = {"demo-server": None}
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": "success"},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_calls"] == {"demo-server": ["demo-tool"]}
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
+
     def test_ignores_error_responses(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
