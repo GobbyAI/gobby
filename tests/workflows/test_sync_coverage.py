@@ -59,7 +59,9 @@ class TestSyncBundledVariables:
             db.fetchall.return_value = []
             result = sync_bundled_variables(db)
 
+        assert result["success"] is True
         assert result["synced"] == 1
+        assert mgr.create.call_args.kwargs["name"] == "my_var"
 
     def test_skip_non_dict_variable(self, tmp_path: Path) -> None:
         yaml_content = textwrap.dedent("""\
@@ -84,7 +86,9 @@ class TestSyncBundledVariables:
             db.fetchall.return_value = []
             result = sync_bundled_variables(db)
 
+        assert result["success"] is True
         assert "not a dict" in result["errors"][0]
+        assert result["synced"] == 0
 
     def test_orphan_cleanup_variables(self, tmp_path: Path) -> None:
         db = MagicMock()
@@ -105,7 +109,9 @@ class TestSyncBundledVariables:
         ):
             result = sync_bundled_variables(db)
 
+        assert result["success"] is True
         assert result["orphaned"] == 1
+        assert mgr.delete.call_args.args == ("orphan-v1",)
 
 
 # ---------------------------------------------------------------------------

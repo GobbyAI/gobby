@@ -543,6 +543,7 @@ class TestStartCommand:
 
                 result = runner.invoke(cli, ["start"])
 
+                assert result.exit_code == 0
                 assert "Stopped 2 existing process(es)" in result.output
 
 
@@ -1310,6 +1311,7 @@ class TestEdgeCases:
             result = runner.invoke(cli, ["start"])
 
             assert result.exit_code == 0
+            assert mock_httpx_get.call_count >= len(responses)
 
     @patch("gobby.cli.daemon.subprocess.Popen")
     @patch("gobby.cli.daemon.is_port_available")

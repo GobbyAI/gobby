@@ -56,6 +56,7 @@ class TestHelpers:
         cwd.__truediv__ = MagicMock(return_value=gobby_dir)
         mock_path_cls.cwd.return_value = cwd
         assert get_project_path() == cwd
+        assert gobby_dir.exists.call_count == 1
 
     @patch("gobby.cli.pipelines.Path")
     def test_get_project_path_not_found(self, mock_path_cls: MagicMock) -> None:
@@ -65,6 +66,7 @@ class TestHelpers:
         cwd.__truediv__ = MagicMock(return_value=gobby_dir)
         mock_path_cls.cwd.return_value = cwd
         assert get_project_path() is None
+        assert gobby_dir.exists.call_count == 1
 
     @patch("gobby.cli.pipelines.get_project_path", return_value=None)
     def test_get_project_id_no_project(self, mock_pp: MagicMock) -> None:

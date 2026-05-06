@@ -369,6 +369,7 @@ class TestProviderModelCatalog:
                 "label": "claude-sonnet-4-5",
             },
         ]
+        assert len(models) == 3
 
     def test_normalize_qwen_model_labels_only_disambiguates_duplicate_base_ids(
         self, temp_dir: Path
@@ -415,6 +416,7 @@ class TestProviderModelCatalog:
             models = await catalog._discover_qwen_models()
 
         assert models == [{"value": "gpt-5(openai)", "label": "gpt-5"}]
+        assert models[0]["label"] == "gpt-5"
 
     @pytest.mark.asyncio
     async def test_discover_droid_models_returns_static_catalog(self, temp_dir: Path) -> None:

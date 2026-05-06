@@ -148,6 +148,7 @@ class TestNotifyApprovalPending:
             call_args = mock_client.post.call_args
             headers = call_args.kwargs["headers"]
             assert headers["Authorization"] == "Bearer secret-token-value"
+            assert call_args.kwargs["json"]["token"] == "token-123"
 
     @pytest.mark.asyncio
     async def test_handles_missing_webhooks_gracefully(
@@ -305,6 +306,7 @@ class TestWebhookErrors:
                 pipeline=pipeline_with_webhooks,
             )
             assert mock_client.post.await_count == 1
+            assert mock_client.post.call_args.kwargs["url"] == "https://example.com/complete"
 
     @pytest.mark.asyncio
     async def test_handles_network_error_gracefully(
@@ -325,3 +327,4 @@ class TestWebhookErrors:
                 pipeline=pipeline_with_webhooks,
             )
             assert mock_client.post.await_count == 1
+            assert mock_client.post.call_args.kwargs["url"] == "https://example.com/complete"

@@ -410,6 +410,7 @@ class TestGetValidationContextSmartEdgeCases:
         # File analysis may or may not be triggered depending on implementation
         # The test verifies the function handles the low remaining chars case
         assert context is not None
+        assert context.startswith("=== STAGED CHANGES ===")
 
     @patch("gobby.tasks.validation.run_git_command")
     def test_context_truncation_on_join(self, mock_run) -> None:
@@ -731,6 +732,7 @@ class TestGetValidationContextSmartFileBranch:
         # With no git changes, no commit diff, and no matching files,
         # context should be None
         assert context is None
+        assert mock_find.call_count == 1
 
 
 class TestIntegrationScenarios:

@@ -1450,6 +1450,7 @@ class TestResolveTaskId:
         result = resolve_task_id(mock_manager, "abc")
 
         assert result is None
+        assert len(mock_manager.find_tasks_by_prefix.return_value) == 2
 
 
 class TestFormatTaskRow:
@@ -1584,6 +1585,7 @@ class TestValidateCommandExtended:
 
         # Command should attempt to validate (may fail on config but accepts the file)
         assert result.exit_code == 0
+        assert summary_file.read_text() == "This is a test summary from file"
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")

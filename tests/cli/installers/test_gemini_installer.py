@@ -259,6 +259,7 @@ class TestInstallGemini:
 
             # Should still succeed, treating invalid JSON as empty
             assert result["success"] is True
+            assert json.loads(settings_file.read_text())["general"]["enableHooks"] is True
 
     def test_install_gemini_ghook_path_substitution(
         self,
@@ -1119,6 +1120,7 @@ class TestUninstallGeminiEdgeCases:
 
             # Should still succeed (rmdir error is caught)
             assert result["success"] is True
+            assert settings_file.exists()
 
     def test_uninstall_gemini_with_enable_hooks_false(
         self, project_path: Path, temp_dir: Path

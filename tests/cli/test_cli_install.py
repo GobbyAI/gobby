@@ -1268,6 +1268,7 @@ class TestInstallCommandDirectInvocation:
             result = runner.invoke(install, ["--claude"])
 
         assert result.exit_code == 0
+        assert mock_install_claude.call_count == 1
 
     @patch("gobby.cli.install.uninstall_claude")
     def test_invoke_uninstall_directly(

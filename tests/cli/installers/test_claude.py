@@ -103,6 +103,7 @@ class TestInstallClaude:
             result = install_claude(temp_project, mode="project")
 
         assert result["success"] is True
+        assert result["hooks_installed"]
         assert result["error"] is None
         assert "SessionStart" in result["hooks_installed"]
         assert "PreToolUse" in result["hooks_installed"]
@@ -1006,6 +1007,7 @@ class TestInstallClaudeEdgeCases:
             result = install_claude(temp_project, mode="project")
 
         assert result["success"] is True
+        assert result["hooks_installed"]
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.install_shared_content")
@@ -1039,6 +1041,7 @@ class TestInstallClaudeEdgeCases:
             result = install_claude(unicode_project, mode="project")
 
         assert result["success"] is True
+        assert (unicode_project / ".claude" / "settings.json").exists()
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.install_shared_content")

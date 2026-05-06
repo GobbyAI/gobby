@@ -74,6 +74,7 @@ class TestChatSessionLocalLLM:
             call_kwargs = mock_sdk.call_args
             options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
             assert options.env.get("ANTHROPIC_BASE_URL") == "http://localhost:8080/v1"
+            assert mock_client.connect.await_count == 1
 
     @pytest.mark.asyncio
     async def test_env_omits_base_url_when_local_llm_disabled(self) -> None:
@@ -100,6 +101,7 @@ class TestChatSessionLocalLLM:
             call_kwargs = mock_sdk.call_args
             options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
             assert "ANTHROPIC_BASE_URL" not in options.env
+            assert mock_client.connect.await_count == 1
 
     @pytest.mark.asyncio
     async def test_env_omits_base_url_when_provider_not_claude(self) -> None:
@@ -130,6 +132,7 @@ class TestChatSessionLocalLLM:
             call_kwargs = mock_sdk.call_args
             options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
             assert "ANTHROPIC_BASE_URL" not in options.env
+            assert mock_client.connect.await_count == 1
 
     @pytest.mark.asyncio
     async def test_model_local_uses_configured_local_endpoint(self) -> None:

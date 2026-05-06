@@ -239,6 +239,7 @@ class TestStatusCommand:
         config.ui.enabled = False
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Running PID 123" in result.output
 
     @patch("gobby.cli.daemon.format_status_message", return_value="Stale PID")
     @patch("gobby.cli.daemon.os.kill", side_effect=ProcessLookupError)

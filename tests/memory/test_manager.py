@@ -674,6 +674,7 @@ class TestDeleteMemoryExtended:
         memory = await manager.create_memory(content="To delete VS fail")
         result = await manager.delete_memory(memory.id)
         assert result is True  # Still returns True since SQLite delete succeeded
+        assert mock_vs.delete.await_count == 1
 
 
 # =============================================================================
@@ -1031,6 +1032,7 @@ class TestCreateCrossrefs:
         mock_vs.search = AsyncMock(return_value=[(mem2.id, 0.9)])
         result = await manager._create_crossrefs(mem1)
         assert result >= 0  # May be 0 or 1 depending on crossref logic
+        assert mock_vs.search.await_count == 1
 
 
 # =============================================================================

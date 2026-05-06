@@ -271,9 +271,10 @@ class TestResolveProject:
         with patch("gobby.servers.routes.source_control.LocalProjectManager", return_value=mock_pm):
             from gobby.servers.routes.source_control import _resolve_project
 
-            repo_path, _ = _resolve_project(mock_server, None)
+            repo_path, github_repo = _resolve_project(mock_server, None)
 
         assert repo_path == "/tmp/real"
+        assert github_repo is None
 
     def test_resolve_returns_none_none_on_failure(self, mock_server) -> None:
         mock_server.session_manager = None
@@ -364,6 +365,7 @@ class TestCallGithubMcp:
 
         result = await _call_github_mcp(mock_server, "test_tool", {"arg": "val"})
         assert result == {"key": "value"}
+        assert mock_session.call_tool.await_args.args == ("test_tool", {"arg": "val"})
 
     @pytest.mark.asyncio
     async def test_returns_plain_text_on_json_decode_error(self, mock_server) -> None:
@@ -383,6 +385,7 @@ class TestCallGithubMcp:
 
         result = await _call_github_mcp(mock_server, "test_tool", {})
         assert result == "plain text response"
+        assert mock_session.call_tool.await_args.args == ("test_tool", {})
 
     @pytest.mark.asyncio
     async def test_raises_502_on_exception(self, mock_server) -> None:
@@ -1112,10 +1115,12 @@ class TestListPRs:
                 return_value=[],
             ) as mock_mcp,
         ):
-            client.get("/api/source-control/prs")
-            client.get("/api/source-control/prs")
+            first_response = client.get("/api/source-control/prs")
+            second_response = client.get("/api/source-control/prs")
             # MCP should only be called once due to caching
             assert mock_mcp.call_count == 1
+            assert first_response.status_code == 200
+            assert second_response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

@@ -83,6 +83,7 @@ class TestGetDaemonPid:
                 mock_iter.return_value = [mock_proc_self, mock_proc_other]
 
                 assert get_daemon_pid() == 888
+                assert mock_iter.call_count == 1
 
     def test_test_protect_skips_processes_outside_gobby_home(
         self, monkeypatch: pytest.MonkeyPatch
@@ -449,6 +450,7 @@ class TestCreateStdioMcpServer:
                 mcp = create_stdio_mcp_server()
                 # Just check it's returned
                 assert mcp is not None
+                assert "list_mcp_servers" in mcp._tool_manager._tools
 
 
 class TestEnsureDaemonRunning:
@@ -464,13 +466,14 @@ class TestEnsureDaemonRunning:
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
                     return_value=True,
-                ):
+                ) as mock_health:
                     # Should not raise or call start
                     # Must import function from module to ensure patches apply
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
                     result = await ensure_daemon_running()
                     assert result is None
+                    assert mock_health.await_count == 1
 
     @pytest.mark.asyncio
     async def test_restarts_unhealthy_daemon(self):

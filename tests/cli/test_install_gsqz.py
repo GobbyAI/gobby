@@ -203,7 +203,10 @@ class TestInstallGsqzFromGithub:
                 return_value="gsqz-v0.1.0",
             ),
         ):
-            assert _install_gsqz_from_github(tmp_path, "aarch64-apple-darwin") is False
+            result = _install_gsqz_from_github(tmp_path, "aarch64-apple-darwin")
+
+        assert result is False
+        assert not (tmp_path / "gsqz").exists()
 
     def test_windows_exe(self, tmp_path: Path) -> None:
         archive = _make_zip("gsqz.exe")
@@ -315,7 +318,10 @@ class TestInstallGsqzFromCargoInstall:
             patch("gobby.cli.install_setup.click"),
         ):
             mock_run.return_value = MagicMock(returncode=101)
-            assert _install_gsqz_from_cargo_install(tmp_path) is False
+            result = _install_gsqz_from_cargo_install(tmp_path)
+
+        assert result is False
+        assert not (tmp_path / "gsqz").exists()
 
 
 class TestInstallGsqz:
@@ -397,6 +403,7 @@ class TestInstallGsqz:
             result = _install_gsqz(force=True)
 
         assert result["installed"] is True
+        assert result["version"] == "0.1.0"
 
     def test_github_fails_cargo_binstall_succeeds(
         self, tmp_path: Path, _patch_platform: None

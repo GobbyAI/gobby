@@ -559,6 +559,7 @@ class TestKillAllGobbyDaemons:
                         with patch("os.getppid", return_value=99998):
                             result = kill_all_gobby_daemons()
                             assert result == 0
+                            assert mock_proc.send_signal.call_count == 0
 
 
 # ==============================================================================
@@ -667,6 +668,7 @@ class TestStopDaemon:
                     with patch("os.kill", side_effect=PermissionError()):
                         result = stop_daemon(quiet=True)
                         assert result is False
+                        assert pid_file.exists()
 
 
 # ==============================================================================

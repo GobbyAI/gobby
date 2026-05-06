@@ -439,6 +439,7 @@ class TestApproveExecution:
 
             response = client.post("/api/pipelines/approve/tok-1")
             assert response.status_code == 200
+            assert response.json()["execution_id"] == "pe-1"
 
     def test_approve_raises_value_error(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
@@ -456,6 +457,7 @@ class TestApproveExecution:
 
             response = client.post("/api/pipelines/approve/tok-bad")
             assert response.status_code == 404
+            assert response.json()["detail"] == "Invalid token: Bad token"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -512,3 +514,4 @@ class TestRejectExecution:
 
             response = client.post("/api/pipelines/reject/tok-bad")
             assert response.status_code == 404
+            assert response.json()["detail"] == "Invalid token: Bad token"

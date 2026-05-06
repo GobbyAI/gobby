@@ -142,6 +142,7 @@ class TestSpawnAgentParamOverrides:
             )
 
             assert result["success"] is True
+            assert mock_execute.call_args[0][0].provider == "claude"
 
 
 class TestSpawnAgentTaskResolution:
@@ -379,6 +380,7 @@ class TestSpawnAgentPromptPreamble:
             # Prompt is passed through as-is; preamble injected via hooks
             spawn_request = mock_execute.call_args[0][0]
             assert spawn_request.prompt == "Fix the bug"
+            assert spawn_request.agent_name == "default"
 
 
 class TestRegisterAgentStepWorkflow:

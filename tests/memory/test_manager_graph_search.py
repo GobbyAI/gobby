@@ -173,6 +173,10 @@ class TestSearchGraphForMemories:
         )
 
         assert result == ["mem-1", "mem-2", "mem-3", "mem-4"]
+        assert manager._kg_service.find_related_memory_ids.await_args.kwargs["entity_keys"] == [
+            entity_key(None, "Python"),
+            entity_key(None, "FastAPI"),
+        ]
 
     async def test_deduplicates_traversed_ids(self) -> None:
         """_search_graph_for_memories deduplicates IDs from traversal."""
@@ -208,6 +212,7 @@ class TestSearchGraphForMemories:
 
         # mem-1 should appear only once
         assert result == ["mem-1", "mem-2"]
+        assert result.count("mem-1") == 1
 
     async def test_returns_empty_when_no_entities(self) -> None:
         """_search_graph_for_memories returns empty when no entity matches."""
@@ -228,6 +233,9 @@ class TestSearchGraphForMemories:
         )
 
         assert result == []
+        assert manager._kg_service.search_entities_by_vector.await_args.kwargs[
+            "query_embedding"
+        ] == [0.1]
 
 
 class TestSearchMemoriesGraphIntegration:
@@ -678,6 +686,7 @@ class TestTemporalDecayIntegration:
         result = await manager.search_memories(query="test", limit=10, min_score=0.3)
 
         assert result == []
+        assert manager.storage.get_memory.call_count == 1
 
     @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_qdrant_only(self) -> None:

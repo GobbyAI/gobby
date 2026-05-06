@@ -151,6 +151,7 @@ class TestWaitStepExecution:
         await registry.notify("run-abc", {"agent_status": "success", "output": "done"})
         result = await task
         assert result.status == ExecutionStatus.COMPLETED
+        assert result.id == "pe-test"
 
     @pytest.mark.asyncio
     async def test_wait_step_timeout_fails_pipeline(self) -> None:
@@ -209,6 +210,7 @@ class TestWaitStepExecution:
                 inputs={},
                 project_id="proj-1",
             )
+        assert mock_em.update_execution_status.call_count >= 1
 
 
 class TestInterruptStaleExecutions:

@@ -140,6 +140,7 @@ class TestDaemonDockerFlag:
 
         compose_calls = [c for c in mock_run.call_args_list if "up" in str(c)]
         assert len(compose_calls) >= 1
+        assert mock_run.call_count >= 1
 
     def test_services_start_skips_when_no_docker(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_start

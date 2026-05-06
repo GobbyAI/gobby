@@ -366,6 +366,7 @@ class TestClaimTaskTool:
 
             # Should succeed (idempotent operation)
             assert "error" not in result
+            assert mock_task_manager.claim_task.call_count == 1
 
     @pytest.mark.asyncio
     async def test_claim_task_not_found(self, mock_task_manager, mock_sync_manager):
@@ -720,3 +721,4 @@ class TestClaimTaskCrossProjectBlocking:
 
             # Should succeed — can't enforce if session isn't in DB
             assert "error" not in result
+            assert mock_task_manager.claim_task.call_count == 1

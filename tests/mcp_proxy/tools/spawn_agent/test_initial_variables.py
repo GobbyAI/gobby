@@ -97,7 +97,7 @@ class TestSpawnAgentPipelineInjection:
                 status="pending",
             )
 
-            await registry.call(
+            result = await registry.call(
                 "spawn_agent",
                 {
                     "prompt": "Run pipeline",
@@ -105,6 +105,7 @@ class TestSpawnAgentPipelineInjection:
                 },
             )
 
+            assert result["success"] is True
             spawn_request = mock_execute.call_args[0][0]
             assert spawn_request.initial_variables["_assigned_pipeline"] == "my-pipeline"
 
@@ -150,7 +151,7 @@ class TestSpawnAgentPipelineInjection:
                 status="pending",
             )
 
-            await registry.call(
+            result = await registry.call(
                 "spawn_agent",
                 {
                     "prompt": "Run workflow",
@@ -158,6 +159,7 @@ class TestSpawnAgentPipelineInjection:
                 },
             )
 
+            assert result["success"] is True
             spawn_request = mock_execute.call_args[0][0]
             assert "_assigned_pipeline" not in spawn_request.initial_variables
 
