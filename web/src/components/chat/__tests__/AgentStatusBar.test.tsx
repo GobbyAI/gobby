@@ -131,7 +131,8 @@ describe('AgentStatusBar', () => {
     expect(newChatButton).toBeDisabled()
   })
 
-  it('shows only Detach while attached', () => {
+  it('shows Resume and Detach (but not Attach) while attached', () => {
+    const onResume = vi.fn()
     const onDetach = vi.fn()
 
     render(
@@ -154,14 +155,44 @@ describe('AgentStatusBar', () => {
         interactionMode="proxy"
         isAttached={true}
         onAttach={vi.fn()}
-        onResume={vi.fn()}
+        onResume={onResume}
         onDetach={onDetach}
       />,
     )
 
     expect(screen.queryByRole('button', { name: 'Attach' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull()
     expect(screen.getByText('Attached')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Detach' })).toBeInTheDocument()
+  })
+
+  it('hides Resume while attached if the session is autonomous', () => {
+    render(
+      <AgentStatusBar
+        viewingMeta={{
+          ref: '#90',
+          source: 'claude',
+          title: 'Autonomous Agent Session',
+          status: 'active',
+          model: 'sonnet',
+          externalId: 'ext-90',
+          chatMode: 'accept_edits',
+          gitBranch: null,
+          contextWindow: null,
+          agentRunId: 'run-1',
+          workflowName: null,
+          agentName: null,
+          sessionType: 'terminal',
+        }}
+        interactionMode="proxy"
+        isAttached={true}
+        isAutonomousSession={true}
+        onResume={vi.fn()}
+        onDetach={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Detach' })).toBeInTheDocument()
   })
 
