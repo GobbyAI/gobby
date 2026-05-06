@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.isolation import (
     SpawnConfig,
+    ensure_isolation_code_index,
     get_isolation_handler,
     provider_mcp_config_error,
     repair_isolation_environment,
@@ -524,6 +525,10 @@ async def spawn_agent_impl(
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             return {"success": False, "error": config_error}
+        try:
+            await ensure_isolation_code_index(isolation_ctx.cwd)
+        except Exception as e:
+            return {"success": False, "error": f"code_index_preflight_failed:{e}"}
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)

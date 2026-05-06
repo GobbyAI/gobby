@@ -18,6 +18,7 @@ from gobby.agents.isolation import (
     SpawnConfig,
     WorktreeIsolationHandler,
     _patch_mcp_config_for_isolation,
+    ensure_isolation_code_index,
     generate_branch_name,
     get_isolation_handler,
     provider_mcp_config_error,
@@ -64,6 +65,45 @@ class TestIsolationContext:
         )
 
         assert ctx.extra["main_repo_path"] == "/path/to/main"
+
+
+class TestEnsureIsolationCodeIndex:
+    """Tests for pre-spawn gcode indexing in isolated workspaces."""
+
+    @pytest.mark.asyncio
+    async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
+        proc = AsyncMock()
+        proc.returncode = 0
+        proc.communicate.return_value = (b"", b"")
+
+        with (
+            patch("gobby.utils.native_bin.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.isolation.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ) as create_proc,
+        ):
+            await ensure_isolation_code_index(str(tmp_path))
+
+        create_proc.assert_awaited_once()
+        assert create_proc.call_args.args[:3] == ("/tmp/gcode", "index", "--quiet")
+        assert create_proc.call_args.kwargs["cwd"] == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
+        proc = AsyncMock()
+        proc.returncode = 2
+        proc.communicate.return_value = (b"", b"parse failed")
+
+        with (
+            patch("gobby.utils.native_bin.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.isolation.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="gcode_index_failed:2:parse failed"):
+                await ensure_isolation_code_index(str(tmp_path))
 
 
 class TestSpawnConfig:
