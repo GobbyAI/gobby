@@ -22,7 +22,6 @@ import {
   AUTO_REASONING_EFFORT,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
-import { normalizeChatMode } from '../../types/chat'
 
 interface ChatInputProps {
   onSend: (
@@ -99,7 +98,6 @@ interface ChatInputProps {
   attachmentsDisabled?: boolean
   isAttached?: boolean
   attachedSessionMeta?: SessionObservationMeta | null
-  onAttachedModeChange?: (mode: ChatMode) => void
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -174,7 +172,6 @@ export function ChatInput({
   attachmentsDisabled = false,
   isAttached = false,
   attachedSessionMeta = null,
-  onAttachedModeChange,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -680,22 +677,13 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
-              {isAttached && onAttachedModeChange ? (
+              {!isAttached && onModeChange && (
                 <ModeSelector
-                  mode={normalizeChatMode(attachedSessionMeta?.chatMode)}
-                  onModeChange={onAttachedModeChange}
-                  disabled={disabled}
+                  mode={mode}
+                  onModeChange={onModeChange}
+                  disabled={disabled || modeDisabled}
                   modes={modeOptions}
                 />
-              ) : (
-                onModeChange && (
-                  <ModeSelector
-                    mode={mode}
-                    onModeChange={onModeChange}
-                    disabled={disabled || modeDisabled}
-                    modes={modeOptions}
-                  />
-                )
               )}
               {!isAttached && (
                 <Button

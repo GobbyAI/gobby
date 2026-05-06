@@ -859,7 +859,6 @@ export function ChatPage({
               attachmentsDisabled={isProxyAttached}
               isAttached={isProxyAttached}
               attachedSessionMeta={chat.attachedSessionMeta ?? null}
-              onAttachedModeChange={chat.onAttachedModeChange}
             />
           )}
         </ArtifactContext.Provider>
