@@ -121,16 +121,6 @@ export function AgentStatusBar({
             Attach
           </button>
         )}
-        {canResume && (
-          <button
-            type="button"
-            className="btn btn-accent btn-sm"
-            onClick={onResume}
-          >
-            <PlayIcon />
-            Resume
-          </button>
-        )}
         {canDetach && (
           <button
             type="button"
@@ -139,6 +129,16 @@ export function AgentStatusBar({
           >
             <UnlinkIcon />
             Detach
+          </button>
+        )}
+        {canResume && (
+          <button
+            type="button"
+            className="btn btn-accent btn-sm"
+            onClick={onResume}
+          >
+            <PlayIcon />
+            Resume
           </button>
         )}
         <button
