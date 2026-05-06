@@ -7,6 +7,7 @@ Cleanup functions added for nightly memory hygiene pipeline (#10572).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -199,6 +200,300 @@ _CODE_DERIVABLE_PATTERNS: list[re.Pattern[str]] = [
 # Maximum content length for code-derivable heuristic — longer memories
 # are more likely to contain substantive context beyond code structure.
 _CODE_DERIVABLE_MAX_LEN = 200
+_STALE_CLASSIFIER_PROMPT_PATH = "memory/stale_audit"
+_STALE_CLASSIFIER_VERDICTS = {"delete", "keep", "review"}
+_STALE_CONTENT_PREVIEW_LEN = 120
+_STALE_PROMPT_CONTENT_LEN = 1200
+
+
+def _coerce_memory_text(memory: Memory, field: str) -> str | None:
+    """Return a string memory attribute, ignoring mock/sentinel values."""
+    value = getattr(memory, field, None)
+    return value if isinstance(value, str) and value else None
+
+
+def _coerce_access_count(memory: Memory) -> int:
+    value = getattr(memory, "access_count", 0)
+    return value if isinstance(value, int) else 0
+
+
+def _parse_memory_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _memory_last_activity(memory: Memory) -> datetime | None:
+    timestamps = [
+        _parse_memory_datetime(_coerce_memory_text(memory, "created_at")),
+        _parse_memory_datetime(_coerce_memory_text(memory, "updated_at")),
+        _parse_memory_datetime(_coerce_memory_text(memory, "last_accessed_at")),
+    ]
+    valid = [value for value in timestamps if value is not None]
+    return max(valid) if valid else None
+
+
+def _memory_age_days(memory: Memory, now: datetime) -> float | None:
+    last_activity = _memory_last_activity(memory)
+    if last_activity is None:
+        return None
+    return max(0.0, (now - last_activity).total_seconds() / 86400)
+
+
+def _is_still_stale(
+    memory: Memory,
+    max_age_days: int,
+    max_access_count: int,
+    now: datetime | None = None,
+) -> bool:
+    if _coerce_access_count(memory) > max_access_count:
+        return False
+    last_activity = _memory_last_activity(memory)
+    if last_activity is None:
+        return False
+    return last_activity < ((now or datetime.now(UTC)) - timedelta(days=max_age_days))
+
+
+def _memory_tags(memory: Memory) -> list[str]:
+    tags = getattr(memory, "tags", None)
+    return tags if isinstance(tags, list) else []
+
+
+def _stale_prompt_candidate(memory: Memory, now: datetime) -> dict[str, Any]:
+    content = _coerce_memory_text(memory, "content") or ""
+    return {
+        "id": memory.id,
+        "memory_type": _coerce_memory_text(memory, "memory_type") or "fact",
+        "content": content[:_STALE_PROMPT_CONTENT_LEN],
+        "created_at": _coerce_memory_text(memory, "created_at"),
+        "updated_at": _coerce_memory_text(memory, "updated_at"),
+        "last_accessed_at": _coerce_memory_text(memory, "last_accessed_at"),
+        "access_count": _coerce_access_count(memory),
+        "age_days": _memory_age_days(memory, now),
+        "tags": _memory_tags(memory),
+    }
+
+
+def _stale_report_item(
+    memory: Memory,
+    verdict: str,
+    confidence: float,
+    reason: str,
+    threshold: float,
+    now: datetime,
+) -> dict[str, Any]:
+    content = _coerce_memory_text(memory, "content") or ""
+    eligible = verdict == "delete" and confidence >= threshold
+    return {
+        "id": memory.id,
+        "content_preview": content[:_STALE_CONTENT_PREVIEW_LEN],
+        "access_count": _coerce_access_count(memory),
+        "age_days": _memory_age_days(memory, now),
+        "verdict": verdict,
+        "confidence": round(confidence, 4),
+        "reason": reason,
+        "eligible_for_delete": eligible,
+    }
+
+
+def _build_stale_report(
+    memories: list[Memory],
+    decisions: dict[str, tuple[str, float, str]],
+    *,
+    classifier_mode: str,
+    confidence_threshold: float,
+    classifier_error: str | None = None,
+    reviewed: int = 0,
+) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    items: list[dict[str, Any]] = []
+    kept = 0
+    review = 0
+
+    for memory in memories:
+        verdict, confidence, reason = decisions.get(
+            memory.id,
+            ("review", 0.0, "Classifier did not return a decision for this memory."),
+        )
+        item = _stale_report_item(memory, verdict, confidence, reason, confidence_threshold, now)
+        if verdict == "keep":
+            kept += 1
+        elif not item["eligible_for_delete"]:
+            review += 1
+        items.append(item)
+
+    delete_items = [item for item in items if item["eligible_for_delete"]]
+    report: dict[str, Any] = {
+        "classifier_mode": classifier_mode,
+        "candidates_found": len(memories),
+        "reviewed": reviewed,
+        "found": len(delete_items),
+        "delete_candidates": len(delete_items),
+        "kept": kept,
+        "review": review,
+        "items": items,
+        "delete_items": delete_items,
+    }
+    if classifier_error:
+        report["classifier_error"] = classifier_error
+    return report
+
+
+def _extract_classifier_decisions(
+    response: str,
+    memory_ids: set[str],
+) -> dict[str, tuple[str, float, str]]:
+    from gobby.utils.json_helpers import extract_json_object
+
+    data = extract_json_object(response)
+    if data is None:
+        raise ValueError("Classifier response did not contain a JSON object")
+
+    raw_items = (
+        data.get("memories")
+        or data.get("classifications")
+        or data.get("results")
+        or data.get("items")
+    )
+    if not isinstance(raw_items, list):
+        raise ValueError("Classifier JSON must contain a memories array")
+
+    decisions: dict[str, tuple[str, float, str]] = {}
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        memory_id = raw_item.get("id")
+        if not isinstance(memory_id, str) or memory_id not in memory_ids:
+            continue
+
+        verdict = str(raw_item.get("verdict", "review")).strip().lower()
+        if verdict not in _STALE_CLASSIFIER_VERDICTS:
+            verdict = "review"
+
+        raw_confidence = raw_item.get("confidence", 0.0)
+        try:
+            confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+
+        reason = raw_item.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            reason = "Classifier did not provide a reason."
+
+        decisions[memory_id] = (verdict, confidence, reason.strip())
+
+    return decisions
+
+
+async def _classify_stale_memories(
+    memories: list[Memory],
+    *,
+    memory_manager: MemoryManager,
+    llm_service: Any | None,
+    stale_audit_config: Any | None,
+    max_stale_age_days: int,
+    max_stale_access_count: int,
+    confidence_threshold: float,
+    use_stale_classifier: bool,
+) -> dict[str, Any]:
+    if not memories:
+        return _build_stale_report(
+            [],
+            {},
+            classifier_mode="none",
+            confidence_threshold=confidence_threshold,
+        )
+
+    if not use_stale_classifier:
+        decisions = {
+            memory.id: (
+                "delete",
+                1.0,
+                "Deterministic stale cleanup: last activity is older than the threshold "
+                "and access count is within the low-access limit.",
+            )
+            for memory in memories
+        }
+        return _build_stale_report(
+            memories,
+            decisions,
+            classifier_mode="disabled",
+            confidence_threshold=confidence_threshold,
+        )
+
+    if llm_service is None:
+        return _build_stale_report(
+            memories,
+            {},
+            classifier_mode="unavailable",
+            confidence_threshold=confidence_threshold,
+            classifier_error="LLM service unavailable for stale memory classification.",
+        )
+
+    if stale_audit_config is None:
+        from gobby.config.persistence import MemoryStaleAuditConfig
+
+        stale_audit_config = MemoryStaleAuditConfig()
+
+    if getattr(stale_audit_config, "enabled", True) is False:
+        return _build_stale_report(
+            memories,
+            {},
+            classifier_mode="disabled",
+            confidence_threshold=confidence_threshold,
+            classifier_error="Stale memory classifier is disabled by configuration.",
+        )
+
+    try:
+        from gobby.prompts.loader import PromptLoader
+
+        now = datetime.now(UTC)
+        prompt_path = getattr(stale_audit_config, "prompt_path", _STALE_CLASSIFIER_PROMPT_PATH)
+        prompt = PromptLoader(db=memory_manager.db).render(
+            prompt_path or _STALE_CLASSIFIER_PROMPT_PATH,
+            {
+                "candidates": json.dumps(
+                    [_stale_prompt_candidate(memory, now) for memory in memories],
+                    indent=2,
+                    sort_keys=True,
+                ),
+                "max_stale_age_days": max_stale_age_days,
+                "max_stale_access_count": max_stale_access_count,
+                "stale_confidence_threshold": confidence_threshold,
+            },
+            strict=True,
+        )
+        response = await llm_service.call_feature(
+            stale_audit_config,
+            prompt,
+            max_tokens=getattr(stale_audit_config, "max_tokens", 4096),
+            caller="memory.stale_audit",
+        )
+        decisions = _extract_classifier_decisions(response, {memory.id for memory in memories})
+        return _build_stale_report(
+            memories,
+            decisions,
+            classifier_mode="llm",
+            confidence_threshold=confidence_threshold,
+            reviewed=len(memories),
+        )
+    except Exception as e:
+        logger.warning("Stale memory classifier failed: %s", e)
+        return _build_stale_report(
+            memories,
+            {},
+            classifier_mode="error",
+            confidence_threshold=confidence_threshold,
+            classifier_error=str(e),
+        )
 
 
 def find_stale_memories(
@@ -206,40 +501,45 @@ def find_stale_memories(
     max_age_days: int = 30,
     project_id: str | None = None,
     limit: int = 500,
+    max_access_count: int = 1,
 ) -> list[Memory]:
-    """Find memories that have never been accessed and are older than max_age_days.
+    """Find low-access memories whose last activity is older than max_age_days.
 
     Args:
         db: Database connection.
-        max_age_days: Memories older than this with 0 access_count are stale.
+        max_age_days: Memories inactive longer than this are stale candidates.
         project_id: Optional project filter.
         limit: Maximum results to return.
+        max_access_count: Maximum access_count still considered low-access.
 
     Returns:
-        List of stale Memory objects.
+        List of stale candidate Memory objects.
     """
     from gobby.storage.memories import Memory
 
     cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
+    max_access_count = max(0, max_access_count)
 
     if project_id:
         rows = db.fetchall(
             """SELECT * FROM memories
-               WHERE access_count = 0
-                 AND created_at < ?
+               WHERE access_count <= ?
+                 AND COALESCE(updated_at, created_at) < ?
+                 AND (last_accessed_at IS NULL OR last_accessed_at < ?)
                  AND (project_id = ? OR project_id IS NULL)
-               ORDER BY created_at ASC
+               ORDER BY COALESCE(last_accessed_at, updated_at, created_at) ASC
                LIMIT ?""",
-            (cutoff, project_id, limit),
+            (max_access_count, cutoff, cutoff, project_id, limit),
         )
     else:
         rows = db.fetchall(
             """SELECT * FROM memories
-               WHERE access_count = 0
-                 AND created_at < ?
-               ORDER BY created_at ASC
+               WHERE access_count <= ?
+                 AND COALESCE(updated_at, created_at) < ?
+                 AND (last_accessed_at IS NULL OR last_accessed_at < ?)
+               ORDER BY COALESCE(last_accessed_at, updated_at, created_at) ASC
                LIMIT ?""",
-            (cutoff, limit),
+            (max_access_count, cutoff, cutoff, limit),
         )
 
     return [Memory.from_row(row) for row in rows]
@@ -417,9 +717,14 @@ async def execute_cleanup(
     dry_run: bool = False,
     categories: list[str] | None = None,
     max_stale_age_days: int = 30,
+    max_stale_access_count: int = 1,
+    stale_confidence_threshold: float = 0.85,
     similarity_threshold: float = 0.95,
     limit_per_category: int = 500,
     project_id: str | None = None,
+    llm_service: Any | None = None,
+    stale_audit_config: Any | None = None,
+    use_stale_classifier: bool = True,
 ) -> dict[str, Any]:
     """Run the full memory cleanup pipeline.
 
@@ -433,9 +738,14 @@ async def execute_cleanup(
         categories: Which categories to clean. None = all four.
             Valid values: "stale", "duplicates", "code_derivable", "orphaned".
         max_stale_age_days: Age threshold for stale/orphaned memories.
+        max_stale_access_count: Max access_count for stale candidates.
+        stale_confidence_threshold: Minimum classifier confidence for stale deletion.
         similarity_threshold: Vector similarity threshold for duplicates.
         limit_per_category: Max memories to scan per category.
         project_id: Optional project filter.
+        llm_service: Optional LLM service for stale classification.
+        stale_audit_config: Optional feature config for stale classification.
+        use_stale_classifier: Whether stale candidates require LLM classification.
 
     Returns:
         Structured report dict with per-category results and totals.
@@ -458,14 +768,23 @@ async def execute_cleanup(
             max_age_days=max_stale_age_days,
             project_id=project_id,
             limit=limit_per_category,
+            max_access_count=max_stale_access_count,
         )
-        report["stale"] = {
-            "found": len(stale),
-            "items": [{"id": m.id, "content_preview": m.content[:120]} for m in stale],
-        }
-        for m in stale:
-            if m.id not in delete_ids:
-                delete_ids[m.id] = "stale"
+        stale_report = await _classify_stale_memories(
+            stale,
+            memory_manager=memory_manager,
+            llm_service=llm_service,
+            stale_audit_config=stale_audit_config,
+            max_stale_age_days=max_stale_age_days,
+            max_stale_access_count=max_stale_access_count,
+            confidence_threshold=stale_confidence_threshold,
+            use_stale_classifier=use_stale_classifier,
+        )
+        report["stale"] = stale_report
+        for item in stale_report["delete_items"]:
+            memory_id = item["id"]
+            if memory_id not in delete_ids:
+                delete_ids[memory_id] = "stale"
 
     # --- Duplicates ---
     if "duplicates" in active:
@@ -523,6 +842,8 @@ async def execute_cleanup(
                 delete_ids[m.id] = "orphaned"
 
     report["total_found"] = len(delete_ids)
+    report["total_review"] = int(report.get("stale", {}).get("review", 0))
+    report["total_kept"] = int(report.get("stale", {}).get("kept", 0))
 
     # --- Execute deletions ---
     if dry_run or not delete_ids:
@@ -537,8 +858,12 @@ async def execute_cleanup(
             if category == "stale":
                 try:
                     mem = memory_manager.storage.get_memory(memory_id)
-                    if mem.access_count > 0:
-                        logger.debug(f"Skipping {memory_id}: accessed since scan")
+                    if not _is_still_stale(
+                        mem,
+                        max_age_days=max_stale_age_days,
+                        max_access_count=max_stale_access_count,
+                    ):
+                        logger.debug(f"Skipping {memory_id}: stale state changed since scan")
                         continue
                 except ValueError:
                     continue  # Already gone

@@ -23,6 +23,7 @@ __all__ = [
     "DatabasesConfig",
     "EmbeddingsConfig",
     "MemoryKnowledgeGraphConfig",
+    "MemoryStaleAuditConfig",
     "MemoryConfig",
     "MemoryBackupConfig",
     "Neo4jConfig",
@@ -194,6 +195,31 @@ class MemoryKnowledgeGraphConfig(FeatureDefaultConfig):
     )
 
 
+class MemoryStaleAuditConfig(FeatureDefaultConfig):
+    """LLM configuration for stale memory audit classification."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable LLM-backed stale memory classification",
+    )
+    model: str = Field(
+        default="haiku",
+        description="Model for stale memory classification (cheap/fast recommended)",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.LOW,
+        description="Complexity tier — determines fallback model when local provider fails",
+    )
+    prompt_path: str = Field(
+        default="memory/stale_audit",
+        description="Prompt template path for stale memory classification",
+    )
+    max_tokens: int = Field(
+        default=4096,
+        description="Maximum tokens for stale memory classifier responses",
+    )
+
+
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
@@ -235,6 +261,10 @@ class MemoryConfig(BaseModel):
     kg: MemoryKnowledgeGraphConfig = Field(
         default_factory=MemoryKnowledgeGraphConfig,
         description="LLM provider/model configuration for knowledge graph extraction",
+    )
+    stale_audit: MemoryStaleAuditConfig = Field(
+        default_factory=MemoryStaleAuditConfig,
+        description="LLM provider/model configuration for stale memory audit classification",
     )
     code_link_min_score: float = Field(
         default=0.82,

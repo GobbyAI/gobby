@@ -4,13 +4,24 @@ Split from the test_pipeline_executor monolith (#12210).
 """
 
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_state import StepStatus
 
 pytestmark = pytest.mark.unit
+
+
+def _load_nightly_memory_cleanup_pipeline() -> PipelineDefinition:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "src/gobby/install/shared/workflows/pipelines/nightly-memory-cleanup.yaml"
+    )
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return PipelineDefinition(**data)
 
 
 class TestConditionEvaluation:
@@ -190,6 +201,88 @@ class TestConditionEvaluation:
         update_calls = mock_execution_manager.update_step_execution.call_args_list
         skipped_calls = [c for c in update_calls if c.kwargs.get("status") == StepStatus.SKIPPED]
         assert len(skipped_calls) >= 1
+
+    @pytest.mark.asyncio
+    async def test_nightly_cleanup_skips_cleanup_when_audit_finds_nothing(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Nightly memory cleanup does not run destructive cleanup with no findings."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = _load_nightly_memory_cleanup_pipeline()
+        cleanup = pipeline.get_step("cleanup")
+        assert cleanup is not None
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        context = {
+            "inputs": {"dry_run": False},
+            "steps": {"audit": {"output": {"total_found": 0}}},
+        }
+
+        assert executor.renderer.should_run_step(cleanup, context) is False
+
+    @pytest.mark.asyncio
+    async def test_nightly_cleanup_skips_cleanup_when_dry_run(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Nightly memory cleanup audit-only mode skips destructive cleanup."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = _load_nightly_memory_cleanup_pipeline()
+        cleanup = pipeline.get_step("cleanup")
+        assert cleanup is not None
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        context = {
+            "inputs": {"dry_run": True},
+            "steps": {"audit": {"output": {"total_found": 3}}},
+        }
+
+        assert executor.renderer.should_run_step(cleanup, context) is False
+
+    @pytest.mark.asyncio
+    async def test_nightly_cleanup_outputs_include_audit_and_cleanup_totals(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Nightly memory cleanup exposes totals without step-level inspection."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        pipeline = _load_nightly_memory_cleanup_pipeline()
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+        context = {
+            "steps": {
+                "audit": {
+                    "output": {
+                        "total_found": 2,
+                        "total_review": 1,
+                        "stale": {"delete_candidates": 2, "review": 1},
+                    }
+                },
+                "cleanup": {"output": {"total_deleted": 2}},
+            }
+        }
+
+        outputs = executor._build_outputs(pipeline, context)
+
+        assert outputs["total_found"] == 2
+        assert outputs["total_deleted"] == 2
+        assert outputs["total_review"] == 1
+        assert outputs["stale_delete_candidates"] == 2
+        assert outputs["stale_review"] == 1
 
 
 class TestDefaultInputMerging:

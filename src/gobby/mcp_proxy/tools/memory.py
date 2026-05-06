@@ -753,6 +753,10 @@ def create_memory_registry(
     )
     async def audit_memories(
         max_stale_age_days: int = 30,
+        max_stale_access_count: int = 1,
+        stale_confidence_threshold: float = 0.85,
+        limit_per_category: int = 500,
+        use_stale_classifier: bool = True,
         categories: list[str] | None = None,
     ) -> dict[str, Any]:
         """
@@ -761,19 +765,32 @@ def create_memory_registry(
         Equivalent to cleanup_memories with dry_run=True.
 
         Args:
-            max_stale_age_days: Memories older than this with 0 access are stale (default: 30)
+            max_stale_age_days: Memories inactive longer than this are stale candidates.
+            max_stale_access_count: Maximum access_count still considered low-access.
+            stale_confidence_threshold: Minimum classifier confidence for stale deletion.
+            limit_per_category: Maximum candidates to scan per category.
+            use_stale_classifier: Whether stale candidates require LLM classification.
             categories: Which categories to audit (default: all).
                 Valid: "stale", "duplicates", "code_derivable", "orphaned"
         """
         from gobby.memory.services.maintenance import execute_cleanup
 
         try:
+            stale_audit_config = (
+                config.memory.stale_audit if config is not None and config.memory else None
+            )
             report = await execute_cleanup(
                 memory_manager=memory_manager,
                 dry_run=True,
                 categories=categories,
                 max_stale_age_days=max_stale_age_days,
+                max_stale_access_count=max_stale_access_count,
+                stale_confidence_threshold=stale_confidence_threshold,
+                limit_per_category=limit_per_category,
                 project_id=get_current_project_id(),
+                llm_service=llm_service,
+                stale_audit_config=stale_audit_config,
+                use_stale_classifier=use_stale_classifier,
             )
             if "error" in report:
                 return {"success": False, "error": report["error"]}
@@ -788,7 +805,11 @@ def create_memory_registry(
     async def cleanup_memories(
         dry_run: bool = False,
         max_stale_age_days: int = 30,
+        max_stale_access_count: int = 1,
+        stale_confidence_threshold: float = 0.85,
         similarity_threshold: float = 0.95,
+        limit_per_category: int = 500,
+        use_stale_classifier: bool = True,
         categories: list[str] | None = None,
     ) -> dict[str, Any]:
         """
@@ -796,21 +817,34 @@ def create_memory_registry(
 
         Args:
             dry_run: If true, report what would be cleaned without deleting (default: false)
-            max_stale_age_days: Memories older than this with 0 access are stale (default: 30)
+            max_stale_age_days: Memories inactive longer than this are stale candidates.
+            max_stale_access_count: Maximum access_count still considered low-access.
+            stale_confidence_threshold: Minimum classifier confidence for stale deletion.
             similarity_threshold: Vector similarity threshold for duplicate detection (default: 0.95)
+            limit_per_category: Maximum candidates to scan per category.
+            use_stale_classifier: Whether stale candidates require LLM classification.
             categories: Which categories to clean (default: all).
                 Valid: "stale", "duplicates", "code_derivable", "orphaned"
         """
         from gobby.memory.services.maintenance import execute_cleanup
 
         try:
+            stale_audit_config = (
+                config.memory.stale_audit if config is not None and config.memory else None
+            )
             report = await execute_cleanup(
                 memory_manager=memory_manager,
                 dry_run=dry_run,
                 categories=categories,
                 max_stale_age_days=max_stale_age_days,
+                max_stale_access_count=max_stale_access_count,
+                stale_confidence_threshold=stale_confidence_threshold,
                 similarity_threshold=similarity_threshold,
+                limit_per_category=limit_per_category,
                 project_id=get_current_project_id(),
+                llm_service=llm_service,
+                stale_audit_config=stale_audit_config,
+                use_stale_classifier=use_stale_classifier,
             )
             if "error" in report:
                 return {"success": False, "error": report["error"]}
