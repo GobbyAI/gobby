@@ -644,7 +644,7 @@ def _previous_stage_done(task: object, stage: object) -> bool:
 
 def _stage_work_exhausted(stage: object, context: object) -> bool:
     cap = _stage_cap(stage, context, "max_work_attempts", "default_max_work_attempts")
-    return cap is not None and int(_field(stage, "work_attempt_count", 0) or 0) >= cap
+    return cap is not None and int(_field(stage, "work_attempt_count", 0) or 0) > cap
 
 
 def _stage_review_exhausted(stage: object, context: object) -> bool:

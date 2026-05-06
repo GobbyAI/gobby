@@ -180,7 +180,31 @@ def test_expansion_work_rule_fires_and_holds_when_cap_reached() -> None:
             stage_overrides={"work_attempt_count": 3, "max_work_attempts": 3},
         )
     )
-    assert capped is None
+    assert isinstance(capped, StartPipelineAction)
+
+    exhausted = _evaluate(
+        _task_at(
+            "expansion",
+            "in_progress",
+            stage_overrides={"work_attempt_count": 4, "max_work_attempts": 3},
+        )
+    )
+    assert exhausted is None
+
+
+def test_development_work_rule_allows_first_counted_attempt_at_cap() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            stage_overrides={"work_attempt_count": 1, "max_work_attempts": 1},
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
 
 
 def test_expansion_review_rule_escalates_when_review_cap_reached() -> None:
