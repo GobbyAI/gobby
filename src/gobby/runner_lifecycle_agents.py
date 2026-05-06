@@ -108,6 +108,8 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
             if getattr(run, "terminal_reason", None) != "daemon_restart":
                 continue
 
+            await _cleanup_lingering_daemon_restart_tmux_session(run)
+
             subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
             if not subscribers:
                 continue
@@ -147,6 +149,33 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
             break
 
     return replayed
+
+
+async def _cleanup_lingering_daemon_restart_tmux_session(run: object) -> bool:
+    """Kill a tmux session left alive by a pre-fix daemon-restart cancellation."""
+    tmux_session_name = getattr(run, "tmux_session_name", None)
+    if not tmux_session_name:
+        return False
+
+    try:
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
+
+        killed = await TmuxSessionManager().kill_session(str(tmux_session_name))
+    except Exception as e:
+        logger.warning(
+            "Failed to clean lingering tmux session for cancelled agent %s: %s",
+            getattr(run, "id", "unknown"),
+            e,
+        )
+        return False
+
+    if killed:
+        logger.info(
+            "Cleaned lingering tmux session %s for cancelled agent %s",
+            tmux_session_name,
+            getattr(run, "id", "unknown"),
+        )
+    return killed
 
 
 async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
