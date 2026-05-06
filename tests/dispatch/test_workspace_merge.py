@@ -307,3 +307,106 @@ def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
     assert (integration_path / "docs" / "guides" / "search.md").read_text() == "search\n"
     assert task_manager.stage_states.get(leaf.id, "merge").state == "done"
     assert worktrees.get(source.id).status == "merged"
+
+
+def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_link(
+    temp_db,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+    readme = repo / "docs" / "guides" / "README.md"
+    readme.parent.mkdir(parents=True)
+    base_readme = (
+        "# Gobby Guides\n\n"
+        "Documentation guides for using Gobby's features.\n\n"
+        "## Quick Links\n\n"
+        '- **Create a task**: `gobby tasks create "Title"` or `create_task` MCP tool\n'
+        "- **Session handoff**: `gobby sessions create-handoff` or `create_handoff` MCP tool\n"
+    )
+    readme.write_text(base_readme)
+    _git(repo, "add", "docs/guides/README.md")
+    _git(repo, "commit", "-m", "add guides index")
+    _git(repo, "worktree", "add", "-b", "integration/root", str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), "integration/root")
+    _git(integration_path, "config", "user.email", "test@example.com")
+    _git(integration_path, "config", "user.name", "Test User")
+    _git(task_path, "config", "user.email", "test@example.com")
+    _git(task_path, "config", "user.name", "Test User")
+
+    integration_readme = (
+        "# Gobby Guides\n\n"
+        "Task-focused documentation for Gobby users, operators, and contributors.\n\n"
+        "## Quick Links\n\n"
+        '- **Create a task**: `gobby tasks create "Title"` or '
+        '`create_task(title="Title", category="docs")`\n'
+        "- **Session handoff**: `gobby sessions create-handoff` or "
+        "`set_handoff_context` MCP tool\n"
+        "\n_Last verified: 2026-05-06_\n"
+    )
+    (integration_path / "docs" / "guides" / "README.md").write_text(integration_readme)
+    _git(integration_path, "add", "docs/guides/README.md")
+    _git(integration_path, "commit", "-m", "refresh guide index quick links")
+
+    task_readme = base_readme.replace("create_handoff", "set_handoff_context")
+    (task_path / "docs" / "guides" / "README.md").write_text(task_readme)
+    (task_path / "docs" / "guides" / "mcp-tools.md").write_text("mcp tools\n")
+    _git(task_path, "add", "docs/guides/README.md", "docs/guides/mcp-tools.md")
+    _git(task_path, "commit", "-m", "refresh mcp tools guide")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="docs",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    worktrees.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+
+    merge_sha = execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="worktree",
+            target_branch="integration/root",
+            source_workspace_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    assert merge_sha == _git(integration_path, "rev-parse", "HEAD")
+    assert (integration_path / "docs" / "guides" / "README.md").read_text() == integration_readme
+    assert (integration_path / "docs" / "guides" / "mcp-tools.md").read_text() == "mcp tools\n"
+    assert task_manager.stage_states.get(leaf.id, "merge").state == "done"
+    assert worktrees.get(source.id).status == "merged"

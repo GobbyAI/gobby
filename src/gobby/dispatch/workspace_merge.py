@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess  # nosec B404 # fixed git commands.
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -220,7 +221,10 @@ def _resolve_docs_guides_readme_conflict(path: str, file_path: str) -> bool:
     if staged is None:
         return False
     base, ours, theirs = staged
-    if _without_guide_rows(base) != _without_guide_rows(theirs):
+    non_row_changes_represented = _non_row_changes_are_represented(base, ours, theirs)
+    if _without_guide_rows(base) != _without_guide_rows(theirs) and not (
+        non_row_changes_represented
+    ):
         return False
 
     base_rows = _guide_rows_by_key(base)
@@ -232,6 +236,10 @@ def _resolve_docs_guides_readme_conflict(path: str, file_path: str) -> bool:
         if key not in base_rows or row.line != base_rows[key].line
     }
     if not changed_theirs or any(key not in ours_rows for key in changed_theirs):
+        if non_row_changes_represented:
+            (Path(path) / file_path).write_text(ours)
+            _git_ok(path, ["add", "--", file_path])
+            return True
         return False
 
     merged_lines = ours.splitlines()
@@ -273,6 +281,17 @@ def _guide_rows_by_key(text: str) -> dict[str, _GuideRow]:
 
 def _without_guide_rows(text: str) -> list[str]:
     return [line for line in text.splitlines() if GUIDE_ROW_RE.match(line) is None]
+
+
+def _non_row_changes_are_represented(base: str, ours: str, theirs: str) -> bool:
+    base_lines = Counter(_without_guide_rows(base))
+    ours_lines = Counter(_without_guide_rows(ours))
+    theirs_lines = Counter(_without_guide_rows(theirs))
+    added_lines = theirs_lines - base_lines
+    removed_lines = base_lines - theirs_lines
+    return all(ours_lines[line] >= count for line, count in added_lines.items()) and all(
+        ours_lines[line] <= theirs_lines[line] for line in removed_lines
+    )
 
 
 def _normalize_guide_target(target: str) -> str:
