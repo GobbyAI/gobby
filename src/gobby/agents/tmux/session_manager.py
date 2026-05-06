@@ -20,6 +20,9 @@ from gobby.config.tmux import TmuxConfig
 logger = logging.getLogger(__name__)
 
 
+_MISSING_SESSION_ERRORS = ("can't find session", "no such session")
+
+
 @dataclass
 class TmuxSessionInfo:
     """Metadata about a running tmux session."""
@@ -367,7 +370,7 @@ class TmuxSessionManager:
         rc, _stdout, _stderr = await self._run("has-session", "-t", name)
         return rc == 0
 
-    async def kill_session(self, name: str) -> bool:
+    async def kill_session(self, name: str, *, missing_ok: bool = False) -> bool:
         """Kill a tmux session and all processes in it.
 
         Collects pane PIDs before destroying the session, then sends SIGTERM
@@ -380,7 +383,16 @@ class TmuxSessionManager:
         # Kill the tmux session
         rc, _stdout, stderr = await self._run("kill-session", "-t", name)
         if rc != 0:
-            logger.warning(f"Failed to kill tmux session '{name}': {stderr.strip()}")
+            message = stderr.strip()
+            if any(error in message.lower() for error in _MISSING_SESSION_ERRORS):
+                logger.debug(
+                    "Tmux session '%s' was already missing during kill (missing_ok=%s): %s",
+                    name,
+                    missing_ok,
+                    message,
+                )
+                return missing_ok
+            logger.warning("Failed to kill tmux session '%s': %s", name, message)
             return False
 
         # Kill process groups rooted at each pane shell

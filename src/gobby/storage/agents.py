@@ -702,6 +702,19 @@ class LocalAgentRunManager:
             tuple(params),
         )
 
+    def clear_tmux_session_name(self, run_id: str, tmux_session_name: str) -> bool:
+        """Clear a persisted tmux session name if it still matches."""
+        now = datetime.now(UTC).isoformat()
+        cursor = self.db.execute(
+            """
+            UPDATE agent_runs
+            SET tmux_session_name = NULL, updated_at = ?
+            WHERE id = ? AND tmux_session_name = ?
+            """,
+            (now, run_id, tmux_session_name),
+        )
+        return cursor.rowcount > 0
+
     def list_pending_with_pid(self, limit: int = 100) -> list[AgentRun]:
         """List pending agent runs that have a PID (spawned but not yet marked running)."""
         return self._fetch_runs_with_live_stats(

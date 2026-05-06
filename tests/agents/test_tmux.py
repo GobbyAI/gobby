@@ -270,7 +270,7 @@ class TestTmuxSessionManager:
             assert await mgr.has_session("missing") is False
 
     @pytest.mark.asyncio
-    async def test_kill_session(self) -> None:
+    async def test_kill_session(self, caplog: pytest.LogCaptureFixture) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (0, "", "")
@@ -278,6 +278,9 @@ class TestTmuxSessionManager:
 
             mock_run.return_value = (1, "", "no such session")
             assert await mgr.kill_session("missing") is False
+            assert await mgr.kill_session("missing", missing_ok=True) is True
+
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
 
     @pytest.mark.asyncio
     async def test_rename_window_success(self) -> None:

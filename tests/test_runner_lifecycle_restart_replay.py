@@ -129,10 +129,12 @@ class TestDaemonRestartAgentCancellationReplay:
             tmux_session_name="gobby-stale-agent",
         )
         tmux_manager = SimpleNamespace(kill_session=AsyncMock(return_value=True))
+        run_storage = SimpleNamespace(
+            list_by_status=MagicMock(return_value=[run]),
+            clear_tmux_session_name=MagicMock(return_value=True),
+        )
         runner = SimpleNamespace(
-            agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_by_status=MagicMock(return_value=[run]))
-            ),
+            agent_runner=SimpleNamespace(run_storage=run_storage),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=[]),
                 remove_completion_subscribers=MagicMock(),
@@ -152,5 +154,12 @@ class TestDaemonRestartAgentCancellationReplay:
             replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
 
         assert replayed == 0
-        tmux_manager.kill_session.assert_awaited_once_with("gobby-stale-agent")
+        tmux_manager.kill_session.assert_awaited_once_with(
+            "gobby-stale-agent",
+            missing_ok=True,
+        )
+        run_storage.clear_tmux_session_name.assert_called_once_with(
+            "run-1",
+            "gobby-stale-agent",
+        )
         runner.completion_registry.notify.assert_not_awaited()

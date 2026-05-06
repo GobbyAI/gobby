@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_lifecycle")
+
+
+class _RunStorageWithTmuxCleanup(Protocol):
+    def clear_tmux_session_name(self, run_id: str, tmux_session_name: str) -> bool: ...
 
 
 def _register_persisted_completion_subscribers(
@@ -108,7 +112,10 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
             if getattr(run, "terminal_reason", None) != "daemon_restart":
                 continue
 
-            await _cleanup_lingering_daemon_restart_tmux_session(run)
+            await _cleanup_lingering_daemon_restart_tmux_session(
+                run,
+                runner.agent_runner.run_storage,
+            )
 
             subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
             if not subscribers:
@@ -151,7 +158,10 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
     return replayed
 
 
-async def _cleanup_lingering_daemon_restart_tmux_session(run: object) -> bool:
+async def _cleanup_lingering_daemon_restart_tmux_session(
+    run: object,
+    run_storage: _RunStorageWithTmuxCleanup,
+) -> bool:
     """Kill a tmux session left alive by a pre-fix daemon-restart cancellation."""
     tmux_session_name = getattr(run, "tmux_session_name", None)
     if not tmux_session_name:
@@ -160,7 +170,10 @@ async def _cleanup_lingering_daemon_restart_tmux_session(run: object) -> bool:
     try:
         from gobby.agents.tmux.session_manager import TmuxSessionManager
 
-        killed = await TmuxSessionManager().kill_session(str(tmux_session_name))
+        session_name = str(tmux_session_name)
+        killed = await TmuxSessionManager().kill_session(session_name, missing_ok=True)
+        if killed:
+            run_storage.clear_tmux_session_name(str(getattr(run, "id", "unknown")), session_name)
     except Exception as e:
         logger.warning(
             "Failed to clean lingering tmux session for cancelled agent %s: %s",
