@@ -201,7 +201,13 @@ def reopen_task(
 
     current_stage = _current_stage_row(db, task_id)
     current_stage_ready = current_stage is None or current_stage["state"] == "ready"
-    if not is_task_closed(task) and not task.is_escalated and current_stage_ready:
+    has_ownership_metadata = bool(task.claimed_by_session_id or task.assignee)
+    if (
+        not is_task_closed(task)
+        and not task.is_escalated
+        and current_stage_ready
+        and not has_ownership_metadata
+    ):
         raise ValueError(f"Task {_task_ref(task, task_id)} is already ready")
 
     description = task.description

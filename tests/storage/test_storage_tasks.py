@@ -828,12 +828,36 @@ class TestLocalTaskManager:
         assert "Original description" in reopened.description
         assert "[Reopened: Bug found]" in reopened.description
 
-    def test_reopen_task_already_open_raises(self, task_manager, project_id) -> None:
-        """Test reopening an already open task raises error."""
+    def test_reopen_task_already_open_unclaimed_raises(self, task_manager, project_id) -> None:
+        """Test reopening an already open, unclaimed task raises error."""
         task = task_manager.create_task(project_id, "Open Task")
 
         with pytest.raises(ValueError, match="already ready"):
             task_manager.reopen_task(task.id)
+
+    def test_reopen_task_already_open_claimed_releases_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Reopening an open claimed task should release the claim."""
+        session = session_manager.register(
+            external_id="reopen-claimed-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Claimed ready task")
+        task_manager.claim_task(task.id, session.id)
+        task_manager.update_task(task.id, validation_fail_count=2, dispatch_failure_count=3)
+
+        reopened = task_manager.reopen_task(task.id, reason="Release claim")
+
+        assert not is_task_closed(reopened)
+        _assert_stage_state(reopened, "ready")
+        assert reopened.assignee is None
+        assert reopened.claimed_by_session_id is None
+        assert reopened.validation_fail_count == 0
+        assert reopened.dispatch_failure_count == 0
+        assert "[Reopened: Release claim]" in (reopened.description or "")
 
     def test_reopen_task_from_escalated(self, task_manager, project_id) -> None:
         """Test reopening an escalated task clears escalation metadata."""
