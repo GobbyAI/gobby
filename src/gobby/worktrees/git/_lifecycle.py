@@ -104,6 +104,16 @@ def create_worktree(
                 timeout=60,
             )
 
+        if create_branch and result.returncode != 0 and _is_branch_exists_error(result.stderr):
+            logger.info(
+                "Branch %s already exists while creating worktree; reusing existing branch",
+                branch_name,
+            )
+            result = runner._run_git(
+                ["worktree", "add", str(worktree_path), branch_name],
+                timeout=60,
+            )
+
         if result.returncode == 0:
             return GitOperationResult(
                 success=True,
@@ -128,6 +138,13 @@ def create_worktree(
             message=f"Error creating worktree: {e}",
             error=str(e),
         )
+
+
+def _is_branch_exists_error(stderr: str | None) -> bool:
+    if not stderr:
+        return False
+    normalized = stderr.lower()
+    return "branch" in normalized and "already exists" in normalized
 
 
 def delete_worktree(

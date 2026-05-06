@@ -275,7 +275,7 @@ class TestWorktreeGitManagerCreateWorktree:
                 args=["git", "worktree", "add"],
                 returncode=128,
                 stdout="",
-                stderr="fatal: branch already exists",
+                stderr="fatal: could not create worktree",
             ),
         ]
 
@@ -283,6 +283,49 @@ class TestWorktreeGitManagerCreateWorktree:
 
         assert result.success is False
         assert "Failed to create" in result.message
+
+    @patch("subprocess.run")
+    def test_create_reuses_existing_branch_when_new_branch_exists(
+        self, mock_run, manager, tmp_path
+    ) -> None:
+        """Restarted builds can reuse task branches left after artifact cleanup."""
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "rev-parse"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "add"],
+                returncode=128,
+                stdout="",
+                stderr="fatal: a branch named 'feature/test' already exists",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "add"],
+                returncode=0,
+                stdout="Preparing worktree",
+                stderr="",
+            ),
+        ]
+
+        result = manager.create_worktree(
+            worktree_path,
+            "feature/test",
+            base_branch="integration-branch",
+            create_branch=True,
+            use_local=True,
+        )
+
+        assert result.success is True
+        assert "Created worktree" in result.message
+        assert [call.args[0][1:3] for call in mock_run.call_args_list] == [
+            ["rev-parse", "--verify"],
+            ["worktree", "add"],
+            ["worktree", "add"],
+        ]
 
     @patch("subprocess.run")
     def test_create_handles_timeout(self, mock_run, manager, tmp_path) -> None:
