@@ -340,6 +340,7 @@ class TestLinearSync:
         mock_resolve.return_value = task
         result = runner.invoke(linear, ["sync", "#1"], catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Synced task #1 to Linear" in result.output
 
     @patch("gobby.cli.linear.asyncio.run", return_value={"synced": True})
     @patch("gobby.cli.linear.get_sync_service")
@@ -360,6 +361,7 @@ class TestLinearSync:
         mock_resolve.return_value = task
         result = runner.invoke(linear, ["sync", "#1", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
+        assert '"synced": true' in result.output
 
     @patch("gobby.cli.linear.resolve_task_id", return_value=None)
     @patch("gobby.cli.linear.get_linear_deps")
@@ -460,6 +462,7 @@ class TestLinearCreate:
         mock_resolve.return_value = task
         result = runner.invoke(linear, ["create", "#1", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
+        assert '"id": "LIN-123"' in result.output
 
     @patch("gobby.cli.linear.resolve_task_id", return_value=None)
     @patch("gobby.cli.linear.get_linear_deps")
@@ -490,3 +493,4 @@ class TestLinearCreate:
         mock_resolve.return_value = task
         result = runner.invoke(linear, ["create", "#1"], catch_exceptions=False)
         assert result.exit_code != 0
+        assert "bad task" in result.output

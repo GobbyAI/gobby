@@ -182,11 +182,13 @@ class TestKillTerminalSession:
 
         with (
             patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-            patch("os.kill", side_effect=ProcessLookupError),
+            patch("os.kill", side_effect=ProcessLookupError) as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is False
+        mock_kill.assert_called_once_with(5678, signal.SIGTERM)
+        assert mock_kill.call_args.args == (5678, signal.SIGTERM)
 
 
 class TestContinueInChatTerminalKill:
@@ -867,6 +869,9 @@ class TestContinueInChatTerminalKill:
             )
 
         assert host._pending_inject_contexts["source-uuid"] == "## Summary fallback"
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["conversation_id"] == "source-uuid"
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_queues_digest_fallback_when_summary_missing(self) -> None:
@@ -942,6 +947,9 @@ class TestContinueInChatTerminalKill:
             )
 
         assert host._pending_inject_contexts["source-uuid"] == "## Digest fallback"
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["conversation_id"] == "source-uuid"
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_prefers_native_resume_over_fallback_context(self) -> None:
@@ -1092,6 +1100,9 @@ class TestContinueInChatTerminalKill:
             )
 
         assert host._pending_inject_contexts == {}
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["conversation_id"] == "source-uuid"
 
     @pytest.mark.asyncio
     async def test_attach_to_session_returns_extended_metadata(self) -> None:

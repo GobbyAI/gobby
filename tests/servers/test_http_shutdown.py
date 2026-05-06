@@ -115,6 +115,7 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         assert len(server._background_tasks) == 0
+        assert server._background_tasks == set()
 
     @pytest.mark.asyncio
     async def test_shutdown_waits_for_pending_tasks(self) -> None:
@@ -137,6 +138,7 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         assert len(server._background_tasks) == 0
+        assert task.done()
 
     @pytest.mark.asyncio
     async def test_shutdown_timeout_with_slow_tasks(self) -> None:
@@ -167,6 +169,7 @@ class TestProcessShutdown:
         with patch.object(server, "_process_shutdown", fast_shutdown):
             await server._process_shutdown()
             assert not task.done()
+            assert task in server._background_tasks
 
         task.cancel()
         try:
@@ -234,6 +237,7 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         assert events == ["terminate", "disconnect"]
+        assert len(events) == 2
 
     @pytest.mark.asyncio
     async def test_shutdown_continues_when_http_session_termination_fails(

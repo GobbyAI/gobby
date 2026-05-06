@@ -235,42 +235,6 @@
       "test_name": "TestInstallGsqzFromGithub.test_missing_binary_in_tarball"
     },
     {
-      "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearCreate.test_create_json::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 448,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_linear_coverage.py",
-      "severity": "medium",
-      "test_name": "TestLinearCreate.test_create_json"
-    },
-    {
-      "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearCreate.test_create_value_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 478,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_linear_coverage.py",
-      "severity": "medium",
-      "test_name": "TestLinearCreate.test_create_value_error"
-    },
-    {
-      "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearSync.test_sync_json::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 348,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_linear_coverage.py",
-      "severity": "medium",
-      "test_name": "TestLinearSync.test_sync_json"
-    },
-    {
-      "fingerprint": "tests/cli/test_linear_coverage.py::TestLinearSync.test_sync_text::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 328,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_linear_coverage.py",
-      "severity": "medium",
-      "test_name": "TestLinearSync.test_sync_text"
-    },
-    {
       "fingerprint": "tests/cli/test_pipelines_coverage.py::TestHelpers.test_get_project_path_found::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 52,
@@ -316,42 +280,6 @@
       "test_name": "TestSkillsValidate.test_validate_valid_json"
     },
     {
-      "fingerprint": "tests/cli/test_sync_coverage.py::TestSyncDevMode.test_dev_mode_with_errors::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 125,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_sync_coverage.py",
-      "severity": "medium",
-      "test_name": "TestSyncDevMode.test_dev_mode_with_errors"
-    },
-    {
-      "fingerprint": "tests/cli/test_sync_coverage.py::TestSyncProductionMode.test_prod_no_git::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 256,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_sync_coverage.py",
-      "severity": "medium",
-      "test_name": "TestSyncProductionMode.test_prod_no_git"
-    },
-    {
-      "fingerprint": "tests/cli/test_sync_coverage.py::TestSyncProductionMode.test_prod_verify_only_clean::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 214,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_sync_coverage.py",
-      "severity": "medium",
-      "test_name": "TestSyncProductionMode.test_prod_verify_only_clean"
-    },
-    {
-      "fingerprint": "tests/cli/test_sync_coverage.py::TestSyncProductionMode.test_prod_verify_only_dirty::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 235,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_sync_coverage.py",
-      "severity": "medium",
-      "test_name": "TestSyncProductionMode.test_prod_verify_only_dirty"
-    },
-    {
       "fingerprint": "tests/cli/test_tasks_cli.py::TestResolveTaskId.test_resolve_prefix_ambiguous::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 1430,
@@ -386,42 +314,6 @@
       "path": "tests/communications/adapters/test_teams.py",
       "severity": "medium",
       "test_name": "test_token_refresh_lock"
-    },
-    {
-      "fingerprint": "tests/communications/test_attachments.py::test_discord_send_attachment::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 357,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/communications/test_attachments.py",
-      "severity": "medium",
-      "test_name": "test_discord_send_attachment"
-    },
-    {
-      "fingerprint": "tests/communications/test_attachments.py::test_slack_send_attachment::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 297,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/communications/test_attachments.py",
-      "severity": "medium",
-      "test_name": "test_slack_send_attachment"
-    },
-    {
-      "fingerprint": "tests/communications/test_attachments.py::test_sms_send_attachment_with_url::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 456,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/communications/test_attachments.py",
-      "severity": "medium",
-      "test_name": "test_sms_send_attachment_with_url"
-    },
-    {
-      "fingerprint": "tests/communications/test_attachments.py::test_telegram_send_attachment::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 258,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/communications/test_attachments.py",
-      "severity": "medium",
-      "test_name": "test_telegram_send_attachment"
     },
     {
       "fingerprint": "tests/communications/test_cleanup.py::test_cleanup_handles_db_error_gracefully::HEAVY_MOCK_LOW_ASSERT",
@@ -712,42 +604,6 @@
       "test_name": "TestSuggestNextTask.test_suggest_next_task_prefers_leaf_tasks"
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_sync.py::TestAutoLinkCommits.test_auto_link_commits_no_project::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 213,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/test_task_sync.py",
-      "severity": "medium",
-      "test_name": "TestAutoLinkCommits.test_auto_link_commits_no_project"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_sync.py::TestAutoLinkCommits.test_auto_link_commits_with_since::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 185,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/test_task_sync.py",
-      "severity": "medium",
-      "test_name": "TestAutoLinkCommits.test_auto_link_commits_with_since"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_sync.py::TestAutoLinkCommits.test_auto_link_commits_with_task_filter::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 156,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/test_task_sync.py",
-      "severity": "medium",
-      "test_name": "TestAutoLinkCommits.test_auto_link_commits_with_task_filter"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_task_sync.py::TestGitIntegrationEdgeCases.test_auto_link_with_skipped_commits::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 388,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/test_task_sync.py",
-      "severity": "medium",
-      "test_name": "TestGitIntegrationEdgeCases.test_auto_link_with_skipped_commits"
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_tasks_lifecycle_coverage.py::TestCloseTaskTool.test_close_task_success_with_commits::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 150,
@@ -946,42 +802,6 @@
       "test_name": "TestStreamableHttpShutdown.test_terminate_streamable_http_sessions_times_out_with_warning"
     },
     {
-      "fingerprint": "tests/servers/test_http_shutdown.py::TestProcessShutdown.test_shutdown_no_pending_tasks::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 105,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_shutdown.py",
-      "severity": "medium",
-      "test_name": "TestProcessShutdown.test_shutdown_no_pending_tasks"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_shutdown.py::TestProcessShutdown.test_shutdown_terminates_streamable_http_sessions_before_disconnect::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 205,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_shutdown.py",
-      "severity": "medium",
-      "test_name": "TestProcessShutdown.test_shutdown_terminates_streamable_http_sessions_before_disconnect"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_shutdown.py::TestProcessShutdown.test_shutdown_timeout_with_slow_tasks::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 142,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_shutdown.py",
-      "severity": "medium",
-      "test_name": "TestProcessShutdown.test_shutdown_timeout_with_slow_tasks"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_shutdown.py::TestProcessShutdown.test_shutdown_waits_for_pending_tasks::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 120,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_shutdown.py",
-      "severity": "medium",
-      "test_name": "TestProcessShutdown.test_shutdown_waits_for_pending_tasks"
-    },
-    {
       "fingerprint": "tests/servers/test_local_llm.py::TestChatSessionLocalLLM.test_env_includes_base_url_when_local_llm_enabled::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 47,
@@ -1027,42 +847,6 @@
       "test_name": "TestProviderModelCatalog.test_discover_qwen_models_merges_acp_and_configured_models"
     },
     {
-      "fingerprint": "tests/servers/test_session_control.py::TestContinueInChatTerminalKill.test_continue_in_chat_has_no_hidden_context_when_no_summary_or_digest_exists::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1020,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_session_control.py",
-      "severity": "medium",
-      "test_name": "TestContinueInChatTerminalKill.test_continue_in_chat_has_no_hidden_context_when_no_summary_or_digest_exists"
-    },
-    {
-      "fingerprint": "tests/servers/test_session_control.py::TestContinueInChatTerminalKill.test_continue_in_chat_queues_digest_fallback_when_summary_missing::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 872,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_session_control.py",
-      "severity": "medium",
-      "test_name": "TestContinueInChatTerminalKill.test_continue_in_chat_queues_digest_fallback_when_summary_missing"
-    },
-    {
-      "fingerprint": "tests/servers/test_session_control.py::TestContinueInChatTerminalKill.test_continue_in_chat_queues_summary_fallback_context::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 797,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_session_control.py",
-      "severity": "medium",
-      "test_name": "TestContinueInChatTerminalKill.test_continue_in_chat_queues_summary_fallback_context"
-    },
-    {
-      "fingerprint": "tests/servers/test_session_control.py::TestKillTerminalSession.test_both_methods_fail::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 175,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_session_control.py",
-      "severity": "medium",
-      "test_name": "TestKillTerminalSession.test_both_methods_fail"
-    },
-    {
       "fingerprint": "tests/servers/websocket/chat/test_runtime_manager.py::TestCodexBackend.test_handle_approval_request_accepts_decision_dict::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 537,
@@ -1088,42 +872,6 @@
       "path": "tests/sessions/test_summarize.py",
       "severity": "medium",
       "test_name": "TestGetClaimedTasks.test_long_description_truncated"
-    },
-    {
-      "fingerprint": "tests/skills/hubs/test_github_collection.py::TestGitHubCollectionProviderFetchSkillContent.test_fetch_skill_content_not_found::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 588,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/skills/hubs/test_github_collection.py",
-      "severity": "medium",
-      "test_name": "TestGitHubCollectionProviderFetchSkillContent.test_fetch_skill_content_not_found"
-    },
-    {
-      "fingerprint": "tests/skills/hubs/test_github_collection.py::TestGitHubCollectionProviderFetchSkillContent.test_fetch_skill_content_with_path::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 559,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/skills/hubs/test_github_collection.py",
-      "severity": "medium",
-      "test_name": "TestGitHubCollectionProviderFetchSkillContent.test_fetch_skill_content_with_path"
-    },
-    {
-      "fingerprint": "tests/skills/hubs/test_github_collection.py::TestGitHubCollectionProviderFetchSkillList.test_fetch_skill_list_handles_api_error::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 406,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/skills/hubs/test_github_collection.py",
-      "severity": "medium",
-      "test_name": "TestGitHubCollectionProviderFetchSkillList.test_fetch_skill_list_handles_api_error"
-    },
-    {
-      "fingerprint": "tests/skills/hubs/test_github_collection.py::TestGitHubCollectionProviderFetchSkillList.test_fetch_skill_list_uses_path::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 346,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/skills/hubs/test_github_collection.py",
-      "severity": "medium",
-      "test_name": "TestGitHubCollectionProviderFetchSkillList.test_fetch_skill_list_uses_path"
     },
     {
       "fingerprint": "tests/tasks/test_validation.py::TestGetValidationContextSmartEdgeCases.test_context_skips_file_analysis_when_low_remaining::HEAVY_MOCK_LOW_ASSERT",
