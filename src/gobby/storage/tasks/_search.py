@@ -149,6 +149,7 @@ class TaskFTS5Searcher:
                     )
                 conditions.append(f"({' OR '.join(stage_clauses)})")
                 params.extend(states)
+                conditions.append("t.closed_at IS NULL")
 
         if task_type:
             conditions.append("t.task_type = ?")

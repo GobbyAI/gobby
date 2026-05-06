@@ -40,6 +40,18 @@ def _start_current_stage(
     task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=session_id)
 
 
+def _mark_closed_without_stage_cleanup(task_manager: LocalTaskManager, task_id: str) -> None:
+    task_manager.db.execute(
+        """
+        UPDATE tasks
+           SET closed_at = ?,
+               closed_reason = ?
+         WHERE id = ?
+        """,
+        ("2026-05-06T00:00:00+00:00", "closed-with-stale-stage", task_id),
+    )
+
+
 def _assert_stage_state(task, state: str) -> None:
     assert projected_task_state(task) == state
 
@@ -1241,6 +1253,61 @@ class TestLocalTaskManager:
         assert t2.id in task_ids
         assert t3.id not in task_ids
 
+    def test_list_tasks_current_stage_state_excludes_stale_closed_task(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Current-stage filters should ignore closed tasks unless closed is explicit."""
+        session = session_manager.register(
+            external_id="stage-filter-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        open_review = task_manager.create_task(project_id, "Open review")
+        _start_current_stage(task_manager, open_review.id, session.id)
+        task_manager.submit_for_review(open_review.id)
+        stale_closed_review = task_manager.create_task(project_id, "Closed stale review")
+        _start_current_stage(task_manager, stale_closed_review.id, session.id)
+        task_manager.submit_for_review(stale_closed_review.id)
+        _mark_closed_without_stage_cleanup(task_manager, stale_closed_review.id)
+
+        tasks = task_manager.list_tasks(
+            project_id=project_id,
+            current_stage_state="needs_review",
+        )
+        task_ids = {task.id for task in tasks}
+
+        assert open_review.id in task_ids
+        assert stale_closed_review.id not in task_ids
+
+    def test_list_tasks_current_stage_state_closed_true_keeps_explicit_closed_behavior(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """The closed=True filter should still allow closed tasks with stale stage rows."""
+        session = session_manager.register(
+            external_id="stage-filter-closed-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        open_review = task_manager.create_task(project_id, "Open review")
+        _start_current_stage(task_manager, open_review.id, session.id)
+        task_manager.submit_for_review(open_review.id)
+        stale_closed_review = task_manager.create_task(project_id, "Closed stale review")
+        _start_current_stage(task_manager, stale_closed_review.id, session.id)
+        task_manager.submit_for_review(stale_closed_review.id)
+        _mark_closed_without_stage_cleanup(task_manager, stale_closed_review.id)
+
+        tasks = task_manager.list_tasks(
+            project_id=project_id,
+            current_stage_state="needs_review",
+            closed=True,
+        )
+        task_ids = {task.id for task in tasks}
+
+        assert stale_closed_review.id in task_ids
+        assert open_review.id not in task_ids
+
     def test_list_tasks_with_title_like(self, task_manager, project_id) -> None:
         """Test filtering tasks by title pattern."""
         task_manager.create_task(project_id, "Fix bug in auth")
@@ -1396,6 +1463,28 @@ class TestLocalTaskManager:
         assert task_manager.count_tasks(project_id=project_id, current_stage_state="ready") == 1
         assert (
             task_manager.count_tasks(project_id=project_id, current_stage_state="in_progress") == 1
+        )
+
+    def test_count_tasks_by_current_stage_state_excludes_stale_closed_task(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Aggregate current-stage filters should use the same open-only default."""
+        session = session_manager.register(
+            external_id="count-stage-filter-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        open_review = task_manager.create_task(project_id, "Open review")
+        _start_current_stage(task_manager, open_review.id, session.id)
+        task_manager.submit_for_review(open_review.id)
+        stale_closed_review = task_manager.create_task(project_id, "Closed stale review")
+        _start_current_stage(task_manager, stale_closed_review.id, session.id)
+        task_manager.submit_for_review(stale_closed_review.id)
+        _mark_closed_without_stage_cleanup(task_manager, stale_closed_review.id)
+
+        assert (
+            task_manager.count_tasks(project_id=project_id, current_stage_state="needs_review") == 1
         )
 
     def test_count_tasks_empty(self, task_manager, project_id) -> None:

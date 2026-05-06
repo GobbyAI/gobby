@@ -107,6 +107,7 @@ def count_tasks(
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
+            query += " AND t.closed_at IS NULL"
 
     result = db.fetchone(query, tuple(params))
     return result["count"] if result else 0

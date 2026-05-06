@@ -138,6 +138,44 @@ class TestTaskSearch:
         assert any(found.id == task.id for found, _ in approved)
         assert all(found.id != task.id for found, _ in ready_results)
 
+    def test_search_current_stage_state_filter_excludes_stale_closed_task(
+        self, db_with_tasks
+    ) -> None:
+        """FTS current-stage filtering should not return closed tasks by stale stage row."""
+        db, manager, project_id = db_with_tasks
+
+        open_task = manager.create_task(
+            project_id=project_id,
+            title="Authentication review active",
+            description="Authentication review shared marker",
+        )
+        set_stage_state(db, open_task.id, "development", "needs_review")
+        closed_task = manager.create_task(
+            project_id=project_id,
+            title="Authentication review closed",
+            description="Authentication review shared marker",
+        )
+        set_stage_state(db, closed_task.id, "development", "needs_review")
+        db.execute(
+            """
+            UPDATE tasks
+               SET closed_at = ?,
+                   closed_reason = ?
+             WHERE id = ?
+            """,
+            ("2026-05-06T00:00:00+00:00", "closed-with-stale-stage", closed_task.id),
+        )
+
+        results = manager.search_tasks(
+            "Authentication review shared marker",
+            project_id=project_id,
+            current_stage_state="needs_review",
+        )
+        result_ids = {task.id for task, _score in results}
+
+        assert open_task.id in result_ids
+        assert closed_task.id not in result_ids
+
     def test_search_with_current_stage_state_list(self, db_with_tasks) -> None:
         """Test search with list of current stage states."""
         db, manager, project_id = db_with_tasks

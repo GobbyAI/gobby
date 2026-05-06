@@ -167,6 +167,8 @@ def list_tasks(
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
+            if closed is None:
+                query += " AND closed_at IS NULL"
     if priority:
         query += " AND priority = ?"
         params.append(priority)
