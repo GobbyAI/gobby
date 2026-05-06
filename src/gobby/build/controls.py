@@ -19,7 +19,7 @@ from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgent
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, StageState, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -262,6 +262,10 @@ async def build_restart_target(
         yes=True,
         services=services,
     )
+    task_manager = LocalTaskManager(db)
+    root = _resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = _affected_tasks(task_manager, root)
+    restart_stage_resets = _reset_restart_stage_manifests(db, tasks)
     resume_result = await build_resume_target(
         input_ref,
         db=db,
@@ -272,6 +276,7 @@ async def build_restart_target(
     clean_result.automation_updated = resume_result.automation_updated
     clean_result.mutexes_cleared = resume_result.mutexes_cleared
     clean_result.claims_released = resume_result.claims_released
+    clean_result.stages_reset += restart_stage_resets
     clean_result.dispatcher_tick = resume_result.dispatcher_tick
     return clean_result
 
@@ -444,6 +449,67 @@ def _reset_current_stages(db: DatabaseProtocol, tasks: list[Task], *, reason: st
         if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
             reset += 1
     return reset
+
+
+def _reset_restart_stage_manifests(db: DatabaseProtocol, tasks: list[Task]) -> int:
+    task_manager = LocalTaskManager(db)
+    reset = 0
+    for task in tasks:
+        if task.closed_at is not None:
+            continue
+        rows = task_manager.stage_states.list_for_task(task.id)
+        if not rows:
+            continue
+        specs = _restart_stage_specs(db, task, rows)
+        db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+        task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
+        reset += 1
+    return reset
+
+
+def _restart_stage_specs(
+    db: DatabaseProtocol,
+    task: Task,
+    rows: list[StageState],
+) -> list[StageManifestSpec]:
+    by_name = {row.stage_name: row for row in rows}
+    stage_names = [row.stage_name for row in sorted(rows, key=lambda item: item.position)]
+    if _task_uses_isolated_workspace(task):
+        if task.task_type == "epic" and _has_children(db, task.id):
+            _insert_stage_before(stage_names, "holistic_qa", before="merge")
+        if "merge" not in stage_names:
+            stage_names.append("merge")
+
+    specs: list[StageManifestSpec] = []
+    for position, stage_name in enumerate(stage_names):
+        source = by_name.get(stage_name)
+        specs.append(
+            StageManifestSpec(
+                stage_name=stage_name,
+                position=position,
+                max_work_attempts=getattr(source, "max_work_attempts", None),
+                max_review_rounds=getattr(source, "max_review_rounds", None),
+            )
+        )
+    return specs
+
+
+def _task_uses_isolated_workspace(task: Task) -> bool:
+    isolation = getattr(task.isolation, "value", task.isolation)
+    return isolation in {"worktree", "clone"}
+
+
+def _has_children(db: DatabaseProtocol, task_id: str) -> bool:
+    return bool(db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = ? LIMIT 1", (task_id,)))
+
+
+def _insert_stage_before(stage_names: list[str], stage_name: str, *, before: str) -> None:
+    if stage_name in stage_names:
+        return
+    if before in stage_names:
+        stage_names.insert(stage_names.index(before), stage_name)
+        return
+    stage_names.append(stage_name)
 
 
 def _clean_blockers(

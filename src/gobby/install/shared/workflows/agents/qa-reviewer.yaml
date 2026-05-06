@@ -18,19 +18,23 @@ instructions: |
 
   Your behavior is enforced by a step workflow. Follow the step prompts:
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
-  2. REVIEW: Perform ordered leaf review:
+     If the active workflow step is already past CLAIM, do not call claim_task again.
+  2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
+     skills: code-index, task-transitions, verification-before-completion.
+  3. REVIEW: Perform ordered leaf review:
      a. spec_compliance: compare task description, validation criteria, coverage labels,
         required files/tests, and diff. Reject immediately on missing or incorrect
         required behavior.
      b. code_quality: only after spec_compliance passes, review tests,
         maintainability, regressions, safety, style, and repo fit.
-  3. DECIDE:
+  4. DECIDE:
      - APPROVE: Call approve_review with `stage_name="development"` only when both
        spec_compliance and code_quality pass
      - REJECT: Call reject_review with `stage_name="development"` and concrete blocking findings if code
        needs changes before approval
-     - ESCALATE: Call escalate_task only for human-intervention blockers
-  4. TERMINATE: Call end_agent_run to signal completion
+     - ESCALATE: Call escalate_task only when your workflow is broken
+       and you cannot emit approve_review or reject_review
+  5. TERMINATE: Call end_agent_run to signal completion
 
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
@@ -44,6 +48,12 @@ instructions: |
   CRITICAL RULES:
   - Emit exactly one verdict: approve_review(stage_name="development"),
     reject_review(stage_name="development"), or escalate_task.
+  - Use escalate_task only for "my workflow is broken" failures: blocked
+    required tools, missing task context, corrupted workflow state, or inability
+    to emit a verdict. Missing/incorrect implementation behavior is always
+    reject_review, not escalation.
+  - After deciding the verdict, call that verdict tool immediately. Do not poll
+    artifacts, wait for mutexes, wait for merges, or use `gobby tasks` CLI.
   - Do NOT edit files, write files, or commit changes. This agent is read-only.
   - Do NOT call close_task — dispatcher lifecycle transitions own task closure.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
@@ -52,6 +62,9 @@ instructions: |
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+  - While in LOAD_SKILLS, do not call claim_task, get_task, get_workflow_status,
+    or get_agent_definition. Only load skills from gobby-skills until the
+    workflow advances to REVIEW.
 
 workflows:
   rule_selectors:
@@ -63,6 +76,11 @@ workflows:
 
 step_variables:
   task_claimed: false
+  required_skills:
+    - code-index
+    - task-transitions
+    - verification-before-completion
+  required_skills_loaded: false
   review_approved: false
   review_complete: false
 
@@ -87,8 +105,37 @@ steps:
         variable: task_claimed
         value: true
     transitions:
-      - to: review
+      - to: load_skills
         when: "vars.task_claimed"
+
+  - name: load_skills
+    description: "Load required QA session skills"
+    status_message: |
+      Load skills now. Do not call claim_task, get_task, get_workflow_status, or
+      get_agent_definition in this step.
+
+      Call these exact tools before reviewing:
+      1. get_skill(name="code-index") on gobby-skills
+      2. get_skill(name="task-transitions") on gobby-skills
+      3. get_skill(name="verification-before-completion") on gobby-skills
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: required_skills_loaded
+        value: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    transitions:
+      - to: review
+        when: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
   - name: review
     description: "Review spec compliance first, then code quality, and emit verdict"
@@ -101,7 +148,17 @@ steps:
          regressions, safety, style, and repo fit.
       3. APPROVE: call approve_review with stage_name="development" only when both pass
       4. REJECT: call reject_review with stage_name="development" and blocking findings
-      5. ESCALATE: call escalate_task for human-intervention blockers
+      5. ESCALATE: call escalate_task only if your workflow is broken and you
+         cannot approve_review or reject_review
+      After deciding, call exactly one verdict tool immediately:
+      - approve_review via gobby-tasks-ops with task_id=assigned_task_id,
+        stage_name="development", and approval_notes containing review evidence
+      - reject_review via gobby-tasks-ops with task_id=assigned_task_id,
+        stage_name="development", and concrete rejection_notes
+      - escalate_task via gobby-tasks with task_id=assigned_task_id and reason
+        only for "my workflow is broken" tooling failures
+      Do not poll artifacts, wait for mutexes, wait for merges, or use the
+      `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
     allowed_tools:
       - Bash
       - Read
@@ -152,7 +209,7 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Call end_agent_run with no arguments to finish the run."
+    status_message: "Call end_agent_run to signal this review agent is complete."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

@@ -429,6 +429,47 @@ async def test_restart_dry_run_reports_restart_without_mutating_task(
     assert task_manager.get_task(task.id).allow_automation is True
 
 
+@pytest.mark.asyncio
+async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_restart_target
+    from gobby.build.dispatch_tick import DispatcherTickSummary
+    from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
+
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Exhausted docs task",
+        category="docs",
+        task_type="task",
+    )
+    task_manager.update_task(task.id, allow_automation=True, isolation="worktree")
+    task_manager.artifacts.set_artifact(task.id, "target_branch", "integration/test")
+    initialize_manifest(temp_db, task.id, [spec("development", 0)])
+    set_stage_state(temp_db, task.id, "development", "done")
+
+    with patch(
+        "gobby.build.controls._kick_dispatcher_tick",
+        new=AsyncMock(return_value=DispatcherTickSummary()),
+    ):
+        result = await build_restart_target(
+            f"#{task.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+            force=True,
+            yes=True,
+        )
+
+    rows = task_manager.stage_states.list_for_task(task.id)
+    assert result.stages_reset == 1
+    assert [row.stage_name for row in rows] == ["development", "merge"]
+    assert {row.state for row in rows} == {"ready"}
+
+
 def test_default_branch_dir_name_uses_untitled_for_empty_slug(
     temp_db,
     sample_project,

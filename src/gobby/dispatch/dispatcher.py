@@ -518,6 +518,7 @@ def execute_action(
                     action.task_id,
                     action.stage_name,
                     by_session_id=action.by_session_id,
+                    validation_override_reason=action.validation_override_reason,
                 )
             if action.method == "approve_review":
                 return manager.approve_review(

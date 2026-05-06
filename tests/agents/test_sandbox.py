@@ -3,6 +3,7 @@ Tests for Sandbox Configuration Models.
 """
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +26,34 @@ from gobby.agents.sandbox import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _git_stdout(cwd: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _resolve_from(workspace: Path, raw_path: str) -> str:
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = workspace / path
+    return str(path.resolve(strict=False))
 
 
 @pytest.mark.unit
@@ -788,3 +817,29 @@ class TestComputeSandboxPaths:
         )
 
         assert paths.gobby_daemon_port == 9999
+
+    def test_linked_worktree_git_metadata_dirs_are_writable(self, tmp_path: Path) -> None:
+        """Linked worktree commits need write access to Git metadata outside the worktree."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init")
+        _git(repo, "config", "user.name", "Gobby Test")
+        _git(repo, "config", "user.email", "test@gobby.local")
+        (repo / "README.md").write_text("root\n", encoding="utf-8")
+        _git(repo, "add", "README.md")
+        _git(repo, "commit", "-m", "initial")
+
+        worktree = tmp_path / "task-worktree"
+        _git(repo, "worktree", "add", "-b", "task-worktree", str(worktree))
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True),
+            workspace_path=str(worktree),
+        )
+
+        git_dir = _git_stdout(worktree, "rev-parse", "--git-dir")
+        common_dir = _git_stdout(worktree, "rev-parse", "--git-common-dir")
+
+        assert _resolve_from(worktree, git_dir) in paths.write_paths
+        assert _resolve_from(worktree, common_dir) in paths.write_paths
+        assert len(paths.write_paths) == len(set(paths.write_paths))

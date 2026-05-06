@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
@@ -74,6 +75,51 @@ def _auto_link_session_commits(
         pass  # nosec B110 # best-effort, SESSION_END is the backstop
 
 
+def _release_current_agent_dispatch_mutex(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    session_id: str,
+) -> bool:
+    """Release the spawn lease only for the running agent that owns this session."""
+    db = ctx.task_manager.db
+    mutexes = TaskDispatchMutexManager(db)
+    try:
+        mutex = mutexes.get_mutex(task_id)
+    except Exception:
+        return False
+    if mutex is None or not isinstance(mutex.run_id, str) or not mutex.run_id:
+        return False
+
+    try:
+        row = db.fetchone(
+            """
+            SELECT id
+              FROM agent_runs
+             WHERE id = ?
+               AND child_session_id = ?
+               AND task_id = ?
+               AND status = 'running'
+            """,
+            (mutex.run_id, session_id, task_id),
+        )
+    except Exception:
+        return False
+    if row is None:
+        return False
+
+    try:
+        if row["id"] != mutex.run_id:
+            return False
+    except Exception:
+        return False
+
+    try:
+        return mutexes.clear_by_run_id(mutex.run_id) > 0
+    except Exception:
+        return False
+
+
 def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register stage-native review transition tools on gobby-tasks-ops."""
 
@@ -101,6 +147,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             project_id=task.project_id,
+            session_id=resolved_session_id,
+        )
+        _release_current_agent_dispatch_mutex(
+            ctx,
+            task_id=resolved_id,
             session_id=resolved_session_id,
         )
 
@@ -178,6 +229,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             project_id=task.project_id,
+            session_id=resolved_session_id,
+        )
+        _release_current_agent_dispatch_mutex(
+            ctx,
+            task_id=resolved_id,
             session_id=resolved_session_id,
         )
 
@@ -261,6 +317,17 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
+        _auto_link_session_commits(
+            ctx,
+            task_id=resolved_id,
+            project_id=task.project_id,
+            session_id=resolved_session_id,
+        )
+        _release_current_agent_dispatch_mutex(
+            ctx,
+            task_id=resolved_id,
+            session_id=resolved_session_id,
+        )
 
         try:
             updated = ctx.task_manager.reject_review(

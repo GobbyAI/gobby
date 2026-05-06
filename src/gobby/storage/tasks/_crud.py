@@ -357,6 +357,7 @@ def cascade_build_state_to_subtree(
     skip_stages: Iterable[str] = (),
     yolo: bool | None = None,
     parent_manifest_specs: Iterable[StageManifestSpec] | None = None,
+    include_merge_stage: bool = False,
 ) -> int:
     """Apply build dispatch state to an epic and every descendant task.
 
@@ -436,6 +437,7 @@ def cascade_build_state_to_subtree(
         specs = derive_child_manifest_specs(
             parent_specs,
             include_holistic_qa=cast(str, row["task_type"]) == "epic",
+            include_merge_stage=include_merge_stage,
         )
         if specs:
             try:

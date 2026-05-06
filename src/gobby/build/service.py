@@ -64,8 +64,6 @@ class BuildOptions:
 
 @dataclass
 class BuildResult:
-    """Summary returned by build service surfaces."""
-
     task_id: str
     created: bool
     initial_lifecycle: str
@@ -76,7 +74,6 @@ class BuildResult:
 
     @property
     def stage_manifest(self) -> list[dict[str, str | int | None]] | None:
-        """Backward-compatible alias for callers still reading stage_manifest."""
         return self.manifest
 
 
@@ -363,6 +360,7 @@ async def _build_epic(
         skip_stages=skip_stages,
         allow_automation=True,
         parent_manifest_specs=cascade_specs,
+        include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
     )
     if opts.isolation == "none":
         _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
@@ -543,6 +541,7 @@ async def _resume_existing_lifecycle(
             isolation=opts.isolation,
             unattended=False,
             allow_automation=True,
+            include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
         )
     specs = _stage_state_specs(task_manager, task.id)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)

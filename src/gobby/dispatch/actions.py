@@ -70,6 +70,7 @@ class AdvanceStageAction:
     stage_name: str
     method: Literal["complete_stage", "approve_review"]
     by_session_id: str = "dispatcher"
+    validation_override_reason: str | None = None
 
 
 @dataclass(frozen=True)

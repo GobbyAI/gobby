@@ -133,6 +133,32 @@ def all_leaves_holistic_rule(task: object, context: object) -> Action | None:
     return StartStageAction(task_id=_task_id(task), stage_name="holistic_qa")
 
 
+def epic_development_start_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "development", "ready")
+    if stage is None or not _is_epic(task):
+        return None
+    if not _children(task, context):
+        return None
+    return StartStageAction(task_id=_task_id(task), stage_name="development")
+
+
+def epic_development_complete_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "development", "in_progress")
+    if stage is None or not _is_epic(task):
+        return None
+    children = list(_children(task, context))
+    if not children:
+        return None
+    if not all(is_child_parked(child) or _is_closed(child) for child in children):
+        return None
+    return AdvanceStageAction(
+        task_id=_task_id(task),
+        stage_name="development",
+        method="complete_stage",
+        validation_override_reason="children_parked",
+    )
+
+
 def ideation_rule(task: object, context: object) -> Action | None:
     return _spawn_configured_stage_agent(task, context, "ideation", "in_progress")
 
@@ -396,6 +422,8 @@ BASE_RULES: list[Rule] = [
     disabled_agent_escalation_rule,
     development_isolation_rule,
     all_leaves_holistic_rule,
+    epic_development_start_rule,
+    epic_development_complete_rule,
     ideation_rule,
     research_rule,
     architecture_rule,
@@ -782,6 +810,8 @@ __all__ = [
     "development_review_rule",
     "development_rule",
     "disabled_agent_escalation_rule",
+    "epic_development_complete_rule",
+    "epic_development_start_rule",
     "evaluate",
     "expansion_advance_rule",
     "expansion_review_rule",

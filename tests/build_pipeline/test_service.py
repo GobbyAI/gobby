@@ -700,6 +700,43 @@ async def test_epic_no_merge_skips_only_root_promotion(
 
 
 @pytest.mark.asyncio
+async def test_existing_epic_cascade_forces_child_merge_with_legacy_root_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project_id, repo_path = _project(temp_db, tmp_path)
+    _init_git_repo(repo_path)
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project_id,
+        title="Legacy Integration Root",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=project_id,
+        title="Legacy Child",
+        parent_task_id=root.id,
+        category="docs",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(root.id, stage_names=["development"])
+
+    await _build(
+        f"#{root.seq_num}",
+        _options(isolation="worktree", target_branch="main"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    child_stages = [row.stage_name for row in task_manager.stage_states.list_for_task(child.id)]
+    assert child_stages == ["development", "merge"]
+
+
+@pytest.mark.asyncio
 async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

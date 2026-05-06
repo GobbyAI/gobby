@@ -1,5 +1,6 @@
 """Tests for reject_review MCP tool."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -130,6 +131,7 @@ def stage_ops_registry(mock_task_manager, mock_sync_manager):
     ctx.session_manager.get.return_value = None
     ctx.session_task_manager = MagicMock()
     ctx.session_var_manager = MagicMock()
+    ctx.get_project_repo_path = MagicMock(return_value=None)
     return create_stage_ops_registry(ctx), ctx
 
 
@@ -234,6 +236,58 @@ class TestMarkTaskReviewRejected:
             round_number=1,
             by_session_id="resolved-session-abc",
         )
+
+    @pytest.mark.asyncio
+    async def test_reject_releases_own_running_agent_dispatch_mutex(
+        self, stage_ops_registry, mock_task_manager, sample_task_needs_review
+    ) -> None:
+        registry, _ = stage_ops_registry
+        mock_task_manager.get_task.side_effect = (
+            lambda task_id: sample_task_needs_review
+            if task_id == sample_task_needs_review.id
+            else None
+        )
+        mock_task_manager.reject_review.return_value = _task(
+            status="open",
+            labels=["planning-round:1"],
+            description=sample_task_needs_review.description,
+            seq_num=sample_task_needs_review.seq_num,
+        )
+        mock_task_manager.db.fetchone.return_value = {"id": "run-1"}
+        mutexes = MagicMock()
+        mutexes.get_mutex.return_value = SimpleNamespace(run_id="run-1")
+        mutexes.clear_by_run_id.return_value = 1
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
+                return_value=sample_task_needs_review.id,
+            ),
+            patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review.TaskDispatchMutexManager",
+                return_value=mutexes,
+            ),
+        ):
+            result = await registry.call(
+                "reject_review",
+                {
+                    "task_id": "#42",
+                    "stage_name": "planning",
+                    "rejection_notes": "Need better sequencing",
+                    "round_number": 1,
+                },
+            )
+
+        assert "error" not in result
+        mock_task_manager.db.fetchone.assert_called_once()
+        assert mock_task_manager.db.fetchone.call_args.args[1] == (
+            "run-1",
+            "resolved-session-abc",
+            sample_task_needs_review.id,
+        )
+        mutexes.clear_by_run_id.assert_called_once_with("run-1")
+        mock_task_manager.reject_review.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_reject_rejects_open_task(

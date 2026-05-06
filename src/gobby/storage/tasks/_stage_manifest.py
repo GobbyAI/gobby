@@ -118,6 +118,7 @@ def derive_child_manifest_specs(
     parent_rows: Sequence[Any],
     *,
     include_holistic_qa: bool,
+    include_merge_stage: bool = False,
 ) -> list[StageManifestSpec]:
     """Derive generated child stage rows from a resolved parent manifest."""
     by_name = {
@@ -128,16 +129,20 @@ def derive_child_manifest_specs(
         stage_names.append("development")
     if include_holistic_qa and "holistic_qa" in by_name:
         stage_names.append("holistic_qa")
-    for stage_name in ("pr", "merge"):
-        if stage_name in by_name:
-            stage_names.append(stage_name)
+    if "pr" in by_name:
+        stage_names.append("pr")
+    if "merge" in by_name or include_merge_stage:
+        stage_names.append("merge")
 
-    return [
-        StageManifestSpec(
-            stage_name=stage_name,
-            position=position,
-            max_work_attempts=getattr(by_name[stage_name], "max_work_attempts", None),
-            max_review_rounds=getattr(by_name[stage_name], "max_review_rounds", None),
+    specs: list[StageManifestSpec] = []
+    for position, stage_name in enumerate(stage_names):
+        source = by_name.get(stage_name)
+        specs.append(
+            StageManifestSpec(
+                stage_name=stage_name,
+                position=position,
+                max_work_attempts=getattr(source, "max_work_attempts", None),
+                max_review_rounds=getattr(source, "max_review_rounds", None),
+            )
         )
-        for position, stage_name in enumerate(stage_names)
-    ]
+    return specs

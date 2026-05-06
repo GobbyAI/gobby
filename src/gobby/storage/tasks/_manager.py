@@ -424,6 +424,7 @@ class LocalTaskManager:
         skip_stages: Iterable[str] = (),
         yolo: bool | None = None,
         parent_manifest_specs: Iterable[Any] | None = None,
+        include_merge_stage: bool = False,
     ) -> int:
         """Apply build dispatch state to an epic and every descendant task."""
         if unattended is None:
@@ -436,6 +437,7 @@ class LocalTaskManager:
             allow_automation=allow_automation,
             skip_stages=skip_stages,
             parent_manifest_specs=parent_manifest_specs,
+            include_merge_stage=include_merge_stage,
         )
         self._notify_listeners()
         return updated_count

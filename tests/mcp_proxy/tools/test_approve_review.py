@@ -3,6 +3,7 @@
 Tests status transitions, validation, and blocked status in update_task.
 """
 
+from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock
 
 import pytest
@@ -254,6 +255,73 @@ class TestMarkTaskReviewApproved:
             )
 
         assert "error" in result
+
+    def test_approve_releases_own_running_agent_dispatch_mutex(
+        self, stage_ops_registry, mock_task_manager, sample_task_needs_review
+    ) -> None:
+        """A spawned reviewer may release its own dispatch lease before verdict."""
+        from unittest.mock import patch
+
+        mock_task_manager.get_task.return_value = sample_task_needs_review
+        mock_task_manager.approve_review.return_value = _task(
+            status="review_approved",
+            description=sample_task_needs_review.description,
+            seq_num=sample_task_needs_review.seq_num,
+        )
+        mock_task_manager.db.fetchone.return_value = {"id": "run-1"}
+        mutexes = MagicMock()
+        mutexes.get_mutex.return_value = SimpleNamespace(run_id="run-1")
+        mutexes.clear_by_run_id.return_value = 1
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._stage_review.TaskDispatchMutexManager",
+            return_value=mutexes,
+        ):
+            tool_func = stage_ops_registry._tools["approve_review"].func
+            result = tool_func(
+                task_id=sample_task_needs_review.id,
+                stage_name="planning",
+            )
+
+        assert "error" not in result
+        mock_task_manager.db.fetchone.assert_called_once()
+        assert mock_task_manager.db.fetchone.call_args.args[1] == (
+            "run-1",
+            "resolved-session-abc",
+            sample_task_needs_review.id,
+        )
+        mutexes.clear_by_run_id.assert_called_once_with("run-1")
+        mock_task_manager.approve_review.assert_called_once()
+
+    def test_approve_keeps_dispatch_mutex_for_other_agent(
+        self, stage_ops_registry, mock_task_manager, sample_task_needs_review
+    ) -> None:
+        """Review verdicts do not clear another run's active dispatch lease."""
+        from unittest.mock import patch
+
+        mock_task_manager.get_task.return_value = sample_task_needs_review
+        mock_task_manager.approve_review.return_value = _task(
+            status="review_approved",
+            description=sample_task_needs_review.description,
+            seq_num=sample_task_needs_review.seq_num,
+        )
+        mock_task_manager.db.fetchone.return_value = None
+        mutexes = MagicMock()
+        mutexes.get_mutex.return_value = SimpleNamespace(run_id="run-1")
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._stage_review.TaskDispatchMutexManager",
+            return_value=mutexes,
+        ):
+            tool_func = stage_ops_registry._tools["approve_review"].func
+            result = tool_func(
+                task_id=sample_task_needs_review.id,
+                stage_name="planning",
+            )
+
+        assert "error" not in result
+        mutexes.clear_by_run_id.assert_not_called()
+        mock_task_manager.approve_review.assert_called_once()
 
 
 class TestApproveSignoffSummary:

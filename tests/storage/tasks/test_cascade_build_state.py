@@ -73,6 +73,39 @@ def test_cascade_uses_initialize_manifest() -> None:
     assert "initialize_manifest(" in source
 
 
+def test_cascade_can_force_merge_into_legacy_child_manifest_scope(
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Legacy parent scope",
+        task_type="epic",
+        category="planning",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Child must merge",
+        parent_task_id=epic.id,
+        task_type="task",
+        category="docs",
+    )
+    task_manager.initialize_task_manifest(epic.id, stage_names=["development"])
+
+    cascade_build_state_to_subtree(
+        temp_db,
+        epic.id,
+        isolation=Isolation.worktree,
+        unattended=False,
+        allow_automation=True,
+        include_merge_stage=True,
+    )
+
+    child_rows = task_manager.stage_states.list_for_task(child.id)
+    assert [row.stage_name for row in child_rows] == ["development", "merge"]
+
+
 def test_cascade_no_legacy_label_writes() -> None:
     source = source_text("src/gobby/storage/tasks/_crud.py")
 

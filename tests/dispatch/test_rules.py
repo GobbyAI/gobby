@@ -365,6 +365,33 @@ def test_all_leaves_holistic_rule_never_targets_merging_directly() -> None:
     assert getattr(action, "stage_name", None) != "merge"
 
 
+def test_epic_development_starts_as_parking_stage() -> None:
+    from gobby.dispatch.actions import StartStageAction
+
+    child = _task_at("development", "in_progress")
+    action = _evaluate(
+        _task_at("development", "ready", task_type="epic"),
+        _context(children=[child]),
+    )
+
+    assert isinstance(action, StartStageAction)
+    assert action.stage_name == "development"
+
+
+def test_epic_development_completes_when_leaves_are_parked() -> None:
+    from gobby.dispatch.actions import AdvanceStageAction
+
+    child = _task(stages=[_stage("development", "done")])
+    action = _evaluate(
+        _task_at("development", "in_progress", task_type="epic"),
+        _context(children=[child]),
+    )
+
+    assert isinstance(action, AdvanceStageAction)
+    assert (action.stage_name, action.method) == ("development", "complete_stage")
+    assert action.validation_override_reason == "children_parked"
+
+
 def test_holistic_rule_fires_when_stage_is_in_progress() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
