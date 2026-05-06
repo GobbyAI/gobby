@@ -534,6 +534,7 @@ async def test_restart_clears_build_owned_dispatch_escalations(
     retried = task_manager.get_task(auto_escalated.id)
     preserved = task_manager.get_task(manual_escalated.id)
     assert result.escalations_cleared == 1
+    assert result.dispatch_failures_reset == 2
     assert retried.is_escalated is False
     assert retried.escalated_at is None
     assert retried.escalation_reason is None
@@ -541,7 +542,43 @@ async def test_restart_clears_build_owned_dispatch_escalations(
     assert retried.validation_fail_count == 0
     assert preserved.is_escalated is True
     assert preserved.escalation_reason == "needs_human: ambiguous docs scope"
-    assert preserved.dispatch_failure_count == 3
+    assert preserved.dispatch_failure_count == 0
+
+
+@pytest.mark.asyncio
+async def test_restart_resets_stale_dispatch_failure_count_without_escalation(
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_restart_target
+    from gobby.build.dispatch_tick import DispatcherTickSummary
+
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Retry counter only",
+        category="docs",
+        task_type="task",
+    )
+    task_manager.update_task(task.id, allow_automation=True, dispatch_failure_count=3)
+
+    with patch(
+        "gobby.build.controls._kick_dispatcher_tick",
+        new=AsyncMock(return_value=DispatcherTickSummary()),
+    ):
+        result = await build_restart_target(
+            f"#{task.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+            force=True,
+            yes=True,
+        )
+
+    assert result.dispatch_failures_reset == 1
+    assert result.escalations_cleared == 0
+    assert task_manager.get_task(task.id).dispatch_failure_count == 0
 
 
 def test_default_branch_dir_name_uses_untitled_for_empty_slug(

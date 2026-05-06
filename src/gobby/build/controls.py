@@ -85,6 +85,7 @@ class BuildTargetControlResult:
     claims_released: int = 0
     stages_reset: int = 0
     escalations_cleared: int = 0
+    dispatch_failures_reset: int = 0
     dispatcher_tick: DispatcherTickSummary | None = None
     blocked_reasons: list[str] = field(default_factory=list)
 
@@ -266,6 +267,7 @@ async def build_restart_target(
     task_manager = LocalTaskManager(db)
     root = _resolve_task_ref(task_manager, input_ref, project_id)
     tasks = _affected_tasks(task_manager, root)
+    dispatch_failures_reset = _reset_restart_dispatch_failures(task_manager, tasks)
     escalations_cleared = _clear_restartable_escalations(task_manager, tasks)
     restart_stage_resets = _reset_restart_stage_manifests(db, tasks)
     resume_result = await build_resume_target(
@@ -280,6 +282,7 @@ async def build_restart_target(
     clean_result.claims_released = resume_result.claims_released
     clean_result.stages_reset += restart_stage_resets
     clean_result.escalations_cleared = escalations_cleared
+    clean_result.dispatch_failures_reset = dispatch_failures_reset
     clean_result.dispatcher_tick = resume_result.dispatcher_tick
     return clean_result
 
@@ -470,6 +473,16 @@ def _clear_restartable_escalations(task_manager: LocalTaskManager, tasks: list[T
         )
         cleared += 1
     return cleared
+
+
+def _reset_restart_dispatch_failures(task_manager: LocalTaskManager, tasks: list[Task]) -> int:
+    reset = 0
+    for task in tasks:
+        if task.closed_at is not None or int(task.dispatch_failure_count or 0) <= 0:
+            continue
+        task_manager.update_task(task.id, dispatch_failure_count=0)
+        reset += 1
+    return reset
 
 
 def _is_build_owned_escalation(reason: str | None) -> bool:
