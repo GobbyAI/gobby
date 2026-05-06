@@ -4,10 +4,7 @@ import { useSessionDetail } from "../../hooks/useSessionDetail";
 import type { GobbySession } from "../../types/sessions";
 import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { getSessionTitleText } from "../../lib/sessionTitle";
-import {
-  fetchProviderModelCatalog,
-  type ProviderModelEntry,
-} from "../../lib/providerModels";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { MessageItem } from "../chat/MessageItem";
@@ -49,6 +46,22 @@ import {
   entryTimestamp,
   parseTimestamp,
 } from "./SessionsTab.helpers";
+
+// Canonical session-providers — sessions can exist for any of these regardless
+// of current local availability, so the filter affordance reflects what was
+// used historically rather than what is installable right now.
+const SESSION_PROVIDERS: readonly string[] = [
+  "claude",
+  "codex",
+  "droid",
+  "gemini",
+  "qwen",
+];
+
+const STATUS_MODE_OPTIONS = [
+  { value: "live" as const, label: "Live" },
+  { value: "expired" as const, label: "Expired" },
+] as const;
 
 interface SessionsTabProps {
   sessions?: GobbySession[];
@@ -148,31 +161,6 @@ export const SessionsTab = memo(function SessionsTab({
     [onFiltersChange],
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([]);
-
-  // Provider catalog drives the dropdown's checkbox list. One fetch per mount;
-  // the helper has its own 5-minute cache.
-  useEffect(() => {
-    let cancelled = false;
-    fetchProviderModelCatalog()
-      .then((catalog) => {
-        if (!cancelled) setProviderCatalog(catalog);
-      })
-      .catch(() => {
-        if (!cancelled) setProviderCatalog([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const providerOptions = useMemo(
-    () =>
-      providerCatalog
-        .filter((p) => p.available)
-        .map((p) => p.provider),
-    [providerCatalog],
-  );
 
   const activeFilterCount = countActiveFilters(filters);
   const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
@@ -661,6 +649,12 @@ export const SessionsTab = memo(function SessionsTab({
           onChange={setSearchInput}
           placeholder="Search sessions"
         />
+        <SegmentedControl<"live" | "expired">
+          value={statusMode}
+          onChange={setStatusMode}
+          options={STATUS_MODE_OPTIONS}
+          ariaLabel="Session status filter"
+        />
         <button
           type="button"
           className="activity-filter-button"
@@ -690,9 +684,7 @@ export const SessionsTab = memo(function SessionsTab({
           <SessionsFilterDropdown
             filters={filters}
             onChange={setFilters}
-            providerOptions={providerOptions}
-            statusMode={statusMode}
-            onStatusModeChange={setStatusMode}
+            providerOptions={SESSION_PROVIDERS}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}

@@ -7,22 +7,18 @@ import { defaultSessionsFilters, type SessionsFilters } from "../sessionsFilters
 function renderDropdown(overrides: Partial<{
   filters: SessionsFilters;
   providerOptions: readonly string[];
-  statusMode: "live" | "expired";
 }> = {}) {
   const onChange = vi.fn();
   const onClose = vi.fn();
-  const onStatusModeChange = vi.fn();
   const view = render(
     <SessionsFilterDropdown
       filters={overrides.filters ?? defaultSessionsFilters()}
       onChange={onChange}
       providerOptions={overrides.providerOptions ?? ["claude", "codex", "gemini"]}
-      statusMode={overrides.statusMode ?? "live"}
-      onStatusModeChange={onStatusModeChange}
       onClose={onClose}
     />,
   );
-  return { onChange, onClose, onStatusModeChange, ...view };
+  return { onChange, onClose, ...view };
 }
 
 describe("SessionsFilterDropdown", () => {
@@ -51,7 +47,7 @@ describe("SessionsFilterDropdown", () => {
     expect([...next.modes]).toEqual(["auto"]);
   });
 
-  it("renders providers alphabetically and checked by default", () => {
+  it("renders providers alphabetically with capitalized labels and checked by default", () => {
     renderDropdown({ providerOptions: ["gemini", "claude", "codex"] });
 
     const section = screen.getByText("Provider").parentElement!;
@@ -59,15 +55,15 @@ describe("SessionsFilterDropdown", () => {
       within(section)
         .getAllByRole("checkbox")
         .map((checkbox) => checkbox.nextSibling?.textContent),
-    ).toEqual(["claude", "codex", "gemini"]);
-    expect(screen.getByLabelText("claude")).toBeChecked();
-    expect(screen.getByLabelText("codex")).toBeChecked();
-    expect(screen.getByLabelText("gemini")).toBeChecked();
+    ).toEqual(["Claude", "Codex", "Gemini"]);
+    expect(screen.getByLabelText("Claude")).toBeChecked();
+    expect(screen.getByLabelText("Codex")).toBeChecked();
+    expect(screen.getByLabelText("Gemini")).toBeChecked();
   });
 
   it("toggling a default Provider emits the remaining narrowed provider set", () => {
     const { onChange } = renderDropdown();
-    fireEvent.click(screen.getByLabelText("codex"));
+    fireEvent.click(screen.getByLabelText("Codex"));
 
     const next: SessionsFilters = onChange.mock.calls[0][0];
     expect([...next.providers]).toEqual(["claude", "gemini"]);
@@ -75,7 +71,7 @@ describe("SessionsFilterDropdown", () => {
 
   it("toggling a default Provider uses the sorted provider option order", () => {
     const { onChange } = renderDropdown({ providerOptions: ["gemini", "claude", "codex"] });
-    fireEvent.click(screen.getByLabelText("codex"));
+    fireEvent.click(screen.getByLabelText("Codex"));
 
     const next: SessionsFilters = onChange.mock.calls[0][0];
     expect([...next.providers]).toEqual(["claude", "gemini"]);

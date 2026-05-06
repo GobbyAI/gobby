@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { SegmentedControl } from "../ui/SegmentedControl";
+import { getProviderDisplayName } from "../../lib/providerModels";
 import {
   countActiveFilters,
   defaultSessionsFilters,
@@ -14,8 +15,6 @@ interface SessionsFilterDropdownProps {
   filters: SessionsFilters;
   onChange: (next: SessionsFilters) => void;
   providerOptions: readonly string[];
-  statusMode: "live" | "expired";
-  onStatusModeChange: (mode: "live" | "expired") => void;
   onClose: () => void;
 }
 
@@ -72,17 +71,10 @@ function parseRefBound(raw: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-const STATUS_MODE_OPTIONS = [
-  { value: "live" as const, label: "Live" },
-  { value: "expired" as const, label: "Expired" },
-] as const;
-
 export function SessionsFilterDropdown({
   filters,
   onChange,
   providerOptions,
-  statusMode,
-  onStatusModeChange,
   onClose,
 }: SessionsFilterDropdownProps) {
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
@@ -154,19 +146,6 @@ export function SessionsFilterDropdown({
         aria-label="Session filters"
       >
         <div className="flex flex-col p-1.5 gap-0.5">
-          {/* Status (replaces the toolbar Live/Expired SegmentedControl —
-              keeps the panel toolbar to one filter affordance). */}
-          <Section label="Status">
-            <div className="px-2 py-1">
-              <SegmentedControl<"live" | "expired">
-                value={statusMode}
-                onChange={onStatusModeChange}
-                options={STATUS_MODE_OPTIONS}
-                ariaLabel="Session status filter"
-              />
-            </div>
-          </Section>
-
           {/* Mode */}
           <Section label="Mode">
             {MODE_OPTIONS.map((option) => (
@@ -187,7 +166,7 @@ export function SessionsFilterDropdown({
               sortedProviderOptions.map((provider) => (
                 <CheckboxRow
                   key={provider}
-                  label={provider}
+                  label={getProviderDisplayName(provider) || provider}
                   checked={isInclusiveSetChecked(filters.providers, provider)}
                   onToggle={() => handleProviderToggle(provider)}
                 />
@@ -212,7 +191,7 @@ export function SessionsFilterDropdown({
               {TASK_REF_ROLES.map((role) => (
                 <label
                   key={role.value}
-                  className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer"
+                  className="flex items-center gap-1 text-[length:var(--text-md)] text-muted-foreground cursor-pointer"
                 >
                   <input
                     type="checkbox"
@@ -245,7 +224,7 @@ export function SessionsFilterDropdown({
             </div>
             <button
               type="button"
-              className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground text-left"
+              className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground hover:text-foreground text-left"
               onClick={() => {
                 const next = !showCustomDate;
                 setShowCustomDate(next);
@@ -263,17 +242,17 @@ export function SessionsFilterDropdown({
               <div className="flex items-center gap-1 px-2 py-1">
                 <input
                   type="date"
-                  className="w-[7.5rem] px-1.5 py-0.5 text-xs bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                  className="w-[7.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
                   value={filters.dateCustomFrom ?? ""}
                   onChange={(e) =>
                     update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
                   }
                   aria-label="Custom date from"
                 />
-                <span className="text-xs text-muted-foreground">→</span>
+                <span className="text-[length:var(--text-md)] text-muted-foreground">→</span>
                 <input
                   type="date"
-                  className="w-[7.5rem] px-1.5 py-0.5 text-xs bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                  className="w-[7.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
                   value={filters.dateCustomTo ?? ""}
                   onChange={(e) =>
                     update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
@@ -291,7 +270,7 @@ export function SessionsFilterDropdown({
         >
           <button
             type="button"
-            className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="text-[length:var(--text-md)] text-muted-foreground hover:text-foreground disabled:opacity-50"
             onClick={handleReset}
             disabled={activeCount === 0}
           >
@@ -299,7 +278,7 @@ export function SessionsFilterDropdown({
           </button>
           <button
             type="button"
-            className="text-xs text-accent hover:underline"
+            className="text-[length:var(--text-md)] text-accent hover:underline"
             onClick={onClose}
           >
             Apply
@@ -313,7 +292,7 @@ export function SessionsFilterDropdown({
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 py-0.5">
-      <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+      <div className="px-2 py-1 text-[length:var(--text-sm)] font-medium uppercase tracking-wide text-muted-foreground/80">
         {label}
       </div>
       {children}
@@ -331,7 +310,7 @@ function CheckboxRow({
   onToggle: () => void;
 }) {
   return (
-    <label className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50">
+    <label className="flex items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-muted-foreground cursor-pointer hover:bg-muted/50">
       <input type="checkbox" className="w-3 h-3" checked={checked} onChange={onToggle} />
       <span className="truncate">{label}</span>
     </label>
@@ -339,7 +318,7 @@ function CheckboxRow({
 }
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
-  return <div className="px-2 py-1 text-xs text-muted-foreground">{children}</div>;
+  return <div className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground">{children}</div>;
 }
 
 function RefRangeInputs({
@@ -356,7 +335,7 @@ function RefRangeInputs({
   ariaLabelPrefix: string;
 }) {
   const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
-  const inputClassName = `w-16 px-1.5 py-0.5 text-xs font-mono bg-transparent border rounded text-foreground focus:outline-none ${
+  const inputClassName = `w-16 px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
     isInvalid
       ? "border-[var(--color-error)] focus:border-[var(--color-error)]"
       : "border-border focus:border-accent"
@@ -374,7 +353,7 @@ function RefRangeInputs({
           aria-label={`${ariaLabelPrefix} minimum`}
           aria-invalid={isInvalid}
         />
-        <span className="text-xs text-muted-foreground">→</span>
+        <span className="text-[length:var(--text-md)] text-muted-foreground">→</span>
         <input
           type="number"
           className={inputClassName}
@@ -386,7 +365,7 @@ function RefRangeInputs({
         />
       </div>
       {isInvalid && (
-        <div className="mt-1 text-xs text-[var(--color-error)]">Min must be &lt;= Max</div>
+        <div className="mt-1 text-[length:var(--text-md)] text-[var(--color-error)]">Min must be &lt;= Max</div>
       )}
     </div>
   );

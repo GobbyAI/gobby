@@ -83,10 +83,6 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
   };
 }
 
-function openStatusFilter(): void {
-  fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
-}
-
 const LIVE_SESSION = makeSession({
   id: "live-1",
   ref: "#201",
@@ -264,7 +260,6 @@ describe("SessionsTab", () => {
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
       target: { value: "" },
     });
-    openStatusFilter();
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
@@ -281,7 +276,6 @@ describe("SessionsTab", () => {
       expect(screen.getByText("#201: Live Terminal")).toBeInTheDocument();
     });
 
-    openStatusFilter();
     const liveRadio = screen.getByRole("radio", { name: "Live" });
     const expiredRadio = screen.getByRole("radio", { name: "Expired" });
     expect(liveRadio).toHaveAttribute("aria-checked", "true");
@@ -315,7 +309,6 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#209: Errored Agent Terminal")).toBeNull();
     expect(screen.queryByText("#210: Cancelled Agent Terminal")).toBeNull();
 
-    openStatusFilter();
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
@@ -518,7 +511,6 @@ describe("SessionsTab", () => {
       />,
     );
 
-    openStatusFilter();
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {

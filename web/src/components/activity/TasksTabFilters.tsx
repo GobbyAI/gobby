@@ -39,7 +39,7 @@ export function TasksTabFilters({
       >
         {stages.length > 0 && (
           <div className="flex flex-col gap-0.5 py-0.5">
-            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+            <div className="px-2 py-1 text-[length:var(--text-sm)] font-medium uppercase tracking-wide text-muted-foreground/80">
               Stage
             </div>
             {stages.map(stage => {
@@ -48,7 +48,7 @@ export function TasksTabFilters({
                 <button
                   key={stage.name}
                   type="button"
-                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs text-left cursor-pointer hover:bg-muted/50 ${
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-left cursor-pointer hover:bg-muted/50 ${
                     selected ? 'text-foreground bg-muted/50' : 'text-muted-foreground'
                   }`}
                   aria-pressed={selected}
@@ -67,13 +67,13 @@ export function TasksTabFilters({
 
         {filterGroups.map(group => (
           <div key={group.label} className="flex flex-col gap-0.5 py-0.5">
-            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+            <div className="px-2 py-1 text-[length:var(--text-sm)] font-medium uppercase tracking-wide text-muted-foreground/80">
               {group.label}
             </div>
             {group.states.map(status => (
               <label
                 key={status}
-                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50"
+                className="flex items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-muted-foreground cursor-pointer hover:bg-muted/50"
               >
                 <input
                   type="checkbox"
