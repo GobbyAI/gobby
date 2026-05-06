@@ -231,6 +231,9 @@ def _echo_target_control_result(payload: dict[str, object]) -> None:
     stages_reset = payload.get("stages_reset")
     if isinstance(stages_reset, int):
         click.echo(f"Stages reset: {stages_reset}")
+    escalations_cleared = payload.get("escalations_cleared")
+    if isinstance(escalations_cleared, int) and escalations_cleared:
+        click.echo(f"Escalations cleared: {escalations_cleared}")
     artifacts = payload.get("artifacts")
     if isinstance(artifacts, list):
         deleted = sum(1 for item in artifacts if isinstance(item, dict) and item.get("deleted"))

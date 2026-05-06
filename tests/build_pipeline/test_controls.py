@@ -470,6 +470,80 @@ async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
     assert {row.state for row in rows} == {"ready"}
 
 
+@pytest.mark.asyncio
+async def test_restart_clears_build_owned_dispatch_escalations(
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_restart_target
+    from gobby.build.dispatch_tick import DispatcherTickSummary
+
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Restart escalated epic",
+        category="planning",
+        task_type="epic",
+    )
+    auto_escalated = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Auto escalated child",
+        category="docs",
+        task_type="task",
+        parent_task_id=epic.id,
+    )
+    manual_escalated = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Manual escalated child",
+        category="docs",
+        task_type="task",
+        parent_task_id=epic.id,
+    )
+    task_manager.update_task(
+        auto_escalated.id,
+        allow_automation=True,
+        dispatch_failure_count=3,
+        validation_fail_count=2,
+    )
+    task_manager.update_task(
+        manual_escalated.id,
+        allow_automation=True,
+        dispatch_failure_count=3,
+        validation_fail_count=2,
+    )
+    task_manager.escalate_task(
+        auto_escalated.id,
+        "dispatch_spawn_max_attempts:Failed to create worktree",
+    )
+    task_manager.escalate_task(manual_escalated.id, "needs_human: ambiguous docs scope")
+
+    with patch(
+        "gobby.build.controls._kick_dispatcher_tick",
+        new=AsyncMock(return_value=DispatcherTickSummary()),
+    ):
+        result = await build_restart_target(
+            f"#{epic.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+            force=True,
+            yes=True,
+        )
+
+    retried = task_manager.get_task(auto_escalated.id)
+    preserved = task_manager.get_task(manual_escalated.id)
+    assert result.escalations_cleared == 1
+    assert retried.is_escalated is False
+    assert retried.escalated_at is None
+    assert retried.escalation_reason is None
+    assert retried.dispatch_failure_count == 0
+    assert retried.validation_fail_count == 0
+    assert preserved.is_escalated is True
+    assert preserved.escalation_reason == "needs_human: ambiguous docs scope"
+    assert preserved.dispatch_failure_count == 3
+
+
 def test_default_branch_dir_name_uses_untitled_for_empty_slug(
     temp_db,
     sample_project,

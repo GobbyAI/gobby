@@ -84,6 +84,7 @@ class BuildTargetControlResult:
     mutexes_cleared: int = 0
     claims_released: int = 0
     stages_reset: int = 0
+    escalations_cleared: int = 0
     dispatcher_tick: DispatcherTickSummary | None = None
     blocked_reasons: list[str] = field(default_factory=list)
 
@@ -265,6 +266,7 @@ async def build_restart_target(
     task_manager = LocalTaskManager(db)
     root = _resolve_task_ref(task_manager, input_ref, project_id)
     tasks = _affected_tasks(task_manager, root)
+    escalations_cleared = _clear_restartable_escalations(task_manager, tasks)
     restart_stage_resets = _reset_restart_stage_manifests(db, tasks)
     resume_result = await build_resume_target(
         input_ref,
@@ -277,6 +279,7 @@ async def build_restart_target(
     clean_result.mutexes_cleared = resume_result.mutexes_cleared
     clean_result.claims_released = resume_result.claims_released
     clean_result.stages_reset += restart_stage_resets
+    clean_result.escalations_cleared = escalations_cleared
     clean_result.dispatcher_tick = resume_result.dispatcher_tick
     return clean_result
 
@@ -449,6 +452,36 @@ def _reset_current_stages(db: DatabaseProtocol, tasks: list[Task], *, reason: st
         if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
             reset += 1
     return reset
+
+
+def _clear_restartable_escalations(task_manager: LocalTaskManager, tasks: list[Task]) -> int:
+    cleared = 0
+    for task in tasks:
+        if task.closed_at is not None or not task.is_escalated:
+            continue
+        if not _is_build_owned_escalation(task.escalation_reason):
+            continue
+        task_manager.release_task_claim(
+            task.id,
+            escalated_at=None,
+            escalation_reason=None,
+            dispatch_failure_count=0,
+            validation_fail_count=0,
+        )
+        cleared += 1
+    return cleared
+
+
+def _is_build_owned_escalation(reason: str | None) -> bool:
+    if not reason:
+        return False
+    return reason.startswith(
+        (
+            "dispatch_spawn_max_attempts:",
+            "stage_pipeline_dispatch:",
+            "isolation_missing_target_branch",
+        )
+    )
 
 
 def _reset_restart_stage_manifests(db: DatabaseProtocol, tasks: list[Task]) -> int:
