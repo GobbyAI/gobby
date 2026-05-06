@@ -441,6 +441,7 @@ class TestExecuteSpawn:
                 'mcp_servers.gobby.args=["run","--project","/main/repo","gobby","mcp-server"]'
                 in command
             )
+            assert "mcp_servers.gobby.startup_timeout_sec=120" in command
             assert "--full-auto" not in command
 
             # Env is passed to the tmux spawner so the SessionStart hook can

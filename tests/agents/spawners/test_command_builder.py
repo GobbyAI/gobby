@@ -103,6 +103,7 @@ class TestBuildCliCommand:
             config_overrides=[
                 'mcp_servers.gobby.command="uv"',
                 'mcp_servers.gobby.args=["run","--project","/repo","gobby","mcp-server"]',
+                "mcp_servers.gobby.startup_timeout_sec=120",
             ],
         )
         assert cmd == [
@@ -111,6 +112,8 @@ class TestBuildCliCommand:
             'mcp_servers.gobby.command="uv"',
             "-c",
             'mcp_servers.gobby.args=["run","--project","/repo","gobby","mcp-server"]',
+            "-c",
+            "mcp_servers.gobby.startup_timeout_sec=120",
             "hello",
         ]
 

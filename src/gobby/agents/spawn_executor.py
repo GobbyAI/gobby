@@ -626,6 +626,7 @@ def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
     return [
         'mcp_servers.gobby.command="uv"',
         f"mcp_servers.gobby.args={args_toml}",
+        "mcp_servers.gobby.startup_timeout_sec=120",
     ]
 
 
