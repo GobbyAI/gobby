@@ -64,6 +64,9 @@ WAIT_TOOL_NAMES = (
 )
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
+DAEMON_HEALTH_ATTEMPTS = 30
+DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
+DAEMON_HEALTH_RETRY_DELAY_SECONDS = 1.0
 
 
 __all__ = [
@@ -832,21 +835,33 @@ async def ensure_daemon_running() -> None:
 
     # Check if running
     if is_daemon_running():
-        # 3 attempts before concluding unhealthy (5s timeout each)
-        for attempt in range(3):
-            if await check_daemon_http_health(port):
+        for attempt in range(DAEMON_HEALTH_ATTEMPTS):
+            if await check_daemon_http_health(port, timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS):
                 return
-            if attempt < 2:
+            if attempt < DAEMON_HEALTH_ATTEMPTS - 1:
                 logger.warning(
-                    f"Daemon health check failed (attempt {attempt + 1}/3), retrying in 5s...",
+                    "Daemon health check failed "
+                    f"(attempt {attempt + 1}/{DAEMON_HEALTH_ATTEMPTS}), "
+                    f"retrying in {DAEMON_HEALTH_RETRY_DELAY_SECONDS:.1f}s...",
                 )
-                await asyncio.sleep(5)
+                await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
 
-        # 3 consecutive failures → restart
-        logger.warning("Daemon running but unhealthy after 3 checks, restarting...")
         pid = get_daemon_pid()
-        await restart_daemon_process(pid, port, ws_port)
+        logger.error(
+            "Daemon is running but did not become healthy "
+            f"(pid={pid}, port={port}) after {DAEMON_HEALTH_ATTEMPTS} attempts. "
+            "Refusing to restart it from a stdio MCP client because that can interrupt "
+            "active dispatch agents.",
+        )
+        sys.exit(1)
     else:
+        if os.environ.get("GOBBY_AGENT_RUN_ID"):
+            logger.error(
+                "Daemon is not running for managed agent MCP client; refusing to auto-start "
+                "from an agent process.",
+            )
+            sys.exit(1)
+
         # Start
         result = await start_daemon_process(port, ws_port)
         if not result.get("success"):
@@ -857,16 +872,21 @@ async def ensure_daemon_running() -> None:
 
     # Wait for health
     last_health_response = None
-    for _i in range(10):
-        last_health_response = await check_daemon_http_health(port)
+    for _i in range(DAEMON_HEALTH_ATTEMPTS):
+        last_health_response = await check_daemon_http_health(
+            port,
+            timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+        )
         if last_health_response:
             return
-        await asyncio.sleep(1)
+        await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
 
     # Health check timed out
     pid = get_daemon_pid()
     logger.error(
-        f"Daemon failed to become healthy after 10 attempts (pid={pid}, port={port}, ws_port={ws_port}, last_health={last_health_response})",
+        "Daemon failed to become healthy after "
+        f"{DAEMON_HEALTH_ATTEMPTS} attempts "
+        f"(pid={pid}, port={port}, ws_port={ws_port}, last_health={last_health_response})",
     )
     sys.exit(1)
 

@@ -476,12 +476,12 @@ class TestEnsureDaemonRunning:
                     assert mock_health.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_restarts_unhealthy_daemon(self):
-        """Test restarts daemon if running but unhealthy."""
+    async def test_waits_for_unhealthy_daemon_without_restart(self):
+        """Test waits for an unhealthy daemon instead of restarting it."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
             with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
-                health_checks = [False, False, False, True]
+                health_checks = [False, False, True]
                 with patch(
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
@@ -494,14 +494,43 @@ class TestEnsureDaemonRunning:
                     ) as mock_restart:
                         with patch("gobby.mcp_proxy.stdio.get_daemon_pid", return_value=12345):
                             with patch(
-                                "gobby.mcp_proxy.stdio.asyncio.sleep", new_callable=AsyncMock
-                            ):
+                                "gobby.mcp_proxy.stdio.asyncio.sleep",
+                                new_callable=AsyncMock,
+                            ) as mock_sleep:
                                 from gobby.mcp_proxy.stdio import ensure_daemon_running
 
                                 await ensure_daemon_running()
-                                mock_restart.assert_called_once()
-                                assert mock_restart.call_count == 1
-                                assert mock_restart.call_args is not None
+                                mock_restart.assert_not_called()
+                                assert mock_sleep.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_exits_instead_of_restarting_persistently_unhealthy_daemon(self):
+        """Test stdio MCP clients do not restart a busy or unhealthy daemon."""
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
+                with patch(
+                    "gobby.mcp_proxy.stdio.check_daemon_http_health",
+                    new_callable=AsyncMock,
+                    return_value=False,
+                ):
+                    with patch(
+                        "gobby.mcp_proxy.stdio.restart_daemon_process",
+                        new_callable=AsyncMock,
+                    ) as mock_restart:
+                        with patch("gobby.mcp_proxy.stdio.get_daemon_pid", return_value=12345):
+                            with patch(
+                                "gobby.mcp_proxy.stdio.asyncio.sleep",
+                                new_callable=AsyncMock,
+                            ):
+                                with patch("sys.exit", side_effect=SystemExit(1)) as mock_exit:
+                                    from gobby.mcp_proxy.stdio import ensure_daemon_running
+
+                                    with pytest.raises(SystemExit):
+                                        await ensure_daemon_running()
+
+                                    mock_restart.assert_not_called()
+                                    mock_exit.assert_called_with(1)
 
     @pytest.mark.asyncio
     async def test_starts_daemon_if_not_running(self):
@@ -525,6 +554,29 @@ class TestEnsureDaemonRunning:
                         mock_start.assert_called_once()
                         assert mock_start.call_count == 1
                         assert mock_start.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_managed_agent_refuses_to_auto_start_daemon(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Managed agent MCP clients must not bootstrap the daemon themselves."""
+        monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-agent")
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=False):
+                with patch(
+                    "gobby.mcp_proxy.stdio.start_daemon_process",
+                    new_callable=AsyncMock,
+                ) as mock_start:
+                    with patch("sys.exit", side_effect=SystemExit(1)) as mock_exit:
+                        from gobby.mcp_proxy.stdio import ensure_daemon_running
+
+                        with pytest.raises(SystemExit):
+                            await ensure_daemon_running()
+
+                        mock_start.assert_not_called()
+                        mock_exit.assert_called_with(1)
 
 
 class TestDaemonProxy:
