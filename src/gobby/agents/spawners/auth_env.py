@@ -108,23 +108,16 @@ CLI_CREDENTIAL_KEYS: dict[str, frozenset[str]] = {
     "droid": frozenset({"FACTORY_API_KEY"}),
 }
 
-CLAUDE_OAUTH_ALLOWLIST: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
-
-
 def terminal_env_passthrough(
     cli: str,
     *,
     source: Mapping[str, str] | None = None,
-    include_claude_oauth: bool = False,
 ) -> dict[str, str]:
     """Return allowlisted env vars present and non-empty in source."""
     env = source or os.environ
     normalized_cli = cli.lower()
     allowed = set(UNIVERSAL_ALLOWLIST)
     allowed.update(CLI_ENV_ALLOWLIST.get(normalized_cli, frozenset()))
-
-    if normalized_cli == "claude" and include_claude_oauth:
-        allowed.update(CLAUDE_OAUTH_ALLOWLIST)
 
     return {key: value for key in allowed if (value := env.get(key))}
 
@@ -133,14 +126,10 @@ def has_auth_env(
     cli: str,
     *,
     source: Mapping[str, str] | None = None,
-    include_claude_oauth: bool = False,
 ) -> bool:
     """True when any credential key for the CLI is present and non-empty."""
     env = source or os.environ
     normalized_cli = cli.lower()
     credential_keys = set(CLI_CREDENTIAL_KEYS.get(normalized_cli, frozenset()))
-
-    if normalized_cli == "claude" and include_claude_oauth:
-        credential_keys.update(CLAUDE_OAUTH_ALLOWLIST)
 
     return any(bool(env.get(key)) for key in credential_keys)

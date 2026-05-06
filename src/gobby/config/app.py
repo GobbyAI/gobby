@@ -151,19 +151,6 @@ class AuthConfig(BaseModel):
     )
 
 
-class AgentAuthConfig(BaseModel):
-    """Authentication environment forwarding for spawned agents."""
-
-    forward_claude_oauth_env: bool = Field(
-        default=False,
-        description=(
-            "Forward CLAUDE_CODE_OAUTH_TOKEN from the daemon environment to spawned "
-            "Claude Code tmux sessions. API/provider credentials and Claude's on-disk "
-            "login state are preferred."
-        ),
-    )
-
-
 class UIConfig(BaseModel):
     """Configuration for the web UI."""
 
@@ -205,7 +192,6 @@ class UIConfig(BaseModel):
 
 __all__ = [
     # Local definitions only - no re-exports
-    "AgentAuthConfig",
     "DaemonConfig",
     "deep_merge",
     "expand_env_vars",
@@ -401,10 +387,6 @@ class DaemonConfig(BaseModel):
     agent_sandbox: DaemonOwnedSandboxConfig = Field(
         default_factory=DaemonOwnedSandboxConfig,
         description="Daemon-owned sandbox defaults for spawned agent runtimes.",
-    )
-    agent_auth: AgentAuthConfig = Field(
-        default_factory=AgentAuthConfig,
-        description="Authentication environment forwarding for spawned agents.",
     )
     communications: CommunicationsConfig = Field(
         default_factory=CommunicationsConfig,

@@ -55,12 +55,9 @@ class TmuxSpawner(TerminalSpawnerBase):
     def __init__(
         self,
         config: TmuxConfig | None = None,
-        *,
-        forward_claude_oauth_env: bool = False,
     ) -> None:
         self._config = config or TmuxConfig()
         self._session_manager = TmuxSessionManager(self._config)
-        self._forward_claude_oauth_env = forward_claude_oauth_env
 
     @property
     def terminal_type(self) -> str:
@@ -132,10 +129,7 @@ class TmuxSpawner(TerminalSpawnerBase):
 
         spawn_env = dict(env or {})
         if cli := _infer_auth_cli(command):
-            for key, value in terminal_env_passthrough(
-                cli,
-                include_claude_oauth=self._forward_claude_oauth_env,
-            ).items():
+            for key, value in terminal_env_passthrough(cli).items():
                 spawn_env.setdefault(key, value)
 
         # Merge env with a clean spawn env

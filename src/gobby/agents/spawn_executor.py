@@ -85,14 +85,8 @@ class SpawnRequest:
 def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     daemon_config = request.daemon_config
     tmux_config = getattr(daemon_config, "tmux", None)
-    agent_auth_config = getattr(daemon_config, "agent_auth", None)
 
-    return TmuxSpawner(
-        config=tmux_config if isinstance(tmux_config, TmuxConfig) else None,
-        forward_claude_oauth_env=bool(
-            getattr(agent_auth_config, "forward_claude_oauth_env", False)
-        ),
-    )
+    return TmuxSpawner(config=tmux_config if isinstance(tmux_config, TmuxConfig) else None)
 
 
 @dataclass

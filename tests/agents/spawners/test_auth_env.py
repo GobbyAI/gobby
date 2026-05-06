@@ -50,14 +50,10 @@ def test_unknown_cli_gets_universal_values_only() -> None:
     assert has_auth_env("unknown", source=source) is False
 
 
-def test_claude_oauth_token_requires_config_opt_in() -> None:
+def test_claude_oauth_token_is_never_forwarded() -> None:
     source = {
         "CLAUDE_CODE_OAUTH_TOKEN": "oauth-token",
     }
 
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in terminal_env_passthrough("claude", source=source)
     assert has_auth_env("claude", source=source) is False
-
-    result = terminal_env_passthrough("claude", source=source, include_claude_oauth=True)
-    assert result["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-token"
-    assert has_auth_env("claude", source=source, include_claude_oauth=True) is True

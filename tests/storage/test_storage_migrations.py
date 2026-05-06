@@ -40,7 +40,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 251
+    assert latest_known_version() == 252
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -54,15 +54,16 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         249,
         250,
         251,
+        252,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 13
-    assert get_current_version(db) == 251
+    assert applied == 14
+    assert get_current_version(db) == 252
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251]
+    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
     assert "workspace_role" in _column_names(db, "worktrees")
@@ -78,9 +79,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 251
+    assert get_current_version(db) == 252
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251]
+    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -215,6 +216,7 @@ def test_config_store_cleanup_migrates_logging_and_removes_stale_keys(tmp_path) 
     }
     stale_exact_keys = {
         "_meta.yaml_imported": True,
+        "agent_auth.forward_claude_oauth_env": True,
         "conductor.daily_budget_usd": 1,
         "conductor.throttle_threshold": 0.8,
         "conductor.tracking_window_days": 7,

@@ -10,7 +10,6 @@ import yaml
 from pydantic import ValidationError
 
 from gobby.config.app import (
-    AgentAuthConfig,
     DaemonConfig,
     apply_cli_overrides,
     expand_env_vars,
@@ -356,8 +355,6 @@ class TestDaemonConfig:
         assert config.daemon_health_check_interval == 10.0
         assert config.database_path == "~/.gobby/gobby-hub.db"
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
-        assert isinstance(config.agent_auth, AgentAuthConfig)
-        assert config.agent_auth.forward_claude_oauth_env is False
 
     def test_port_validation(self) -> None:
         """Test daemon port validation."""

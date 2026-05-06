@@ -751,9 +751,9 @@ class TestTmuxSpawner:
         assert mock_create.call_args[1]["env"]["ANTHROPIC_API_KEY"] == "sk-override"
 
     @pytest.mark.asyncio
-    async def test_spawn_forwards_claude_oauth_only_when_configured(self) -> None:
-        """Claude OAuth env passthrough is controlled by daemon config."""
-        spawner = TmuxSpawner(forward_claude_oauth_env=True)
+    async def test_spawn_never_forwards_claude_oauth_token(self) -> None:
+        """Claude OAuth env tokens are not forwarded into spawned tmux panes."""
+        spawner = TmuxSpawner()
         with (
             patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-token"}, clear=False),
             patch.object(
@@ -767,7 +767,7 @@ class TestTmuxSpawner:
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             await spawner._async_spawn(command=["claude"], cwd="/tmp")
 
-        assert mock_create.call_args[1]["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-token"
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in mock_create.call_args[1]["env"]
 
 
 # =============================================================================

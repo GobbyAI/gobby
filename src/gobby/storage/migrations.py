@@ -192,6 +192,7 @@ VALUES ('review_anchor', 'planning', 0);
 _STALE_CONFIG_STORE_EXACT_KEYS = frozenset(
     {
         "_meta.yaml_imported",
+        "agent_auth.forward_claude_oauth_env",
         "conductor.daily_budget_usd",
         "conductor.throttle_threshold",
         "conductor.tracking_window_days",
@@ -487,6 +488,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (249, "Persist rich web chat content blocks", _apply_chat_message_content_blocks_schema),
     (250, "Add Linear project binding to projects", _apply_linear_project_binding_schema),
     (251, "Add integration workspace metadata", _apply_integration_workspace_metadata_schema),
+    (252, "Remove Claude OAuth env forwarding config", _apply_config_store_cleanup),
 ]
 
 
