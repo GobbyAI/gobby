@@ -505,7 +505,7 @@ async def test_restart_no_resume_resets_epic_tree_without_dispatch(
     initialize_manifest(temp_db, leaf.id, [spec("development", 0)])
     set_stage_state(temp_db, epic.id, "planning", "done")
     set_stage_state(temp_db, leaf.id, "development", "in_progress")
-    task_manager.escalate_task(leaf.id, "dispatch_spawn_max_attempts:missing mcp config")
+    task_manager.escalate_task(leaf.id, "development_max_work_attempts")
 
     with patch("gobby.build.controls._kick_dispatcher_tick", new=AsyncMock()) as tick:
         result = await build_restart_target(

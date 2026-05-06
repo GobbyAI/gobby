@@ -503,6 +503,15 @@ def _reset_restart_dispatch_failures(task_manager: LocalTaskManager, tasks: list
 def _is_build_owned_escalation(reason: str | None) -> bool:
     if not reason:
         return False
+    if reason.endswith(
+        (
+            "_max_work_attempts",
+            "_max_review_rounds",
+            "_work_failed:max",
+            "_review_failed:max",
+        )
+    ):
+        return True
     return reason.startswith(
         (
             "dispatch_spawn_max_attempts:",
