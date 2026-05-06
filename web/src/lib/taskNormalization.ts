@@ -12,6 +12,12 @@ const STAGE_STATES: readonly StageState5[] = [
 
 const REVIEW_POLICIES: readonly ReviewPolicy[] = ['none', 'required', 'optional']
 
+const RETIRED_STAGE_NAMES = new Set(['test_arch'])
+
+export function isRetiredStageName(name: string | null | undefined): boolean {
+  return typeof name === 'string' && RETIRED_STAGE_NAMES.has(name)
+}
+
 export interface StageRegistryEntry extends StageStateView {
   sequence_order?: number | null
   description?: string | null
@@ -179,7 +185,9 @@ export function normalizeStagesRegistryResponse(
   data: StagesRegistryWireResponse | null | undefined,
 ): StageRegistryEntry[] {
   const rows = data?.stages ?? data?.registry ?? []
-  return rows.map(row => normalizeStageRegistryEntry(row))
+  return rows
+    .map(row => normalizeStageRegistryEntry(row))
+    .filter(stage => !isRetiredStageName(stage.name))
 }
 
 function normalizeCurrentStage(
@@ -192,6 +200,8 @@ function normalizeCurrentStage(
   if (!rawCurrent) return selectCurrentStageFromRows(stages)
 
   const currentName = rawCurrent.name ?? rawCurrent.stage_name ?? null
+  if (isRetiredStageName(currentName)) return selectCurrentStageFromRows(stages)
+
   const matchingStage = currentName
     ? stages.find(stage => stage.name === currentName)
     : null
@@ -213,7 +223,9 @@ function selectCurrentStageFromRows(stages: StageStateView[]): StageStateView | 
 export function normalizeTaskPayload<T extends RawTaskPayload>(
   task: T,
 ): T & NormalizedTaskPayload {
-  const stages = (task.stages ?? []).map(stage => normalizeStageRow(stage))
+  const stages = (task.stages ?? [])
+    .map(stage => normalizeStageRow(stage))
+    .filter(stage => !isRetiredStageName(stage.name))
   const currentStage = normalizeCurrentStage(task, stages)
   const projected = {
     ...task,

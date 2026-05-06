@@ -18,7 +18,6 @@ CANONICAL_STAGE_NAMES = [
     "architecture",
     "prd",
     "planning",
-    "test_arch",
     "expansion",
     "development",
     "holistic_qa",

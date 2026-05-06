@@ -22,7 +22,6 @@ def test_build_config_defaults_include_dispatch_knobs() -> None:
             "architecture",
             "prd",
             "planning",
-            "test_arch",
             "expansion",
             "development",
             "holistic_qa",

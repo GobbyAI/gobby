@@ -33,7 +33,6 @@ DEFAULT_MAX_CHARS = 50000
 RELATED_TEST_MAX_FILES = 5
 VALIDATION_GATES = {
     ("plan_review", "needs_review"): "plan_review",
-    ("test_arch", "needs_review"): "test_arch",
     ("in_development", "needs_review"): "qa",
     ("holistic_review", "needs_review"): "holistic_review",
     ("holistic_review", "open"): "holistic_review",

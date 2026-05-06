@@ -15,7 +15,6 @@ _STAGE_AGENTS = {
     "architecture": "architect",
     "prd": "product-manager",
     "planning": "planner",
-    "test_arch": "test-architect",
     "development": "backend-developer",
     "holistic_qa": "holistic-reviewer",
     "pr": "merge-orchestrator",
@@ -164,15 +163,6 @@ def test_planning_review_rule_fires_on_needs_review_stage() -> None:
         "stage_name": "planning",
         "stage_state": "needs_review",
     }
-
-
-def test_test_arch_rule_fires_on_in_progress_stage() -> None:
-    from gobby.dispatch.actions import SpawnAgentAction
-
-    action = _evaluate(_task_at("test_arch", "in_progress"))
-
-    assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "test-architect"
 
 
 def test_expansion_work_rule_fires_and_holds_when_cap_reached() -> None:
@@ -492,6 +482,8 @@ def test_base_rules_order_excludes_merge_rule() -> None:
         "disabled_agent_escalation_rule",
         "development_isolation_rule",
         "all_leaves_holistic_rule",
+        "epic_development_start_rule",
+        "epic_development_complete_rule",
         "ideation_rule",
         "research_rule",
         "architecture_rule",
@@ -499,7 +491,6 @@ def test_base_rules_order_excludes_merge_rule() -> None:
         "planning_work_rule",
         "planning_review_rule",
         "planning_advance_rule",
-        "test_arch_rule",
         "expansion_work_rule",
         "expansion_review_rule",
         "expansion_advance_rule",
@@ -520,7 +511,7 @@ def test_final_rules_is_base_rules_plus_merge_rule_at_final_position() -> None:
     from gobby.dispatch.rules import BASE_RULES, RULES, merge_rule
 
     assert RULES == [*BASE_RULES, merge_rule]
-    assert len(RULES) == 25
+    assert len(RULES) == 26
     assert RULES[-1] is merge_rule
 
 

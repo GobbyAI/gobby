@@ -211,6 +211,20 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
         return grouped
 
+    def _normalize_stage_filters(values: list[str] | None) -> list[str]:
+        if not values:
+            return []
+        stage_names: list[str] = []
+        seen: set[str] = set()
+        for raw_value in values:
+            for raw_stage in raw_value.split(","):
+                stage_name = raw_stage.strip()
+                if not stage_name or stage_name in seen:
+                    continue
+                stage_names.append(stage_name)
+                seen.add(stage_name)
+        return stage_names
+
     register_task_stage_routes(
         router,
         server,
@@ -245,7 +259,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             description="Sort order: hierarchy, updated_at, created_at, or priority",
         ),
         sort_order: str = Query("asc", description="Sort direction: asc or desc"),
-        stage: str | None = Query(None, description="Filter by stage name"),
+        stage: list[str] | None = Query(None, description="Filter by stage name"),
         stage_state: (
             Literal["ready", "in_progress", "needs_review", "review_approved", "done"] | None
         ) = Query(None, description="Filter by stage state"),
@@ -262,14 +276,17 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 )
             resolved_project = _resolve_project(project_id)
             stage_task_ids: set[str] | None = None
-            if stage is not None:
-                stage_task_ids = set(
-                    server.task_manager.stage_states.list_tasks_at_stage(
-                        stage_name=stage,
-                        state=stage_state,
-                        project_id=resolved_project,
+            stage_filters = _normalize_stage_filters(stage)
+            if stage_filters:
+                stage_task_ids = set()
+                for stage_name in stage_filters:
+                    stage_task_ids.update(
+                        server.task_manager.stage_states.list_tasks_at_stage(
+                            stage_name=stage_name,
+                            state=stage_state,
+                            project_id=resolved_project,
+                        )
                     )
-                )
 
             tasks = server.task_manager.list_tasks(
                 project_id=resolved_project,
@@ -295,7 +312,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 total = server.task_manager.count_tasks(project_id=resolved_project)
 
             task_dicts = [t.to_brief() for t in tasks]
-            if include_stages or stage is not None or stage_state is not None:
+            if include_stages or stage_filters or stage_state is not None:
                 stages_by_task = _stage_views_for_tasks([task.id for task in tasks])
                 for item in task_dicts:
                     item["stages"] = stages_by_task.get(item["id"], [])

@@ -96,6 +96,76 @@ def test_list_filter_by_stage_state(
     assert [task["id"] for task in response.json()["tasks"]] == [matching.id]
 
 
+def test_list_filter_by_repeated_stage_query_values(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    development, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0)],
+        title="Development task",
+    )
+    planning, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("planning", 0)],
+        title="Planning task",
+    )
+    make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("merge", 0)],
+        title="Other task",
+    )
+
+    response = stage_client.get(
+        "/api/tasks",
+        params=[
+            ("project_id", sample_project["id"]),
+            ("stage", "development"),
+            ("stage", "planning"),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert {task["id"] for task in response.json()["tasks"]} == {development.id, planning.id}
+
+
+def test_list_filter_by_comma_separated_stage_query_values(
+    temp_db,
+    sample_project,
+    stage_client: TestClient,
+) -> None:
+    development, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0)],
+        title="Development task",
+    )
+    planning, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("planning", 0)],
+        title="Planning task",
+    )
+    make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("merge", 0)],
+        title="Other task",
+    )
+
+    response = stage_client.get(
+        "/api/tasks",
+        params={"project_id": sample_project["id"], "stage": "development,planning"},
+    )
+
+    assert response.status_code == 200
+    assert {task["id"] for task in response.json()["tasks"]} == {development.id, planning.id}
+
+
 @pytest.mark.parametrize(
     "state",
     ["ready", "in_progress", "needs_review", "review_approved", "done"],

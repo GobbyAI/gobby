@@ -17,7 +17,7 @@ async def _build(input_ref: str, opts: BuildOptions, db: object, project_id: str
 def _options(**overrides: object) -> BuildOptions:
     values = {
         "quick": False,
-        "skip_stages": ["test_arch", "qa"],
+        "skip_stages": ["qa"],
         "isolation": "none",
         "no_merge": False,
         "pr": None,

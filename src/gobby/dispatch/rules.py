@@ -29,7 +29,6 @@ _STAGE_AGENT_SLUGS: dict[tuple[str, str], str] = {
     ("prd", "in_progress"): "product-manager",
     ("planning", "in_progress"): "planner",
     ("planning", "needs_review"): "plan-adversary",
-    ("test_arch", "in_progress"): "test-architect",
     ("expansion", "needs_review"): "expansion-qa",
     ("holistic_qa", "in_progress"): "holistic-reviewer",
     ("merge", "in_progress"): "merge-orchestrator",
@@ -185,10 +184,6 @@ def planning_review_rule(task: object, context: object) -> Action | None:
 
 def planning_advance_rule(task: object, context: object) -> Action | None:
     return _complete_review_approved_stage(task, context, "planning")
-
-
-def test_arch_rule(task: object, context: object) -> Action | None:
-    return _spawn_configured_stage_agent(task, context, "test_arch", "in_progress")
 
 
 def expansion_work_rule(task: object, context: object) -> Action | None:
@@ -431,7 +426,6 @@ BASE_RULES: list[Rule] = [
     planning_work_rule,
     planning_review_rule,
     planning_advance_rule,
-    test_arch_rule,
     expansion_work_rule,
     expansion_review_rule,
     expansion_advance_rule,
@@ -833,5 +827,4 @@ __all__ = [
     "research_rule",
     "stage_agent_available",
     "task_has_stage",
-    "test_arch_rule",
 ]

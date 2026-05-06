@@ -34,12 +34,11 @@ Active manifest stages, in order:
 3. `architecture`
 4. `prd`
 5. `planning`
-6. `test_arch`
-7. `expansion`
-8. `development`
-9. `holistic_qa`
-10. `pr`
-11. `merge`
+6. `expansion`
+7. `development`
+8. `holistic_qa`
+9. `pr`
+10. `merge`
 
 ## Manifest Rows
 

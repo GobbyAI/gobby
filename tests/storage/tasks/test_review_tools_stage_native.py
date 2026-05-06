@@ -110,8 +110,8 @@ def test_rejected_over_cap_escalates(temp_db, sample_project) -> None:
 
 def test_needs_review_rejected_on_policy_none(temp_db, sample_project) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
-    initialize_manifest(temp_db, task.id, [spec("test_arch", 1)])
-    set_stage_state(temp_db, task.id, "test_arch", "in_progress")
+    initialize_manifest(temp_db, task.id, [spec("merge", 1)])
+    set_stage_state(temp_db, task.id, "merge", "in_progress")
 
     with pytest.raises(IllegalStageTransitionError):
         submit_for_review(temp_db, task.id)
@@ -119,8 +119,8 @@ def test_needs_review_rejected_on_policy_none(temp_db, sample_project) -> None:
 
 def test_approved_rejected_on_policy_none(temp_db, sample_project) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
-    initialize_manifest(temp_db, task.id, [spec("test_arch", 1)])
-    set_stage_state(temp_db, task.id, "test_arch", "needs_review", review_policy="none")
+    initialize_manifest(temp_db, task.id, [spec("merge", 1)])
+    set_stage_state(temp_db, task.id, "merge", "needs_review", review_policy="none")
 
     with pytest.raises(IllegalStageTransitionError):
         approve_review(temp_db, task.id)

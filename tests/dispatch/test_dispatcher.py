@@ -30,7 +30,6 @@ _LEGACY_STAGE_MAP = {
     "holistic_review": "holistic_qa",
     "in_development": "development",
     "merged": "merge",
-    "test_arch": "test_arch",
 }
 
 
@@ -552,11 +551,11 @@ async def test_advance_action_releases_lease_immediately(
 ) -> None:
     from gobby.dispatch import dispatcher
 
-    task = _task(temp_db, sample_project, stage_name="test_arch")
+    task = _task(temp_db, sample_project, stage_name="development")
     storage = _mutex_storage(temp_db)
     action = StartStageAction(
         task_id=task.id,
-        stage_name="test_arch",
+        stage_name="development",
     )
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
 

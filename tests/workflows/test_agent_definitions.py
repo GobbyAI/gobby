@@ -88,7 +88,11 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     terminate = _step(agent, "terminate")
 
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert "tool_input.name == 'holistic-review'" in str(load_skill.get("on_mcp_success"))
+    assert {"holistic-review", "tech-writer"}.issubset(
+        set(agent["step_variables"]["required_skills"])
+    )
+    assert 'get_skill(name="holistic-review")' in load_skill["status_message"]
+    assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
     assert review["allowed_tools"] == "all"
     assert {
         "gobby-tasks:close_task",
@@ -99,10 +103,10 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
 
 
-def test_test_architect_outputs_structured_prose_not_expansion_tasks() -> None:
-    instructions = _agent("test-architect")["instructions"]
+def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() -> None:
+    skill_text = (SKILLS_DIR / "test-architecture/SKILL.md").read_text(encoding="utf-8")
 
-    assert "## Test Architecture" in instructions
+    assert "## Test Architecture" in skill_text
     for heading in (
         "### Integration",
         "### E2E",
@@ -110,9 +114,19 @@ def test_test_architect_outputs_structured_prose_not_expansion_tasks() -> None:
         "### Contract",
         "### Infrastructure",
     ):
-        assert heading in instructions
-    assert "Do NOT write `### N.N` task sections" in instructions
-    assert "[category: test] leaves" in instructions
+        assert heading in skill_text
+    assert "Do NOT write `### N.N` task sections" in skill_text
+    assert "[category: test] leaves" in skill_text
+
+
+def test_architect_requires_architecture_and_test_architecture_sections() -> None:
+    agent = _agent("architect")
+    load_skill = _step(agent, "load_skill")
+
+    assert {"architecture", "test-architecture"}.issubset(set(agent["skills"]["methodology"]))
+    assert "## Architecture Brief" in agent["instructions"]
+    assert "## Test Architecture" in agent["instructions"]
+    assert "tool_input.name == 'test-architecture'" in str(load_skill.get("on_mcp_success"))
 
 
 def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
@@ -211,12 +225,15 @@ def test_backend_developer_documents_default_fallback_audit_marker() -> None:
 def test_tech_writer_loads_methodology_skill_after_claim() -> None:
     agent = _agent("tech-writer")
     claim = _step(agent, "claim")
-    load_skill = _step(agent, "load_skill")
+    load_skill = _step(agent, "load_skills")
     implement = _step(agent, "implement")
 
-    assert claim["transitions"] == [{"to": "load_skill", "when": "vars.task_claimed"}]
+    assert claim["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert "tool_input.name == 'tech-writer'" in str(load_skill.get("on_mcp_success"))
+    assert {"tech-writer", "task-transitions", "verification-before-completion"}.issubset(
+        set(agent["step_variables"]["required_skills"])
+    )
+    assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
     assert "submit_for_review" in implement["status_message"]
 
 

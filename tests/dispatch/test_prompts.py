@@ -37,7 +37,6 @@ def test_dispatch_prompt_builder_keys_present() -> None:
         "product-manager",
         "qa-reviewer",
         "researcher",
-        "test-architect",
     } <= set(PROMPT_BUILDERS)
 
 
@@ -55,17 +54,6 @@ def test_holistic_reviewer_prompt_builder_registered() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
     assert "holistic-reviewer" in PROMPT_BUILDERS
-
-
-def test_test_architect_prompt_builder_registered() -> None:
-    from gobby.dispatch.prompts import PROMPT_BUILDERS
-
-    builder = PROMPT_BUILDERS["test-architect"]
-    prompt = builder(SimpleNamespace(ref="#77", title="Design tests"), {"reason": "test arch"})
-
-    assert "Draft the test architecture" in prompt
-    assert "test-architect.yaml agent" in prompt
-    assert "#77" in prompt
 
 
 @pytest.mark.parametrize(

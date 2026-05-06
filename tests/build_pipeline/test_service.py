@@ -72,10 +72,42 @@ async def test_build_rejects_unknown_skip_stage_with_valid_values(
 ) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path)
 
-    with pytest.raises(ValueError, match="skip.*dev.*plan_review.*pr.*test_arch"):
+    with pytest.raises(ValueError, match="skip.*dev.*plan_review.*pr"):
         await _build(
             "#1",
             _options(skip_stages=["dev"]),
+            db=temp_db,
+            project_id=project_id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_build_rejects_retired_test_arch_stage(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.config.build import StageCapOverride
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Retired stage",
+        task_type="epic",
+        category="planning",
+    )
+
+    with pytest.raises(ValueError, match="invalid skip stage test_arch"):
+        await _build(
+            f"#{task.seq_num}",
+            _options(skip_stages=["test_arch"]),
+            db=temp_db,
+            project_id=project_id,
+        )
+
+    with pytest.raises(ValueError, match="unknown stage: test_arch"):
+        await _build(
+            f"#{task.seq_num}",
+            _options(isolation="none", stage_caps=[StageCapOverride(stage_name="test_arch")]),
             db=temp_db,
             project_id=project_id,
         )

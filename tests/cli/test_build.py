@@ -50,7 +50,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     build_result = BuildResult(
         task_id="task-1",
         created=True,
-        initial_lifecycle="test_arch",
+        initial_lifecycle="expansion",
         applied_stages_skipped=["plan_review", "qa"],
         tick_dispatched=2,
         dispatcher_tick=DispatcherTickSummary(ticks=2, scanned=4, executed=2, skipped=1),
@@ -92,7 +92,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
 
     assert result.exit_code == 0
     assert "task-1" in result.output
-    assert "test_arch" in result.output
+    assert "expansion" in result.output
     assert "Dispatcher tick: scanned=4 executed=2 skipped=1" in result.output
     run_migrations.assert_called_once_with(db_cls.return_value)
     run.assert_called_once()

@@ -2,6 +2,7 @@ import {
   taskAtStage,
   type LifecycleTask,
 } from '../../lib/stageActions'
+import { isRetiredStageName } from '../../lib/taskNormalization'
 import type { StageRegistryEntry } from './StageColumn'
 
 export interface Swimlane {
@@ -26,6 +27,7 @@ function registryFromRows(tasks: LifecycleTask[]): StageRegistryEntry[] {
   const stages = new Map<string, StageRegistryEntry>()
   for (const task of tasks) {
     for (const row of task.stages ?? []) {
+      if (isRetiredStageName(row.name)) continue
       if (stages.has(row.name)) continue
       stages.set(row.name, {
         name: row.name,
@@ -47,10 +49,12 @@ export function buildStageRegistry(
   if (!registry?.length) return fallback
 
   const rowStages = new Map(fallback.map(stage => [stage.name, stage]))
-  return registry.map(stage => ({
-    ...stage,
-    review_policy: stage.review_policy ?? rowStages.get(stage.name)?.review_policy ?? 'none',
-  }))
+  return registry
+    .filter(stage => !isRetiredStageName(stage.name))
+    .map(stage => ({
+      ...stage,
+      review_policy: stage.review_policy ?? rowStages.get(stage.name)?.review_policy ?? 'none',
+    }))
 }
 
 export function groupIntoSwimlanes(tasks: LifecycleTask[]): Swimlane[] {
@@ -69,13 +73,21 @@ export function groupIntoSwimlanes(tasks: LifecycleTask[]): Swimlane[] {
 export function stageNamesForTasks(tasks: LifecycleTask[]): Set<string> {
   const names = new Set<string>()
   for (const task of tasks) {
-    for (const row of task.stages ?? []) names.add(row.name)
+    for (const row of task.stages ?? []) {
+      if (!isRetiredStageName(row.name)) names.add(row.name)
+    }
   }
   return names
 }
 
 export function stageCategories(stages: ReadonlyArray<StageRegistryEntry>): string[] {
-  return Array.from(new Set(stages.map(stage => stage.category))).sort()
+  return Array.from(
+    new Set(
+      stages
+        .filter(stage => !isRetiredStageName(stage.name))
+        .map(stage => stage.category),
+    ),
+  ).sort()
 }
 
 export function activeStageCategories(
@@ -93,6 +105,7 @@ export function visibleStagesForTasks(
   const visibleStageNames = stageNamesForTasks(tasks)
   return stages
     .map((stage, index) => ({ stage, index }))
+    .filter(({ stage }) => !isRetiredStageName(stage.name))
     .filter(({ stage }) => visibleStageNames.has(stage.name))
     .filter(({ stage }) => activeCategories.has(stage.category))
     .sort((a, b) => stageOrder(a.stage, a.index) - stageOrder(b.stage, b.index))
@@ -100,5 +113,6 @@ export function visibleStagesForTasks(
 }
 
 export function tasksForStage(tasks: LifecycleTask[], stageName: string): LifecycleTask[] {
+  if (isRetiredStageName(stageName)) return []
   return tasks.filter(task => taskAtStage(task, stageName))
 }

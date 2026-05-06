@@ -131,7 +131,6 @@ STAGE_LABELS = [
     "conductor-stage:requirements",
     "conductor-stage:planning",
     "conductor-stage:expansion",
-    "conductor-stage:test-architecture",
 ]
 has_live_stage_child = False
 for stage in STAGE_LABELS:
@@ -691,9 +690,11 @@ On wake/resume, read `expansion_execution_id` and call
   2. **Retry with overrides** — ask for `provider`/`model` overrides; loop to 8.1 with those added to `inputs`.
   3. **Escalate** — `escalate_task(planning_task_id, reason=f"expansion_failed: {error}")`; run terminal cleanup; skill exits. The user can pick the escalated planning epic up later.
 
-### 8.3. Stay out of test-architecture
+### 8.3. Stay out of standalone test architecture
 
-Do **not** advance into the test-architecture stage. The stage-native build flow owns that stage; the interactive skill ends at expansion.
+Do **not** create or advance a standalone test-architecture stage. The architect-owned
+architecture step now carries the test strategy, and the interactive skill ends at
+expansion.
 
 ---
 

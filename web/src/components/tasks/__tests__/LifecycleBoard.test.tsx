@@ -106,6 +106,42 @@ describe('LifecycleBoard Phase 6 contracts', () => {
     expect(screen.queryByRole('region', { name: /deploy/i })).toBeNull()
   })
 
+  it('test_retired_stage_is_hidden_from_columns', async () => {
+    const { LifecycleBoard } = await loadLifecycleBoard()
+    render(
+      <LifecycleBoard
+        tasks={[
+          task('task-1', 'Build manifest', 'feature', [
+            stage('build', 'ready'),
+            {
+              name: 'test_arch',
+              display_name: 'Test Architecture',
+              category: 'quality',
+              state: 'ready',
+              review_policy: 'required',
+              updated_at: '2026-05-02T00:00:00Z',
+            },
+          ]),
+        ]}
+        stagesRegistry={[
+          ...registry,
+          {
+            name: 'test_arch',
+            display_name: 'Test Architecture',
+            category: 'quality',
+            review_policy: 'required',
+            sequence_order: 15,
+          },
+        ]}
+        onSelectTask={vi.fn()}
+        onAdvanceStage={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('region', { name: /build/i })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: /test architecture/i })).toBeNull()
+  })
+
   it('test_hide_blocked_toggle_persists', async () => {
     window.localStorage.clear()
     const blockedTask = task('task-1', 'Blocked task', 'bug', [stage('build', 'ready')], {

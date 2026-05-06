@@ -38,13 +38,6 @@ stages:
     reviewer_agent: plan-adversary
     review_policy: required
     position_hint: 50
-  - name: test_arch
-    display_label: Test Architecture
-    description: Test scaffolding and contract test design before expansion.
-    category: verification
-    default_agent: test-architect
-    review_policy: none
-    position_hint: 70
   - name: expansion
     display_label: Expansion
     description: Decompose plan into TDD-wrapped leaf tasks.

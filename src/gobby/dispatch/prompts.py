@@ -129,15 +129,6 @@ def _plan_adversary(task: object, context: Mapping[str, object]) -> str:
     )
 
 
-def _test_architect(task: object, context: Mapping[str, object]) -> str:
-    return _prompt(
-        task,
-        context,
-        role="Draft the test architecture",
-        contract="test-architect.yaml agent",
-    )
-
-
 def _expansion_qa(task: object, context: Mapping[str, object]) -> str:
     return _prompt(
         task,
@@ -221,7 +212,6 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "reviewer": _holistic_reviewer,
     "researcher": _researcher,
     "tech-writer": _developer,
-    "test-architect": _test_architect,
 }
 
 

@@ -140,7 +140,7 @@ describe("TasksTab — filters", () => {
 
     mockFetch.fn.mockClear();
     fireEvent.click(screen.getByTitle("Filter by task state"));
-    fireEvent.click(await screen.findByRole("button", { name: "Development" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
 
     await waitFor(() => {
       const taskFetch = mockFetch.fn.mock.calls.find(([url]) =>
@@ -149,6 +149,61 @@ describe("TasksTab — filters", () => {
       expect(String(taskFetch?.[0])).toContain("stage=development");
       expect(String(taskFetch?.[0])).toContain("include_stages=1");
     });
+  });
+
+  it("selecting multiple stage filters fetches each stage", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    mockFetch.fn.mockClear();
+    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Operator Review" }));
+
+    await waitFor(() => {
+      const taskFetch = mockFetch.fn.mock.calls.find(([url]) => {
+        const text = String(url);
+        return (
+          text.includes("/api/tasks?") &&
+          text.includes("stage=development") &&
+          text.includes("stage=operator_review")
+        );
+      });
+      expect(String(taskFetch?.[0])).toContain("include_stages=1");
+    });
+  });
+
+  it("hides retired lifecycle stages from the stage filter", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/stages/registry", {
+      stages: [
+        {
+          name: "development",
+          display_label: "Development",
+          category: "implementation",
+          review_policy: "required",
+          position_hint: 10,
+        },
+        {
+          name: "test_arch",
+          display_label: "Test Architecture",
+          category: "verification",
+          review_policy: "required",
+          position_hint: 20,
+        },
+      ],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: [] });
+
+    render(<TasksTab projectId="proj-1" />);
+
+    fireEvent.click(await screen.findByTitle("Filter by task state"));
+
+    expect(await screen.findByRole("checkbox", { name: "Development" })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: "Test Architecture" })).toBeNull();
   });
 
   it("hides the active-filter badge while statusFilters matches the default set", async () => {

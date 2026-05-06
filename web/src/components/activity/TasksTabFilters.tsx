@@ -11,18 +11,18 @@ import {
 interface FilterDropdownProps {
   filters: Set<TaskFilterKey>
   stages: StageRegistryEntry[]
-  selectedStage: string | null
+  selectedStages: ReadonlySet<string>
   onToggle: (status: TaskFilterKey) => void
-  onSelectStage: (stage: string | null) => void
+  onToggleStage: (stage: string) => void
   onClose: () => void
 }
 
 export function TasksTabFilters({
   filters,
   stages,
-  selectedStage,
+  selectedStages,
   onToggle,
-  onSelectStage,
+  onToggleStage,
   onClose,
 }: FilterDropdownProps) {
   const filterGroups: Array<{ label: string; states: TaskFilterKey[] }> = [
@@ -43,23 +43,27 @@ export function TasksTabFilters({
               Stage
             </div>
             {stages.map(stage => {
-              const selected = selectedStage === stage.name
+              const selected = selectedStages.has(stage.name)
               return (
-                <button
+                <label
                   key={stage.name}
-                  type="button"
                   className={`flex items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-left cursor-pointer hover:bg-muted/50 ${
                     selected ? 'text-foreground bg-muted/50' : 'text-muted-foreground'
                   }`}
-                  aria-pressed={selected}
-                  onClick={() => onSelectStage(selected ? null : stage.name)}
                 >
+                  <input
+                    type="checkbox"
+                    className="w-3 h-3"
+                    checked={selected}
+                    onChange={() => onToggleStage(stage.name)}
+                  />
                   <span
                     className="w-1.5 h-1.5 rounded-full shrink-0"
                     style={{ backgroundColor: getStageStateColor(stage.state) }}
+                    aria-hidden="true"
                   />
                   <span>{stage.display_name}</span>
-                </button>
+                </label>
               )
             })}
           </div>

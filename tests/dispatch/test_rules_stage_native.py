@@ -89,7 +89,7 @@ def test_current_stage_uses_leftmost_non_done_manifest_row() -> None:
     task = _task(
         stages=[
             _stage("planning", "done", 0),
-            _stage("test_arch", "done", 1),
+            _stage("expansion", "done", 1),
             _stage("development", "ready", 2),
             _stage("merge", "ready", 3),
         ]

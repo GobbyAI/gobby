@@ -70,7 +70,6 @@ async def test_default_build_skips_nothing(
         "architecture",
         "prd",
         "planning",
-        "test_arch",
         "expansion",
         "development",
         "holistic_qa",

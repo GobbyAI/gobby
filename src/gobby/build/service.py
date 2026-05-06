@@ -114,7 +114,6 @@ InputKind = Literal["plan_file", "epic", "leaf"]
 
 _SKIPPABLE_STAGE_ORDER = (
     "plan_review",
-    "test_arch",
     "expanding",
     "qa",
     "holistic_review",
@@ -126,7 +125,6 @@ _CANONICAL_STAGE_NAMES = {
     "architecture",
     "prd",
     "planning",
-    "test_arch",
     "expansion",
     "development",
     "holistic_qa",

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.unit
 def _options(**overrides: object) -> BuildOptions:
     values = {
         "quick": False,
-        "skip_stages": ["test_arch"],
+        "skip_stages": [],
         "isolation": "none",
         "no_merge": False,
         "pr": None,

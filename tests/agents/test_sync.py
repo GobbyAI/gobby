@@ -436,9 +436,9 @@ class TestSyncBundledAgents:
                 "product-manager",
                 "planner",
                 "plan-adversary",
-                "test-architect",
             )
         )
+        assert "test-architect" not in names
         assert "requirements-analyst" not in names
         assert "conductor" not in names
         assert "developer" not in names

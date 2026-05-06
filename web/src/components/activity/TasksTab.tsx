@@ -96,18 +96,24 @@ export const TasksTab = memo(function TasksTab({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [selectedStageFilter, setSelectedStageFilter] = useState<string | null>(null);
+  const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [statusFilters, setStatusFilters] = useState<Set<TaskFilterKey>>(
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const selectedStageList = useMemo(
+    () => Array.from(selectedStageFilters).sort(),
+    [selectedStageFilters],
+  );
   const activeFilterCount = useMemo(() => {
     const symmetricDifference = new Set([...DEFAULT_FILTERS, ...statusFilters]);
     const statusFilterCount = [...symmetricDifference].filter(
       (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
     ).length;
-    return statusFilterCount + (selectedStageFilter ? 1 : 0);
-  }, [selectedStageFilter, statusFilters]);
+    return statusFilterCount + selectedStageList.length;
+  }, [selectedStageList, statusFilters]);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -141,7 +147,7 @@ export const TasksTab = memo(function TasksTab({
     params.set("sort_by", "updated_at");
     params.set("sort_order", "desc");
     params.set("include_stages", "1");
-    if (selectedStageFilter) params.set("stage", selectedStageFilter);
+    selectedStageList.forEach((stageName) => params.append("stage", stageName));
     fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : { tasks: [] }))
       .then((data) => setTasks(normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[]))
@@ -151,7 +157,7 @@ export const TasksTab = memo(function TasksTab({
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-  }, [projectId, selectedStageFilter]);
+  }, [projectId, selectedStageList]);
 
   useEffect(() => {
     fetchTasks();
@@ -323,8 +329,13 @@ export const TasksTab = memo(function TasksTab({
     });
   }, []);
 
-  const toggleStageFilter = useCallback((stageName: string | null) => {
-    setSelectedStageFilter(stageName);
+  const toggleStageFilter = useCallback((stageName: string) => {
+    setSelectedStageFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(stageName)) next.delete(stageName);
+      else next.add(stageName);
+      return next;
+    });
   }, []);
 
   // Client-side filter + display ordering. The activity Tasks tree should read
@@ -706,9 +717,9 @@ export const TasksTab = memo(function TasksTab({
           <TasksTabFilters
             filters={statusFilters}
             stages={stagesRegistry}
-            selectedStage={selectedStageFilter}
+            selectedStages={selectedStageFilters}
             onToggle={toggleFilter}
-            onSelectStage={toggleStageFilter}
+            onToggleStage={toggleStageFilter}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}

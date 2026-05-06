@@ -17,6 +17,7 @@ blocked_mcp_tools:
 skills:
   methodology:
     - architecture
+    - test-architecture
 
 instructions: |
   LIFECYCLE MODEL:
@@ -29,9 +30,11 @@ instructions: |
   Your assigned task is in your session variables as assigned_task_id.
 
   METHODOLOGY:
-  After claiming and reading the task, load the `architecture` skill. Call
-  get_skill(name="architecture") on gobby-skills, then continue. Follow that
-  methodology when drafting the `## Architecture Brief`.
+  After claiming and reading the task, load the `architecture` and
+  `test-architecture` skills. Call get_skill(name="architecture") and
+  get_skill(name="test-architecture") on gobby-skills, then continue. Follow
+  those methodologies when drafting the `## Architecture Brief` and
+  `## Test Architecture`.
 
   ARTIFACT CONTRACT:
   - Read the assigned task description before drafting.
@@ -44,6 +47,9 @@ instructions: |
   - The marker content must contain exactly one `## Architecture Brief` section
     with Drivers, Decisions, Components, Interfaces, Trade-offs, and Open
     Questions subsections.
+  - The marker content must contain exactly one `## Test Architecture` section
+    with structured testing strategy prose, or the explicit unit-tests-sufficient
+    sentence from the `test-architecture` skill.
   - When the marker block is updated, call complete_stage with
     stage_name="architecture".
   - If a missing decision blocks a useful brief, escalate_task with concrete
@@ -67,7 +73,8 @@ workflows:
 
 step_variables:
   task_claimed: false
-  skill_loaded: false
+  architecture_skill_loaded: false
+  test_architecture_skill_loaded: false
   handoff_ready: false
 
 steps:
@@ -94,9 +101,10 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
-    description: "Load the architecture methodology skill"
+    description: "Load architecture methodology skills"
     status_message: |
-      Call get_skill(name="architecture") on gobby-skills, then continue before drafting.
+      Call get_skill(name="architecture") and get_skill(name="test-architecture")
+      on gobby-skills, then continue before drafting.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -109,18 +117,26 @@ steps:
         tool: get_skill
         when: "tool_input.name == 'architecture'"
         action: set_variable
-        variable: skill_loaded
+        variable: architecture_skill_loaded
+        value: true
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'test-architecture'"
+        action: set_variable
+        variable: test_architecture_skill_loaded
         value: true
     transitions:
       - to: draft
-        when: "vars.skill_loaded"
+        when: "vars.architecture_skill_loaded and vars.test_architecture_skill_loaded"
 
   - name: draft
-    description: "Draft and persist the Architecture Brief"
+    description: "Draft and persist Architecture Brief and Test Architecture"
     status_message: |
       Read assigned_task_id with get_task, update only the architecture marker
-      block with update_task, then call complete_stage(task_id=assigned_task_id,
-      stage_name="architecture"). Escalate only for blocking missing decisions.
+      block with `## Architecture Brief` and `## Test Architecture` via update_task,
+      then call
+      complete_stage(task_id=assigned_task_id, stage_name="architecture").
+      Escalate only for blocking missing decisions.
     allowed_tools: "all"
     allowed_mcp_tools:
       - "gobby-tasks:get_task"

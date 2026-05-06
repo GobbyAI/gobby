@@ -32,44 +32,5 @@ register_contract_tests(
         "test_skill_md_prose_describes_5_state_model": (
             "bundled SKILL.md surfaces describe stage-native submit/approve/reject semantics"
         ),
-        "test_test_architect_yaml_all_complete_stage_surfaces_agree_on_gobby_tasks_ops": (
-            "test-architect instructions, status, hook, and allowlist agree on gobby-tasks-ops"
-        ),
-        "test_test_architect_yaml_calls_complete_stage_for_test_arch": (
-            "test-architect completes test_arch with complete_stage instead of review tools"
-        ),
-        "test_test_architect_yaml_complete_stage_success_hook_keyed_on_gobby_tasks_ops": (
-            "test-architect success hook is keyed on gobby-tasks-ops:complete_stage"
-        ),
-        "test_test_architect_yaml_complete_stage_success_hook_sets_handoff_ready": (
-            "complete_stage success hook sets handoff_ready=true"
-        ),
-        "test_test_architect_yaml_complete_stage_uses_gobby_tasks_ops_in_instructions": (
-            "test-architect instructions use gobby-tasks-ops:complete_stage"
-        ),
-        "test_test_architect_yaml_complete_stage_uses_gobby_tasks_ops_in_status_message": (
-            "test-architect status message uses gobby-tasks-ops:complete_stage"
-        ),
-        "test_test_architect_yaml_does_not_call_review_tools": (
-            "test-architect YAML does not call mark_task review tools"
-        ),
-        "test_test_architect_yaml_drops_review_rejected_block_and_prose": (
-            "test-architect removes the obsolete reject_review block/prose"
-        ),
-        "test_test_architect_yaml_workflow_reaches_terminate_after_complete_stage": (
-            "test-architect workflow can terminate after the complete_stage success hook"
-        ),
-    },
-    required_text={
-        "src/gobby/install/shared/workflows/agents/test-architect.yaml": (
-            "gobby-tasks-ops:complete_stage",
-            "handoff_ready",
-        )
-    },
-    forbidden_text={
-        "src/gobby/install/shared/workflows/agents/test-architect.yaml": (
-            "reject_review",
-            "approve_review",
-        )
     },
 )

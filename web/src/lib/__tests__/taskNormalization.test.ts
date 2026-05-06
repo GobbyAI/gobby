@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeStageRow } from '../taskNormalization'
+import {
+  normalizeStageRow,
+  normalizeStagesRegistryResponse,
+  normalizeTaskPayload,
+} from '../taskNormalization'
 
 describe('normalizeStageRow display_name fallback', () => {
   it('preserves QA as an acronym when titleizing snake_case stage names', () => {
@@ -24,8 +28,8 @@ describe('normalizeStageRow display_name fallback', () => {
     expect(normalizeStageRow({ name: 'development' }).display_name).toBe(
       'Development',
     )
-    expect(normalizeStageRow({ name: 'test_arch' }).display_name).toBe(
-      'Test Arch',
+    expect(normalizeStageRow({ name: 'planning_review' }).display_name).toBe(
+      'Planning Review',
     )
   })
 
@@ -44,5 +48,28 @@ describe('normalizeStageRow display_name fallback', () => {
       display_label: 'Holistic QA',
     })
     expect(stage.display_name).toBe('Custom Name')
+  })
+
+  it('filters retired stages from registry and task payloads', () => {
+    expect(
+      normalizeStagesRegistryResponse({
+        stages: [
+          { name: 'development', display_name: 'Development' },
+          { name: 'test_arch', display_name: 'Test Architecture' },
+        ],
+      }).map(stage => stage.name),
+    ).toEqual(['development'])
+
+    const task = normalizeTaskPayload({
+      id: 'task-1',
+      current_stage: { name: 'test_arch', state: 'ready' },
+      stages: [
+        { name: 'test_arch', state: 'ready' },
+        { name: 'development', state: 'ready' },
+      ],
+    })
+
+    expect(task.current_stage?.name).toBe('development')
+    expect(task.stages.map(stage => stage.name)).toEqual(['development'])
   })
 })

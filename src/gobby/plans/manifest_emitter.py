@@ -41,6 +41,11 @@ _CATEGORY_RE = re.compile(r"\[category:\s*(?P<value>[a-z_]+)\]")
 _TITLE_BRACKET_RE = re.compile(r"\s*(?:\[category:[^\]]+\]|\(depends:[^)]+\))")
 _FENCE_OPEN_RE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})")
 _PHASE_REF_RE = re.compile(r"^P\d+$")
+_FRONTEND_SIGNAL_RE = re.compile(
+    r"\b(?:accessibility|browser|client|component|css|eslint|frontend|lighthouse|"
+    r"next\.?js|playwright|react|routing|storybook|svelte|ui|vite|vue|webpack)\b",
+    flags=re.IGNORECASE,
+)
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "backend-developer",
@@ -49,7 +54,7 @@ _AGENT_BY_CATEGORY: dict[str, str] = {
     "planning": "planner",
     "refactor": "backend-developer",
     "research": "researcher",
-    "test": "test-architect",
+    "test": "backend-developer",
 }
 _DEFAULT_AGENT_FALLBACK = "backend-developer"
 _DEFAULT_TASK_TYPE = "feature"
@@ -255,7 +260,7 @@ def _synthesize_entry(
         "depends_on": list(dependencies),
         "validation_criteria": validation,
         "labels": labels,
-        "assigned_agent": _agent_for(category),
+        "assigned_agent": _agent_for(category, section, title, validation),
         "tdd": category in TDD_ELIGIBLE_CATEGORIES,
         "source_section": section.section_id,
     }
@@ -335,7 +340,22 @@ def _phase_parent_id(
     return None
 
 
-def _agent_for(category: str) -> str:
+def _agent_for(
+    category: str,
+    section: PlanSection,
+    title: str,
+    validation: str,
+) -> str:
+    signal_text = " ".join(
+        [
+            section.title,
+            title,
+            validation,
+            *[item.artifact_ref for item in section.acceptance_items],
+        ]
+    )
+    if _FRONTEND_SIGNAL_RE.search(signal_text):
+        return "frontend-developer"
     return _AGENT_BY_CATEGORY.get(category, _DEFAULT_AGENT_FALLBACK)
 
 

@@ -40,7 +40,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 252
+    assert latest_known_version() == 253
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -55,15 +55,32 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         250,
         251,
         252,
+        253,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 14
-    assert get_current_version(db) == 252
+    assert applied == 15
+    assert get_current_version(db) == 253
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252]
+    assert versions == [
+        239,
+        240,
+        241,
+        242,
+        243,
+        244,
+        245,
+        246,
+        247,
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+    ]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
     assert "workspace_role" in _column_names(db, "worktrees")
@@ -79,9 +96,25 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 252
+    assert get_current_version(db) == 253
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252]
+    assert versions == [
+        239,
+        240,
+        241,
+        242,
+        243,
+        244,
+        245,
+        246,
+        247,
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+    ]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -446,7 +479,6 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
     assert {
         "last_reviewed_plan_hash",
         "plan_review_attempts",
-        "test_arch_attempts",
         "qa_attempts",
         "holistic_attempts",
         "merge_attempts",
@@ -568,7 +600,6 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
         "architecture",
         "prd",
         "planning",
-        "test_arch",
         "expansion",
         "development",
         "holistic_qa",
@@ -604,6 +635,128 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
     assert by_type["review_anchor"] == [("planning", 0)]
     for rows in by_type.values():
         assert [position for _stage_name, position in rows] == list(range(len(rows)))
+
+
+def test_remove_test_arch_stage_migration_cleans_rows_and_renumbers(tmp_path) -> None:
+    db_path = tmp_path / "remove_test_arch.db"
+    db = LocalDatabase(db_path)
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute(
+        """
+        CREATE TABLE task_stage_states (
+            task_id TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (task_id, stage_name)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE task_type_default_stages (
+            task_type TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (task_type, stage_name)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE task_stages_registry (
+            name TEXT PRIMARY KEY,
+            position_hint INTEGER
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE task_artifacts (
+            task_id TEXT PRIMARY KEY,
+            test_arch_attempts INTEGER,
+            qa_attempts INTEGER
+        )
+        """
+    )
+    db.executemany(
+        """
+        INSERT INTO task_stage_states (task_id, stage_name, position)
+        VALUES (?, ?, ?)
+        """,
+        [
+            ("task-1", "planning", 4),
+            ("task-1", "test_arch", 5),
+            ("task-1", "expansion", 6),
+            ("task-1", "development", 7),
+            ("task-2", "test_arch", 1),
+            ("task-2", "pr", 3),
+        ],
+    )
+    db.executemany(
+        """
+        INSERT INTO task_type_default_stages (task_type, stage_name, position)
+        VALUES (?, ?, ?)
+        """,
+        [
+            ("epic", "planning", 4),
+            ("epic", "test_arch", 5),
+            ("epic", "expansion", 6),
+            ("epic", "development", 7),
+            ("feature", "planning", 0),
+            ("feature", "test_arch", 1),
+            ("feature", "expansion", 2),
+        ],
+    )
+    db.executemany(
+        "INSERT INTO task_stages_registry (name, position_hint) VALUES (?, ?)",
+        [
+            ("planning", 4),
+            ("test_arch", 5),
+            ("expansion", 6),
+            ("development", 7),
+            ("pr", 8),
+        ],
+    )
+    db.execute(
+        """
+        INSERT INTO task_artifacts (task_id, test_arch_attempts, qa_attempts)
+        VALUES ('task-1', 2, 3)
+        """
+    )
+
+    migration = [item for item in MIGRATIONS if item[0] == 253]
+    applied = _run_migration_list(db, current_version=252, migrations=migration)
+
+    assert applied == 1
+    assert "test_arch_attempts" not in _column_names(db, "task_artifacts")
+    assert db.fetchone("SELECT name FROM task_stages_registry WHERE name = 'test_arch'") is None
+    stage_rows = db.fetchall(
+        """
+        SELECT task_id, stage_name, position
+          FROM task_stage_states
+         ORDER BY task_id, position
+        """
+    )
+    assert [tuple(row) for row in stage_rows] == [
+        ("task-1", "planning", 0),
+        ("task-1", "expansion", 1),
+        ("task-1", "development", 2),
+        ("task-2", "pr", 0),
+    ]
+    default_rows = db.fetchall(
+        """
+        SELECT task_type, stage_name, position
+          FROM task_type_default_stages
+         ORDER BY task_type, position
+        """
+    )
+    assert [tuple(row) for row in default_rows] == [
+        ("epic", "planning", 0),
+        ("epic", "expansion", 1),
+        ("epic", "development", 2),
+        ("feature", "planning", 0),
+        ("feature", "expansion", 1),
+    ]
 
 
 def test_migrations_needed_checks_latest_schema_version(tmp_path) -> None:

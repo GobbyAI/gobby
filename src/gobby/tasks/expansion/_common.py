@@ -28,9 +28,7 @@ AUTOMATED_LEAF_CATEGORIES = frozenset(
 )
 _DEFAULT_AGENT = "backend-developer"
 _DEFAULT_PHASE_ID = "phase-1"
-_EXPANSION_STAGES = frozenset(
-    {"planning", "test_arch", "expansion", "development", "holistic_qa", "pr"}
-)
+_EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "holistic_qa", "pr"})
 _FRONTEND_SIGNALS = frozenset(
     {
         "accessibility",
@@ -53,13 +51,14 @@ _FRONTEND_SIGNALS = frozenset(
     }
 )
 _DETERMINISTIC_FRONTEND_SIGNAL_RE = re.compile(
-    r"\b(?:frontend|react|ui|vue|next\.?js)\b",
+    r"\b(?:accessibility|browser|client|component|css|eslint|frontend|lighthouse|"
+    r"next\.?js|playwright|react|routing|storybook|svelte|ui|vite|vue|webpack)\b",
     flags=re.IGNORECASE,
 )
 _DETERMINISTIC_AGENT_BY_CATEGORY = {
     "code": "backend-developer",
     "refactor": "backend-developer",
-    "test": "test-architect",
+    "test": "backend-developer",
     "config": "backend-developer",
     "docs": "tech-writer",
     "planning": "planner",

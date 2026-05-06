@@ -471,6 +471,101 @@ def _apply_integration_workspace_metadata_schema(db: LocalDatabase) -> None:
     )
 
 
+def _apply_remove_test_arch_stage(db: LocalDatabase) -> None:
+    db.execute("DELETE FROM task_stage_states WHERE stage_name = 'test_arch'")
+    _renumber_stage_state_positions(db)
+
+    db.execute("DELETE FROM task_type_default_stages WHERE stage_name = 'test_arch'")
+    _renumber_default_stage_positions(db)
+
+    db.execute("DELETE FROM task_stages_registry WHERE name = 'test_arch'")
+
+    artifact_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_artifacts)")}
+    if "test_arch_attempts" in artifact_columns:
+        _require_sqlite_drop_column_support()
+        db.execute("ALTER TABLE task_artifacts DROP COLUMN test_arch_attempts")
+
+
+def _renumber_stage_state_positions(db: LocalDatabase) -> None:
+    db.execute("DROP TABLE IF EXISTS gobby_stage_state_positions")
+    db.execute(
+        """
+        CREATE TEMP TABLE gobby_stage_state_positions AS
+        SELECT task_id,
+               stage_name,
+               ROW_NUMBER() OVER (
+                   PARTITION BY task_id
+                   ORDER BY position, stage_name
+               ) - 1 AS new_position
+          FROM task_stage_states
+        """
+    )
+    db.execute(
+        """
+        UPDATE task_stage_states
+           SET position = -1000000 - position
+         WHERE EXISTS (
+               SELECT 1
+                 FROM gobby_stage_state_positions renumbered
+                WHERE renumbered.task_id = task_stage_states.task_id
+                  AND renumbered.stage_name = task_stage_states.stage_name
+         )
+        """
+    )
+    db.execute(
+        """
+        UPDATE task_stage_states
+           SET position = (
+               SELECT new_position
+                 FROM gobby_stage_state_positions renumbered
+                WHERE renumbered.task_id = task_stage_states.task_id
+                  AND renumbered.stage_name = task_stage_states.stage_name
+           )
+         WHERE EXISTS (
+               SELECT 1
+                 FROM gobby_stage_state_positions renumbered
+                WHERE renumbered.task_id = task_stage_states.task_id
+                  AND renumbered.stage_name = task_stage_states.stage_name
+         )
+        """
+    )
+    db.execute("DROP TABLE gobby_stage_state_positions")
+
+
+def _renumber_default_stage_positions(db: LocalDatabase) -> None:
+    db.execute("DROP TABLE IF EXISTS gobby_default_stage_positions")
+    db.execute(
+        """
+        CREATE TEMP TABLE gobby_default_stage_positions AS
+        SELECT task_type,
+               stage_name,
+               ROW_NUMBER() OVER (
+                   PARTITION BY task_type
+                   ORDER BY position, stage_name
+               ) - 1 AS new_position
+          FROM task_type_default_stages
+        """
+    )
+    db.execute(
+        """
+        UPDATE task_type_default_stages
+           SET position = (
+               SELECT new_position
+                 FROM gobby_default_stage_positions renumbered
+                WHERE renumbered.task_type = task_type_default_stages.task_type
+                  AND renumbered.stage_name = task_type_default_stages.stage_name
+           )
+         WHERE EXISTS (
+               SELECT 1
+                 FROM gobby_default_stage_positions renumbered
+                WHERE renumbered.task_type = task_type_default_stages.task_type
+                  AND renumbered.stage_name = task_type_default_stages.stage_name
+         )
+        """
+    )
+    db.execute("DROP TABLE gobby_default_stage_positions")
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         240,
@@ -489,6 +584,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (250, "Add Linear project binding to projects", _apply_linear_project_binding_schema),
     (251, "Add integration workspace metadata", _apply_integration_workspace_metadata_schema),
     (252, "Remove Claude OAuth env forwarding config", _apply_config_store_cleanup),
+    (253, "Remove retired test architecture lifecycle stage", _apply_remove_test_arch_stage),
 ]
 
 
