@@ -185,6 +185,7 @@ class TestInstallNeo4j:
             install_neo4j(gobby_home=tmp_path)
 
         assert conf_file.read_text() == "# user customized config\n"
+        assert "apoc.*" not in conf_file.read_text()
 
     def test_install_neo4j_calls_docker_compose_with_profile(self, tmp_path: Path) -> None:
         """install_neo4j runs docker compose up with --profile neo4j."""

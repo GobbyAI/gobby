@@ -230,6 +230,8 @@ class TestWindowsUninstall:
         result = uninstall_service_windows()
 
         assert result["success"] is True
+        assert result["platform"] == "windows"
+        assert mock_schtasks.call_count == 2
 
 
 # ---------------------------------------------------------------------------

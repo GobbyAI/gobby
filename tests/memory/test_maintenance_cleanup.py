@@ -236,6 +236,7 @@ class TestFindDuplicateMemories:
         )
 
         assert len(result) == 0
+        assert vector_store.search.await_count == 1
 
     @pytest.mark.asyncio
     async def test_empty_store(self) -> None:

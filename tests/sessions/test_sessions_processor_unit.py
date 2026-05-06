@@ -271,6 +271,7 @@ class TestProcessSession:
                 await processor._process_session("session-1", str(transcript))
 
         assert "Error reading transcript" in caplog.text
+        assert processor.message_manager.store_messages.call_count == 0
 
     @pytest.mark.asyncio
     async def test_process_session_incomplete_line(self, processor, tmp_path):

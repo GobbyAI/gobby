@@ -916,6 +916,7 @@ class TestGetSessionCommits:
             result = get_commits(session_id="sess-123")
 
         assert result["session_id"] == "sess-123-full"
+        assert result["commits"] == []
 
     def test_get_session_commits_datetime_objects(self) -> None:
         """Test handling datetime objects instead of strings."""

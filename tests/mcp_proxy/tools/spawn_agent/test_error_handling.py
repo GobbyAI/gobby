@@ -279,3 +279,4 @@ class TestSpawnAgentImplErrorBranches:
                 timeout=0,
             )
             assert result["success"] is True
+            assert "timeout" not in mock_execute.call_args.kwargs

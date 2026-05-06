@@ -151,3 +151,6 @@ def test_setup_propagates_exit_code(
         result = runner.invoke(setup_mod.setup)
 
     assert result.exit_code == 42
+    command = mock_run.call_args.args[0]
+    assert command[0] == "/usr/local/bin/node"
+    assert command[1] == str(bundle_dir / "setup.mjs")

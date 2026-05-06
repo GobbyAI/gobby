@@ -561,6 +561,7 @@ class TestCodexBackend:
             result = await backend.handle_approval_request("tools/call", {"threadId": "thread-1"})
 
         assert result == backend._accept_response("tools/call")
+        assert session._wait_for_tool_approval.await_count == 1
 
     @pytest.mark.asyncio
     async def test_handle_approval_request_respects_managed_pre_tool_block(self) -> None:

@@ -259,3 +259,5 @@ async def test_resume_handles_malformed_inputs_json() -> None:
     )
 
     assert result == [execution.id]
+    await drain_asyncio_tasks()
+    assert executor.execute.call_args.kwargs["inputs"] == {}

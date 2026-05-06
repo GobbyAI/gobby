@@ -1133,6 +1133,7 @@ class TestResultStructure:
             "error",
         }
         assert set(result.keys()) >= expected_keys
+        assert result["success"] is True
 
     def test_uninstall_result_has_all_keys(self, mock_home: Path) -> None:
         """Test that uninstall result contains all expected keys."""

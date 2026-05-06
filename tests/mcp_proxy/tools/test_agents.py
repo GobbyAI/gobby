@@ -1036,3 +1036,5 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
 
         notify_result = mock_complete.call_args.kwargs["notify_result"]
         assert "signoff_message" not in notify_result
+        assert notify_result["status"] == "success"
+        assert notify_result["run_id"] == "run-abc"

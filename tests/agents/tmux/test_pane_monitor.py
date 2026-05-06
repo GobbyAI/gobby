@@ -218,3 +218,4 @@ async def test_callback_exception_no_crash() -> None:
 
     # Callback was called but raised; session should still be marked recently ended
     assert "sess-err" in monitor._recently_ended
+    assert len(monitor._recently_ended) == 1

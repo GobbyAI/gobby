@@ -368,6 +368,7 @@ class TestProjectRouting:
             await session.start(model="sonnet")
 
         assert captured_options["effort"] == "high"
+        assert captured_options["model"] == "sonnet"
 
     @pytest.mark.asyncio
     async def test_start_materializes_sandbox_settings_file(

@@ -526,6 +526,7 @@ class TestGetClaimedTasks:
             result = _get_claimed_tasks("sess-1", mock_db)
 
         assert "..." in result
+        assert "Long desc task" in result
 
     def test_exception_returns_empty(self) -> None:
         """Exception during task lookup returns empty string."""

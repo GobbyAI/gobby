@@ -173,6 +173,7 @@ class TestInstallCommand:
         }
         result = runner.invoke(install, ["--claude"], catch_exceptions=False)
         assert result.exit_code == 1
+        assert "Something went wrong" in result.output
 
     @patch("gobby.cli.install.run_daemon_setup")
     @patch(

@@ -106,6 +106,7 @@ class TestRemovedWaitTools:
 
         tool_names = [t["name"] for t in registry.list_tools()]
         assert "wait_for_completion" not in tool_names
+        assert "list_workflows" in tool_names
 
 
 class TestSpawnAgentContinuationPrompt:

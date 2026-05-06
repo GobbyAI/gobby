@@ -210,3 +210,4 @@ def test_get_config_provided() -> None:
         db=MagicMock(),
     )
     assert svc._get_config() is custom_config
+    assert svc._config is custom_config

@@ -769,6 +769,8 @@ class TestInstallDefaultMCPServers:
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
             result = install_default_mcp_servers()
         assert result["success"] is True
+        assert len(result["servers_added"]) > 0
+        assert mcp_path.read_text() != ""
 
     def test_repairs_misconfigured_transport(self, tmp_path: Path) -> None:
         mcp_path = tmp_path / ".gobby" / ".mcp.json"

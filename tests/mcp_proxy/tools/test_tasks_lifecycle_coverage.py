@@ -187,6 +187,7 @@ class TestCloseTaskTool:
             )
 
             assert result == {"success": True}
+            assert mock_task_manager.close_task.call_count == 1
 
     @pytest.mark.asyncio
     async def test_close_task_surfaces_bootstrap_ledger_mismatch(

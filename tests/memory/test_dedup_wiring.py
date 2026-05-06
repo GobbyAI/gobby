@@ -250,3 +250,4 @@ class TestBackgroundDedupTask:
             timeout=1.0,
         )
         assert memory.id == "mem-5"
+        assert memory.content == "Immediate"

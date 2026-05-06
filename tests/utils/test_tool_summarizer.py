@@ -242,6 +242,7 @@ class TestGenerateServerDescription:
         ):
             result = await generate_server_description("server1", tool_summaries)
             assert result == "Server does things."
+            assert mock_llm_service.call_feature.await_count == 1
 
     @pytest.mark.asyncio
     async def test_generate_server_description_failure_fallback(self):

@@ -985,3 +985,5 @@ class TestExecuteSpawnErrorPaths:
             result = await execute_spawn(request)
 
         assert result.tmux_session_name == "gobby-abc"
+        assert result.success is True
+        assert result.pid == 99

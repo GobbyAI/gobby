@@ -307,6 +307,7 @@ async def test_slack_adapter_sends_with_thread_ts():
     json_body = call_kwargs.kwargs.get("json", {})
     # The Slack adapter should include thread_ts in the payload
     assert json_body.get("thread_ts") == "1234567890.000001"
+    assert json_body["text"] == "Thread reply"
 
 
 # --- Discord adapter threading ---

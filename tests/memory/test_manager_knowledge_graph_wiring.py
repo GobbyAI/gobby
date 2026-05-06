@@ -348,6 +348,7 @@ class TestGraphBackgroundTask:
         # No graph background tasks should exist
         graph_tasks = [t for t in manager._background_tasks if "graph" in (t.get_name() or "")]
         assert len(graph_tasks) == 0
+        assert manager._kg_service is None
 
     async def test_graph_task_failure_logged_not_raised(self) -> None:
         """Graph background task failure is logged but doesn't propagate."""

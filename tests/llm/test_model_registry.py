@@ -191,6 +191,7 @@ class TestFetchModelsSync:
         mock_get.return_value = mock_response
         models = fetch_models_sync()
         assert models == []
+        assert mock_response.json.call_count == 0
 
     @patch("gobby.llm.model_registry.httpx.get")
     def test_malformed_json_returns_empty(self, mock_get: MagicMock) -> None:

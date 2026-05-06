@@ -384,6 +384,7 @@ class TestSessionStartNewSession:
 
         # Should still allow despite error
         assert response.decision == "allow"
+        assert mock_dependencies["session_manager"].mark_session_expired.call_count == 1
 
     def test_new_session_coordinator_registration_error(self, mock_dependencies: dict) -> None:
         """Test error registering session with coordinator is handled."""

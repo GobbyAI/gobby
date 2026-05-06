@@ -80,6 +80,9 @@ async def test_base_captured_before_first_agent_run(
     ):
         await handler.prepare_environment(_config(task.id, sample_project["id"], tmp_path))
 
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert artifacts.worktree_id == "wt-123"
+
 
 async def _prepare_with_git_head(
     handler,

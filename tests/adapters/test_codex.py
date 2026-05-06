@@ -352,6 +352,7 @@ class TestCodexAppServerClientStart:
                 "--disable",
                 "guardian_approval",
             ]
+            assert args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
 
         await client.stop()
 

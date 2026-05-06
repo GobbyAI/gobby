@@ -148,6 +148,7 @@ class TestFindGeminiTranscript:
 
             result = handler._find_gemini_transcript({"cwd": cwd}, "abcdefgh-1234")
             assert result == "/fake/session-20240101-abcdefgh.json"
+            assert "abcdefgh" in result
 
     def test_fallback_most_recent(self, tmp_path) -> None:
         """When prefix doesn't match, falls back to most recent."""

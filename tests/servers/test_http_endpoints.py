@@ -759,6 +759,7 @@ class TestInternalRegistries:
             )
 
         assert response.status_code == 500
+        assert "Tool error" in response.text
 
     def test_get_tool_schema_internal_server(self, session_storage: SessionManager) -> None:
         """Test getting tool schema from internal server."""

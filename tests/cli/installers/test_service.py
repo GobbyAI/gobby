@@ -639,6 +639,7 @@ class TestMacOSEnable:
         result = enable_service_macos()
 
         assert result["success"] is True
+        assert mock_run.call_count == 3
 
     @patch("gobby.cli.installers.service._plist_path")
     def test_enable_fails_when_not_installed(

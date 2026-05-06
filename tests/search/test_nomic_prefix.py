@@ -326,12 +326,13 @@ async def test_reload_failure_raises() -> None:
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        patch("gobby.cli.services.try_autoload_embedding_model", return_value=False),
+        patch("gobby.cli.services.try_autoload_embedding_model", return_value=False) as mock_reload,
     ):
         with pytest.raises(RuntimeError, match="Embedding generation failed"):
             await generate_embedding(
                 "test", model="nomic-embed-text", api_base="http://localhost:1234/v1"
             )
+    assert mock_reload.await_count == 1
 
 
 @pytest.mark.asyncio

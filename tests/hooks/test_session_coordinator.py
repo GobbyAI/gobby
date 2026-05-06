@@ -261,6 +261,7 @@ class TestSessionLifecycleTransitions:
 
         # Should still count the successful one
         assert count == 1
+        assert mock_message_processor.register_session.call_count == 2
 
     def test_reregister_resets_agent_context_injected(self) -> None:
         """Test re-registration resets deferred persona injection flags."""

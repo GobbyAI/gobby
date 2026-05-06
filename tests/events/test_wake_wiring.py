@@ -276,6 +276,7 @@ class TestAutoSubscribeLineage:
 
         subs = registry.get_subscribers("pe-lin-1")
         assert "sess-child" in subs
+        assert set(subs) == {"sess-child", "sess-mid", "sess-root"}
 
 
 class TestStartupRecovery:

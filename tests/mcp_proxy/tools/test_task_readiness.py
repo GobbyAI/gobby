@@ -289,6 +289,7 @@ class TestSuggestNextTask:
             parent_task_id=None,
             current_stage_state=None,
             closed=None,
+            claimed=None,
             limit=None,
             project_id=None,
         ):
@@ -305,6 +306,7 @@ class TestSuggestNextTask:
 
         # At same priority, leaf task wins due to leaf bonus + other bonuses
         assert result["suggestion"]["id"] == "leaf-1"
+        assert result["suggestion"]["title"] == "Leaf task"
 
     def test_suggest_next_task_with_type_filter(self, mock_readiness_registry) -> None:
         """Test suggest_next_task with task_type filter."""

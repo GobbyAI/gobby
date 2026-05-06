@@ -195,3 +195,4 @@ def test_get_provider_models_rebuilds_fallback_catalog_on_config_change(
     reasoning._get_provider_models("claude", config_b)
 
     assert created_for == [config_a, config_b]
+    assert reasoning._fallback_catalog_config is config_b
