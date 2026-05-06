@@ -202,6 +202,61 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.load_config")
+    def test_start_warns_when_no_agent_auth_env_detected(
+        self,
+        mock_load_config: MagicMock,
+        mock_sleep: MagicMock,
+        mock_init_storage: MagicMock,
+        mock_kill_daemons: MagicMock,
+        mock_is_port_available: MagicMock,
+        mock_wait_port: MagicMock,
+        mock_popen: MagicMock,
+        mock_httpx_get: MagicMock,
+        mock_fetch_status: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        temp_dir: Path,
+    ) -> None:
+        """Start emits a soft warning when no major CLI auth env is visible."""
+        mock_load_config.return_value = mock_daemon_config
+        mock_kill_daemons.return_value = 0
+        mock_is_port_available.return_value = True
+        mock_fetch_status.return_value = {}
+
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+        mock_process.poll.return_value = None
+        mock_popen.return_value = mock_process
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_httpx_get.return_value = mock_response
+
+        with (
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+            patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
+            patch("gobby.cli.daemon.has_auth_env", return_value=False),
+        ):
+            gobby_dir = temp_dir / ".gobby"
+            gobby_dir.mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+            result = runner.invoke(cli, ["start"], env={"HOME": str(temp_dir)})
+
+        assert result.exit_code == 0
+        assert "no Anthropic/OpenAI/Google API/provider credential env vars detected" in (
+            result.output
+        )
+
+    @patch("gobby.cli.daemon.fetch_rich_status")
+    @patch("gobby.cli.daemon.httpx.get")
+    @patch("gobby.cli.daemon.subprocess.Popen")
+    @patch("gobby.cli.daemon.wait_for_port_available")
+    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon.kill_all_gobby_daemons")
+    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon.time.sleep")
+    @patch("gobby.cli.load_config")
     def test_start_with_verbose_flag(
         self,
         mock_load_config: MagicMock,

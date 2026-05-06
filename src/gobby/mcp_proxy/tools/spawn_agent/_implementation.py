@@ -613,6 +613,7 @@ async def spawn_agent_impl(
         reasoning_message=reasoning.message,
         sandbox_config=effective_sandbox_config,
         timeout_seconds=effective_timeout,
+        daemon_config=daemon_config,
     )
 
     # run_id is minted above and threaded through SpawnRequest.agent_run_id.

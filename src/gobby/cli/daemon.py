@@ -16,6 +16,7 @@ import click
 import httpx
 import psutil
 
+from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
 from .installers.service import (
@@ -454,6 +455,13 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     cmd = [sys.executable, "-m", "gobby.runner"]
     if verbose:
         cmd.append("--verbose")
+
+    if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex", "gemini")):
+        click.secho(
+            "warning: no Anthropic/OpenAI/Google API/provider credential env vars detected. "
+            "Spawned agents may prompt for login unless the CLI has on-disk credentials.",
+            fg="yellow",
+        )
 
     with contextlib.ExitStack() as log_stack:
         log_f = log_stack.enter_context(open(log_file, "a"))

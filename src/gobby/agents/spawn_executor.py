@@ -25,6 +25,7 @@ from gobby.agents.spawn import (
     prepare_terminal_spawn,
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,20 @@ class SpawnRequest:
 
     # Timeout
     timeout_seconds: float | None = None  # Agent timeout (persisted to DB for restart survival)
+    daemon_config: Any | None = None
+
+
+def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
+    daemon_config = request.daemon_config
+    tmux_config = getattr(daemon_config, "tmux", None)
+    agent_auth_config = getattr(daemon_config, "agent_auth", None)
+
+    return TmuxSpawner(
+        config=tmux_config if isinstance(tmux_config, TmuxConfig) else None,
+        forward_claude_oauth_env=bool(
+            getattr(agent_auth_config, "forward_claude_oauth_env", False)
+        ),
+    )
 
 
 @dataclass
@@ -249,7 +264,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("claude", request.cwd)
 
     # Spawn in terminal with env vars
-    terminal_spawner = TmuxSpawner()
+    terminal_spawner = _tmux_spawner_for_request(request)
     terminal_result = terminal_spawner.spawn(
         command=cmd,
         cwd=request.cwd,
@@ -367,7 +382,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("gemini", request.cwd)
 
     # Spawn in terminal with env vars
-    terminal_spawner = TmuxSpawner()
+    terminal_spawner = _tmux_spawner_for_request(request)
     terminal_result = terminal_spawner.spawn(
         command=cmd,
         cwd=request.cwd,
@@ -475,7 +490,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
     pre_approve_directory("qwen", request.cwd)
 
-    terminal_spawner = TmuxSpawner()
+    terminal_spawner = _tmux_spawner_for_request(request)
     terminal_result = terminal_spawner.spawn(
         command=cmd,
         cwd=request.cwd,
@@ -575,7 +590,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    terminal_spawner = TmuxSpawner()
+    terminal_spawner = _tmux_spawner_for_request(request)
     terminal_result = terminal_spawner.spawn(
         command=cmd,
         cwd=request.cwd,
@@ -665,7 +680,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
 
     pre_approve_directory("droid", request.cwd)
 
-    terminal_spawner = TmuxSpawner()
+    terminal_spawner = _tmux_spawner_for_request(request)
     terminal_result = terminal_spawner.spawn(
         command=cmd,
         cwd=request.cwd,

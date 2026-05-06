@@ -6,6 +6,7 @@ All tmux subprocess calls are mocked — no real tmux binary required.
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -691,6 +692,82 @@ class TestTmuxSpawner:
 
             assert result.success is False
             assert "tmux not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_spawn_forwards_auth_env_from_daemon_environment(self) -> None:
+        """tmux receives allowlisted auth env from the live daemon process."""
+        spawner = TmuxSpawner()
+        daemon_env = {
+            "HOME": "/home/daemon",
+            "ANTHROPIC_API_KEY": "sk-daemon",
+            "CLAUDE_CODE_OAUTH_TOKEN": "oauth-token",
+            "UNRELATED_SECRET": "nope",
+        }
+        with (
+            patch.dict(os.environ, daemon_env, clear=False),
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(
+                command=["claude", "--dangerously-skip-permissions"],
+                cwd="/tmp",
+                env={"GOBBY_SESSION_ID": "sess-1"},
+            )
+
+        env_arg = mock_create.call_args[1]["env"]
+        assert env_arg["GOBBY_SESSION_ID"] == "sess-1"
+        assert env_arg["HOME"] == "/home/daemon"
+        assert env_arg["ANTHROPIC_API_KEY"] == "sk-daemon"
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in env_arg
+        assert "UNRELATED_SECRET" not in env_arg
+
+    @pytest.mark.asyncio
+    async def test_spawn_keeps_explicit_env_over_passthrough(self) -> None:
+        """Command/sandbox env wins over daemon passthrough values."""
+        spawner = TmuxSpawner()
+        with (
+            patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-daemon"}, clear=False),
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(
+                command=["claude"],
+                cwd="/tmp",
+                env={"ANTHROPIC_API_KEY": "sk-override"},
+            )
+
+        assert mock_create.call_args[1]["env"]["ANTHROPIC_API_KEY"] == "sk-override"
+
+    @pytest.mark.asyncio
+    async def test_spawn_forwards_claude_oauth_only_when_configured(self) -> None:
+        """Claude OAuth env passthrough is controlled by daemon config."""
+        spawner = TmuxSpawner(forward_claude_oauth_env=True)
+        with (
+            patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-token"}, clear=False),
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(command=["claude"], cwd="/tmp")
+
+        assert mock_create.call_args[1]["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-token"
 
 
 # =============================================================================

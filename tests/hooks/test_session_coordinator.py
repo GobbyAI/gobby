@@ -400,6 +400,28 @@ class TestAgentRunCompletion:
         assert "no activity" in fail_kwargs["error"].lower()
         mock_agent_run_manager.complete.assert_not_called()
 
+    def test_complete_agent_run_zero_activity_reports_auth_prompt(self) -> None:
+        """Zero-activity failures include auth/trust diagnostics from pane output."""
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="running")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        mock_session = MagicMock()
+        mock_session.agent_run_id = "run-auth"
+        mock_session.id = "sess-auth"
+        mock_session.summary_markdown = "Claude Code\n/login\n"
+        mock_session.tool_call_count = 0
+        mock_session.turn_count = 0
+
+        coordinator.complete_agent_run(mock_session)
+
+        fail_kwargs = mock_agent_run_manager.fail.call_args[1]
+        assert "auth/trust prompt detected" in fail_kwargs["error"]
+        assert "no activity" in fail_kwargs["error"].lower()
+        mock_agent_run_manager.complete.assert_not_called()
+
     def test_complete_agent_run_defaults_counts_when_missing(self) -> None:
         """Stats attributes from session are passed through to complete()."""
         mock_agent_run_manager = MagicMock()

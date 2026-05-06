@@ -18,6 +18,7 @@ from pathlib import Path
 
 from gobby.agents.constants import get_terminal_env_vars
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths, get_sandbox_resolver
+from gobby.agents.spawners.auth_env import terminal_env_passthrough
 from gobby.agents.spawners.base import (
     SpawnResult,
     TerminalSpawnerBase,
@@ -29,6 +30,17 @@ from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManage
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
+_SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "droid"})
+
+
+def _infer_auth_cli(command: list[str]) -> str | None:
+    """Infer the provider CLI from a command argv list."""
+    if not command:
+        return None
+    cli = Path(command[0]).name.lower()
+    if cli in _SUPPORTED_AUTH_CLIS:
+        return cli
+    return None
 
 
 class TmuxSpawner(TerminalSpawnerBase):
@@ -40,9 +52,15 @@ class TmuxSpawner(TerminalSpawnerBase):
       can start output streaming and register the name on the agent.
     """
 
-    def __init__(self, config: TmuxConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TmuxConfig | None = None,
+        *,
+        forward_claude_oauth_env: bool = False,
+    ) -> None:
         self._config = config or TmuxConfig()
         self._session_manager = TmuxSessionManager(self._config)
+        self._forward_claude_oauth_env = forward_claude_oauth_env
 
     @property
     def terminal_type(self) -> str:
@@ -112,10 +130,18 @@ class TmuxSpawner(TerminalSpawnerBase):
         # tmux inherits the daemon's env; -e can only SET vars, not unset.
         shell_cmd = f"unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT; {shell_cmd}"
 
+        spawn_env = dict(env or {})
+        if cli := _infer_auth_cli(command):
+            for key, value in terminal_env_passthrough(
+                cli,
+                include_claude_oauth=self._forward_claude_oauth_env,
+            ).items():
+                spawn_env.setdefault(key, value)
+
         # Merge env with a clean spawn env
-        clean_env = make_spawn_env(env)
+        clean_env = make_spawn_env(spawn_env)
         # Only pass the *extra* env vars that differ from os.environ
-        extra_env = {k: v for k, v in clean_env.items() if k in (env or {})}
+        extra_env = {k: v for k, v in clean_env.items() if k in spawn_env}
 
         # tmux -e can only SET vars, not unset them.  Override to empty so
         # the session doesn't inherit the daemon's VIRTUAL_ENV (causes uv
