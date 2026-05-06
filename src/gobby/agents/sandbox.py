@@ -241,8 +241,6 @@ class ClaudeSandboxResolver(SandboxResolver):
                     "allowAllUnixSockets": False,
                     "allowLocalBinding": False,
                     "allowedDomains": [],
-                    "httpProxyPort": None,
-                    "socksProxyPort": None,
                 },
                 "enableWeakerNestedSandbox": False,
             },

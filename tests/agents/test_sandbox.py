@@ -417,6 +417,8 @@ class TestClaudeSandboxResolver:
         assert "network" in settings["sandbox"]
         assert settings["sandbox"]["network"]["allowLocalBinding"] is False
         assert settings["sandbox"]["network"]["allowedDomains"] == []
+        assert "httpProxyPort" not in settings["sandbox"]["network"]
+        assert "socksProxyPort" not in settings["sandbox"]["network"]
 
     def test_returns_empty_env(self) -> None:
         """Test that Claude resolver always returns empty env dict."""

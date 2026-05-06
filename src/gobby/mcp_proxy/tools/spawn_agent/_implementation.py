@@ -191,6 +191,44 @@ async def _kill_tmux_session(
         logger.warning("Failed to kill unregistered tmux session %s: %s", session_name, exc)
 
 
+async def _registration_timeout_error(session_name: str, *, config: TmuxConfig) -> str:
+    manager = TmuxSessionManager(config)
+    pane_output = await manager.capture_pane(session_name, lines=40)
+    if not pane_output or not pane_output.strip():
+        return "agent_did_not_register"
+
+    tail = "\n".join(pane_output.strip().splitlines()[-20:])
+    return f"agent_did_not_register - last pane output:\n{tail}"
+
+
+def _persist_spawn_runtime(
+    runner: Any,
+    run_id: str,
+    spawn_result: Any,
+    *,
+    tmux_session_name: str | None,
+    worktree_id: str | None,
+    clone_id: str | None,
+) -> None:
+    child_session_id = getattr(spawn_result, "child_session_id", None)
+    if child_session_id is not None:
+        try:
+            runner.run_storage.update_child_session(run_id, child_session_id)
+        except Exception as e:
+            logger.warning(f"Failed to update child_session_id for {run_id}: {e}")
+
+    try:
+        runner.run_storage.update_runtime(
+            run_id,
+            pid=getattr(spawn_result, "pid", None),
+            tmux_session_name=tmux_session_name,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
+
+
 async def spawn_agent_impl(
     prompt: str,
     runner: AgentRunner,
@@ -634,6 +672,7 @@ async def spawn_agent_impl(
     tmux_spawn = bool(
         spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
     )
+    runtime_persisted = False
     if tmux_spawn and tmux_session_name:
         alive = await _check_tmux_session_alive(
             tmux_session_name,
@@ -652,35 +691,41 @@ async def spawn_agent_impl(
             socket_name=tmux_socket_name,
             socket_path=tmux_socket_path,
         )
+        if spawn_result.child_session_id is not None:
+            _persist_spawn_runtime(
+                runner,
+                run_id,
+                spawn_result,
+                tmux_session_name=tmux_session_name,
+                worktree_id=isolation_ctx.worktree_id,
+                clone_id=isolation_ctx.clone_id,
+            )
+            runtime_persisted = True
         registered = await _wait_for_agent_registration(
             runner.run_storage,
             run_id,
             timeout_seconds=tmux_config.registration_timeout_seconds,
         )
         if not registered:
+            spawn_result.error = await _registration_timeout_error(
+                tmux_session_name,
+                config=tmux_config,
+            )
             await _kill_tmux_session(tmux_session_name, config=tmux_config)
             spawn_result.success = False
             spawn_result.status = "failed"
-            spawn_result.error = "agent_did_not_register"
 
     # 12. Update DB and handle post-spawn setup based on spawn result
     if spawn_result.success and spawn_result.child_session_id is not None:
-        try:
-            runner.run_storage.update_child_session(run_id, spawn_result.child_session_id)
-        except Exception as e:
-            logger.warning(f"Failed to update child_session_id for {run_id}: {e}")
-
-        # Persist runtime state for daemon restart recovery
-        try:
-            runner.run_storage.update_runtime(
+        if not runtime_persisted:
+            _persist_spawn_runtime(
+                runner,
                 run_id,
-                pid=spawn_result.pid,
+                spawn_result,
                 tmux_session_name=tmux_session_name,
                 worktree_id=isolation_ctx.worktree_id,
                 clone_id=isolation_ctx.clone_id,
             )
-        except Exception as e:
-            logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
 
         if not tmux_spawn:
             try:
