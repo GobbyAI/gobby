@@ -193,14 +193,8 @@ class TestGobbyDaemonToolsListMcpServers:
         assert result["total"] == 2
         assert result["connected"] == 1
 
-        # Verify slim fields on each server
-        server1 = next(s for s in result["servers"] if s["name"] == "server1")
-        assert server1["state"] == "connected"
-        assert server1["transport"] == "http"
-
-        server2 = next(s for s in result["servers"] if s["name"] == "server2")
-        assert server2["state"] == "pending"
-        assert server2["transport"] == "stdio"
+        assert result["servers"] == ["server1", "server2"]
+        assert result["issues"] == [{"name": "server2", "state": "pending", "transport": "stdio"}]
 
     @pytest.mark.asyncio
     async def test_list_mcp_servers_emits_proxy_after_tool(self, tools_handler):

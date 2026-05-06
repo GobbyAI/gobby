@@ -163,9 +163,7 @@ async def test_list_mcp_servers(daemon_tools, mock_mcp_manager):
     daemon_tools.internal_manager.get_all_registries.return_value = []
 
     result = await daemon_tools.list_mcp_servers()
-    assert len(result["servers"]) == 1
-    assert result["servers"][0]["name"] == "server1"
-    assert result["servers"][0]["state"] == "connected"
+    assert result["servers"] == ["server1"]
     assert result["connected"] == 1
 
 

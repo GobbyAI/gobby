@@ -633,13 +633,35 @@ class TestDaemonProxyMethods:
         proxy = DaemonProxy(60887)
         with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = {
-                "total": 1,
-                "connected": 1,
-                "servers": [{"name": "srv1", "state": "connected", "transport": "http"}],
+                "total": 2,
+                "connected": 2,
+                "servers": [
+                    {"name": "srv1", "state": "connected", "transport": "http"},
+                    {"name": "srv2", "state": "connected", "transport": "stdio"},
+                ],
             }
             result = await proxy.list_mcp_servers()
-            assert result["total"] == 1
-            assert result["servers"][0]["name"] == "srv1"
+            assert result["total"] == 2
+            assert result["servers"] == ["srv1", "srv2"]
+            assert "issues" not in result
+
+    @pytest.mark.asyncio
+    async def test_list_mcp_servers_keeps_issue_details(self):
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = {
+                "total": 2,
+                "connected": 1,
+                "servers": [
+                    {"name": "srv1", "state": "connected", "transport": "http"},
+                    {"name": "srv2", "state": "pending", "transport": "stdio"},
+                ],
+            }
+            result = await proxy.list_mcp_servers()
+            assert result["servers"] == ["srv1", "srv2"]
+            assert result["issues"] == [{"name": "srv2", "state": "pending", "transport": "stdio"}]
 
     @pytest.mark.asyncio
     async def test_recommend_tools(self):

@@ -31,6 +31,7 @@ from gobby.mcp_proxy.daemon_control import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.mcp_proxy.server_list import compact_mcp_server_list
 
 
 def _strip_none(obj: Any) -> Any:
@@ -319,7 +320,8 @@ class DaemonProxy:
 
     async def list_mcp_servers(self, session_id: str | None = None) -> dict[str, Any]:
         """List configured MCP servers (includes internal gobby-* servers)."""
-        return await self._request("GET", "/api/mcp/servers", session_id=session_id)
+        result = await self._request("GET", "/api/mcp/servers", session_id=session_id)
+        return compact_mcp_server_list(result)
 
     async def recommend_tools(
         self,

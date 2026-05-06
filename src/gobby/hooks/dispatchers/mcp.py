@@ -114,7 +114,17 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         servers = result.get("servers", [])
         lines = ["**Available MCP Servers:**"]
         for s in servers:
-            lines.append(f"- {s.get('name')} ({s.get('state', 'unknown')})")
+            if isinstance(s, str):
+                lines.append(f"- {s}")
+            elif isinstance(s, dict):
+                lines.append(f"- {s.get('name')} ({s.get('state', 'unknown')})")
+        issues = result.get("issues") or []
+        if issues:
+            lines.append("")
+            lines.append("**MCP Server Issues:**")
+            for issue in issues:
+                if isinstance(issue, dict):
+                    lines.append(f"- {issue.get('name')} ({issue.get('state', 'unknown')})")
         return "\n".join(lines)
 
     elif tool == "list_tools":

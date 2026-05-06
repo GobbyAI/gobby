@@ -18,6 +18,7 @@ from gobby.mcp_proxy._call_tool_wrapper import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
@@ -134,12 +135,14 @@ class GobbyDaemonTools:
             server_list = [s for s in server_list if fnmatch.fnmatch(s["name"], name_filter)]
             connected_count = sum(1 for s in server_list if s.get("state") == "connected")
 
-        result = {
-            "success": True,
-            "servers": server_list,
-            "total": len(server_list),
-            "connected": connected_count,
-        }
+        result = compact_mcp_server_list(
+            {
+                "success": True,
+                "servers": server_list,
+                "total": len(server_list),
+                "connected": connected_count,
+            }
+        )
         self.tool_proxy.record_servers_listed(session_id)
         await self.tool_proxy.emit_synthetic_proxy_after_tool(
             session_id=session_id,
