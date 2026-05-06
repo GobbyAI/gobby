@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 from gobby.hooks.events import HookEvent
+from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.skills.formatting import skill_fetch_directive
 
 
@@ -70,7 +71,7 @@ async def proxy_self_call(
     if tool == "list_mcp_servers":
         name_filter = args.get("name_filter") if "name_filter" in args else args.get("filter")
         result = await proxy.list_servers(name_filter=name_filter)
-        return result
+        return compact_mcp_server_list(result)
     elif tool == "list_tools":
         server_name = args.get("server_name", "")
         result = await proxy.list_tools(server_name)

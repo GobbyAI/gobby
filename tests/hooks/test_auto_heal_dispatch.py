@@ -77,7 +77,7 @@ class TestInjectResult:
         assert len(results) == 1
         assert results[0]["inject_result"] is True
         assert results[0]["success"] is True
-        assert results[0]["result"]["servers"][0]["name"] == "gobby-tasks"
+        assert results[0]["result"]["servers"] == ["gobby-tasks"]
 
     def test_no_inject_result_returns_empty(self) -> None:
         """Calls without inject_result/block_on_failure don't appear in results."""
@@ -304,6 +304,56 @@ class TestProxySelfRouting:
 
         proxy.list_servers.assert_called_once()
         assert results[0]["success"] is True
+        assert results[0]["result"]["servers"] == ["s1"]
+
+    def test_list_mcp_servers_preserves_issue_details(self) -> None:
+        """_proxy/list_mcp_servers keeps details only for servers needing attention."""
+        proxy = AsyncMock()
+        proxy.list_servers = AsyncMock(
+            return_value={
+                "success": True,
+                "servers": [
+                    {"name": "live", "state": "connected", "transport": "internal"},
+                    {
+                        "name": "stale",
+                        "state": "disconnected",
+                        "transport": "stdio",
+                        "enabled": False,
+                    },
+                ],
+                "total": 2,
+                "connected": 1,
+            }
+        )
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
+        event = _make_event()
+
+        calls = [
+            {
+                "server": "_proxy",
+                "tool": "list_mcp_servers",
+                "arguments": {},
+                "inject_result": True,
+                "block_on_failure": False,
+            }
+        ]
+
+        results = stub._dispatch_mcp_calls(calls, event)
+
+        assert results[0]["result"] == {
+            "success": True,
+            "servers": ["live", "stale"],
+            "total": 2,
+            "connected": 1,
+            "issues": [
+                {
+                    "name": "stale",
+                    "state": "disconnected",
+                    "transport": "stdio",
+                    "enabled": False,
+                }
+            ],
+        }
 
     def test_list_tools_routes_to_proxy_list_tools(self) -> None:
         """_proxy/list_tools routes to proxy.list_tools(server_name)."""
