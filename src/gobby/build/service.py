@@ -216,6 +216,7 @@ async def _build_plan_file(
     tick = await _kick_dispatcher_tick(
         task_manager.db,
         project_id,
+        dispatcher_enabled=True,
         services=services,
         max_ticks=_quick_tick_limit(opts),
         max_active_agents=opts.max_active_agents,
@@ -267,6 +268,7 @@ async def _build_leaf(
     tick = await _kick_dispatcher_tick(
         db,
         project_id,
+        dispatcher_enabled=True,
         services=services,
         max_ticks=_quick_tick_limit(opts),
         max_active_agents=opts.max_active_agents,
@@ -339,6 +341,7 @@ async def _build_epic(
     tick = await _kick_dispatcher_tick(
         db,
         project_id,
+        dispatcher_enabled=True,
         services=services,
         max_ticks=_quick_tick_limit(opts),
         max_active_agents=opts.max_active_agents,
@@ -521,6 +524,7 @@ async def _resume_existing_lifecycle(
     tick = await _kick_dispatcher_tick(
         db,
         project_id,
+        dispatcher_enabled=True,
         services=services,
         max_ticks=_quick_tick_limit(opts),
         max_active_agents=opts.max_active_agents,

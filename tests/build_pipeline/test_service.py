@@ -366,6 +366,41 @@ async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
 
 
 @pytest.mark.asyncio
+async def test_explicit_build_tick_bypasses_paused_dispatcher_cron(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.service import DispatcherTickSummary, build_stop
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Docs leaf",
+        category="docs",
+        task_type="task",
+    )
+    tick_kwargs: list[dict[str, object]] = []
+
+    async def fake_tick(*_args: object, **kwargs: object) -> DispatcherTickSummary:
+        tick_kwargs.append(dict(kwargs))
+        return DispatcherTickSummary(ticks=1)
+
+    monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", fake_tick)
+    build_stop(db=temp_db, project_id=project_id)
+
+    result = await _build(
+        str(task.seq_num),
+        _options(isolation="none", quick=True),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    assert result.tick_dispatched == 1
+    assert tick_kwargs[0]["dispatcher_enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_max_retries_zero_sets_one_attempt_per_resolved_stage(
     temp_db,
     tmp_path: Path,
