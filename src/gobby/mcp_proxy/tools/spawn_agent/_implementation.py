@@ -20,8 +20,6 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
-from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
@@ -133,72 +131,6 @@ def _initial_step_state_for_spawn(
     current_step = _advance_initial_step(agent_body, current_step, step_variables)
 
     return current_step, step_variables
-
-
-def _tmux_config_for_spawn(
-    daemon_config: Any | None,
-    *,
-    socket_name: str | None,
-    socket_path: str | None,
-) -> TmuxConfig:
-    config = getattr(daemon_config, "tmux", None)
-    if not isinstance(config, TmuxConfig):
-        config = TmuxConfig()
-    if socket_name is not None or socket_path is not None:
-        config = config.model_copy(
-            update={
-                "socket_name": config.socket_name if socket_name is None else socket_name,
-                "socket_path": socket_path,
-            }
-        )
-    return config
-
-
-async def _wait_for_agent_registration(
-    run_storage: Any,
-    run_id: str,
-    *,
-    timeout_seconds: float,
-) -> bool:
-    """Wait for SessionStart to move a spawned terminal run out of pending."""
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    while True:
-        run = run_storage.get(run_id)
-        status = getattr(run, "status", None)
-        if status == "running":
-            return True
-        if status in {"success", "error", "timeout", "cancelled"}:
-            return False
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            return False
-        await asyncio.sleep(min(0.25, remaining))
-
-
-async def _kill_tmux_session(
-    session_name: str,
-    *,
-    config: TmuxConfig,
-) -> None:
-    manager = TmuxSessionManager(config)
-    if not manager.is_available():
-        return
-    try:
-        await manager.kill_session(session_name)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logger.warning("Failed to kill unregistered tmux session %s: %s", session_name, exc)
-
-
-async def _registration_timeout_error(session_name: str, *, config: TmuxConfig) -> str:
-    manager = TmuxSessionManager(config)
-    pane_output = await manager.capture_pane(session_name, lines=40)
-    if not pane_output or not pane_output.strip():
-        return "agent_did_not_register"
-
-    tail = "\n".join(pane_output.strip().splitlines()[-20:])
-    return f"agent_did_not_register - last pane output:\n{tail}"
 
 
 def _persist_spawn_runtime(
@@ -686,11 +618,6 @@ async def spawn_agent_impl(
             tmux_spawn = False
 
     if tmux_spawn and tmux_session_name:
-        tmux_config = _tmux_config_for_spawn(
-            daemon_config,
-            socket_name=tmux_socket_name,
-            socket_path=tmux_socket_path,
-        )
         if spawn_result.child_session_id is not None:
             _persist_spawn_runtime(
                 runner,
@@ -701,19 +628,10 @@ async def spawn_agent_impl(
                 clone_id=isolation_ctx.clone_id,
             )
             runtime_persisted = True
-        registered = await _wait_for_agent_registration(
-            runner.run_storage,
-            run_id,
-            timeout_seconds=tmux_config.registration_timeout_seconds,
-        )
-        if not registered:
-            spawn_result.error = await _registration_timeout_error(
-                tmux_session_name,
-                config=tmux_config,
-            )
-            await _kill_tmux_session(tmux_session_name, config=tmux_config)
-            spawn_result.success = False
-            spawn_result.status = "failed"
+            try:
+                runner.run_storage.start(run_id)
+            except Exception as e:
+                logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
 
     # 12. Update DB and handle post-spawn setup based on spawn result
     if spawn_result.success and spawn_result.child_session_id is not None:
