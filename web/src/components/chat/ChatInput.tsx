@@ -1,5 +1,11 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ChatModeInfo, ChatSendOptions } from '../../types/chat'
+import type {
+  QueuedFile,
+  ChatMode,
+  ChatModeInfo,
+  ChatSendOptions,
+  SessionObservationMeta,
+} from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
@@ -9,12 +15,14 @@ import { ChatInputModelControls } from './ChatInputModelControls'
 import { ModeSelector } from './ModeSelector'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
+import { AttachedSessionMetadataStrip } from './AttachedSessionMetadataStrip'
 import { useChatInputProviderSelection } from './useChatInputProviderSelection'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import {
   AUTO_REASONING_EFFORT,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
+import { normalizeChatMode } from '../../types/chat'
 
 interface ChatInputProps {
   onSend: (
@@ -89,6 +97,9 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
+  isAttached?: boolean
+  attachedSessionMeta?: SessionObservationMeta | null
+  onAttachedModeChange?: (mode: ChatMode) => void
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -161,6 +172,9 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
+  isAttached = false,
+  attachedSessionMeta = null,
+  onAttachedModeChange,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -666,28 +680,42 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
-              {onModeChange && (
+              {isAttached && onAttachedModeChange ? (
                 <ModeSelector
-                  mode={mode}
-                  onModeChange={onModeChange}
-                  disabled={disabled || modeDisabled}
+                  mode={normalizeChatMode(attachedSessionMeta?.chatMode)}
+                  onModeChange={onAttachedModeChange}
+                  disabled={disabled}
                   modes={modeOptions}
                 />
+              ) : (
+                onModeChange && (
+                  <ModeSelector
+                    mode={mode}
+                    onModeChange={onModeChange}
+                    disabled={disabled || modeDisabled}
+                    modes={modeOptions}
+                  />
+                )
               )}
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={disabled || attachmentsDisabled}
-                title={
-                  attachmentsDisabled
-                    ? 'Attached session owns attachments'
-                    : 'Attach file'
-                }
-              >
-                <PaperclipIcon />
-              </Button>
-              {onAgentChange && agentName && agentDefinitions.length > 0 && (
+              {!isAttached && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled || attachmentsDisabled}
+                  title={
+                    attachmentsDisabled
+                      ? 'Attached session owns attachments'
+                      : 'Attach file'
+                  }
+                >
+                  <PaperclipIcon />
+                </Button>
+              )}
+              {!isAttached &&
+                onAgentChange &&
+                agentName &&
+                agentDefinitions.length > 0 && (
                 <ActiveAgentIndicator
                   agentName={agentName}
                   onAgentChange={onAgentChange}
@@ -700,7 +728,7 @@ export function ChatInput({
                   disabled={disabled || agentPickerDisabled}
                 />
               )}
-              {onTtsEnabledChange && (
+              {!isAttached && onTtsEnabledChange && (
                 <Button
                   size="icon"
                   variant="ghost"
@@ -740,7 +768,7 @@ export function ChatInput({
                   <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />
                 </Button>
               )}
-              {onSttEnabledChange && startRecording && stopRecording && (
+              {!isAttached && onSttEnabledChange && startRecording && stopRecording && (
                 <Button
                   size="icon"
                   variant="ghost"
@@ -856,27 +884,31 @@ export function ChatInput({
             </div>
           </div>
 
-          {canSelectModel && (
-            <ChatInputModelControls
-              currentBranch={currentBranch}
-              disabled={disabled}
-              effectiveProvider={effectiveProvider}
-              modelOptions={modelOptions}
-              onModelSelect={handleModelSelect}
-              onProviderSelect={handleProviderSelect}
-              onReasoningSelect={handleReasoningSelect}
-              onWorktreeChange={onWorktreeChange}
-              orderedProviders={orderedProviders}
-              projectId={projectId}
-              providerPickerDisabledReason={providerPickerDisabledReason}
-              reasoningOptions={reasoningOptions}
-              resolvedModelLabel={resolvedModelLabel}
-              resolvedModelValue={resolvedModelValue}
-              resolvedReasoning={resolvedReasoning}
-              selectionDisabled={selectionDisabled}
-              worktreePath={worktreePath}
-              worktreePickerDisabled={worktreePickerDisabled}
-            />
+          {isAttached && attachedSessionMeta ? (
+            <AttachedSessionMetadataStrip meta={attachedSessionMeta} />
+          ) : (
+            canSelectModel && (
+              <ChatInputModelControls
+                currentBranch={currentBranch}
+                disabled={disabled}
+                effectiveProvider={effectiveProvider}
+                modelOptions={modelOptions}
+                onModelSelect={handleModelSelect}
+                onProviderSelect={handleProviderSelect}
+                onReasoningSelect={handleReasoningSelect}
+                onWorktreeChange={onWorktreeChange}
+                orderedProviders={orderedProviders}
+                projectId={projectId}
+                providerPickerDisabledReason={providerPickerDisabledReason}
+                reasoningOptions={reasoningOptions}
+                resolvedModelLabel={resolvedModelLabel}
+                resolvedModelValue={resolvedModelValue}
+                resolvedReasoning={resolvedReasoning}
+                selectionDisabled={selectionDisabled}
+                worktreePath={worktreePath}
+                worktreePickerDisabled={worktreePickerDisabled}
+              />
+            )
           )}
           {showObserveOverlay && (
             <div className="chat-input-overlay">

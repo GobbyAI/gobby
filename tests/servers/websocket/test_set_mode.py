@@ -122,3 +122,54 @@ class TestSetModeIdempotency:
         svm_instance.merge_variables.assert_called_once()
         merged_vars = svm_instance.merge_variables.call_args[0][1]
         assert merged_vars["chat_mode"] == "plan"
+
+
+class TestSetModeAttachedSession:
+    """Verify set_mode with target_session_id drives an attached session via storage."""
+
+    async def test_target_session_id_routes_to_storage_update(self) -> None:
+        server = ConcreteSessionControl()
+        attached_session = MagicMock()
+        attached_session.chat_mode = "normal"
+        server.session_manager.get = MagicMock(return_value=attached_session)
+        ws = _make_ws()
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls:
+            svm_instance = MagicMock()
+            svm_cls.return_value = svm_instance
+            await server._handle_set_mode(
+                ws,
+                {"target_session_id": "tmux-uuid-1", "mode": "plan"},
+            )
+
+        server.session_manager.update_chat_mode.assert_called_once_with("tmux-uuid-1", "plan")
+        svm_instance.merge_variables.assert_called_once()
+        merged_vars = svm_instance.merge_variables.call_args[0][1]
+        assert merged_vars["chat_mode"] == "plan"
+
+    async def test_target_session_id_no_change_skips_update(self) -> None:
+        server = ConcreteSessionControl()
+        attached_session = MagicMock()
+        attached_session.chat_mode = "plan"
+        server.session_manager.get = MagicMock(return_value=attached_session)
+        ws = _make_ws()
+
+        await server._handle_set_mode(
+            ws,
+            {"target_session_id": "tmux-uuid-1", "mode": "plan"},
+        )
+
+        server.session_manager.update_chat_mode.assert_not_called()
+
+    async def test_target_session_not_found_returns_error(self) -> None:
+        server = ConcreteSessionControl()
+        server.session_manager.get = MagicMock(return_value=None)
+        ws = _make_ws()
+
+        await server._handle_set_mode(
+            ws,
+            {"target_session_id": "missing-uuid", "mode": "plan"},
+        )
+
+        server._send_error.assert_awaited_once()
+        server.session_manager.update_chat_mode.assert_not_called()

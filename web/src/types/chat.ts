@@ -291,6 +291,7 @@ export interface ChatState {
   ) => void;
   onAttachToViewed?: () => void;
   onDetachFromSession?: () => void;
+  onAttachedModeChange?: (mode: ChatMode) => void;
 }
 
 export interface ConversationState {

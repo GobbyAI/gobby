@@ -18,6 +18,81 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _set_attached_session_mode(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    target_session_id: str,
+    mode: str,
+) -> None:
+    """Persist chat_mode for a session the caller is attached to but does not own.
+
+    Used when the web chat client drives a tmux/CLI session's mode via
+    set_mode with a target_session_id. The session has no in-memory ChatSession
+    on this server; we update the storage row and session_variables, then
+    rely on the next attach_to_session_result reload to confirm.
+    """
+    session_manager = getattr(mixin, "session_manager", None)
+    if session_manager is None:
+        await mixin._send_error(websocket, "Session manager not available")
+        return
+
+    try:
+        session = await asyncio.to_thread(session_manager.get, target_session_id)
+    except Exception as exc:
+        logger.warning("Failed to look up target session %s: %s", target_session_id, exc)
+        await mixin._send_error(
+            websocket,
+            f"Session not found: {target_session_id}",
+            code="NOT_FOUND",
+        )
+        return
+    if session is None:
+        await mixin._send_error(
+            websocket,
+            f"Session not found: {target_session_id}",
+            code="NOT_FOUND",
+        )
+        return
+
+    if getattr(session, "chat_mode", None) == mode:
+        logger.debug(
+            "Chat mode unchanged ('%s') for attached session %s",
+            mode,
+            target_session_id[:8],
+        )
+        return
+
+    try:
+        await asyncio.to_thread(session_manager.update_chat_mode, target_session_id, mode)
+    except ValueError as exc:
+        await mixin._send_error(websocket, str(exc))
+        return
+
+    try:
+        from gobby.workflows.observers import compute_mode_level
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        db = getattr(session_manager, "db", None) or getattr(mixin, "db", None)
+        if db is not None:
+            svm = SessionVariableManager(db)
+            svm.merge_variables(
+                target_session_id,
+                {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
+            )
+    except Exception as exc:
+        logger.warning(
+            "Failed to sync mode_level for attached session %s: %s",
+            target_session_id[:8],
+            exc,
+        )
+
+    logger.info(
+        "Chat mode set to '%s' for attached session %s",
+        mode,
+        target_session_id[:8],
+    )
+
+
 async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]) -> None:
     """Handle set_mode message to change chat mode for a conversation.
 
@@ -25,10 +100,14 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
     {
         "type": "set_mode",
         "mode": "normal" | "accept_edits" | "bypass" | "plan",
-        "conversation_id": "stable-id"
+        "conversation_id": "stable-id",
+        "target_session_id": "db-uuid"  # optional: drives an attached
+                                        # tmux/CLI session instead of the
+                                        # caller's chat session
     }
     """
     conversation_id: str | None = data.get("conversation_id")
+    target_session_id: str | None = data.get("target_session_id")
     mode: str = str(data.get("mode", "bypass"))
     valid_modes = {"normal", "accept_edits", "bypass", "plan"}
     if mode not in valid_modes:
@@ -36,6 +115,10 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
         return
     if mode == "accept_edits":
         mode = "normal"
+
+    if target_session_id:
+        await _set_attached_session_mode(mixin, websocket, target_session_id, mode)
+        return
 
     # Track which conversation this client is in (for scoped broadcasts)
     if conversation_id:

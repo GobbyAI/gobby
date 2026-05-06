@@ -857,6 +857,9 @@ export function ChatPage({
               proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
               attachmentsDisabled={isProxyAttached}
+              isAttached={isProxyAttached}
+              attachedSessionMeta={chat.attachedSessionMeta ?? null}
+              onAttachedModeChange={chat.onAttachedModeChange}
             />
           )}
         </ArtifactContext.Provider>

@@ -89,6 +89,7 @@ export default function App() {
     contextUsage,
     sendMessage,
     sendMode,
+    sendAttachedSessionMode,
     sendProjectChange,
     setProjectIdRef,
     sendWorktreeChange,
@@ -765,6 +766,9 @@ export default function App() {
                   proxyDeliveryNotice,
                   onAttachToViewed: attachToViewed,
                   onDetachFromSession: detachFromSession,
+                  onAttachedModeChange: attachedSessionId
+                    ? (mode) => sendAttachedSessionMode(attachedSessionId, mode)
+                    : undefined,
                   activeAgent,
                   onAgentChange: sendAgentChange,
                   provider: selectedProvider,

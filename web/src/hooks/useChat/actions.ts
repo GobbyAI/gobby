@@ -519,6 +519,24 @@ const sendMode = useCallback((mode: ChatMode) => {
   );
 }, []);
 
+// Send mode change for an attached tmux/CLI session. The daemon writes
+// the new chat_mode to that session's storage row and syncs the
+// session_variables entry; the chat composer's main session is untouched.
+const sendAttachedSessionMode = useCallback(
+  (targetSessionId: string, mode: ChatMode) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const normalizedMode = normalizeChatMode(mode);
+    wsRef.current.send(
+      JSON.stringify({
+        type: "set_mode",
+        mode: normalizedMode,
+        target_session_id: targetSessionId,
+      }),
+    );
+  },
+  [],
+);
+
 // Notify backend that the project changed — stops the CLI subprocess
 // so the next chat_message recreates it with the correct CWD.
 const sendProjectChange = useCallback((projectId: string) => {
@@ -874,6 +892,7 @@ const requestPlanChanges = useCallback((feedback: string) => {
     deleteConversation,
     stopStreaming,
     sendMode,
+    sendAttachedSessionMode,
     sendProjectChange,
     sendAgentChange,
     sendWorktreeChange,

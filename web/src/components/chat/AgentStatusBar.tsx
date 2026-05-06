@@ -96,17 +96,19 @@ export function AgentStatusBar({
             ) : null}
           </div>
         ) : null}
-        <div className="agent-status-bar__context">
-          <ContextUsageIndicator
-            totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-            outputTokens={contextUsage?.outputTokens ?? 0}
-            contextWindow={contextUsage?.contextWindow ?? null}
-            staleMs={contextUsageStaleMs}
-            uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-            cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-            cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-          />
-        </div>
+        {!isAttached && (
+          <div className="agent-status-bar__context">
+            <ContextUsageIndicator
+              totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+              outputTokens={contextUsage?.outputTokens ?? 0}
+              contextWindow={contextUsage?.contextWindow ?? null}
+              staleMs={contextUsageStaleMs}
+              uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+              cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+              cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+            />
+          </div>
+        )}
       </div>
       <div className="agent-status-bar__actions">
         {canAttach && (
