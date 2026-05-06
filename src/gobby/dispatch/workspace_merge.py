@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess  # nosec B404 # fixed git commands.
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -21,6 +23,12 @@ from gobby.storage.worktrees import LocalWorktreeManager
 WorkspaceBackend = Literal["worktree", "clone"]
 MERGE_HOLDER = "dispatcher-merge"
 MERGE_TTL_SECONDS = 600
+WORKTREE_LOCAL_PROJECT_KEYS = frozenset({"parent_project_id", "parent_project_path"})
+WORKTREE_LOCAL_METADATA_CONFLICTS = frozenset({".gobby/project.json"})
+DOCS_GUIDES_README = "docs/guides/README.md"
+GUIDE_ROW_RE = re.compile(
+    r"^\| (?P<link>\[[^\]]+\]\((?P<target>[^)]+\.md)\)) \| (?P<description>.*?) \|$"
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,14 @@ class _WorkspacePaths:
     source_branch: str
     source_id: str
     target_id: str
+
+
+@dataclass(frozen=True)
+class _GuideRow:
+    index: int
+    link: str
+    description: str
+    line: str
 
 
 def execute_merge_workspace(
@@ -61,8 +77,24 @@ def execute_merge_workspace(
         result = _git(Path(paths.target_path), ["merge", "--no-ff", "--no-edit", merge_ref])
         if result.returncode != 0:
             conflicted = _conflicted_files(paths.target_path)
+            remaining = _resolve_worktree_local_conflicts(paths.target_path, conflicted)
+            if conflicted and not remaining:
+                commit_result = _git(Path(paths.target_path), ["commit", "--no-edit"])
+                if commit_result.returncode == 0:
+                    merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+                    if action.backend == "clone":
+                        _sync_source_repo_branch(
+                            db,
+                            action.task_id,
+                            paths.target_path,
+                            action.target_branch,
+                        )
+                    _mark_source_merged(action, db=db, source_id=paths.source_id)
+                    _complete_merge_stage(db, action.task_id, merge_sha)
+                    return merge_sha
             _abort_merge(paths.target_path)
-            detail = "\n".join(conflicted) if conflicted else result.stderr.strip()
+            detail_files = remaining or conflicted
+            detail = "\n".join(detail_files) if detail_files else result.stderr.strip()
             _fail_merge_stage(db, action.task_id, f"merge_conflict:{detail or 'unknown'}")
             return None
 
@@ -162,6 +194,112 @@ def _is_ancestor(target_path: str, commit_sha: str) -> bool:
 def _conflicted_files(path: str) -> list[str]:
     result = _git(Path(path), ["diff", "--name-only", "--diff-filter=U"])
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _resolve_worktree_local_conflicts(path: str, conflicted: list[str]) -> list[str]:
+    remaining: list[str] = []
+    for file_path in conflicted:
+        if file_path in WORKTREE_LOCAL_METADATA_CONFLICTS and _same_project_config_except_local(
+            path,
+            file_path,
+        ):
+            _git_ok(path, ["checkout", "--ours", "--", file_path])
+            _git_ok(path, ["add", "--", file_path])
+            continue
+        if file_path == DOCS_GUIDES_README and _resolve_docs_guides_readme_conflict(
+            path,
+            file_path,
+        ):
+            continue
+        remaining.append(file_path)
+    return remaining
+
+
+def _resolve_docs_guides_readme_conflict(path: str, file_path: str) -> bool:
+    staged = _staged_file_versions(path, file_path)
+    if staged is None:
+        return False
+    base, ours, theirs = staged
+    if _without_guide_rows(base) != _without_guide_rows(theirs):
+        return False
+
+    base_rows = _guide_rows_by_key(base)
+    ours_rows = _guide_rows_by_key(ours)
+    theirs_rows = _guide_rows_by_key(theirs)
+    changed_theirs = {
+        key: row
+        for key, row in theirs_rows.items()
+        if key not in base_rows or row.line != base_rows[key].line
+    }
+    if not changed_theirs or any(key not in ours_rows for key in changed_theirs):
+        return False
+
+    merged_lines = ours.splitlines()
+    for key, row in changed_theirs.items():
+        ours_row = ours_rows[key]
+        merged_lines[ours_row.index] = f"| {ours_row.link} | {row.description} |"
+    merged = "\n".join(merged_lines)
+    if ours.endswith("\n"):
+        merged += "\n"
+    (Path(path) / file_path).write_text(merged)
+    _git_ok(path, ["add", "--", file_path])
+    return True
+
+
+def _staged_file_versions(path: str, file_path: str) -> tuple[str, str, str] | None:
+    versions = []
+    for stage in ("1", "2", "3"):
+        result = _git(Path(path), ["show", f":{stage}:{file_path}"])
+        if result.returncode != 0:
+            return None
+        versions.append(result.stdout)
+    return versions[0], versions[1], versions[2]
+
+
+def _guide_rows_by_key(text: str) -> dict[str, _GuideRow]:
+    rows: dict[str, _GuideRow] = {}
+    for index, line in enumerate(text.splitlines()):
+        match = GUIDE_ROW_RE.match(line)
+        if match is None:
+            continue
+        rows[_normalize_guide_target(match.group("target"))] = _GuideRow(
+            index=index,
+            link=match.group("link"),
+            description=match.group("description"),
+            line=line,
+        )
+    return rows
+
+
+def _without_guide_rows(text: str) -> list[str]:
+    return [line for line in text.splitlines() if GUIDE_ROW_RE.match(line) is None]
+
+
+def _normalize_guide_target(target: str) -> str:
+    if target.startswith("./"):
+        return target[2:]
+    return target
+
+
+def _same_project_config_except_local(path: str, file_path: str) -> bool:
+    staged = _staged_file_versions(path, file_path)
+    if staged is None:
+        return False
+    _, ours, theirs = staged
+    try:
+        ours_json = json.loads(ours)
+        theirs_json = json.loads(theirs)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(ours_json, dict) or not isinstance(theirs_json, dict):
+        return False
+    return _without_worktree_local_project_keys(ours_json) == _without_worktree_local_project_keys(
+        theirs_json,
+    )
+
+
+def _without_worktree_local_project_keys(value: dict[str, object]) -> dict[str, object]:
+    return {key: item for key, item in value.items() if key not in WORKTREE_LOCAL_PROJECT_KEYS}
 
 
 def _abort_merge(path: str) -> None:
