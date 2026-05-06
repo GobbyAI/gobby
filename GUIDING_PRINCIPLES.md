@@ -2,58 +2,17 @@
 
 These principles are operational rules for agents working in this repository.
 
-1. Use progressive MCP discovery: list servers, list tools, fetch the specific schema,
-   then call the tool.
-2. Keep files under 1,000 lines. If an oversized file is found, use gobby-tasks to find
-   or create the refactor task under the right parent.
-3. Create or claim a Gobby task before editing files.
-4. Commit changed work before closing a task. Close with the commit SHA so validation and
-   task linkage happen together.
-5. Fix failures you encounter during validation unless they need a larger architectural
-   task.
-6. Treat rule templates as templates. Installed DB rows are the active source of truth.
-7. Prefer deterministic rules, storage state, and explicit lifecycle transitions over
-   prompt-only control.
-
-## Dispatch
-
-Task automation is owned by deterministic dispatch. The retired conductor and
-orchestration pipeline templates are historical tombstones; they are not the active
-task-automation model.
-
-Dispatch rules live in `src/gobby/dispatch/rules.py`. A new rule should be a small,
-deterministic predicate over task lifecycle, status, labels, automation fields, and
-artifacts. It returns an explicit action, then gets added to the ordered rule registry
-near its lifecycle stage. If the action needs reasoning, spawn an agent; do not put model
-judgment in the dispatcher.
-
-`gobby build` is the opt-in surface. The CLI command, MCP tool
-(`gobby-tasks-ops:build_task`), and HTTP route (`POST /api/build`) share the same service
-in `src/gobby/build/service.py`.
-
-Build resolves operator intent into stored task state:
-
-- `allow_automation=true` makes the task visible to dispatch.
-- `yolo=true` selects deterministic fallback paths where a normal run would escalate.
-- `isolation` is one of `none`, `worktree`, or `clone`.
-- Stage skips are `stage-:<name>` labels. Profiles are only build-time sugar over skip
-  labels, isolation, and yolo.
-- `assigned_agent` and `additional_skills` route leaf implementation work.
-
-Use the adjacent dispatch tables through their helpers:
-
-- `task_dispatch_mutex`: per-task leases for side-effecting dispatch actions. Acquire
-  before acting, release after, sweep expired leases on startup.
-- `task_artifacts`: sparse paths and external pointers. Write worktree/clone path and ID
-  pairs atomically.
-- `task_lifecycle_events`: append-only lifecycle audit. Lifecycle transition helpers are
-  the normal writers.
-
-The dispatcher has a global active-agent slot cap (`max_active_agents`, default 10).
-Overflow waits for the next heartbeat.
-
-Retired templates such as `orchestrator.yaml`, `front-half-orchestrator.yaml`,
-`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, and `conductor.yaml` live under
-`workflows/*/deprecated/` as archival tombstones. Active bundled sync reads only top-level
-YAML and soft-deletes installed rows for retired definitions. PR creation and advanced
-merge/conflict work belong to task #13552.
+1. **ALWAYS use progressive tool discovery.** Do not try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
+2. **NEVER create or leave monoliths.** Keep non-test Python, TypeScript, and CSS source files under 1,000 lines. For non-test `.py`, `.ts`, `.tsx`, and `.css` files only, you *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Leave these tasks for another agent to pick up.
+3. **ALWAYS create or claim a task before editing a file.** This applies to file edits only — no task needed for plan mode, research, investigation, or answering questions unless the user explicitly requests one.
+4. **Validation runs when closing with a commit. If a commit is done, validation must run.** `skip_validation` is silently stripped when commits are attached.
+5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
+6. **NEVER stop while you have a claimed task in progress.** Your stop hook is blocked while you have a claimed task. Task must be closed before stopping. If you claim a task, you finish a task.
+7. **Escalate only when the user explicitly needs to review your work, your agent skill/workflow/pipeline directs escalation, or you are genuinely stuck and need guidance.** Do not use escalation as a workaround for committing, closing, or completing required validation.
+8. **You found it, you own it.** Every error, test failure, lint warning, or type error you encounter is yours to fix — even if it's pre-existing, even if it's unrelated to your task. Fix it before closing your task. The only exception is something that genuinely requires multi-session architectural planning; even then, investigate thoroughly and attempt the fix before filing a task to defer it.
+9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
+10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, you *MUST* voice your concerns and provide alternative solutions.
+11. **NEVER leave options or unanswered questions in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
+12. **ALWAYS choose/present the best approach to solve a problem. The best, most correct fix is *ALWAYS* in scope. NEVER choose or present the simplest approach if it is not the best or most complete/correct approach.**
+13. **ALWAYS remember: Rule templates are not rules.** Templates must be installed in the rules engine to function. Templates are enabled by default and sync to the DB on first startup. The DB is the source of truth — before telling the user a rule is disabled, check the installed version in the DB.
+14. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.

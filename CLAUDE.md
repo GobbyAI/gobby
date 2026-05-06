@@ -7,7 +7,7 @@ This file provides guidance for developing the Gobby codebase.
 These are enforced by hooks, rules and workflows.
 
 1. **ALWAYS use progressive tool discovery.** Do not try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
-2. **NEVER create or leave monoliths.** Keep non-test Python, TypeScript, and CSS source files under 1,000 lines. For non-test `.py`, `.ts`, `.tsx`, and `.css` files only, you *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Place it under the parent #12730 for the gobby project if working in gobby. Create a new epic only if no suitable open or active epic exists. Leave these tasks for another agent to pick up.
+2. **NEVER create or leave monoliths.** Keep non-test Python, TypeScript, and CSS source files under 1,000 lines. For non-test `.py`, `.ts`, `.tsx`, and `.css` files only, you *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Leave these tasks for another agent to pick up.
 3. **ALWAYS create or claim a task before editing a file.** This applies to file edits only — no task needed for plan mode, research, investigation, or answering questions unless the user explicitly requests one.
 4. **Validation runs when closing with a commit. If a commit is done, validation must run.** `skip_validation` is silently stripped when commits are attached.
 5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
@@ -30,7 +30,12 @@ Do NOT try to call one step through another (e.g., don't use call_tool to invoke
 
 ## DO NOT RUN THE FULL PYTEST SUITE
 
-The repo has over 14,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+The repo has over 15,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+
+When running pytest as an agent, always prefix pytest commands with `GOBBY_TEST_PROTECT=1`.
+
+Pytest must be isolated from the user’s running Gobby daemon and real local daemon state. Tests that need daemon behavior must start/use an isolated test
+daemon with temporary state and ports; they must not talk to the existing user daemon.
 
 ## Plan Mode
 
@@ -42,7 +47,7 @@ All design / UI / color / typography work — across every Gobby surface (produc
 
 ## Project Overview
 
-Gobby is a local-first daemon that unifies AI coding assistants (Claude Code, Gemini CLI, Codex CLI) under one persistent, extensible platform. It provides:
+A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Codex, Droid, Gemini, and QwenCode. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks.
 
 - **Session management** that survives restarts and context compactions
 - **Task system** with dependency graphs, TDD expansion, and validation gates
