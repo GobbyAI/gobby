@@ -5,6 +5,8 @@ enabled: true
 surfaces: [spawn]
 provider: inherit
 model: inherit
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
 
 skills:
   methodology:

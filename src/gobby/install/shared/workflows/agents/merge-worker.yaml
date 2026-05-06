@@ -12,6 +12,8 @@ priority: 20
 provider: gemini
 model: gemini-3.1-pro-preview
 reasoning_effort: high
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
 
 instructions: |
   You are a merge agent spawned to merge work from an isolation environment

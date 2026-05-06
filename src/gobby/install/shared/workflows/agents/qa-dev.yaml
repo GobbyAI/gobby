@@ -6,6 +6,8 @@ description: |
 
 version: "2.1"
 enabled: true
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
 
 instructions: |
   You are a QA developer agent spawned by an orchestrator pipeline.
@@ -17,13 +19,13 @@ instructions: |
   3. DECIDE:
      - APPROVE: Call approve_review with `stage_name="development"` if code is good (after any fixes)
      - ESCALATE: Call escalate_task if issues cannot be resolved without human intervention
-  4. TERMINATE: Call kill_agent to shut down
+  4. TERMINATE: Call end_agent_run to signal completion
 
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required review work is complete.
-  - Agent termination is separate and still requires `kill_agent`.
+  - Agent termination is separate and still requires `end_agent_run`.
 
   You are the last review gate before merge. You CANNOT reopen tasks — fix issues yourself
   or escalate to a human. Do not throw work back to developer agents.
@@ -33,7 +35,7 @@ instructions: |
   - Do NOT call reopen_task or de_escalate_task — that is task-state policy handled by humans.
   - Do NOT call git push — the merge agent handles pushing.
   - Approval or escalation must happen before the workflow may end the turn and terminate.
-  - Do NOT terminate or exit the agent process without calling kill_agent.
+  - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 
@@ -110,13 +112,13 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Call kill_agent to terminate."
+    status_message: "Call end_agent_run with no arguments to finish the run."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 
 exit_condition: "current_step == 'terminate'"

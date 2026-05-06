@@ -11,13 +11,15 @@ provider: claude
 model: opus
 reasoning_effort: max
 isolation: none
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
 
 instructions: |
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required planning work is complete.
-  - Ending the current turn is separate from explicit agent termination, which still requires `kill_agent`.
+  - Ending the current turn is separate from explicit agent termination, which uses `end_agent_run`.
 
   You are the spawned plan drafter for a stage-native planning stage. Each
   revision round is a fresh agent instance; carry no assumptions from prior
@@ -94,7 +96,7 @@ instructions: |
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT call approve_review or reject_review.
   - Do NOT spawn other agents.
-  - Do NOT terminate without calling kill_agent.
+  - Do NOT terminate without calling end_agent_run.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
 
@@ -191,13 +193,13 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Call kill_agent to terminate."
+    status_message: "Call end_agent_run with no arguments to finish the run."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 
 exit_condition: "current_step == 'terminate'"

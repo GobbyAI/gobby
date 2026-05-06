@@ -27,6 +27,15 @@ REMOVED_LIFECYCLE_TOOLS = (
     "mark_task_merge_failed",
     "advance_lifecycle",
 )
+SELF_TERMINATION_KILL_AGENT_PHRASES = (
+    "call kill_agent to terminate",
+    "call `kill_agent` to terminate",
+    "call kill_agent to shut down",
+    "without calling kill_agent",
+    "requires `kill_agent`",
+    "requires kill_agent",
+    "self-terminate by calling kill_agent",
+)
 
 
 def _tool_inventory(
@@ -66,6 +75,10 @@ def _tool_inventory(
 
 def _agent_yaml_files() -> list[Path]:
     return sorted(path for path in AGENTS_DIR.glob("*.yaml") if path.is_file())
+
+
+def _all_agent_yaml_files() -> list[Path]:
+    return sorted(path for path in AGENTS_DIR.rglob("*.yaml") if path.is_file())
 
 
 def test_bundled_agent_mcp_references_match_registered_tool_inventory(
@@ -113,6 +126,49 @@ def test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools
     assert offenders == []
 
 
+def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
+    offenders: list[str] = []
+
+    for path in _all_agent_yaml_files():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        agent_blocked_tools = set(_mcp_tool_refs(data.get("blocked_mcp_tools")))
+        if path.name == "default.yaml":
+            if "gobby-agents:kill_agent" in agent_blocked_tools:
+                offenders.append(f"{path.name}:agent:blocks kill_agent")
+        elif "gobby-agents:kill_agent" not in agent_blocked_tools:
+            offenders.append(f"{path.name}:agent:missing kill_agent block")
+
+        _collect_self_termination_phrase_offenders(
+            offenders,
+            path=path,
+            field_name="instructions",
+            text=str(data.get("instructions") or ""),
+        )
+
+        for step in data.get("steps") or []:
+            if not isinstance(step, dict) or step.get("name") != "terminate":
+                continue
+
+            allowed_tools = set(_mcp_tool_refs(step.get("allowed_mcp_tools")))
+            if "gobby-agents:kill_agent" in allowed_tools:
+                offenders.append(f"{path.name}:terminate:allows kill_agent")
+            if "gobby-agents:end_agent_run" not in allowed_tools:
+                offenders.append(f"{path.name}:terminate:missing end_agent_run")
+
+            terminate_text = "\n".join(
+                str(step.get(field_name) or "")
+                for field_name in ("description", "status_message")
+            )
+            _collect_self_termination_phrase_offenders(
+                offenders,
+                path=path,
+                field_name="terminate",
+                text=terminate_text,
+            )
+
+    assert offenders == []
+
+
 def _mcp_tool_refs(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -136,3 +192,16 @@ def _handler_refs(value: object) -> list[str]:
 def _tool_ref_exists(ref: str, inventory: dict[str, set[str]]) -> bool:
     server, tool = ref.split(":", 1)
     return server in inventory and (tool == "*" or tool in inventory[server])
+
+
+def _collect_self_termination_phrase_offenders(
+    offenders: list[str],
+    *,
+    path: Path,
+    field_name: str,
+    text: str,
+) -> None:
+    normalized = " ".join(text.lower().split())
+    for phrase in SELF_TERMINATION_KILL_AGENT_PHRASES:
+        if phrase in normalized:
+            offenders.append(f"{path.name}:{field_name}:{phrase}")

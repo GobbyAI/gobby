@@ -12,6 +12,8 @@ provider: gemini
 model: gemini-3-pro-image-preview
 reasoning_effort: medium
 isolation: inherit
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
 
 skills:
   baseline:
