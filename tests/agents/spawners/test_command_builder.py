@@ -96,6 +96,24 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
         assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
 
+    def test_codex_config_overrides_precede_prompt(self):
+        cmd, _env = build_cli_command(
+            "codex",
+            prompt="hello",
+            config_overrides=[
+                'mcp_servers.gobby.command="uv"',
+                'mcp_servers.gobby.args=["run","--project","/repo","gobby","mcp-server"]',
+            ],
+        )
+        assert cmd == [
+            "codex",
+            "-c",
+            'mcp_servers.gobby.command="uv"',
+            "-c",
+            'mcp_servers.gobby.args=["run","--project","/repo","gobby","mcp-server"]',
+            "hello",
+        ]
+
     def test_droid_agent_command(self):
         cmd, _env = build_cli_command(
             "droid",

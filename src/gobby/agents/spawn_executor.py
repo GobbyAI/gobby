@@ -5,6 +5,7 @@ This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
 and clones.py into a single executor. All agents spawn via tmux.
 """
 
+import json
 import logging
 import shutil
 from dataclasses import dataclass, field
@@ -42,6 +43,7 @@ class SpawnRequest:
     run_id: str
     parent_session_id: str
     project_id: str
+    project_path: str | None = None
 
     # Canonical agent_run_id from spawn_agent_impl (pre-generated)
     agent_run_id: str | None = None
@@ -577,6 +579,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=sandbox_args or None,
+        config_overrides=_codex_mcp_config_overrides(request.project_path),
     )
 
     env = spawn_context.env_vars.copy()
@@ -612,6 +615,18 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Codex agent spawned in terminal with session {gobby_session_id}",
     )
+
+
+def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
+    """Force Codex spawned in isolated workspaces to use the main repo MCP server."""
+    if not project_path:
+        return []
+    args = ["run", "--project", project_path, "gobby", "mcp-server"]
+    args_toml = "[" + ",".join(json.dumps(arg) for arg in args) + "]"
+    return [
+        'mcp_servers.gobby.command="uv"',
+        f"mcp_servers.gobby.args={args_toml}",
+    ]
 
 
 async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:

@@ -19,6 +19,7 @@ def build_cli_command(
     mode: str = "agent",
     output_format: str | None = None,
     env_overrides: dict[str, str] | None = None,
+    config_overrides: list[str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """
     Build the CLI command and env for any provider.
@@ -58,6 +59,8 @@ def build_cli_command(
         output_format: Output format override (e.g., "stream-json")
         env_overrides: Environment variable overrides. Callers are responsible
             for merging inherited environment variables if needed.
+        config_overrides: CLI configuration overrides for providers that
+            support `-c key=value` flags. Currently used by Codex.
 
     Returns:
         Tuple of (command list, env dict) for subprocess execution
@@ -102,6 +105,8 @@ def build_cli_command(
             command.extend(["--ask-for-approval", "never", "--disable", "guardian_approval"])
         if working_directory:
             command.extend(["-C", working_directory])
+        for override in config_overrides or []:
+            command.extend(["-c", override])
 
     elif cli == "droid":
         # Droid exec flags, verified against `droid exec --help` on v0.106.0.

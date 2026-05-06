@@ -389,6 +389,7 @@ class TestExecuteSpawn:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
+            project_path="/main/repo",
             agent_run_id="run-abc123def456",
             session_manager=mock_session_manager,
         )
@@ -435,6 +436,11 @@ class TestExecuteSpawn:
             assert "resume" not in command
             assert command[1:3] == ["--ask-for-approval", "never"]
             assert command[3:5] == ["--disable", "guardian_approval"]
+            assert 'mcp_servers.gobby.command="uv"' in command
+            assert (
+                'mcp_servers.gobby.args=["run","--project","/main/repo","gobby","mcp-server"]'
+                in command
+            )
             assert "--full-auto" not in command
 
             # Env is passed to the tmux spawner so the SessionStart hook can

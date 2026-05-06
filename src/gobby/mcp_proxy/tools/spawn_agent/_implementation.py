@@ -561,6 +561,7 @@ async def spawn_agent_impl(
         agent_run_id=run_id,
         parent_session_id=parent_session_id,
         project_id=project_id,
+        project_path=resolved_project_path,
         workflow=effective_workflow,
         initial_variables=effective_initial_variables,
         worktree_id=isolation_ctx.worktree_id,
