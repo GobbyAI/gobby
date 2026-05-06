@@ -49,6 +49,19 @@ class CreateIsolationAction:
     base_branch: str | None = None
 
 
+@dataclass(frozen=True)
+class MergeWorkspaceAction:
+    """Merge a task or child-epic workspace into its parent integration branch."""
+
+    task_id: str
+    task_ref: str
+    backend: Literal["worktree", "clone"]
+    target_branch: str
+    source_branch: str | None = None
+    source_workspace_id: str | None = None
+    source_clone_id: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class AdvanceStageAction:
     """Advance a task manifest stage through the stage-state manager."""
@@ -94,6 +107,7 @@ type Action = (
     | StartPipelineAction
     | StartStageAction
     | CreateIsolationAction
+    | MergeWorkspaceAction
     | AdvanceStageAction
     | AdvanceLifecycleAction
     | AppendAuditMarkerAction
@@ -108,6 +122,7 @@ __all__ = [
     "AppendAuditMarkerAction",
     "CreateIsolationAction",
     "EscalateAction",
+    "MergeWorkspaceAction",
     "SpawnAgentAction",
     "StartPipelineAction",
     "StartStageAction",

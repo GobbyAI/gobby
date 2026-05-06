@@ -20,6 +20,7 @@ from gobby.dispatch.actions import (
     AppendAuditMarkerAction,
     CreateIsolationAction,
     EscalateAction,
+    MergeWorkspaceAction,
     SpawnAgentAction,
     StartPipelineAction,
     StartStageAction,
@@ -36,6 +37,7 @@ from gobby.dispatch.spawn import (
     DispatchSpawnUnavailable,
     spawn_agent,
 )
+from gobby.dispatch.workspace_merge import execute_merge_workspace
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
     _register_background_task,
@@ -48,6 +50,7 @@ from gobby.storage.tasks._artifacts import (
 from gobby.storage.tasks._artifacts import (
     set_artifacts_atomic as _set_artifacts_atomic,
 )
+from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._crud import get_task, list_automation_candidates, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -278,6 +281,7 @@ def reload_candidate(
         return None
     task = Task.from_row(rows[0])
     task.stages = tuple(_stage_from_joined_row(row) for row in rows if row["stage_task_id"])
+    hydrate_task_blocking_state(db, [task])
     return task
 
 
@@ -525,6 +529,8 @@ def execute_action(
             return append_audit_marker(db, action.task_id, action.heading, action.body)
         if isinstance(action, EscalateAction):
             return escalate_task(db=db, task_id=action.task_id, reason=action.reason)
+        if isinstance(action, MergeWorkspaceAction):
+            return execute_merge_workspace(action, db=db, services=services)
         if isinstance(action, CreateIsolationAction):
             return create_isolation(action, db=db, context=context)
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")

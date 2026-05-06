@@ -49,7 +49,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "input_ref": "plan.md",
                 "quick": True,
                 "skip_stages": ["pr"],
-                "isolation": "worktree",
+                "workspace_backend": "worktree",
                 "no_merge": False,
                 "pr": "123",
                 "stage": ["pr:max_review_rounds=3"],
@@ -101,9 +101,11 @@ def test_buildrequest_rejects_removed_fields() -> None:
 
     with pytest.raises(ValueError):
         BuildRequest(input_ref="#42", profile="quick")
+    with pytest.raises(ValueError):
+        BuildRequest(input_ref="#42", isolation="worktree")
 
 
-def test_post_api_build_omitted_isolation_is_not_an_override() -> None:
+def test_post_api_build_omitted_backend_defaults_to_worktree() -> None:
     from gobby.build.service import BuildResult, DispatcherTickSummary
 
     build_result = BuildResult(

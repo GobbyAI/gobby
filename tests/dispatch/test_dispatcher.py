@@ -982,11 +982,9 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
     second = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
-    third = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert first.executed == 1
     assert second.executed == 1
-    assert third.executed == 1
     assert spawned == [task.id]
 
 

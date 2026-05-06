@@ -20,7 +20,8 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "Usage:" in result.output
     assert "--quick" in result.output
     assert "--skip-stage" in result.output
-    assert "--isolation" in result.output
+    assert "--clone" in result.output
+    assert "--isolation" not in result.output
     assert "--no-merge" in result.output
     assert "--pr" in result.output
     assert "--stage" in result.output
@@ -71,8 +72,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "--quick",
                 "--skip-stage",
                 "qa,pr",
-                "--isolation",
-                "clone",
+                "--clone",
                 "--no-merge",
                 "--pr",
                 "123",
@@ -122,7 +122,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     }
 
 
-def test_build_cli_omitted_isolation_is_not_an_override(tmp_path: Path) -> None:
+def test_build_cli_omitted_backend_defaults_to_worktree(tmp_path: Path) -> None:
     from gobby.build.service import BuildResult, DispatcherTickSummary
     from gobby.cli import cli
 
@@ -158,7 +158,7 @@ def test_build_cli_omitted_isolation_is_not_an_override(tmp_path: Path) -> None:
     }
 
 
-def test_build_payload_omits_isolation_when_not_explicit() -> None:
+def test_build_payload_omits_workspace_backend_when_not_explicit() -> None:
     from gobby.build.service import BuildOptions
     from gobby.cli.build import _build_payload
 
@@ -167,6 +167,7 @@ def test_build_payload_omits_isolation_when_not_explicit() -> None:
         "#42",
     )
 
+    assert "workspace_backend" not in payload
     assert "isolation" not in payload
 
 

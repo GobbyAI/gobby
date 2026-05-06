@@ -441,6 +441,35 @@ def _apply_linear_project_binding_schema(db: LocalDatabase) -> None:
         db.execute("ALTER TABLE projects ADD COLUMN linear_project_id TEXT")
 
 
+def _apply_integration_workspace_metadata_schema(db: LocalDatabase) -> None:
+    worktree_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(worktrees)")}
+    if "workspace_role" not in worktree_columns:
+        db.execute("ALTER TABLE worktrees ADD COLUMN workspace_role TEXT NOT NULL DEFAULT 'task'")
+
+    clone_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(clones)")}
+    if "workspace_role" not in clone_columns:
+        db.execute("ALTER TABLE clones ADD COLUMN workspace_role TEXT NOT NULL DEFAULT 'task'")
+
+    artifact_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_artifacts)")}
+    if "integration_branch" not in artifact_columns:
+        db.execute("ALTER TABLE task_artifacts ADD COLUMN integration_branch TEXT")
+    if "integration_workspace_id" not in artifact_columns:
+        db.execute("ALTER TABLE task_artifacts ADD COLUMN integration_workspace_id TEXT")
+    if "integration_clone_id" not in artifact_columns:
+        db.execute("ALTER TABLE task_artifacts ADD COLUMN integration_clone_id TEXT")
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS integration_workspace_mutex (
+            integration_key TEXT PRIMARY KEY,
+            lease_until TEXT,
+            lease_holder TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         240,
@@ -457,6 +486,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (248, "Add dispatch mutex run id lookup index", _apply_dispatch_mutex_run_id_index),
     (249, "Persist rich web chat content blocks", _apply_chat_message_content_blocks_schema),
     (250, "Add Linear project binding to projects", _apply_linear_project_binding_schema),
+    (251, "Add integration workspace metadata", _apply_integration_workspace_metadata_schema),
 ]
 
 

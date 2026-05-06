@@ -31,8 +31,10 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["required"] == ["input_ref"]
     assert schema["properties"]["input_ref"]["type"] == "string"
     assert schema["properties"]["quick"]["type"] == "boolean"
-    assert set(schema["properties"]["isolation"]["enum"]) == {"none", "worktree", "clone"}
-    assert "default" not in schema["properties"]["isolation"]
+    assert set(schema["properties"]["workspace_backend"]["enum"]) == {"worktree", "clone"}
+    assert "default" not in schema["properties"]["workspace_backend"]
+    assert schema["properties"]["clone"]["type"] == "boolean"
+    assert "isolation" not in schema["properties"]
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
     assert schema["properties"]["no_merge"]["type"] == "boolean"
     assert schema["properties"]["pr"]["type"] == "string"
@@ -84,7 +86,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
             input_ref="#42",
             quick=True,
             skip_stages=["qa"],
-            isolation="none",
+            workspace_backend="clone",
             no_merge=False,
             pr="123",
             stage=["pr:max_review_rounds=2"],
@@ -116,7 +118,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     opts = call.args[1]
     assert opts.quick is True
     assert opts.skip_stages == ["qa"]
-    assert opts.isolation == "none"
+    assert opts.isolation == "clone"
     assert opts.isolation_explicit is True
     assert opts.no_merge is False
     assert opts.pr == "123"
@@ -134,7 +136,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
 
 
 @pytest.mark.asyncio
-async def test_build_task_tool_omitted_isolation_is_not_an_override(temp_db) -> None:
+async def test_build_task_tool_omitted_backend_defaults_to_worktree(temp_db) -> None:
     from gobby.build.service import BuildResult, DispatcherTickSummary
 
     registry = _registry(temp_db)

@@ -88,7 +88,10 @@ async def test_target_branch_persisted_before_isolation_action(temp_db, tmp_path
     )
 
     await _build(
-        f"#{task.seq_num}", _options(target_branch="release"), db=temp_db, project_id=project_id
+        f"#{task.seq_num}",
+        _options(isolation="none", target_branch="release"),
+        db=temp_db,
+        project_id=project_id,
     )
 
     artifacts = LocalTaskManager(temp_db).artifacts.get_artifacts(task.id)
@@ -112,6 +115,25 @@ async def test_leaf_build_inherits_target_branch_via_cascade(temp_db, tmp_path: 
 
     artifacts = manager.artifacts.get_artifacts(leaf.id)
     assert artifacts.target_branch is None
+
+
+@pytest.mark.asyncio
+async def test_worktree_leaf_build_persists_target_branch(temp_db, tmp_path: Path) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    manager = LocalTaskManager(temp_db)
+    leaf = manager.create_task(
+        project_id=project_id, title="Leaf", task_type="task", category="code"
+    )
+
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(isolation="worktree", target_branch="release"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    artifacts = manager.artifacts.get_artifacts(leaf.id)
+    assert artifacts.target_branch == "release"
 
 
 def test_target_branch_flag_maps_to_build_options() -> None:

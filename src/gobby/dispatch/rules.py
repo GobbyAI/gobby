@@ -10,8 +10,8 @@ from typing import Any, cast
 from gobby.dispatch.actions import (
     Action,
     AdvanceStageAction,
-    CreateIsolationAction,
     EscalateAction,
+    MergeWorkspaceAction,
     SpawnAgentAction,
     StartPipelineAction,
     StartStageAction,
@@ -78,6 +78,8 @@ def auto_advance_ready_rule(task: object, context: object) -> Action | None:
     registry_entry = _registry_entry(context, stage_name, stage)
     if bool(_field(registry_entry, "requires_human", _field(stage, "requires_human", False))):
         return None
+    if stage_name == "merge" and _has_workspace_merge_source(task, context):
+        return StartStageAction(task_id=_task_id(task), stage_name=stage_name)
     if stage_name not in _AUTO_ADVANCE_NON_AGENT_STAGES:
         if not _default_agent(stage, context):
             return None
@@ -105,6 +107,8 @@ def development_isolation_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "development", "ready")
     if stage is None or not _is_leaf(task):
         return None
+    if is_blocked_by_deps(task):
+        return None
 
     isolation = _isolation(task)
     if isolation == "none":
@@ -114,15 +118,7 @@ def development_isolation_rule(task: object, context: object) -> Action | None:
             task_id=_task_id(task), reason=f"development_isolation_invalid:{isolation}"
         )
 
-    artifacts = _artifacts(task, context)
-    if _has_isolation_pair(artifacts, isolation):
-        return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
-    return CreateIsolationAction(
-        task_id=_task_id(task),
-        task_ref=_task_ref(task),
-        isolation=isolation,
-        base_branch=_field(artifacts, "target_branch"),
-    )
+    return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
 
 
 def all_leaves_holistic_rule(task: object, context: object) -> Action | None:
@@ -265,6 +261,9 @@ def pr_advance_rule(task: object, context: object) -> Action | None:
 
 
 def merge_rule(task: object, context: object) -> Action | None:
+    workspace_action = _workspace_merge_action(task, context)
+    if workspace_action is not None:
+        return workspace_action
     return _spawn_required_stage_agent(
         task,
         context,
@@ -273,6 +272,75 @@ def merge_rule(task: object, context: object) -> Action | None:
         agent_slug="merge-orchestrator",
         has_agent=_has_merge_agent,
         missing_agent_reason="merge_no_agent",
+    )
+
+
+def _workspace_merge_action(task: object, context: object) -> MergeWorkspaceAction | None:
+    stage = _matching_current_stage(task, context, "merge", "in_progress")
+    if stage is None or not _has_workspace_merge_source(task, context):
+        return None
+    artifacts = _artifacts(task, context)
+    target_branch = _field(artifacts, "target_branch")
+    assert isinstance(target_branch, str)
+
+    integration_branch = _field(artifacts, "integration_branch")
+    integration_workspace_id = _field(artifacts, "integration_workspace_id")
+    integration_clone_id = _field(artifacts, "integration_clone_id")
+    worktree_id = _field(artifacts, "worktree_id")
+    clone_id = _field(artifacts, "clone_id")
+
+    if isinstance(integration_branch, str) and isinstance(integration_clone_id, str):
+        return MergeWorkspaceAction(
+            task_id=_task_id(task),
+            task_ref=_task_ref(task),
+            backend="clone",
+            target_branch=target_branch,
+            source_branch=integration_branch,
+            source_clone_id=integration_clone_id,
+        )
+    if isinstance(integration_branch, str) and isinstance(integration_workspace_id, str):
+        return MergeWorkspaceAction(
+            task_id=_task_id(task),
+            task_ref=_task_ref(task),
+            backend="worktree",
+            target_branch=target_branch,
+            source_branch=integration_branch,
+            source_workspace_id=integration_workspace_id,
+        )
+    if isinstance(clone_id, str):
+        return MergeWorkspaceAction(
+            task_id=_task_id(task),
+            task_ref=_task_ref(task),
+            backend="clone",
+            target_branch=target_branch,
+            source_clone_id=clone_id,
+        )
+    if isinstance(worktree_id, str):
+        return MergeWorkspaceAction(
+            task_id=_task_id(task),
+            task_ref=_task_ref(task),
+            backend="worktree",
+            target_branch=target_branch,
+            source_workspace_id=worktree_id,
+        )
+    return None
+
+
+def _has_workspace_merge_source(task: object, context: object) -> bool:
+    if not _field(task, "parent_task_id"):
+        return False
+    artifacts = _artifacts(task, context)
+    target_branch = _field(artifacts, "target_branch")
+    if not isinstance(target_branch, str) or not target_branch:
+        return False
+    return any(
+        isinstance(_field(artifacts, field_name), str)
+        for field_name in (
+            "integration_workspace_id",
+            "integration_clone_id",
+            "worktree_id",
+            "clone_id",
+        )
     )
 
 

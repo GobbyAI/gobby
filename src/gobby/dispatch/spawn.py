@@ -127,7 +127,8 @@ async def spawn_agent(
         git_manager=getattr(services, "git_manager", None)
         or _service_git_manager(services, project_id),
         clone_storage=getattr(services, "clone_storage", None),
-        clone_manager=getattr(services, "clone_manager", None),
+        clone_manager=getattr(services, "clone_manager", None)
+        or _service_clone_manager(services, project_id),
         workflow=workflow,
         provider=None,
         model=action.model_override,
@@ -155,6 +156,19 @@ def _service_git_manager(services: object | None, project_id: str) -> object | N
     if callable(getter):
         return cast(object | None, getter(project_id))
     return None
+
+
+def _service_clone_manager(services: object | None, project_id: str) -> object | None:
+    git_manager = _service_git_manager(services, project_id)
+    repo_path = getattr(git_manager, "repo_path", None)
+    if repo_path is None:
+        return None
+    try:
+        from gobby.clones.git import CloneGitManager
+
+        return CloneGitManager(repo_path)
+    except (TypeError, ValueError, OSError, RuntimeError):
+        return None
 
 
 def _persist_spawn_artifacts(

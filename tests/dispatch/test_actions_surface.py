@@ -94,9 +94,11 @@ def test_action_union_includes_stage_actions() -> None:
     assert actions.StartStageAction in union_members
     assert actions.AdvanceStageAction in union_members
     assert actions.StartPipelineAction in union_members
+    assert actions.MergeWorkspaceAction in union_members
     assert "StartStageAction" in actions.__all__
     assert "AdvanceStageAction" in actions.__all__
     assert "StartPipelineAction" in actions.__all__
+    assert "MergeWorkspaceAction" in actions.__all__
 
 
 def test_legacy_action_types_still_present() -> None:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import cast
 
 import click
 
@@ -22,7 +21,7 @@ from gobby.build import (
     build_stop,
     build_stop_target,
 )
-from gobby.config.build import Isolation, StageCapOverride
+from gobby.config.build import StageCapOverride
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
@@ -129,8 +128,8 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "reset_expansion_output": opts.reset_expansion_output,
         "max_active_agents": opts.max_active_agents,
     }
-    if opts.isolation_explicit:
-        payload["isolation"] = opts.isolation
+    if opts.workspace_backend_explicit:
+        payload["workspace_backend"] = opts.workspace_backend
     return payload
 
 
@@ -277,12 +276,7 @@ def _open_database() -> LocalDatabase:
     multiple=True,
     help="Stage selector/cap override, e.g. development:max_review_rounds=4.",
 )
-@click.option(
-    "--isolation",
-    type=click.Choice(["none", "worktree", "clone"]),
-    default=None,
-    help="Execution isolation mode.",
-)
+@click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
 @click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
 @click.option("--target-branch", help="Target branch for the build.")
@@ -307,7 +301,7 @@ def build_command(
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
-    isolation: str | None,
+    use_clone: bool,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -340,8 +334,8 @@ def build_command(
     opts = BuildOptions(
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
-        isolation=cast(Isolation, isolation) if isolation is not None else "worktree",
-        isolation_explicit=isolation is not None,
+        isolation="clone" if use_clone else "worktree",
+        isolation_explicit=use_clone,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),

@@ -16,6 +16,10 @@ from gobby.build.dispatch_tick import (
 from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
+from gobby.build.workspaces import (
+    WorkspaceBackend,
+    ensure_epic_integration_workspaces,
+)
 from gobby.config.build import Isolation, StageCapOverride
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.cron import CronJobStorage, compute_next_run
@@ -48,6 +52,14 @@ class BuildOptions:
     clones_dir: Path | None = None
     reset_expansion_output: bool = False
     max_active_agents: int | None = None
+
+    @property
+    def workspace_backend(self) -> WorkspaceBackend:
+        return "clone" if self.isolation == "clone" else "worktree"
+
+    @property
+    def workspace_backend_explicit(self) -> bool:
+        return self.isolation_explicit
 
 
 @dataclass
@@ -145,7 +157,6 @@ async def build(
     skip_stages = _validate_skip_stages(opts.skip_stages)
     task_manager = LocalTaskManager(db)
     input_kind, task_or_plan = _resolve_input(input_ref, task_manager, project_id)
-    opts = _apply_task_ref_isolation_default(opts, task_or_plan)
 
     _validate_no_merge(opts)
     _validate_clones_dir(opts)
@@ -176,11 +187,21 @@ async def build(
             db,
             project_id,
             services,
+            target_branch,
         )
 
     _prepare_task_ref_expansion_output(task_manager, task, opts)
     if input_kind == "leaf":
-        return await _build_leaf(task_manager, task, opts, skip_stages, db, project_id, services)
+        return await _build_leaf(
+            task_manager,
+            task,
+            opts,
+            skip_stages,
+            target_branch,
+            db,
+            project_id,
+            services,
+        )
 
     return await _build_epic(
         task_manager,
@@ -250,6 +271,7 @@ async def _build_leaf(
     task: Task,
     opts: BuildOptions,
     skip_stages: list[str],
+    target_branch: str | None,
     db: DatabaseProtocol,
     project_id: str,
     services: object | None,
@@ -270,6 +292,8 @@ async def _build_leaf(
         isolation=opts.isolation,
         assigned_agent=opts.assigned_agent,
     )
+    if opts.isolation in {"worktree", "clone"} and target_branch:
+        task_manager.artifacts.set_artifact(task.id, "target_branch", target_branch)
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "leaf")
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
@@ -309,16 +333,39 @@ async def _build_epic(
         task.id,
         target_branch=target_branch,
     )
+    if opts.isolation in {"worktree", "clone"}:
+        if target_branch is None:
+            raise ValueError("target_branch is required for epic integration workspaces")
+        ensure_epic_integration_workspaces(
+            task_manager=task_manager,
+            root_task=task,
+            backend=opts.workspace_backend,
+            target_branch=target_branch,
+            project_id=project_id,
+            services=services,
+        )
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "epic")
+    cascade_specs = (
+        resolve_stage_manifest_specs(
+            task_manager,
+            task,
+            "epic",
+            replace(opts, no_merge=False),
+            skip_stages,
+        )
+        if opts.no_merge
+        else specs
+    )
     task_manager.cascade_build_state_to_subtree(
         task.id,
         isolation=opts.isolation,
         unattended=False,
         skip_stages=skip_stages,
         allow_automation=True,
-        parent_manifest_specs=specs,
+        parent_manifest_specs=cascade_specs,
     )
-    _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
+    if opts.isolation == "none":
+        _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
     tick = await _kick_dispatcher_tick(
@@ -410,14 +457,6 @@ def _resolve_input(
     return "plan_file", plan_file
 
 
-def _apply_task_ref_isolation_default(
-    opts: BuildOptions, task_or_plan: Task | Path
-) -> BuildOptions:
-    if opts.isolation_explicit or not isinstance(task_or_plan, Task):
-        return opts
-    return replace(opts, isolation=task_or_plan.isolation.value)
-
-
 def _validate_skip_stages(skip_stages: list[str]) -> list[str]:
     normalized: list[str] = []
     for stage in skip_stages:
@@ -433,7 +472,7 @@ def _validate_skip_stages(skip_stages: list[str]) -> list[str]:
 
 def _validate_no_merge(opts: BuildOptions) -> None:
     if opts.no_merge and opts.isolation == "none":
-        raise ValueError("--no-merge requires --isolation worktree or --isolation clone")
+        raise ValueError("--no-merge requires worktree or clone build workspace backend")
 
 
 def _validate_clones_dir(opts: BuildOptions) -> None:
@@ -468,6 +507,7 @@ async def _resume_existing_lifecycle(
     db: DatabaseProtocol,
     project_id: str,
     services: object | None,
+    target_branch: str | None,
 ) -> BuildResult:
     if skip_stages:
         raise ValueError(
@@ -485,6 +525,19 @@ async def _resume_existing_lifecycle(
         ),
     )
     if task.task_type == "epic":
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        integration_target = target_branch or artifacts.target_branch
+        if opts.isolation in {"worktree", "clone"}:
+            if integration_target is None:
+                raise ValueError("target_branch is required for epic integration workspaces")
+            ensure_epic_integration_workspaces(
+                task_manager=task_manager,
+                root_task=task,
+                backend=opts.workspace_backend,
+                target_branch=integration_target,
+                project_id=project_id,
+                services=services,
+            )
         task_manager.cascade_build_state_to_subtree(
             task.id,
             isolation=opts.isolation,

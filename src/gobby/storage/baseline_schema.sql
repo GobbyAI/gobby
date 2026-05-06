@@ -635,6 +635,7 @@ CREATE TABLE worktrees (
     merge_state TEXT,
     merged_at TEXT,
     cleanup_after TEXT,
+    workspace_role TEXT NOT NULL DEFAULT 'task',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -796,6 +797,7 @@ CREATE TABLE clones (
     remote_url TEXT,
     last_sync_at TEXT,
     cleanup_after TEXT,
+    workspace_role TEXT NOT NULL DEFAULT 'task',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1533,6 +1535,9 @@ CREATE TABLE task_artifacts (
             clone_id TEXT,
             base_commit_sha TEXT,
             target_branch TEXT,
+            integration_branch TEXT,
+            integration_workspace_id TEXT,
+            integration_clone_id TEXT,
             expansion_run_id TEXT,
             expansion_attempts INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL DEFAULT (datetime('now')), last_reviewed_plan_hash TEXT, plan_review_attempts INTEGER NOT NULL DEFAULT 0, test_arch_attempts INTEGER NOT NULL DEFAULT 0, qa_attempts INTEGER NOT NULL DEFAULT 0, holistic_attempts INTEGER NOT NULL DEFAULT 0, merge_attempts INTEGER NOT NULL DEFAULT 0,
@@ -1540,6 +1545,15 @@ CREATE TABLE task_artifacts (
                 (worktree_path IS NULL) = (worktree_id IS NULL)
                 AND (clone_path IS NULL) = (clone_id IS NULL)
                 AND (worktree_path IS NULL OR clone_path IS NULL)
+                AND (integration_workspace_id IS NULL OR integration_clone_id IS NULL)
+                AND (
+                    integration_workspace_id IS NULL
+                    OR integration_branch IS NOT NULL
+                )
+                AND (
+                    integration_clone_id IS NULL
+                    OR integration_branch IS NOT NULL
+                )
                 AND (
                     base_commit_sha IS NULL
                     OR worktree_path IS NOT NULL
@@ -1547,6 +1561,13 @@ CREATE TABLE task_artifacts (
                 )
             )
         );
+
+CREATE TABLE integration_workspace_mutex (
+    integration_key TEXT PRIMARY KEY,
+    lease_until TEXT,
+    lease_holder TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 CREATE TABLE task_delivery_campaigns (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,

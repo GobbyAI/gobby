@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from gobby.agents.kill import kill_agent
+from gobby.build.dispatch_tick import (
+    DispatcherTickSummary,
+)
+from gobby.build.dispatch_tick import (
+    kick_dispatcher_tick as _kick_dispatcher_tick,
+)
 from gobby.clones.git import CloneGitManager
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
@@ -18,8 +24,6 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.worktrees.git import WorktreeGitManager
-
-from .service import DispatcherTickSummary, _kick_dispatcher_tick
 
 logger = logging.getLogger(__name__)
 
@@ -493,6 +497,30 @@ def _collect_clean_artifacts(
             artifact_id=artifacts.clone_id,
             source="task_artifacts",
         )
+        if artifacts.integration_workspace_id:
+            integration_worktree = worktrees.get(artifacts.integration_workspace_id)
+            if integration_worktree is not None:
+                _append_artifact(
+                    summaries,
+                    seen,
+                    family="worktree",
+                    task_id=task.id,
+                    path=integration_worktree.worktree_path,
+                    artifact_id=integration_worktree.id,
+                    source="task_artifacts_integration",
+                )
+        if artifacts.integration_clone_id:
+            integration_clone = clones.get(artifacts.integration_clone_id)
+            if integration_clone is not None:
+                _append_artifact(
+                    summaries,
+                    seen,
+                    family="clone",
+                    task_id=task.id,
+                    path=integration_clone.clone_path,
+                    artifact_id=integration_clone.id,
+                    source="task_artifacts_integration",
+                )
 
         worktree = worktrees.get_by_task(task.id)
         if worktree is not None:
@@ -503,7 +531,9 @@ def _collect_clean_artifacts(
                 task_id=task.id,
                 path=worktree.worktree_path,
                 artifact_id=worktree.id,
-                source="worktrees",
+                source="worktrees_integration"
+                if worktree.workspace_role == "integration"
+                else "worktrees",
             )
         clone = clones.get_by_task(task.id)
         if clone is not None:
@@ -514,7 +544,7 @@ def _collect_clean_artifacts(
                 task_id=task.id,
                 path=clone.clone_path,
                 artifact_id=clone.id,
-                source="clones",
+                source="clones_integration" if clone.workspace_role == "integration" else "clones",
             )
 
     summaries.extend(_detect_orphan_artifacts(db, project_id, tasks, seen))
@@ -633,7 +663,14 @@ def _delete_artifacts(
                 if artifact.artifact_id:
                     clones.delete(artifact.artifact_id)
 
-            if artifact.task_id is not None and not artifact.orphan:
+            if artifact.task_id is not None and artifact.source.endswith("_integration"):
+                task_manager.artifacts.set_artifacts_atomic(
+                    artifact.task_id,
+                    integration_branch=None,
+                    integration_workspace_id=None,
+                    integration_clone_id=None,
+                )
+            elif artifact.task_id is not None and not artifact.orphan:
                 task_manager.artifacts.clear_isolation_pair(artifact.task_id, artifact.family)
             artifact.exists = False
             artifact.deleted = True

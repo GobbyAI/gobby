@@ -13,7 +13,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 
-BuildIsolation = Literal["none", "worktree", "clone"]
+WorkspaceBackend = Literal["worktree", "clone"]
 
 DISPATCHER_CRON_DISABLED_MESSAGE = (
     "dispatcher_cron_disabled: dispatcher cron is disabled. "
@@ -33,7 +33,8 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         input_ref: str,
         quick: bool = False,
         skip_stages: list[str] | None = None,
-        isolation: BuildIsolation | None = None,
+        workspace_backend: WorkspaceBackend | None = None,
+        clone: bool = False,
         no_merge: bool = False,
         pr: str | None = None,
         stage: list[str] | None = None,
@@ -48,12 +49,15 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
+        if clone and workspace_backend == "worktree":
+            raise ValueError("clone=true conflicts with workspace_backend=worktree")
+        backend = workspace_backend or ("clone" if clone else "worktree")
 
         opts = BuildOptions(
             quick=quick,
             skip_stages=skip_stages or [],
-            isolation=isolation or "worktree",
-            isolation_explicit=isolation is not None,
+            isolation=backend,
+            isolation_explicit=workspace_backend is not None or clone,
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),
@@ -92,10 +96,11 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "items": {"type": "string"},
                     "default": [],
                 },
-                "isolation": {
+                "workspace_backend": {
                     "type": "string",
-                    "enum": ["none", "worktree", "clone"],
+                    "enum": ["worktree", "clone"],
                 },
+                "clone": {"type": "boolean", "default": False},
                 "no_merge": {"type": "boolean", "default": False},
                 "pr": {"type": "string"},
                 "stage": {

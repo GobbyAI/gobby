@@ -23,6 +23,7 @@ def test_build_skill_exists_and_delegates_to_shared_build_surface() -> None:
     assert "quick" in content
     assert "--skip-stage" in content
     assert "--stage" in content
-    assert "--isolation" in content
+    assert "--clone" in content
+    assert "--isolation" not in content
     assert "--no-merge" in content
     assert "--yolo" not in content

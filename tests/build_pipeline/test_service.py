@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -53,6 +54,15 @@ def _disable_dispatcher_tick(monkeypatch: pytest.MonkeyPatch) -> None:
         return DispatcherTickSummary()
 
     monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", no_tick)
+
+
+def _init_git_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=path, check=True)
+    (path / "README.md").write_text("initial\n")
+    subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=path, check=True, capture_output=True)
 
 
 @pytest.mark.asyncio
@@ -388,7 +398,7 @@ async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
 
 
 @pytest.mark.asyncio
-async def test_build_existing_leaf_omitted_isolation_preserves_task_isolation(
+async def test_build_existing_leaf_omitted_backend_defaults_to_worktree(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -412,7 +422,7 @@ async def test_build_existing_leaf_omitted_isolation_preserves_task_isolation(
     )
 
     updated = task_manager.get_task(leaf.id)
-    assert updated.isolation == "none"
+    assert updated.isolation == "worktree"
     assert [row.stage_name for row in task_manager.stage_states.list_for_task(leaf.id)] == [
         "development"
     ]
@@ -587,6 +597,106 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in child_rows] == ["development"]
     assert child_rows[0].max_review_rounds == 8
+
+
+@pytest.mark.asyncio
+async def test_build_epic_creates_integration_worktrees_and_targets_nearest_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project_id, repo_path = _project(temp_db, tmp_path)
+    _init_git_repo(repo_path)
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project_id,
+        title="Root Integration",
+        category="planning",
+        task_type="epic",
+    )
+    child_epic = task_manager.create_task(
+        project_id=project_id,
+        title="Child Integration",
+        parent_task_id=root.id,
+        category="planning",
+        task_type="epic",
+    )
+    leaf = task_manager.create_task(
+        project_id=project_id,
+        title="Leaf Work",
+        parent_task_id=child_epic.id,
+        category="code",
+        task_type="task",
+    )
+
+    await _build(
+        f"#{root.seq_num}",
+        _options(isolation="worktree", target_branch="main"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    root_artifacts = task_manager.artifacts.get_artifacts(root.id)
+    child_artifacts = task_manager.artifacts.get_artifacts(child_epic.id)
+    leaf_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
+    root_worktree = temp_db.fetchone(
+        "SELECT * FROM worktrees WHERE id = ?",
+        (root_artifacts.integration_workspace_id,),
+    )
+    child_worktree = temp_db.fetchone(
+        "SELECT * FROM worktrees WHERE id = ?",
+        (child_artifacts.integration_workspace_id,),
+    )
+
+    assert root_artifacts.integration_branch is not None
+    assert root_artifacts.target_branch == "main"
+    assert child_artifacts.integration_branch is not None
+    assert child_artifacts.target_branch == root_artifacts.integration_branch
+    assert leaf_artifacts.target_branch == child_artifacts.integration_branch
+    assert root_worktree["workspace_role"] == "integration"
+    assert root_worktree["base_branch"] == "main"
+    assert child_worktree["workspace_role"] == "integration"
+    assert child_worktree["base_branch"] == root_artifacts.integration_branch
+
+
+@pytest.mark.asyncio
+async def test_epic_no_merge_skips_only_root_promotion(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project_id, repo_path = _project(temp_db, tmp_path)
+    _init_git_repo(repo_path)
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=project_id,
+        title="No merge root",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=project_id,
+        title="Child keeps merge",
+        parent_task_id=root.id,
+        category="code",
+        task_type="task",
+    )
+
+    await _build(
+        f"#{root.seq_num}",
+        _options(isolation="worktree", no_merge=True, target_branch="main"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    root_stages = [row.stage_name for row in task_manager.stage_states.list_for_task(root.id)]
+    child_stages = [row.stage_name for row in task_manager.stage_states.list_for_task(child.id)]
+    assert "merge" not in root_stages
+    assert "merge" in child_stages
 
 
 @pytest.mark.asyncio

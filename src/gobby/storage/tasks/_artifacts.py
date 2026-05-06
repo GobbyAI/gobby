@@ -18,6 +18,9 @@ _ARTIFACT_FIELDS = frozenset(
         "clone_id",
         "base_commit_sha",
         "target_branch",
+        "integration_branch",
+        "integration_workspace_id",
+        "integration_clone_id",
         "expansion_run_id",
         "expansion_attempts",
     }
@@ -56,6 +59,9 @@ class TaskArtifacts:
     clone_id: str | None = None
     base_commit_sha: str | None = None
     target_branch: str | None = None
+    integration_branch: str | None = None
+    integration_workspace_id: str | None = None
+    integration_clone_id: str | None = None
     expansion_run_id: str | None = None
     expansion_attempts: int = 0
     updated_at: str | None = None
@@ -72,6 +78,9 @@ class TaskArtifacts:
             clone_id=row["clone_id"],
             base_commit_sha=row["base_commit_sha"],
             target_branch=row["target_branch"],
+            integration_branch=row["integration_branch"],
+            integration_workspace_id=row["integration_workspace_id"],
+            integration_clone_id=row["integration_clone_id"],
             expansion_run_id=row["expansion_run_id"],
             expansion_attempts=int(row["expansion_attempts"] or 0),
             updated_at=row["updated_at"],
@@ -91,6 +100,8 @@ def _validate_constraints(values: dict[str, Any]) -> None:
     worktree_id_set = values.get("worktree_id") is not None
     clone_path_set = values.get("clone_path") is not None
     clone_id_set = values.get("clone_id") is not None
+    integration_workspace_set = values.get("integration_workspace_id") is not None
+    integration_clone_set = values.get("integration_clone_id") is not None
 
     if worktree_path_set != worktree_id_set:
         raise TaskArtifactConstraintError(
@@ -111,6 +122,18 @@ def _validate_constraints(values: dict[str, Any]) -> None:
         raise TaskArtifactConstraintError(
             "isolation_base_without_family",
             "base_commit_sha requires an active worktree or clone artifact family",
+        )
+    if integration_workspace_set and integration_clone_set:
+        raise TaskArtifactConstraintError(
+            "integration_workspace_xor",
+            "integration workspace and clone artifacts are mutually exclusive",
+        )
+    if (integration_workspace_set or integration_clone_set) and values.get(
+        "integration_branch"
+    ) is None:
+        raise TaskArtifactConstraintError(
+            "integration_id_without_branch",
+            "integration_branch is required when setting an integration workspace id",
         )
 
 

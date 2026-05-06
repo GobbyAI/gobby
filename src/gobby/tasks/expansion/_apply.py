@@ -19,7 +19,8 @@ from gobby.tasks.expansion._common import (
 
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
-    return self.task_manager.artifacts.get_artifacts(parent_task_id).target_branch
+    artifacts = self.task_manager.artifacts.get_artifacts(parent_task_id)
+    return artifacts.integration_branch or artifacts.target_branch
 
 
 def _copy_target_branch_to_leaf(
@@ -30,6 +31,23 @@ def _copy_target_branch_to_leaf(
 ) -> None:
     if target_branch:
         self.task_manager.artifacts.set_artifact(task_id, "target_branch", target_branch)
+
+
+def _inherit_build_state(
+    self: Any,
+    *,
+    parent: Task,
+    task_id: str,
+    target_branch: str | None,
+) -> None:
+    _copy_target_branch_to_leaf(self, task_id=task_id, target_branch=target_branch)
+    if parent.allow_automation:
+        self.task_manager.update_task(
+            task_id,
+            allow_automation=True,
+            unattended=parent.unattended,
+            isolation=parent.isolation.value,
+        )
 
 
 def _complete_dev_only_run(self: Any, run_id: str, task: Task) -> ExpansionRun:
@@ -149,6 +167,12 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                         phase_manifest_specs,
                         by_session_id=session_id,
                     )
+                _inherit_build_state(
+                    self,
+                    parent=task,
+                    task_id=result["task"]["id"],
+                    target_branch=target_branch,
+                )
         else:
             phase_parent_map = {phase["id"]: task.id for phase in phase_list}
 
@@ -186,8 +210,9 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                         leaf_manifest_specs,
                         by_session_id=session_id,
                     )
-                _copy_target_branch_to_leaf(
+                _inherit_build_state(
                     self,
+                    parent=task,
                     task_id=test_result["task"]["id"],
                     target_branch=target_branch,
                 )
@@ -225,8 +250,9 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                         leaf_manifest_specs,
                         by_session_id=session_id,
                     )
-                _copy_target_branch_to_leaf(
+                _inherit_build_state(
                     self,
+                    parent=task,
                     task_id=created_id,
                     target_branch=target_branch,
                 )
@@ -257,8 +283,9 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
                         leaf_manifest_specs,
                         by_session_id=session_id,
                     )
-                _copy_target_branch_to_leaf(
+                _inherit_build_state(
                     self,
+                    parent=task,
                     task_id=ref_result["task"]["id"],
                     target_branch=target_branch,
                 )

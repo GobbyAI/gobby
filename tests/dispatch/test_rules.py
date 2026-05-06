@@ -115,7 +115,12 @@ def _artifacts(**overrides):
         "plan_file_hash": None,
         "last_reviewed_plan_hash": None,
         "worktree_path": None,
+        "worktree_id": None,
         "clone_path": None,
+        "clone_id": None,
+        "integration_branch": None,
+        "integration_workspace_id": None,
+        "integration_clone_id": None,
         "base_commit_sha": None,
         "target_branch": "main",
     }
@@ -203,16 +208,16 @@ def test_expansion_review_rule_escalates_when_review_cap_reached() -> None:
     assert capped.reason == "expansion_max_review_rounds"
 
 
-def test_isolation_rule_reads_task_isolation_field_and_fires_when_pair_missing() -> None:
-    from gobby.dispatch.actions import CreateIsolationAction
+def test_isolation_rule_starts_development_and_defers_workspace_to_spawn() -> None:
+    from gobby.dispatch.actions import StartStageAction
 
     action = _evaluate(
         _task_at("development", "ready", isolation="worktree"),
         _context(artifacts=_artifacts()),
     )
 
-    assert isinstance(action, CreateIsolationAction)
-    assert action.isolation == "worktree"
+    assert isinstance(action, StartStageAction)
+    assert action.stage_name == "development"
 
 
 def test_isolation_rule_starts_development_when_isolation_none() -> None:
@@ -233,6 +238,15 @@ def test_dev_rule_blocked_by_missing_isolation_artifacts() -> None:
     assert action is not None
 
 
+def test_development_ready_with_dependency_does_not_start_workspace() -> None:
+    action = _evaluate(
+        _task_at("development", "ready", isolation="worktree", active_blocked_by={"task-0"}),
+        _context(artifacts=_artifacts()),
+    )
+
+    assert action is None
+
+
 def test_dev_rule_fires_after_stage_start() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
@@ -243,6 +257,32 @@ def test_dev_rule_fires_after_stage_start() -> None:
 
     assert isinstance(action, SpawnAgentAction)
     assert action.agent_slug == "backend-developer"
+
+
+def test_non_root_leaf_merge_uses_workspace_merge_action() -> None:
+    from gobby.dispatch.actions import MergeWorkspaceAction
+
+    action = _evaluate(
+        _task_at("merge", "in_progress", parent_task_id="epic-1"),
+        _context(artifacts=_artifacts(worktree_id="wt-1", target_branch="integration/root")),
+    )
+
+    assert isinstance(action, MergeWorkspaceAction)
+    assert action.backend == "worktree"
+    assert action.source_workspace_id == "wt-1"
+    assert action.target_branch == "integration/root"
+
+
+def test_root_merge_still_routes_to_merge_orchestrator() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at("merge", "in_progress"),
+        _context(artifacts=_artifacts(worktree_id="wt-1", target_branch="main")),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "merge-orchestrator"
 
 
 def test_docs_dev_rule_routes_to_tech_writer_when_available() -> None:

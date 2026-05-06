@@ -45,8 +45,8 @@ Collect only options the user explicitly wants to change:
 1. `--quick` for exactly one lifecycle step.
 2. `--skip-stage <stage[,stage...]>`, only when starting a new lifecycle.
 3. `--stage <stage>[:key=value[,key=value...]]` for stage selection or caps.
-4. `--isolation none|worktree|clone`.
-5. `--no-merge`, only with `worktree` or `clone` isolation.
+4. `--clone` to use clone workspaces instead of the default worktree backend.
+5. `--no-merge` to skip final promotion for the requested build.
 6. `--pr <number-or-url>`, optional.
 7. `--target-branch <branch>`, optional.
 8. `--agent <agent-name>`, optional.
@@ -57,7 +57,7 @@ Collect only options the user explicitly wants to change:
 Before running, show the equivalent command:
 
 ```text
-gobby build <input> --quick --skip-stage <stage,...> --stage <stage>:max_review_rounds=<n> --isolation <mode> --no-merge --target-branch <branch> --agent <agent>
+gobby build <input> --quick --skip-stage <stage,...> --stage <stage>:max_review_rounds=<n> --clone --no-merge --target-branch <branch> --agent <agent>
 ```
 
 Omit flags that are unset.

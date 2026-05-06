@@ -18,7 +18,7 @@ def _options(**overrides: object) -> BuildOptions:
     values = {
         "quick": False,
         "skip_stages": ["test_arch", "qa"],
-        "isolation": "clone",
+        "isolation": "none",
         "no_merge": False,
         "pr": None,
         "target_branch": "main",
@@ -90,7 +90,7 @@ async def test_build_epic_cascades_resolved_dispatch_state_to_subtree(
         *[task_manager.get_task(item.id) for item in descendants],
     ]:
         assert task.allow_automation is True
-        assert task.isolation == "clone"
+        assert task.isolation == "none"
         assert task.unattended is False
         assert not any(label.startswith("stage-:") for label in task.labels or [])
 
