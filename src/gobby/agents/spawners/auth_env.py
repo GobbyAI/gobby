@@ -108,6 +108,7 @@ CLI_CREDENTIAL_KEYS: dict[str, frozenset[str]] = {
     "droid": frozenset({"FACTORY_API_KEY"}),
 }
 
+
 def terminal_env_passthrough(
     cli: str,
     *,
