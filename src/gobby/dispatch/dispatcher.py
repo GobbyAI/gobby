@@ -122,6 +122,12 @@ async def run_heartbeat(
     services: object | None = None,
 ) -> HeartbeatResult:
     """Scan automation candidates, acquire per-task leases, and execute first-match actions."""
+    from gobby.agents.readiness import spawn_readiness_blocker
+
+    readiness_reason = spawn_readiness_blocker(services)
+    if readiness_reason is not None:
+        return _unavailable(HeartbeatResult(), readiness_reason)
+
     resolved_db = db or LocalDatabase()
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:

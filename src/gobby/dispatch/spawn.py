@@ -40,6 +40,11 @@ async def spawn_agent(
     """Spawn an agent through daemon services and return its real agent run id."""
     if db is None:
         raise DispatchSpawnUnavailable("database_missing")
+    from gobby.agents.readiness import spawn_readiness_blocker
+
+    readiness_reason = spawn_readiness_blocker(services)
+    if readiness_reason is not None:
+        raise DispatchSpawnUnavailable(readiness_reason)
     required = {
         "database": getattr(services, "database", None),
         "task_manager": getattr(services, "task_manager", None),

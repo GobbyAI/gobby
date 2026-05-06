@@ -458,4 +458,8 @@ async def init_subsystems(
 
     if tracker:
         tracker.finish()
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    if services is not None:
+        services.startup_ready = True
+        services.shutdown_in_progress = False
     logger.info("Subsystem initialization complete")

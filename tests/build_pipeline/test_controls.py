@@ -471,6 +471,66 @@ async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
 
 
 @pytest.mark.asyncio
+async def test_restart_no_resume_resets_epic_tree_without_dispatch(
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_restart_target
+    from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
+
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs epic",
+        category="planning",
+        task_type="epic",
+    )
+    leaf = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs leaf",
+        category="docs",
+        task_type="task",
+        parent_task_id=epic.id,
+    )
+    task_manager.update_task(epic.id, allow_automation=True, isolation="worktree")
+    task_manager.update_task(
+        leaf.id,
+        allow_automation=True,
+        isolation="worktree",
+        dispatch_failure_count=2,
+    )
+    initialize_manifest(temp_db, epic.id, [spec("planning", 0), spec("merge", 1)])
+    initialize_manifest(temp_db, leaf.id, [spec("development", 0)])
+    set_stage_state(temp_db, epic.id, "planning", "done")
+    set_stage_state(temp_db, leaf.id, "development", "in_progress")
+    task_manager.escalate_task(leaf.id, "dispatch_spawn_max_attempts:missing mcp config")
+
+    with patch("gobby.build.controls._kick_dispatcher_tick", new=AsyncMock()) as tick:
+        result = await build_restart_target(
+            f"#{epic.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+            force=True,
+            yes=True,
+            no_resume=True,
+        )
+
+    epic_rows = task_manager.stage_states.list_for_task(epic.id)
+    leaf_rows = task_manager.stage_states.list_for_task(leaf.id)
+    assert [row.stage_name for row in epic_rows] == ["development", "holistic_qa", "merge"]
+    assert [row.stage_name for row in leaf_rows] == ["development", "merge"]
+    assert {row.state for row in epic_rows + leaf_rows} == {"ready"}
+    assert task_manager.get_task(epic.id).allow_automation is False
+    assert task_manager.get_task(leaf.id).allow_automation is False
+    assert task_manager.get_task(leaf.id).dispatch_failure_count == 0
+    assert task_manager.get_task(leaf.id).is_escalated is False
+    assert result.dispatcher_tick is None
+    tick.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_restart_clears_build_owned_dispatch_escalations(
     temp_db,
     sample_project,

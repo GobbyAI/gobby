@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from gobby.agents.isolation import (
     SpawnConfig,
     get_isolation_handler,
+    provider_mcp_config_error,
+    repair_isolation_environment,
 )
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
@@ -428,6 +430,15 @@ async def spawn_agent_impl(
                 "error": f"Worktree directory missing: {existing_worktree.worktree_path} (stale record cleaned up)",
             }
 
+        try:
+            await repair_isolation_environment(
+                main_repo_path=resolved_project_path,
+                isolated_path=existing_worktree.worktree_path,
+                provider=effective_provider,
+            )
+        except Exception as e:
+            return {"success": False, "error": f"Failed to repair worktree isolation: {e}"}
+
         from gobby.agents.isolation import IsolationContext
 
         isolation_ctx = IsolationContext(
@@ -451,6 +462,15 @@ async def spawn_agent_impl(
                 "success": False,
                 "error": f"Clone directory missing: {existing_clone.clone_path} (stale record cleaned up)",
             }
+
+        try:
+            await repair_isolation_environment(
+                main_repo_path=resolved_project_path,
+                isolated_path=existing_clone.clone_path,
+                provider=effective_provider,
+            )
+        except Exception as e:
+            return {"success": False, "error": f"Failed to repair clone isolation: {e}"}
 
         from gobby.agents.isolation import IsolationContext
 
@@ -499,6 +519,11 @@ async def spawn_agent_impl(
             except Exception as cleanup_err:
                 logger.warning(f"Cleanup after prepare failure also failed: {cleanup_err}")
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
+
+    if effective_isolation in {"worktree", "clone"}:
+        config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
+        if config_error is not None:
+            return {"success": False, "error": config_error}
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)

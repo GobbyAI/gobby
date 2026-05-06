@@ -16,11 +16,9 @@ from gobby.build.dispatch_tick import (
 from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
-from gobby.build.workspaces import (
-    WorkspaceBackend,
-    ensure_epic_integration_workspaces,
-)
-from gobby.config.build import Isolation, StageCapOverride
+from gobby.build.options import BuildOptions, retry_attempt_cap
+from gobby.build.workspaces import ensure_epic_integration_workspaces
+from gobby.config.build import Isolation
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.database import DatabaseProtocol
@@ -34,32 +32,6 @@ from gobby.storage.tasks import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class BuildOptions:
-    """Resolved options for a build request."""
-
-    quick: bool = False
-    skip_stages: list[str] = field(default_factory=list)
-    isolation: Isolation = "worktree"
-    isolation_explicit: bool = True
-    no_merge: bool = False
-    pr: str | None = None
-    stage_caps: list[StageCapOverride] = field(default_factory=list)
-    target_branch: str | None = None
-    assigned_agent: str | None = None
-    clones_dir: Path | None = None
-    reset_expansion_output: bool = False
-    max_active_agents: int | None = None
-
-    @property
-    def workspace_backend(self) -> WorkspaceBackend:
-        return "clone" if self.isolation == "clone" else "worktree"
-
-    @property
-    def workspace_backend_explicit(self) -> bool:
-        return self.isolation_explicit
 
 
 @dataclass
@@ -479,6 +451,8 @@ def _validate_clones_dir(opts: BuildOptions) -> None:
 
 
 def _validate_retry_caps(opts: BuildOptions) -> None:
+    if opts.max_retries is not None and opts.max_retries < 0:
+        raise ValueError("max_retries must be greater than or equal to 0")
     for override in opts.stage_caps:
         if override.max_work_attempts is not None and override.max_work_attempts < 1:
             raise ValueError(
@@ -509,7 +483,7 @@ async def _resume_existing_lifecycle(
         raise ValueError(
             "--skip-stage can only shape a new lifecycle; use build restart or clean first"
         )
-    _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, opts.stage_caps)
+    _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, opts)
     _validate_task_ref_isolation_artifacts(task_manager, task, opts.isolation)
     task_manager.update_task(
         task.id,
@@ -567,24 +541,38 @@ async def _resume_existing_lifecycle(
 def _apply_stage_caps_to_existing_lifecycle(
     task_manager: LocalTaskManager,
     task_id: str,
-    stage_caps: list[StageCapOverride],
+    opts: BuildOptions,
 ) -> None:
-    if not stage_caps:
+    if not opts.stage_caps and opts.max_retries is None:
         return
     rows = task_manager.stage_states.list_for_task(task_id)
     stage_names = {row.stage_name for row in rows}
-    for override in stage_caps:
+    overrides = {_canonical_stage_name(item.stage_name): item for item in opts.stage_caps}
+    retry_cap = retry_attempt_cap(opts)
+    for override in opts.stage_caps:
         stage_name = _canonical_stage_name(override.stage_name)
         if stage_name not in stage_names:
             raise ValueError(f"--stage target stage is not in the existing lifecycle: {stage_name}")
+    for stage_name in stage_names:
+        stage_override = overrides.get(stage_name)
         updates: list[str] = []
         params: list[int | str] = []
-        if override.max_work_attempts is not None:
+        max_work_attempts = (
+            stage_override.max_work_attempts
+            if stage_override and stage_override.max_work_attempts is not None
+            else retry_cap
+        )
+        max_review_rounds = (
+            stage_override.max_review_rounds
+            if stage_override and stage_override.max_review_rounds is not None
+            else retry_cap
+        )
+        if max_work_attempts is not None:
             updates.append("max_work_attempts = ?")
-            params.append(override.max_work_attempts)
-        if override.max_review_rounds is not None:
+            params.append(max_work_attempts)
+        if max_review_rounds is not None:
             updates.append("max_review_rounds = ?")
-            params.append(override.max_review_rounds)
+            params.append(max_review_rounds)
         if not updates:
             continue
         params.extend([task_id, stage_name])
@@ -828,6 +816,7 @@ def resolve_stage_manifest_specs(
     cap_by_stage = {
         _canonical_stage_name(override.stage_name): override for override in opts.stage_caps
     }
+    retry_cap = retry_attempt_cap(opts)
     unknown_caps = sorted(set(cap_by_stage) - set(manifest))
     if unknown_caps:
         raise ValueError(f"--stage target stage not in resolved manifest: {unknown_caps[0]}")
@@ -839,8 +828,16 @@ def resolve_stage_manifest_specs(
             StageManifestSpec(
                 stage_name=stage_name,
                 position=position,
-                max_work_attempts=override.max_work_attempts if override else None,
-                max_review_rounds=override.max_review_rounds if override else None,
+                max_work_attempts=(
+                    override.max_work_attempts
+                    if override and override.max_work_attempts is not None
+                    else retry_cap
+                ),
+                max_review_rounds=(
+                    override.max_review_rounds
+                    if override and override.max_review_rounds is not None
+                    else retry_cap
+                ),
             )
         )
     return specs

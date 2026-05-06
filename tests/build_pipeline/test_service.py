@@ -366,6 +366,55 @@ async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
 
 
 @pytest.mark.asyncio
+async def test_max_retries_zero_sets_one_attempt_per_resolved_stage(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    result = await _build(
+        str(plan_file),
+        _options(isolation="none", max_retries=0),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    rows = LocalTaskManager(temp_db).stage_states.list_for_task(result.task_id)
+    assert rows
+    assert {row.max_work_attempts for row in rows} == {1}
+    assert {row.max_review_rounds for row in rows} == {1}
+
+
+@pytest.mark.asyncio
+async def test_stage_override_wins_over_max_retries_default(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.config.build import StageCapOverride
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    result = await _build(
+        str(plan_file),
+        _options(
+            isolation="none",
+            max_retries=0,
+            stage_caps=[StageCapOverride("planning", max_work_attempts=4)],
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    row = LocalTaskManager(temp_db).stage_states.list_for_task(result.task_id)[0]
+    assert row.max_work_attempts == 4
+    assert row.max_review_rounds == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stage_name", "cap_name"),
     [
@@ -394,6 +443,24 @@ async def test_build_rejects_stage_caps_below_one(
         await _build(
             str(plan_file),
             _options(stage_caps=[override]),
+            db=temp_db,
+            project_id=project_id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_build_rejects_negative_max_retries(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    with pytest.raises(ValueError, match="max_retries.*greater than or equal to 0"):
+        await _build(
+            str(plan_file),
+            _options(max_retries=-1),
             db=temp_db,
             project_id=project_id,
         )

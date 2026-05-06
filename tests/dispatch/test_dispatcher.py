@@ -217,6 +217,27 @@ async def test_max_active_agents_cap(
     assert spawned == []
 
 
+async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    _task(temp_db, sample_project)
+    spawned: list[object] = []
+    services = SimpleNamespace(startup_ready=False, shutdown_in_progress=False)
+    monkeypatch.setattr(dispatcher, "spawn_agent", lambda *args, **kwargs: spawned.append(args))
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    assert result.reason == "daemon_startup_not_ready"
+    assert result.executed == 0
+    assert spawned == []
+
+
 async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_project) -> None:
     from gobby.dispatch import dispatcher
 

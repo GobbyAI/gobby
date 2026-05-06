@@ -46,6 +46,7 @@ class BuildRequest(BaseModel):
     clones_dir: str | None = None
     reset_expansion_output: bool = False
     max_active_agents: int | None = Field(default=None, ge=1)
+    max_retries: int | None = Field(default=None, ge=0)
 
 
 class BuildControlRequest(BaseModel):
@@ -55,6 +56,7 @@ class BuildControlRequest(BaseModel):
     dry_run: bool = False
     force: bool = False
     yes: bool = False
+    no_resume: bool = False
 
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
@@ -75,6 +77,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         clones_dir=clones_dir,
         reset_expansion_output=request_data.reset_expansion_output,
         max_active_agents=request_data.max_active_agents,
+        max_retries=request_data.max_retries,
     )
 
 
@@ -220,6 +223,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 dry_run=request_data.dry_run,
                 force=request_data.force,
                 yes=request_data.yes,
+                no_resume=request_data.no_resume,
                 services=server.services,
             )
             return result.to_dict()

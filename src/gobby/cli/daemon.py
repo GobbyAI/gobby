@@ -179,7 +179,7 @@ def _show_error_log_tail(error_log_file: Path, n: int = 15) -> None:
         click.echo(f"  Check logs: {error_log_file}", err=True)
 
 
-def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
+def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
     """Poll the daemon's startup progress endpoint and display steps."""
     displayed_steps: set[str] = set()
     displayed_errors: set[str] = set()
@@ -193,7 +193,7 @@ def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
                 timeout=1.0,
             )
             if resp.status_code != 200:
-                break
+                return False
             progress = resp.json()
 
             # Show completed steps
@@ -225,13 +225,14 @@ def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
                     click.echo("Background tasks:")
                     for task in scheduled:
                         _step(task, scheduled=True)
-                break
+                return True
 
         except (httpx.ConnectError, httpx.TimeoutException):
             pass
         except Exception:
-            break
+            return False
         time.sleep(0.5)
+    return False
 
 
 def _wait_for_daemon_health(
@@ -381,6 +382,9 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
             if elapsed is None:
                 _step("Daemon did not become healthy after service start", error=True)
                 sys.exit(1)
+            if not _poll_startup_progress(config.daemon_port):
+                _step("Daemon did not finish startup readiness after service start", error=True)
+                sys.exit(1)
             _step(f"Daemon started via {svc.get('platform', 'OS')} service")
             _step(f"Health check passed ({elapsed:.1f}s)")
             return
@@ -501,7 +505,10 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
                 sys.exit(1)
 
             # Poll startup progress from daemon
-            _poll_startup_progress(http_port)
+            if not _poll_startup_progress(http_port):
+                _step("Startup readiness did not complete", error=True)
+                _show_error_log_tail(error_log_file)
+                sys.exit(1)
 
             # Spawn UI server if enabled
             ui_url = None
@@ -621,6 +628,7 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
             sys.exit(code if isinstance(code, int) else 1)
 
     ctx.invoke(start, verbose=verbose, no_ui=no_ui, docker_flag=docker_flag)
+    ctx.invoke(status)
 
 
 @click.command()

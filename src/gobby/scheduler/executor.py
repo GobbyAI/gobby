@@ -98,6 +98,11 @@ class CronExecutor:
 
     async def _execute_agent_spawn(self, job: CronJob) -> str:
         """Execute an agent_spawn action."""
+        from gobby.agents.readiness import spawn_readiness_blocker
+
+        readiness_reason = spawn_readiness_blocker(self.services)
+        if readiness_reason is not None:
+            return f"Agent spawn skipped: {readiness_reason}"
         if not self.agent_runner:
             raise RuntimeError("agent_runner not configured for cron executor")
 

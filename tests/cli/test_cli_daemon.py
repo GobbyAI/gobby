@@ -108,6 +108,7 @@ class TestStartCommand:
         assert "Start the Gobby daemon" in result.output
         assert "--verbose" in result.output
 
+    @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
     @patch("gobby.cli.daemon.service_start", return_value={"success": True})
     @patch(
@@ -120,6 +121,7 @@ class TestStartCommand:
         mock_get_service_status: MagicMock,
         mock_service_start: MagicMock,
         mock_wait_for_health: MagicMock,
+        mock_poll_startup: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
     ) -> None:
@@ -135,6 +137,7 @@ class TestStartCommand:
         assert "Health check passed (2.5s)" in result.output
         mock_service_start.assert_called_once()
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
+        mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
@@ -704,6 +707,7 @@ class TestRestartCommand:
         assert "Restart the Gobby daemon" in result.output
         assert "--verbose" in result.output
 
+    @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=4.0)
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=1.0)
     @patch("gobby.cli.daemon.service_start", return_value={"success": True})
@@ -731,6 +735,7 @@ class TestRestartCommand:
         mock_service_start: MagicMock,
         mock_wait_for_service_stop: MagicMock,
         mock_wait_for_health: MagicMock,
+        mock_poll_startup: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
     ) -> None:
@@ -753,7 +758,50 @@ class TestRestartCommand:
         mock_service_start.assert_called_once()
         mock_wait_for_service_stop.assert_called_once_with(4321)
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
+        mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
 
+    @patch("gobby.cli.daemon._poll_startup_progress", return_value=False)
+    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=4.0)
+    @patch("gobby.cli.daemon._wait_for_service_stop", return_value=1.0)
+    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={
+            "installed": True,
+            "enabled": True,
+            "running": True,
+            "platform": "macos",
+            "pid": 4321,
+        },
+    )
+    @patch("gobby.cli.daemon.stop_daemon_util")
+    @patch("gobby.cli.daemon.setup_logging")
+    @patch("gobby.cli.load_config")
+    def test_restart_via_service_fails_when_startup_readiness_does_not_complete(
+        self,
+        mock_load_config: MagicMock,
+        mock_setup_logging: MagicMock,
+        mock_stop_daemon: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_stop: MagicMock,
+        mock_service_start: MagicMock,
+        mock_wait_for_service_stop: MagicMock,
+        mock_wait_for_health: MagicMock,
+        mock_poll_startup: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+    ) -> None:
+        """Restart exits non-zero when startup readiness never completes."""
+        mock_load_config.return_value = mock_daemon_config
+
+        result = runner.invoke(cli, ["restart"])
+
+        assert result.exit_code == 1
+        assert "Daemon did not finish startup readiness after service start" in result.output
+        mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
+
+    @patch("gobby.cli.daemon._poll_startup_progress")
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=None)
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=0.8)
     @patch("gobby.cli.daemon.service_start", return_value={"success": True})
@@ -781,6 +829,7 @@ class TestRestartCommand:
         mock_service_start: MagicMock,
         mock_wait_for_service_stop: MagicMock,
         mock_wait_for_health: MagicMock,
+        mock_poll_startup: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
     ) -> None:
@@ -797,6 +846,7 @@ class TestRestartCommand:
         mock_service_start.assert_called_once()
         mock_wait_for_service_stop.assert_called_once_with(4321)
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
+        mock_poll_startup.assert_not_called()
 
     @patch("gobby.cli.daemon._wait_for_daemon_health")
     @patch("gobby.cli.daemon.service_start")
@@ -1352,6 +1402,10 @@ class TestEdgeCases:
         good_response = MagicMock()
         good_response.status_code = 200
         responses.append(good_response)
+        progress_response = MagicMock()
+        progress_response.status_code = 200
+        progress_response.json.return_value = {"done": True, "steps_scheduled": []}
+        responses.append(progress_response)
 
         mock_httpx_get.side_effect = responses
 

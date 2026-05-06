@@ -108,8 +108,10 @@ async def build_stop_target(
     task_ids = [task.id for task in tasks]
     agents = _active_agents(db, task_ids)
 
+    updated = 0
     for task in tasks:
         task_manager.update_task(task.id, allow_automation=False, unattended=False)
+        updated += 1
 
     await _cancel_active_agents(db, agents, services=services)
     mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
@@ -122,7 +124,7 @@ async def build_stop_target(
         root_task_id=root.id,
         affected_tasks=_task_summaries(tasks),
         agents=_agent_summaries(agents),
-        automation_updated=len(tasks),
+        automation_updated=updated,
         mutexes_cleared=mutexes_cleared,
         claims_released=claims_released,
         stages_reset=stages_reset,
@@ -235,6 +237,7 @@ async def build_restart_target(
     dry_run: bool = False,
     force: bool = False,
     yes: bool = False,
+    no_resume: bool = False,
     services: object | None = None,
 ) -> BuildTargetControlResult:
     """Stop, clean, and resume automation for a task or epic subtree."""
@@ -254,7 +257,9 @@ async def build_restart_target(
         preview.action = "restart"
         return preview
 
-    await build_stop_target(input_ref, db=db, project_id=project_id, services=services)
+    stop_result = await build_stop_target(
+        input_ref, db=db, project_id=project_id, services=services
+    )
     clean_result = await build_clean_target(
         input_ref,
         db=db,
@@ -270,6 +275,16 @@ async def build_restart_target(
     dispatch_failures_reset = _reset_restart_dispatch_failures(task_manager, tasks)
     escalations_cleared = _clear_restartable_escalations(task_manager, tasks)
     restart_stage_resets = _reset_restart_stage_manifests(db, tasks)
+    if no_resume:
+        clean_result.action = "restart"
+        clean_result.automation_updated = stop_result.automation_updated
+        clean_result.mutexes_cleared = stop_result.mutexes_cleared + clean_result.mutexes_cleared
+        clean_result.claims_released = stop_result.claims_released + clean_result.claims_released
+        clean_result.stages_reset += restart_stage_resets
+        clean_result.escalations_cleared = escalations_cleared
+        clean_result.dispatch_failures_reset = dispatch_failures_reset
+        clean_result.dispatcher_tick = None
+        return clean_result
     resume_result = await build_resume_target(
         input_ref,
         db=db,
@@ -519,12 +534,13 @@ def _restart_stage_specs(
     rows: list[StageState],
 ) -> list[StageManifestSpec]:
     by_name = {row.stage_name: row for row in rows}
-    stage_names = [row.stage_name for row in sorted(rows, key=lambda item: item.position)]
     if _task_uses_isolated_workspace(task):
         if task.task_type == "epic" and _has_children(db, task.id):
-            _insert_stage_before(stage_names, "holistic_qa", before="merge")
-        if "merge" not in stage_names:
-            stage_names.append("merge")
+            stage_names = ["development", "holistic_qa", "merge"]
+        else:
+            stage_names = [_primary_stage_for_restart(task), "merge"]
+    else:
+        stage_names = [row.stage_name for row in sorted(rows, key=lambda item: item.position)]
 
     specs: list[StageManifestSpec] = []
     for position, stage_name in enumerate(stage_names):
@@ -549,13 +565,16 @@ def _has_children(db: DatabaseProtocol, task_id: str) -> bool:
     return bool(db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = ? LIMIT 1", (task_id,)))
 
 
-def _insert_stage_before(stage_names: list[str], stage_name: str, *, before: str) -> None:
-    if stage_name in stage_names:
-        return
-    if before in stage_names:
-        stage_names.insert(stage_names.index(before), stage_name)
-        return
-    stage_names.append(stage_name)
+def _primary_stage_for_restart(task: Task) -> str:
+    return {
+        "code": "development",
+        "config": "development",
+        "docs": "development",
+        "refactor": "development",
+        "test": "development",
+        "research": "research",
+        "planning": "planning",
+    }.get(task.category or "", "development")
 
 
 def _clean_blockers(

@@ -6,7 +6,7 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from gobby.agents.isolation import (
     _patch_mcp_config_for_isolation,
     generate_branch_name,
     get_isolation_handler,
+    provider_mcp_config_error,
 )
 
 pytestmark = pytest.mark.unit
@@ -394,11 +395,22 @@ class TestWorktreeIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        with patch("pathlib.Path.is_dir", return_value=True):
+        with (
+            patch("pathlib.Path.is_dir", return_value=True),
+            patch(
+                "gobby.agents.isolation.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
+        ):
             ctx = await handler.prepare_environment(config)
 
         assert ctx.worktree_id == "existing-wt-456"
         assert ctx.cwd == "/tmp/worktrees/existing-branch"
+        repair.assert_awaited_once_with(
+            main_repo_path="/path/to/main/repo",
+            isolated_path="/tmp/worktrees/existing-branch",
+            provider="claude",
+        )
         # Should NOT create a new worktree
         mock_git_manager.create_worktree.assert_not_called()
 
@@ -807,11 +819,22 @@ class TestCloneIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        with patch("pathlib.Path.is_dir", return_value=True):
+        with (
+            patch("pathlib.Path.is_dir", return_value=True),
+            patch(
+                "gobby.agents.isolation.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
+        ):
             ctx = await handler.prepare_environment(config)
 
         assert ctx.clone_id == "existing-clone-456"
         assert ctx.cwd == "/tmp/clones/existing-branch"
+        repair.assert_awaited_once_with(
+            main_repo_path="/path/to/main/repo",
+            isolated_path="/tmp/clones/existing-branch",
+            provider="claude",
+        )
         # Should NOT create a new clone
         mock_clone_manager.create_clone.assert_not_called()
 
@@ -1160,3 +1183,48 @@ class TestPatchMcpConfigForIsolation:
 
         # Verify warning was logged
         assert any("Failed to write" in msg for msg in caplog.messages)
+
+
+class TestProviderMcpConfigPreflight:
+    """Tests for provider_mcp_config_error."""
+
+    def test_reports_missing_mcp_json(self, tmp_path: Path) -> None:
+        assert provider_mcp_config_error(str(tmp_path), "gemini").startswith(
+            "provider_mcp_config_missing:"
+        )
+
+    def test_accepts_non_claude_mcp_json(self, tmp_path: Path) -> None:
+        (tmp_path / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gobby": {
+                            "command": "uv",
+                            "args": ["run", "--project", "/main", "gobby", "mcp-server"],
+                        }
+                    }
+                }
+            )
+        )
+
+        assert provider_mcp_config_error(str(tmp_path), "gemini") is None
+
+    def test_requires_claude_project_config(self, tmp_path: Path) -> None:
+        (tmp_path / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gobby": {
+                            "command": "uv",
+                            "args": ["run", "--project", "/main", "gobby", "mcp-server"],
+                        }
+                    }
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            error = provider_mcp_config_error(str(tmp_path), "claude")
+
+        assert error is not None
+        assert error.startswith("provider_mcp_config_missing:")

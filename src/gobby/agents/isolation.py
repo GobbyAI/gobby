@@ -211,6 +211,11 @@ class WorktreeIsolationHandler(IsolationHandler):
         existing = self._worktree_storage.get_by_branch(config.project_id, branch_name)
         if existing:
             if Path(existing.worktree_path).is_dir():
+                await repair_isolation_environment(
+                    main_repo_path=str(self._git_manager.repo_path),
+                    isolated_path=existing.worktree_path,
+                    provider=config.provider,
+                )
                 # Use existing worktree
                 return IsolationContext(
                     cwd=existing.worktree_path,
@@ -289,24 +294,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                 base_commit_sha=base_commit_sha,
             )
 
-        # Copy CLI hooks to worktree so hooks fire correctly
-        await _copy_cli_hooks(
-            source_path=str(self._git_manager.repo_path),
-            target_path=worktree_path,
-            provider=config.provider,
-        )
-
-        # Ensure project.json has parent_project_path for workflow discovery
-        from gobby.utils.project_context import ensure_project_json_for_isolation
-
-        await asyncio.to_thread(
-            ensure_project_json_for_isolation,
-            str(self._git_manager.repo_path),
-            worktree_path,
-        )
-
-        # Patch MCP config so agents use the main repo's gobby code
-        await _patch_mcp_config_for_isolation(
+        await repair_isolation_environment(
             main_repo_path=str(self._git_manager.repo_path),
             isolated_path=worktree_path,
             provider=config.provider,
@@ -428,6 +416,11 @@ class CloneIsolationHandler(IsolationHandler):
         existing = self._clone_storage.get_by_branch(config.project_id, branch_name)
         if existing:
             if Path(existing.clone_path).is_dir():
+                await repair_isolation_environment(
+                    main_repo_path=config.project_path,
+                    isolated_path=existing.clone_path,
+                    provider=config.provider,
+                )
                 # Use existing clone
                 return IsolationContext(
                     cwd=existing.clone_path,
@@ -513,24 +506,7 @@ class CloneIsolationHandler(IsolationHandler):
                 base_commit_sha=base_commit_sha,
             )
 
-        # Copy CLI hooks to clone so hooks fire correctly
-        await _copy_cli_hooks(
-            source_path=config.project_path,
-            target_path=clone_path,
-            provider=config.provider,
-        )
-
-        # Ensure project.json has parent_project_path for workflow discovery
-        from gobby.utils.project_context import ensure_project_json_for_isolation
-
-        await asyncio.to_thread(
-            ensure_project_json_for_isolation,
-            config.project_path,
-            clone_path,
-        )
-
-        # Patch MCP config so agents use the main repo's gobby code
-        await _patch_mcp_config_for_isolation(
+        await repair_isolation_environment(
             main_repo_path=config.project_path,
             isolated_path=clone_path,
             provider=config.provider,
@@ -598,6 +574,33 @@ Push your changes when ready to share with the original.
         # Sanitize branch name for use in path
         safe_branch = branch_name.replace("/", "-").replace("\\", "-")
         return str(Path.home() / ".gobby" / "clones" / project_name / safe_branch)
+
+
+async def repair_isolation_environment(
+    *,
+    main_repo_path: str,
+    isolated_path: str,
+    provider: str,
+) -> None:
+    """Repair hooks, project metadata, and MCP config for an isolated workspace."""
+    await _copy_cli_hooks(
+        source_path=main_repo_path,
+        target_path=isolated_path,
+        provider=provider,
+    )
+
+    from gobby.utils.project_context import ensure_project_json_for_isolation
+
+    await asyncio.to_thread(
+        ensure_project_json_for_isolation,
+        main_repo_path,
+        isolated_path,
+    )
+    await _patch_mcp_config_for_isolation(
+        main_repo_path=main_repo_path,
+        isolated_path=isolated_path,
+        provider=provider,
+    )
 
 
 async def _copy_cli_hooks(
@@ -827,6 +830,45 @@ async def _patch_mcp_config_for_isolation(
             logger.info(f"Registered isolated path in ~/.claude.json: {isolated_path}")
         except Exception as e:
             logger.warning(f"Failed to patch ~/.claude.json for {isolated_path}: {e}")
+
+
+def provider_mcp_config_error(isolated_path: str, provider: str) -> str | None:
+    """Return a compact preflight error if isolated MCP config is missing."""
+    if provider == "droid":
+        return None
+
+    isolated = Path(isolated_path)
+    mcp_json_path = isolated / ".mcp.json"
+    if not mcp_json_path.exists():
+        return f"provider_mcp_config_missing:{mcp_json_path}"
+    try:
+        data = json.loads(mcp_json_path.read_text())
+        gobby_server = data["mcpServers"]["gobby"]
+        args = gobby_server.get("args", [])
+    except (OSError, KeyError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        return f"provider_mcp_config_invalid:{mcp_json_path}:{exc}"
+    if gobby_server.get("command") != "uv" or "mcp-server" not in args:
+        return f"provider_mcp_config_invalid:{mcp_json_path}:gobby server not configured"
+
+    if provider != "claude":
+        return None
+
+    claude_json_path = Path.home() / ".claude.json"
+    if not claude_json_path.exists():
+        return f"provider_mcp_config_missing:{claude_json_path}"
+    try:
+        claude_data = json.loads(claude_json_path.read_text())
+        projects = claude_data.get("projects", {})
+        keys = {str(isolated), str(isolated.resolve())}
+        project_config = next(
+            (projects[key] for key in keys if isinstance(projects.get(key), dict)),
+            None,
+        )
+        if not project_config or "gobby" not in project_config.get("mcpServers", {}):
+            return f"provider_mcp_config_missing:{claude_json_path}:projects[{isolated}]"
+    except (OSError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        return f"provider_mcp_config_invalid:{claude_json_path}:{exc}"
+    return None
 
 
 def get_isolation_handler(

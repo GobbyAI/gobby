@@ -105,6 +105,8 @@ class ServiceContainer:
     # Context
     project_id: str | None = None
     websocket_server: Any | None = None  # GobbyWebSocketServer
+    startup_ready: bool = False
+    shutdown_in_progress: bool = False
 
     # Lazy wiring for per-project executors
     tool_proxy_getter: Any | None = None  # Callable[[], ToolProxyService]

@@ -39,6 +39,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--agent" in result.output
     assert "--reset-expansion-output" in result.output
     assert "--max-active-agents" in result.output
+    assert "--max-retries" in result.output
 
 
 def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
@@ -87,6 +88,8 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "--reset-expansion-output",
                 "--max-active-agents",
                 "4",
+                "--max-retries",
+                "0",
             ],
         )
 
@@ -116,6 +119,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.assigned_agent == "backend-developer"
     assert opts.reset_expansion_output is True
     assert opts.max_active_agents == 4
+    assert opts.max_retries == 0
     assert call.kwargs == {
         "db": db_cls.return_value,
         "project_id": "project-1",
@@ -169,6 +173,15 @@ def test_build_payload_omits_workspace_backend_when_not_explicit() -> None:
 
     assert "workspace_backend" not in payload
     assert "isolation" not in payload
+
+
+def test_build_payload_includes_max_retries_zero() -> None:
+    from gobby.build.service import BuildOptions
+    from gobby.cli.build import _build_payload
+
+    payload = _build_payload(BuildOptions(max_retries=0), "#42")
+
+    assert payload["max_retries"] == 0
 
 
 def test_build_cli_without_input_invokes_interactive_build_skill() -> None:
@@ -287,7 +300,10 @@ def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
         patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
         patch("gobby.cli.build.build_restart_target", new=AsyncMock()) as restart_target,
     ):
-        result = CliRunner().invoke(cli, ["build", "restart", "#1", "--dry-run", "--force"])
+        result = CliRunner().invoke(
+            cli,
+            ["build", "restart", "#1", "--dry-run", "--force", "--no-resume"],
+        )
 
     assert result.exit_code == 0
     assert "Dry run: no changes made" in result.output
@@ -297,3 +313,4 @@ def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
     assert call.kwargs["dry_run"] is True
     assert call.kwargs["force"] is True
     assert call.kwargs["yes"] is True
+    assert call.kwargs["no_resume"] is True

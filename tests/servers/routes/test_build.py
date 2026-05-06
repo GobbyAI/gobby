@@ -56,6 +56,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "target_branch": "main",
                 "agent": "backend-developer",
                 "max_active_agents": 4,
+                "max_retries": 0,
             },
         )
 
@@ -92,6 +93,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.target_branch == "main"
     assert opts.assigned_agent == "backend-developer"
     assert opts.max_active_agents == 4
+    assert opts.max_retries == 0
     assert call.kwargs["project_id"] == "project-1"
     assert call.kwargs["services"] is not None
 
@@ -218,7 +220,7 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     ) as restart:
         response = _client().post(
             "/api/build/restart",
-            json={"input_ref": "#1", "dry_run": True, "force": True},
+            json={"input_ref": "#1", "dry_run": True, "force": True, "no_resume": True},
         )
 
     assert response.status_code == 200
@@ -226,3 +228,4 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     call = restart.call_args
     assert call.kwargs["dry_run"] is True
     assert call.kwargs["force"] is True
+    assert call.kwargs["no_resume"] is True

@@ -127,6 +127,7 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "agent": opts.assigned_agent,
         "reset_expansion_output": opts.reset_expansion_output,
         "max_active_agents": opts.max_active_agents,
+        "max_retries": opts.max_retries,
     }
     if opts.workspace_backend_explicit:
         payload["workspace_backend"] = opts.workspace_backend
@@ -298,9 +299,20 @@ def _open_database() -> LocalDatabase:
     type=int,
     help="Maximum active automation agents allowed during the immediate dispatcher tick.",
 )
+@click.option(
+    "--max-retries",
+    type=click.IntRange(min=0),
+    help="Maximum retries per build stage; 0 means one attempt.",
+)
 @click.option("--dry-run", is_flag=True, default=False, help="Preview clean/restart effects.")
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
+@click.option(
+    "--no-resume",
+    is_flag=True,
+    default=False,
+    help="For restart, reset state but leave automation paused.",
+)
 def build_command(
     input_ref: str | None,
     target_ref: str | None,
@@ -314,9 +326,11 @@ def build_command(
     assigned_agent: str | None,
     reset_expansion_output: bool,
     max_active_agents: int | None,
+    max_retries: int | None,
     dry_run: bool,
     force: bool,
     yes: bool,
+    no_resume: bool,
 ) -> None:
     """Start lifecycle automation from a plan file or task reference."""
     if input_ref == "stop":
@@ -329,7 +343,13 @@ def build_command(
         _run_build_clean(target_ref, dry_run=dry_run, force=force, yes=yes)
         return
     if input_ref == "restart":
-        _run_build_restart(target_ref, dry_run=dry_run, force=force, yes=yes)
+        _run_build_restart(
+            target_ref,
+            dry_run=dry_run,
+            force=force,
+            yes=yes,
+            no_resume=no_resume,
+        )
         return
     if input_ref is None:
         invoke_build_skill()
@@ -349,6 +369,7 @@ def build_command(
         assigned_agent=assigned_agent,
         reset_expansion_output=reset_expansion_output,
         max_active_agents=max_active_agents,
+        max_retries=max_retries,
     )
     project_id = resolve_project_id()
     result = _try_daemon_build(input_ref, opts)
@@ -467,6 +488,7 @@ def _run_build_restart(
     dry_run: bool,
     force: bool,
     yes: bool,
+    no_resume: bool = False,
 ) -> None:
     if input_ref is None:
         raise click.ClickException("gobby build restart requires a task ref")
@@ -483,6 +505,7 @@ def _run_build_restart(
                 dry_run=dry_run,
                 force=force,
                 yes=True,
+                no_resume=no_resume,
             )
         )
     except ValueError as exc:

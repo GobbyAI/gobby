@@ -234,6 +234,10 @@ async def shutdown_daemon_services(
     cleanup_pid_file: Callable[[], None],
 ) -> None:
     """Run the ordered graceful shutdown sequence."""
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    if services is not None:
+        services.startup_ready = False
+        services.shutdown_in_progress = True
     await await_critical_stop_hook_grace_window()
     logger.debug("Shutdown requested; beginning graceful shutdown")
     server.should_exit = True
