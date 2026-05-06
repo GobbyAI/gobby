@@ -2727,7 +2727,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "block-and-teach-code-index",
+            "require-code-index-skill",
             RuleDefinitionBody(
                 event=RuleEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
@@ -2742,7 +2742,7 @@ class TestVerboseOnceBlockReason:
         assert response.decision == "block"
         assert "gcode outline" in (response.reason or "")
         assert self._TERSE_HINT not in (response.reason or "")
-        assert variables["_block_reasons_shown"] == ["block-and-teach-code-index"]
+        assert variables["_block_reasons_shown"] == ["require-code-index-skill"]
 
     @pytest.mark.asyncio
     async def test_second_block_same_rule_collapses_to_terse(
@@ -2750,7 +2750,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "block-and-teach-code-index",
+            "require-code-index-skill",
             RuleDefinitionBody(
                 event=RuleEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
@@ -2765,7 +2765,7 @@ class TestVerboseOnceBlockReason:
 
         assert second.decision == "block"
         assert second.reason == (
-            f"Rule enforced by Gobby: [block-and-teach-code-index] {self._TERSE_HINT}"
+            f"Rule enforced by Gobby: [require-code-index-skill] {self._TERSE_HINT}"
         )
 
     @pytest.mark.asyncio
@@ -2774,7 +2774,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "block-and-teach-code-index",
+            "require-code-index-skill",
             RuleDefinitionBody(
                 event=RuleEvent.BEFORE_TOOL,
                 when="event.data.get('tool_name') == 'Read'",
@@ -2816,7 +2816,7 @@ class TestVerboseOnceBlockReason:
         assert "Use uv instead" in (second.reason or "")
         assert self._TERSE_HINT not in (second.reason or "")
         assert sorted(variables["_block_reasons_shown"]) == [
-            "block-and-teach-code-index",
+            "require-code-index-skill",
             "require-uv",
         ]
 
@@ -2826,7 +2826,7 @@ class TestVerboseOnceBlockReason:
     ) -> None:
         _insert_rule(
             manager,
-            "block-and-teach-code-index",
+            "require-code-index-skill",
             RuleDefinitionBody(
                 event=RuleEvent.BEFORE_TOOL,
                 effects=[RuleEffect(type="block", reason=self._full_reason())],
@@ -2838,7 +2838,7 @@ class TestVerboseOnceBlockReason:
 
         await engine.evaluate(block_event, session_id="sess-1", variables=variables)
         await engine.evaluate(block_event, session_id="sess-1", variables=variables)
-        assert "block-and-teach-code-index" in variables["_block_reasons_shown"]
+        assert "require-code-index-skill" in variables["_block_reasons_shown"]
 
         # New turn: BEFORE_AGENT is the TURN_START transport event.
         await engine.evaluate(

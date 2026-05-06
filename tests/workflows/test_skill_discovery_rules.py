@@ -1,6 +1,6 @@
 """Tests for skill-discovery rules.
 
-Verifies inject-python-skill, inject-rust-skill, and reset-skill-injection
+Verifies require-python-skill, require-rust-skill, and reset-skill-injection
 rules sync correctly, have valid structure, and evaluate conditions properly.
 """
 
@@ -59,9 +59,15 @@ def _sync_bundled(db):
 
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
+    "require-python-skill",
+    "require-rust-skill",
+    "reset-skill-injection",
+}
+
+REPLACED_SKILL_RULES = {
     "inject-python-skill",
     "inject-rust-skill",
-    "reset-skill-injection",
+    "block-and-teach-code-index",
 }
 
 BREVITY_RULES = {
@@ -90,6 +96,7 @@ class TestSkillDiscoverySync:
         assert SKILL_DISCOVERY_RULES.issubset(rule_names), (
             f"Missing: {SKILL_DISCOVERY_RULES - rule_names}"
         )
+        assert REPLACED_SKILL_RULES.isdisjoint(rule_names)
 
     def test_all_rules_have_group(self, db, manager) -> None:
         """All rules should have group='skill-discovery'."""
@@ -361,37 +368,40 @@ class TestBrevityRules:
         assert "brevity_last_violation" not in variables
 
 
-# --- inject-python-skill structure ---
+# --- require-python-skill structure ---
 
 
-class TestInjectPythonSkillStructure:
-    """Verify inject-python-skill rule structure."""
+class TestRequirePythonSkillStructure:
+    """Verify require-python-skill rule structure."""
 
     def test_is_before_tool_event(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("inject-python-skill")
+        row = manager.get_by_name("require-python-skill")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('python')" in body.when
 
     def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("inject-python-skill")
+        row = manager.get_by_name("require-python-skill")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert 'Call get_skill(name="python") on gobby-skills, then continue.' in (
-            body.effects[0].reason or ""
+        assert (
+            body.effects[0].reason
+            == 'Call get_skill(name="python") on gobby-skills, then continue.'
         )
 
 
-# --- inject-python-skill condition evaluation ---
+# --- require-python-skill condition evaluation ---
 
 
-class TestInjectPythonSkillCondition:
-    """Test the inject-python-skill condition evaluates correctly."""
+class TestRequirePythonSkillCondition:
+    """Test the require-python-skill condition evaluates correctly."""
 
     CONDITION = (
         "not skill_loaded('python') "
@@ -452,37 +462,39 @@ class TestInjectPythonSkillCondition:
         assert self._eval("") is False
 
 
-# --- inject-rust-skill structure ---
+# --- require-rust-skill structure ---
 
 
-class TestInjectRustSkillStructure:
-    """Verify inject-rust-skill rule structure."""
+class TestRequireRustSkillStructure:
+    """Verify require-rust-skill rule structure."""
 
     def test_is_before_tool_event(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("inject-rust-skill")
+        row = manager.get_by_name("require-rust-skill")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('rust')" in body.when
 
     def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
         _sync_bundled(db)
-        row = manager.get_by_name("inject-rust-skill")
+        row = manager.get_by_name("require-rust-skill")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert 'Call get_skill(name="rust") on gobby-skills, then continue.' in (
-            body.effects[0].reason or ""
+        assert (
+            body.effects[0].reason == 'Call get_skill(name="rust") on gobby-skills, then continue.'
         )
 
 
-# --- inject-rust-skill condition evaluation ---
+# --- require-rust-skill condition evaluation ---
 
 
-class TestInjectRustSkillCondition:
-    """Test the inject-rust-skill condition evaluates correctly."""
+class TestRequireRustSkillCondition:
+    """Test the require-rust-skill condition evaluates correctly."""
 
     CONDITION = (
         "not skill_loaded('rust') "
@@ -593,6 +605,27 @@ class TestCodeIndexRuleCondition:
 
     def test_does_not_skip_when_legacy_injected(self) -> None:
         assert self._eval(canonical_tool_kind="search", injected_skills=["code-index"]) is True
+
+
+class TestRequireCodeIndexSkillStructure:
+    """Verify require-code-index-skill blocks with the canonical directive."""
+
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-code-index-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        assert "not skill_loaded('code-index')" in body.when
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert (
+            body.effects[0].reason
+            == 'Call get_skill(name="code-index") on gobby-skills, then continue.'
+        )
 
 
 class TestContext7RuleCondition:

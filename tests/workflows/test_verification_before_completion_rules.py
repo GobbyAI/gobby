@@ -46,9 +46,15 @@ def _rule(manager: LocalWorkflowDefinitionManager, name: str) -> RuleDefinitionB
 def test_schema_lookup_rule_mentions_lifecycle_completion_tools(db, manager) -> None:
     _sync_bundled(db)
 
-    body = _rule(manager, "inject-verification-before-completion-on-schema")
+    body = _rule(manager, "require-verification-before-completion-on-schema")
 
-    assert body.event.value == "after_tool"
+    assert body.event.value == "before_tool"
+    assert body.effects[0].type == "block"
+    assert (
+        body.effects[0].reason
+        == 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
+    )
+    assert "not skill_loaded('verification-before-completion')" in (body.when or "")
     when = body.when or ""
     for tool_name in (
         "close_task",
@@ -63,13 +69,16 @@ def test_schema_lookup_rule_mentions_lifecycle_completion_tools(db, manager) -> 
         assert tool_name in when
 
 
-def test_lifecycle_call_rule_injects_verification_skill(db, manager) -> None:
+def test_lifecycle_call_rule_requires_verification_skill(db, manager) -> None:
     _sync_bundled(db)
 
-    body = _rule(manager, "inject-verification-before-completion-on-lifecycle-call")
-    inject_effects = [effect for effect in body.effects if effect.type == "inject_context"]
+    body = _rule(manager, "require-verification-before-completion-on-lifecycle-call")
+    block_effects = [effect for effect in body.effects if effect.type == "block"]
 
     assert body.event.value == "before_tool"
-    assert len(inject_effects) == 1
-    assert 'get_skill(name="verification-before-completion")' in (inject_effects[0].template or "")
-    assert "Fresh verification evidence is required" in (inject_effects[0].template or "")
+    assert "not skill_loaded('verification-before-completion')" in (body.when or "")
+    assert len(block_effects) == 1
+    assert (
+        block_effects[0].reason
+        == 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
+    )

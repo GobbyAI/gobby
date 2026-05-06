@@ -1,8 +1,8 @@
 tags: [code-index, gobby, default]
 
 rules:
-  block-and-teach-code-index:
-    description: "Block first code file read/grep, require code-index skill to teach gcode"
+  require-code-index-skill:
+    description: "Block first code navigation until code-index skill is loaded"
     event: before_tool
     enabled: true
     priority: 30
@@ -17,9 +17,4 @@ rules:
       )
     effects:
       - type: block
-        reason: >
-          This project is indexed with gcode. Use gcode for code navigation:
-          - `gcode outline path/to/file` — symbol map (much cheaper than Read)
-          - `gcode search "query"` — find symbols by name
-          - `gcode symbol <id>` — retrieve just the source you need
-          Call get_skill(name="code-index") on gobby-skills, then continue.
+        reason: 'Call get_skill(name="code-index") on gobby-skills, then continue.'

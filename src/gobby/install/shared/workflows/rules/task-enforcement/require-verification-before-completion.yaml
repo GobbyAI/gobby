@@ -1,14 +1,16 @@
 tags: [task-enforcement, enforcement, lifecycle, verification-before-completion, gobby, default]
 
 rules:
-  inject-verification-before-completion-on-schema:
-    description: "Prompt for verification-before-completion when lifecycle completion tools are inspected"
-    event: after_tool
+  require-verification-before-completion-on-schema:
+    description: "Require verification-before-completion before completion schema lookup"
+    event: before_tool
     enabled: true
-    priority: 26
+    priority: 23
     when: >
-      (event.data.get('mcp_tool') == 'get_tool_schema'
-       or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
+      (
+        event.data.get('mcp_tool') == 'get_tool_schema'
+        or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema')
+      )
       and (
         (
           (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
@@ -27,14 +29,14 @@ rules:
       )
       and not skill_loaded('verification-before-completion')
     effects:
-      - type: inject_context
-        template: 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
+      - type: block
+        reason: 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
 
-  inject-verification-before-completion-on-lifecycle-call:
-    description: "Remind agents to use fresh evidence before lifecycle success transitions"
+  require-verification-before-completion-on-lifecycle-call:
+    description: "Require verification-before-completion before lifecycle success transitions"
     event: before_tool
     enabled: true
-    priority: 30
+    priority: 23
     when: >
       (
         (
@@ -71,9 +73,5 @@ rules:
       )
       and not skill_loaded('verification-before-completion')
     effects:
-      - type: inject_context
-        template: |
-          Load verification-before-completion before making or recording success claims.
-          Call get_skill(name="verification-before-completion") on gobby-skills.
-          Fresh verification evidence is required before claiming work is complete,
-          fixed, passing, approved, merged, ready, or handed off.
+      - type: block
+        reason: 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'

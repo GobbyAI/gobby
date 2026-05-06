@@ -34,6 +34,4 @@ rules:
       and not skill_loaded('task-transitions')
     effects:
       - type: block
-        reason: |
-          Load the task-transitions workflow before changing task lifecycle state.
-          Call get_skill(name="task-transitions") on gobby-skills, then continue.
+        reason: 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'

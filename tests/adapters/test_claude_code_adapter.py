@@ -497,7 +497,7 @@ class TestTranslateFromHookResponse:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(
             decision="block",
-            reason="Rule enforced by Gobby: [block-and-teach-code-index]\nUse gcode.",
+            reason="Rule enforced by Gobby: [require-code-index-skill]\nUse gcode.",
         )
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
 
@@ -509,7 +509,7 @@ class TestTranslateFromHookResponse:
         assert hso["hookEventName"] == "PreToolUse"
         assert hso["permissionDecision"] == "deny"
         assert hso["permissionDecisionReason"] == (
-            "Gobby blocked [block-and-teach-code-index]: Use gcode."
+            "Gobby blocked [require-code-index-skill]: Use gcode."
         )
 
     def test_pre_tool_use_block_compacts_rule_reason_and_preserves_action(self) -> None:

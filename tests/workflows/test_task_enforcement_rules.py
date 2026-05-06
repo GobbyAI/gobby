@@ -50,10 +50,10 @@ TASK_ENFORCEMENT_RULES = {
     "block-native-task-tools-unclaimed",
     "block-native-todo-write",
     "block-reopen-task",
-    "inject-task-creation-on-schema",
-    "inject-transition-skill",
-    "inject-verification-before-completion-on-lifecycle-call",
-    "inject-verification-before-completion-on-schema",
+    "require-task-creation-skill-on-schema",
+    "require-task-transitions-skill-on-lifecycle",
+    "require-verification-before-completion-on-lifecycle-call",
+    "require-verification-before-completion-on-schema",
     "require-task-creation-skill-loaded",
     "require-task-transitions-skill-loaded",
     "require-task-before-edit",
@@ -64,6 +64,13 @@ TASK_ENFORCEMENT_RULES = {
     "block-needs-review-interactive",
     "track-task-claim",
     "reset-subagent-flag",
+}
+
+REPLACED_TASK_SKILL_RULES = {
+    "inject-task-creation-on-schema",
+    "inject-transition-skill",
+    "inject-verification-before-completion-on-lifecycle-call",
+    "inject-verification-before-completion-on-schema",
 }
 
 
@@ -80,6 +87,7 @@ class TestTaskEnforcementSync:
         assert TASK_ENFORCEMENT_RULES.issubset(rule_names), (
             f"Missing: {TASK_ENFORCEMENT_RULES - rule_names}"
         )
+        assert REPLACED_TASK_SKILL_RULES.isdisjoint(rule_names)
         assert "block-front-half-on-interactive-lock" not in rule_names
 
     def test_all_rules_have_group(self, db, manager) -> None:
@@ -640,7 +648,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["task-transitions", "verification-before-completion"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -659,7 +667,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["task-transitions", "verification-before-completion"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -677,7 +685,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["task-transitions", "verification-before-completion"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -830,37 +838,61 @@ class TestBlockReopenTask:
         assert response.decision == "allow"
 
 
-class TestInjectTransitionSkill:
-    """Verify lifecycle schemas prompt for the task-transitions skill."""
+class TestRequireTaskCreationSkillOnSchema:
+    """Verify create_task schema lookup requires task-creation."""
+
+    def test_blocks_create_task_schema_with_canonical_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("require-task-creation-skill-on-schema")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert "get_tool_schema" in (body.when or "")
+        assert "create_task" in (body.when or "")
+        assert "not skill_loaded('task-creation')" in (body.when or "")
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert (
+            body.effects[0].reason
+            == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+        )
+
+
+class TestRequireTaskTransitionsSkillOnLifecycle:
+    """Verify lifecycle schemas require the task-transitions skill."""
 
     def test_when_mentions_extended_lifecycle_tools(self, db, manager) -> None:
         """reopen/escalate/de_escalate should all trigger the skill directive."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("inject-transition-skill")
+        row = manager.get_by_name("require-task-transitions-skill-on-lifecycle")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "after_tool"
+        assert body.event.value == "before_tool"
+        assert "get_tool_schema" in (body.when or "")
         assert "reopen_task" in (body.when or "")
         assert "escalate_task" in (body.when or "")
         assert "de_escalate_task" in (body.when or "")
         assert "reject_review" in (body.when or "")
+        assert "not skill_loaded('task-transitions')" in (body.when or "")
 
-    def test_emits_task_transitions_directive(self, db, manager) -> None:
-        """The rule should emit a directive without writing skill ledgers."""
+    def test_blocks_with_task_transitions_directive(self, db, manager) -> None:
+        """The rule should block with the canonical directive."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("inject-transition-skill")
+        row = manager.get_by_name("require-task-transitions-skill-on-lifecycle")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        inject_effects = [effect for effect in body.effects if effect.type == "inject_context"]
+        block_effects = [effect for effect in body.effects if effect.type == "block"]
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
-        assert len(inject_effects) == 1
+        assert len(block_effects) == 1
         assert (
-            inject_effects[0].template
+            block_effects[0].reason
             == 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
         )
         assert set_effects == []
@@ -877,8 +909,9 @@ class TestTaskLifecycleSkillGates:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert "skill_loaded('task-creation')" in (body.when or "")
-        assert 'Call get_skill(name="task-creation") on gobby-skills, then continue.' in (
-            body.effects[0].reason or ""
+        assert (
+            body.effects[0].reason
+            == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
         )
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
@@ -890,9 +923,62 @@ class TestTaskLifecycleSkillGates:
         assert body.event.value == "before_tool"
         assert "reopen_task" in (body.when or "")
         assert "skill_loaded('task-transitions')" in (body.when or "")
-        assert 'Call get_skill(name="task-transitions") on gobby-skills, then continue.' in (
-            body.effects[0].reason or ""
+        assert (
+            body.effects[0].reason
+            == 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
         )
+
+    @pytest.mark.asyncio
+    async def test_creation_schema_gate_blocks_until_loaded(self, db, manager) -> None:
+        _sync_bundled(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "mcp_tool": "get_tool_schema",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "create_task"},
+            },
+        )
+
+        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        allowed = await RuleEngine(db).evaluate(
+            event,
+            session_id="sid",
+            variables={"loaded_skills": ["task-creation"]},
+        )
+
+        assert blocked.decision == "block"
+        assert "task-creation" in (blocked.reason or "")
+        assert allowed.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_transition_schema_gate_blocks_until_loaded(self, db, manager) -> None:
+        _sync_bundled(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "mcp_tool": "get_tool_schema",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "reopen_task"},
+            },
+        )
+
+        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        allowed = await RuleEngine(db).evaluate(
+            event,
+            session_id="sid",
+            variables={"loaded_skills": ["task-transitions"]},
+        )
+
+        assert blocked.decision == "block"
+        assert "task-transitions" in (blocked.reason or "")
+        assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_creation_gate_blocks_normalized_call_until_loaded(self, db, manager) -> None:
@@ -933,7 +1019,7 @@ class TestTaskLifecycleSkillGates:
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": "gobby-tasks",
-                    "tool_name": "close_task",
+                    "tool_name": "reopen_task",
                     "arguments": {"task_id": "#42"},
                 },
             },

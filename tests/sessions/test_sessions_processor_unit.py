@@ -926,10 +926,10 @@ class TestCodexMcpHookSynthesis:
         assert before.project_id == "project-abc"
         assert before.metadata["_platform_session_id"] == "sid"
         assert before.data["tool_name"] == "mcp__gobby__get_tool_schema"
-        # mcp_server/mcp_tool reflect the proxy boundary; the rule keys for
-        # inject-task-creation-on-schema actually read `tool_input.server_name`
-        # and `tool_input.tool_name` (see the bundled YAML), so those are the
-        # contract that must be preserved exactly.
+        # mcp_server/mcp_tool reflect the proxy boundary; the task-creation
+        # schema gate reads `tool_input.server_name` and `tool_input.tool_name`
+        # (see the bundled YAML), so those are the contract that must be
+        # preserved exactly.
         assert before.data["mcp_server"] == "gobby"
         assert before.data["mcp_tool"] == "get_tool_schema"
         assert before.data["tool_input"]["server_name"] == "gobby-tasks"

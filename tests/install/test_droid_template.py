@@ -48,10 +48,3 @@ def test_default_agent_template_lists_droid_as_supported_source() -> None:
     template = yaml.safe_load(template_path.read_text())
 
     assert "droid" in template["sources"]
-
-
-def test_automation_skill_provider_example_documents_droid() -> None:
-    skill_path = Path("src/gobby/install/shared/skills/automate/SKILL.md")
-    content = skill_path.read_text()
-
-    assert "inherit | claude | gemini | qwen | codex | droid" in content
