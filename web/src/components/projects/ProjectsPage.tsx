@@ -30,7 +30,6 @@ type ProjectsTab =
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "files", label: "Files" },
-  { id: "graph", label: "Graph" },
   { id: "source-control", label: "Source Control" },
   { id: "issues", label: "Issues" },
   { id: "prs", label: "PR" },

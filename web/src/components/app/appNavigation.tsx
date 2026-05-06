@@ -3,7 +3,6 @@ import {
   ChatIcon,
   ConfigurationIcon,
   CronIcon,
-  DashboardIcon,
   IntegrationsIcon,
   McpIcon,
   MemoryIcon,
@@ -23,7 +22,6 @@ export interface AppNavItem {
 }
 
 export const APP_NAV_PAGES: Array<{ id: string; label: string }> = [
-  { id: "dashboard", label: "Dashboard" },
   { id: "tasks", label: "Tasks" },
   { id: "workflows", label: "Workflows" },
   { id: "reports", label: "Reports" },
@@ -54,12 +52,11 @@ export function createAppNavItems(): AppNavItem[] {
   return [
     { id: "chat", label: "Chat", icon: <ChatIcon /> },
     {
-      id: "dashboard",
-      label: "Dashboard",
-      icon: <DashboardIcon />,
+      id: "projects",
+      label: "Project",
+      icon: <ProjectsIcon />,
       separator: true,
     },
-    { id: "projects", label: "Project", icon: <ProjectsIcon /> },
     { id: "tasks", label: "Tasks", icon: <TasksIcon /> },
     { id: "workflows", label: "Workflows", icon: <WorkflowsIcon /> },
     { id: "cron", label: "Cron Jobs", icon: <CronIcon /> },
