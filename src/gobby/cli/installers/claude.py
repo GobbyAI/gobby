@@ -16,6 +16,7 @@ from shutil import copy2
 from typing import Any
 
 from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
+from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 from gobby.utils.native_bin import resolve_native_bin_or_default
 
@@ -137,6 +138,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "commands_installed": [],
         "mcp_configured": False,
         "mcp_already_configured": False,
+        "trust": None,
         "error": None,
     }
 
@@ -311,6 +313,8 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
     else:
         # MCP config failure is non-fatal, just log it
         logger.warning(f"Failed to configure MCP server: {mcp_result['error']}")
+
+    result["trust"] = seed_gobby_home_trust("claude")
 
     result["success"] = True
     return result

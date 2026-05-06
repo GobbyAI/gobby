@@ -54,6 +54,8 @@ def test_install_droid_global_writes_hooks_and_mcp(
 
     assert result["success"] is True
     assert tuple(result["hooks_installed"]) == DROID_PASCAL_HOOK_NAMES
+    assert result["trust"]["skipped"] is True
+    assert result["trust"]["files_written"] == []
 
     hooks_file = droid_env / ".factory" / "hooks" / "hooks.json"
     hooks = _load_json(hooks_file)["hooks"]

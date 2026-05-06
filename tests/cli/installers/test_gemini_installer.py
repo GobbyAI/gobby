@@ -104,10 +104,14 @@ class TestInstallGemini:
             assert result["commands_installed"] == ["command1.md", "gobby/", "g/"]
             assert result["plugins_installed"] == ["plugin1.py"]
             assert result["mcp_configured"] is True
+            assert result["trust"]["success"] is True
+            assert os.environ["GOBBY_HOME"] in result["trust"]["paths"]
 
             # Verify settings file was created
             settings_file = project_path / ".gemini" / "settings.json"
             assert settings_file.exists()
+            assert (temp_dir / ".gemini" / "projects.json").exists()
+            assert (temp_dir / ".gemini" / "trustedFolders.json").exists()
 
             # Verify settings content
             with open(settings_file) as f:

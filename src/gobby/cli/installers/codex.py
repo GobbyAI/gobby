@@ -18,6 +18,7 @@ import tomlkit
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
+from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
 from .hook_commands import config_contains_gobby_hook, rewrite_hook_template_commands
@@ -236,6 +237,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         "mcp_configured": False,
         "mcp_already_configured": False,
         "mcp_tools_stripped": False,
+        "trust": None,
         "error": None,
     }
 
@@ -315,6 +317,11 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         result["mcp_tools_stripped"] = True
     elif not strip_result["success"]:
         logger.warning(f"Failed to strip MCP tool overrides: {strip_result['error']}")
+
+    trust_result = seed_gobby_home_trust("codex")
+    result["trust"] = trust_result
+    if trust_result.get("files_written"):
+        result["config_updated"] = True
 
     result["success"] = True
     return result

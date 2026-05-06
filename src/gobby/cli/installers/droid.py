@@ -15,6 +15,7 @@ from shutil import copy2
 from typing import Any, Final
 
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
+from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 from gobby.utils.deps import get_ghook_version
 
@@ -254,6 +255,7 @@ def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "mcp_configured": False,
         "mcp_already_configured": False,
         "already_configured": False,
+        "trust": None,
         "error": None,
     }
 
@@ -325,6 +327,8 @@ def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
 
     if result["already_configured"] and not result["mcp_already_configured"]:
         result["already_configured"] = False
+
+    result["trust"] = seed_gobby_home_trust("droid")
 
     result["success"] = True
     return result

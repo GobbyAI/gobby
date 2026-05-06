@@ -5,6 +5,7 @@ which handle installing and uninstalling Gobby hooks for Claude Code CLI.
 """
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -110,10 +111,13 @@ class TestInstallClaude:
         assert result["workflows_installed"] == []  # DB-managed
         assert "memory/" in result["commands_installed"]
         assert result["mcp_configured"] is True
+        assert result["trust"]["success"] is True
 
         # Verify .claude directory structure was created
         assert (temp_project / ".claude").exists()
         assert (temp_project / ".claude" / "settings.json").exists()
+        assert os.environ["GOBBY_HOME"] in result["trust"]["paths"]
+        assert any((mock_home_dir / ".claude" / "projects").iterdir())
         with open(temp_project / ".claude" / "settings.json") as f:
             settings = json.load(f)
         assert settings["statusLine"]["type"] == "command"
@@ -1079,6 +1083,7 @@ class TestInstallClaudeEdgeCases:
             "commands_installed",
             "mcp_configured",
             "mcp_already_configured",
+            "trust",
             "error",
             "plugins_installed",
             "agents_installed",
@@ -1093,6 +1098,7 @@ class TestInstallClaudeEdgeCases:
         assert isinstance(result["agents_installed"], list)
         assert isinstance(result["mcp_configured"], bool)
         assert isinstance(result["mcp_already_configured"], bool)
+        assert isinstance(result["trust"], dict)
 
 
 class TestCleanProjectHooks:

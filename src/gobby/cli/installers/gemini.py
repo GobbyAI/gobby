@@ -12,6 +12,7 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any
 
+from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
 from .hook_commands import rewrite_hook_template_commands
@@ -50,6 +51,7 @@ def install_gemini(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "mcp_already_configured": False,
         "policy_installed": False,
         "policy_backup_path": None,
+        "trust": None,
         "error": None,
     }
 
@@ -178,6 +180,8 @@ def install_gemini(project_path: Path, mode: str = "global") -> dict[str, Any]:
     # Install agent scripts (used by meeseeks workflow)
     scripts_installed = _install_agent_scripts(install_dir)
     result["scripts_installed"] = scripts_installed
+
+    result["trust"] = seed_gobby_home_trust("gemini")
 
     result["success"] = True
     return result

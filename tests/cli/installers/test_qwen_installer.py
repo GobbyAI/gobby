@@ -1,6 +1,7 @@
 """Tests for the Qwen CLI installer module."""
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -80,6 +81,8 @@ class TestInstallQwen:
         assert result["plugins_installed"] == ["plugin1.py"]
         assert result["mcp_configured"] is True
         assert result["scripts_installed"] == ["agent_shutdown.sh"]
+        assert result["trust"]["success"] is True
+        assert os.environ["GOBBY_HOME"] in result["trust"]["paths"]
 
         settings_file = project_path / ".qwen" / "settings.json"
         with open(settings_file) as f:
@@ -88,6 +91,8 @@ class TestInstallQwen:
         assert settings["general"]["enableHooks"] is True
         assert settings["ui"]["hideTips"] is True
         assert "hooks" in settings
+        assert (temp_dir / ".qwen" / "projects.json").exists()
+        assert (temp_dir / ".qwen" / "trustedFolders.json").exists()
 
     def test_install_qwen_returns_error_for_malformed_settings_json(
         self, project_path: Path, mock_install_dir: Path, temp_dir: Path

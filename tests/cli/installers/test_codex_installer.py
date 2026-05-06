@@ -155,6 +155,7 @@ class TestInstallCodex:
         assert result["success"] is True
         assert result["error"] is None
         assert result["mcp_configured"] is True
+        assert result["trust"]["success"] is True
 
         # Verify hooks.json was created
         hooks_path = mock_home / ".codex" / "hooks.json"
@@ -172,6 +173,7 @@ class TestInstallCodex:
         assert config_path.exists()
         config_data = _load_toml_file(config_path)
         assert config_data["features"]["codex_hooks"] is True
+        assert config_data["projects"][os.environ["GOBBY_HOME"]]["trust_level"] == "trusted"
 
     def test_install_hooks_installed_list(
         self,
