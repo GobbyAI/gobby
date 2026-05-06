@@ -271,60 +271,6 @@
       "test_name": "TestLinearSync.test_sync_text"
     },
     {
-      "fingerprint": "tests/cli/test_merge_cli.py::TestMergeOutputFormatting.test_status_output_format::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 545,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_merge_cli.py",
-      "severity": "medium",
-      "test_name": "TestMergeOutputFormatting.test_status_output_format"
-    },
-    {
-      "fingerprint": "tests/cli/test_merge_cli.py::TestMergeResolveCommand.test_merge_resolve_basic::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 287,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_merge_cli.py",
-      "severity": "medium",
-      "test_name": "TestMergeResolveCommand.test_merge_resolve_basic"
-    },
-    {
-      "fingerprint": "tests/cli/test_merge_cli.py::TestMergeStartCommand.test_merge_start_with_strategy::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 140,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_merge_cli.py",
-      "severity": "medium",
-      "test_name": "TestMergeStartCommand.test_merge_start_with_strategy"
-    },
-    {
-      "fingerprint": "tests/cli/test_merge_cli.py::TestMergeStatusCommand.test_merge_status_basic::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 201,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_merge_cli.py",
-      "severity": "medium",
-      "test_name": "TestMergeStatusCommand.test_merge_status_basic"
-    },
-    {
-      "fingerprint": "tests/cli/test_merge_cli.py::TestMergeWorktreeIntegration.test_merge_in_worktree_directory::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 653,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_merge_cli.py",
-      "severity": "medium",
-      "test_name": "TestMergeWorktreeIntegration.test_merge_in_worktree_directory"
-    },
-    {
-      "fingerprint": "tests/cli/test_merge_cli.py::TestMergeWorktreeIntegration.test_merge_start_uses_worktree_context::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 628,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_merge_cli.py",
-      "severity": "medium",
-      "test_name": "TestMergeWorktreeIntegration.test_merge_start_uses_worktree_context"
-    },
-    {
       "fingerprint": "tests/cli/test_pipelines_coverage.py::TestHelpers.test_get_project_path_found::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
       "line": 52,
@@ -422,105 +368,6 @@
       "path": "tests/cli/test_tasks_cli.py",
       "severity": "medium",
       "test_name": "TestValidateCommandExtended.test_validate_with_file_summary"
-    },
-    {
-      "fingerprint": "tests/cli/test_ui_coverage.py::TestUiBuild.test_build_failure::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 405,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_ui_coverage.py",
-      "severity": "medium",
-      "test_name": "TestUiBuild.test_build_failure"
-    },
-    {
-      "fingerprint": "tests/cli/test_ui_coverage.py::TestUiDev.test_dev_success::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 309,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_ui_coverage.py",
-      "severity": "medium",
-      "test_name": "TestUiDev.test_dev_success"
-    },
-    {
-      "fingerprint": "tests/cli/test_ui_coverage.py::TestUiRestart.test_restart::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 205,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_ui_coverage.py",
-      "severity": "medium",
-      "test_name": "TestUiRestart.test_restart"
-    },
-    {
-      "fingerprint": "tests/cli/test_ui_coverage.py::TestUiRestart.test_restart_stop_failure::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 245,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_ui_coverage.py",
-      "severity": "medium",
-      "test_name": "TestUiRestart.test_restart_stop_failure"
-    },
-    {
-      "fingerprint": "tests/cli/test_ui_coverage.py::TestUiStart.test_start_dev_spawn_fails::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 148,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_ui_coverage.py",
-      "severity": "medium",
-      "test_name": "TestUiStart.test_start_dev_spawn_fails"
-    },
-    {
-      "fingerprint": "tests/cli/test_validation_cli.py::TestDeEscalateCommand.test_de_escalate_non_escalated_task_fails::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 202,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_validation_cli.py",
-      "severity": "medium",
-      "test_name": "TestDeEscalateCommand.test_de_escalate_non_escalated_task_fails"
-    },
-    {
-      "fingerprint": "tests/cli/test_validation_cli.py::TestDeEscalateCommand.test_de_escalate_with_reset_validation_flag::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 229,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_validation_cli.py",
-      "severity": "medium",
-      "test_name": "TestDeEscalateCommand.test_de_escalate_with_reset_validation_flag"
-    },
-    {
-      "fingerprint": "tests/cli/test_validation_cli.py::TestDeEscalateCommand.test_de_escalate_with_valid_args::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 177,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_validation_cli.py",
-      "severity": "medium",
-      "test_name": "TestDeEscalateCommand.test_de_escalate_with_valid_args"
-    },
-    {
-      "fingerprint": "tests/cli/test_validation_cli.py::TestValidateCommandWithNewFlags.test_validate_with_max_iterations::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 66,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_validation_cli.py",
-      "severity": "medium",
-      "test_name": "TestValidateCommandWithNewFlags.test_validate_with_max_iterations"
-    },
-    {
-      "fingerprint": "tests/cli/test_validation_cli.py::TestValidateFlagCombinations.test_all_flags_together::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 543,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_validation_cli.py",
-      "severity": "medium",
-      "test_name": "TestValidateFlagCombinations.test_all_flags_together"
-    },
-    {
-      "fingerprint": "tests/cli/test_validation_cli.py::TestValidationHistoryCommand.test_validation_history_shows_iterations::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 311,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/cli/test_validation_cli.py",
-      "severity": "medium",
-      "test_name": "TestValidationHistoryCommand.test_validation_history_shows_iterations"
     },
     {
       "fingerprint": "tests/communications/adapters/test_teams.py::test_send_message_success::HEAVY_MOCK_LOW_ASSERT",
@@ -813,7 +660,7 @@
     {
       "fingerprint": "tests/mcp_proxy/tools/test_agents.py::TestCompleteSelfTerminatedRunSignoffMessage.test_signoff_message_omitted_when_var_unset::HEAVY_MOCK_LOW_ASSERT",
       "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 981,
+      "line": 997,
       "message": "test has heavy mock setup with too little observable assertion coverage",
       "path": "tests/mcp_proxy/tools/test_agents.py",
       "severity": "medium",
@@ -908,51 +755,6 @@
       "path": "tests/mcp_proxy/tools/test_tasks_lifecycle_coverage.py",
       "severity": "medium",
       "test_name": "TestCloseTaskTool.test_close_task_success_with_commits"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/workflows/test_resolution.py::TestResolveSessionTaskValueErrors.test_task_not_found_returns_original::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 251,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/workflows/test_resolution.py",
-      "severity": "medium",
-      "test_name": "TestResolveSessionTaskValueErrors.test_task_not_found_returns_original"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/workflows/test_resolution.py::TestResolveSessionTaskValueErrors.test_type_error_returns_original::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 281,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/workflows/test_resolution.py",
-      "severity": "medium",
-      "test_name": "TestResolveSessionTaskValueErrors.test_type_error_returns_original"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/workflows/test_resolution.py::TestResolveSessionTaskValueErrors.test_unexpected_error_returns_original::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 266,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/workflows/test_resolution.py",
-      "severity": "medium",
-      "test_name": "TestResolveSessionTaskValueErrors.test_unexpected_error_returns_original"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/workflows/test_resolution.py::TestResolveSessionTaskValueNumericRef.test_hash_only_is_treated_as_seq_ref::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 315,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/workflows/test_resolution.py",
-      "severity": "medium",
-      "test_name": "TestResolveSessionTaskValueNumericRef.test_hash_only_is_treated_as_seq_ref"
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/workflows/test_resolution.py::TestResolveSessionTaskValueNumericRef.test_numeric_zero_is_seq_ref::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 300,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/mcp_proxy/tools/workflows/test_resolution.py",
-      "severity": "medium",
-      "test_name": "TestResolveSessionTaskValueNumericRef.test_numeric_zero_is_seq_ref"
     },
     {
       "fingerprint": "tests/memory/test_dedup_wiring.py::TestBackgroundDedupTask.test_create_memory_returns_immediately::HEAVY_MOCK_LOW_ASSERT",
@@ -1133,60 +935,6 @@
       "path": "tests/servers/test_http_endpoints.py",
       "severity": "medium",
       "test_name": "TestInternalRegistries.test_call_tool_internal_server_error"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_init.py::TestHTTPServerInit.test_init_creates_app::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 148,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_init.py",
-      "severity": "medium",
-      "test_name": "TestHTTPServerInit.test_init_creates_app"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_init.py::TestHTTPServerInit.test_init_creates_broadcaster::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 99,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_init.py",
-      "severity": "medium",
-      "test_name": "TestHTTPServerInit.test_init_creates_broadcaster"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_init.py::TestHTTPServerInit.test_init_llm_service_creation_failure::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 203,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_init.py",
-      "severity": "medium",
-      "test_name": "TestHTTPServerInit.test_init_llm_service_creation_failure"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_init.py::TestHTTPServerInit.test_init_running_flag_false::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 137,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_init.py",
-      "severity": "medium",
-      "test_name": "TestHTTPServerInit.test_init_running_flag_false"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_init.py::TestHTTPServerInit.test_init_sets_start_time::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 86,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_init.py",
-      "severity": "medium",
-      "test_name": "TestHTTPServerInit.test_init_sets_start_time"
-    },
-    {
-      "fingerprint": "tests/servers/test_http_init.py::TestHTTPServerInit.test_init_with_llm_service::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 159,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/servers/test_http_init.py",
-      "severity": "medium",
-      "test_name": "TestHTTPServerInit.test_init_with_llm_service"
     },
     {
       "fingerprint": "tests/servers/test_http_server.py::TestStreamableHttpShutdown.test_terminate_streamable_http_sessions_times_out_with_warning::HEAVY_MOCK_LOW_ASSERT",
@@ -1403,69 +1151,6 @@
       "path": "tests/utils/test_tool_summarizer.py",
       "severity": "medium",
       "test_name": "TestGenerateServerDescription.test_generate_server_description_success"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_already_initialized_with_empty_id::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 775,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "medium",
-      "test_name": "TestInitializeProject.test_already_initialized_with_empty_id"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_auto_detects_github_url::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 878,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "medium",
-      "test_name": "TestInitializeProject.test_auto_detects_github_url"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_directory_name_used_as_project_name::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1091,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "medium",
-      "test_name": "TestInitializeProject.test_directory_name_used_as_project_name"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_new_project_without_verification_commands::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 1048,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "medium",
-      "test_name": "TestInitializeProject.test_new_project_without_verification_commands"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_project_context_none_id::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 957,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "medium",
-      "test_name": "TestInitializeProject.test_project_context_none_id"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_uses_provided_github_url::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 851,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "medium",
-      "test_name": "TestInitializeProject.test_uses_provided_github_url"
-    },
-    {
-      "fingerprint": "tests/utils/test_utils_project_init.py::TestInitializeProject.test_uses_provided_name::HEAVY_MOCK_LOW_ASSERT",
-      "issue_code": "HEAVY_MOCK_LOW_ASSERT",
-      "line": 828,
-      "message": "test has heavy mock setup with too little observable assertion coverage",
-      "path": "tests/utils/test_utils_project_init.py",
-      "severity": "medium",
-      "test_name": "TestInitializeProject.test_uses_provided_name"
     },
     {
       "fingerprint": "tests/workflows/test_pipeline_webhooks.py::TestNotifyApprovalPending.test_expands_env_vars_in_headers::HEAVY_MOCK_LOW_ASSERT",

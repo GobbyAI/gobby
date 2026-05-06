@@ -160,6 +160,7 @@ class TestUiStart:
         config.logging.client = "~/.gobby/logs/gobby.log"
         result = runner.invoke(ui, ["start"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code != 0
+        assert "Failed to start UI server" in result.output
 
     def test_start_production_mode(self, runner: CliRunner) -> None:
         config = MagicMock()
@@ -218,6 +219,7 @@ class TestUiRestart:
         config.logging.client = "~/.gobby/logs/gobby.log"
         result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert "UI dev server started" in result.output
 
     @patch("gobby.cli.ui.spawn_ui_server", return_value=None)
     @patch("gobby.cli.ui.find_web_dir", return_value=Path("/fake/web"))
@@ -255,6 +257,7 @@ class TestUiRestart:
         config.ui.mode = "dev"
         result = runner.invoke(ui, ["restart"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code != 0
+        assert "already running" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +323,7 @@ class TestUiDev:
         mock_run.return_value = MagicMock(returncode=0)
         result = runner.invoke(ui, ["dev"], catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Starting dev server" in result.output
 
     @patch("gobby.cli.ui.WEB_UI_DIR", new=Path("/nonexistent/path"))
     def test_dev_no_web_dir(self, runner: CliRunner) -> None:
@@ -415,6 +419,7 @@ class TestUiBuild:
         mock_run.return_value = MagicMock(returncode=1)
         result = runner.invoke(ui, ["build"], catch_exceptions=False)
         assert result.exit_code != 0
+        assert "Build failed" in result.output
 
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=False)
     @patch("gobby.cli.ui.WEB_UI_DIR")

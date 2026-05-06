@@ -95,6 +95,7 @@ class TestValidateCommandWithNewFlags:
         # We're testing the CLI accepts the flag, not the implementation
         # Exit code 2 means Click rejected the flag as unrecognized
         assert result.exit_code != 2, f"Flag --max-iterations was rejected: {result.output}"
+        assert "No such option" not in result.output
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -140,6 +141,7 @@ class TestValidateCommandWithNewFlags:
         )
 
         assert result.exit_code == 0
+        assert result.exception is None
         # Should show recurring issues info
         assert "recurring" in result.output.lower() or "no recurring" in result.output.lower()
 
@@ -196,6 +198,7 @@ class TestDeEscalateCommand:
         )
 
         assert result.exit_code == 0
+        assert result.exception is None
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -223,6 +226,7 @@ class TestDeEscalateCommand:
         assert "not escalated" in result.output.lower(), (
             f"Expected 'not escalated' message for non-escalated task, got: {result.output}"
         )
+        assert result.exit_code == 0
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -251,6 +255,7 @@ class TestDeEscalateCommand:
         assert result.exit_code == 0, (
             f"Expected exit code 0 for valid de-escalate command, got {result.exit_code}: {result.output}"
         )
+        assert result.exception is None
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -328,6 +333,7 @@ class TestValidationHistoryCommand:
         )
 
         assert result.exit_code == 0
+        assert result.exception is None
 
     def test_validation_history_clear_flag_exists(self, runner: CliRunner) -> None:
         """Test that validation-history --clear flag exists."""
@@ -577,6 +583,7 @@ class TestValidateFlagCombinations:
 
         # All flags should be accepted without error
         assert result.exit_code != 2  # 2 is Click's usage error
+        assert "No such option" not in result.output
 
 
 class TestValidateTaskNotFound:
