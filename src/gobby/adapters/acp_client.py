@@ -264,7 +264,7 @@ class ACPClient:
                     "name": "gobby",
                     "version": "1.0.0",
                 },
-                "capabilities": {},
+                "clientCapabilities": {},
             },
         )
         logger.debug(f"ACP initialize response: {init_result}")

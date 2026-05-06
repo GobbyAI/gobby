@@ -13,10 +13,12 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.trust import pre_approve_directory
 from gobby.servers.websocket.chat.backends.base import (
     _BACKEND_START_TIMEOUT_SECONDS,
     ProviderBackendHealth,
@@ -139,7 +141,8 @@ class ACPWebChatBackend:
             )
 
         session_id = session.sdk_session_id or session.resume_session_id
-        cwd = session.project_path or "."
+        cwd = str(Path(session.project_path or ".").expanduser().resolve())
+        pre_approve_directory(self.provider, cwd)
         if session_id:
             session_info = await self._client.load_session(
                 session_id,

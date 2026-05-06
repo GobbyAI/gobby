@@ -246,6 +246,8 @@ class TestStart:
         assert init_req["method"] == "initialize"
         assert init_req["params"]["protocolVersion"] == 1
         assert init_req["params"]["clientInfo"]["name"] == "gobby"
+        assert init_req["params"]["clientCapabilities"] == {}
+        assert "capabilities" not in init_req["params"]
 
         session_req = json.loads(proc.stdin.write.call_args_list[1][0][0].decode())
         assert session_req["method"] == "session/new"

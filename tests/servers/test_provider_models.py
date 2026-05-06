@@ -292,7 +292,12 @@ class TestProviderModelCatalog:
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
         client = MagicMock()
-        client.start = AsyncMock()
+        order: list[str] = []
+
+        async def start() -> None:
+            order.append("start")
+
+        client.start = AsyncMock(side_effect=start)
         client.stop = AsyncMock()
         client.session_info = {
             "models": {
@@ -304,11 +309,30 @@ class TestProviderModelCatalog:
 
         client_cls = MagicMock(return_value=client)
         client_cls.cli_name = "gemini"
+        gobby_home = temp_dir / "gobby-home"
+        expected_cwd = (gobby_home / "provider-model-discovery").resolve()
 
-        with patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"):
+        def record_trust(_cli: str, _cwd: Path) -> None:
+            order.append("trust")
+
+        with (
+            patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.pre_approve_directory",
+                side_effect=record_trust,
+            ) as pre_approve,
+        ):
             models = await catalog._discover_acp_models(client_cls=client_cls)
 
-        client_cls.assert_called_once_with(purpose="model-discovery")
+        client_cls.assert_called_once()
+        _, kwargs = client_cls.call_args
+        assert kwargs["purpose"] == "model-discovery"
+        assert Path(kwargs["cwd"]) == expected_cwd
+        assert Path(kwargs["cwd"]).is_absolute()
+        assert kwargs["request_timeout"] > 30.0
+        pre_approve.assert_called_once_with("gemini", expected_cwd)
+        assert order == ["trust", "start"]
         assert client_cls.call_count == 1
         assert client_cls.call_args is not None
         client.start.assert_awaited_once()

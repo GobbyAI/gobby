@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.acp_client import ACPClient
+from gobby.agents.trust import pre_approve_directory
 from gobby.config.app import deep_merge
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 
@@ -26,6 +27,8 @@ logger = logging.getLogger(__name__)
 _PROVIDERS = ("claude", "gemini", "qwen", "codex", "droid")
 _CACHE_VERSION = 3
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
+_MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
+_MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS = 90.0
 _CLAUDE_ALIASES = (("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"))
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
@@ -204,6 +207,12 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("droid", _DROID
 def _gobby_home() -> Path:
     raw = os.environ.get("GOBBY_HOME")
     return Path(raw).expanduser() if raw else Path.home() / ".gobby"
+
+
+def _model_discovery_cwd() -> Path:
+    cwd = _gobby_home() / _MODEL_DISCOVERY_CWD_NAME
+    cwd.mkdir(parents=True, exist_ok=True)
+    return cwd.resolve()
 
 
 def _short_error(exc: BaseException) -> str:
@@ -736,7 +745,13 @@ class ProviderModelCatalog:
         if not shutil.which(client_cls.cli_name):
             raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-        client = client_cls(purpose="model-discovery")
+        cwd = _model_discovery_cwd()
+        pre_approve_directory(client_cls.cli_name, cwd)
+        client = client_cls(
+            cwd=os.fspath(cwd),
+            purpose="model-discovery",
+            request_timeout=_MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS,
+        )
         await client.start()
         try:
             session_info = client.session_info
