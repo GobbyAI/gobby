@@ -12,7 +12,7 @@ import { CICDView } from "../source-control/CICDView";
 import { FilesTab } from "../activity/FilesTab";
 
 const PAGE_CLS = "flex flex-1 flex-col overflow-hidden";
-const PAGE_HEADER_CLS = "shrink-0 border-b border-[var(--border)] px-6";
+const PAGE_HEADER_CLS = "shrink-0 px-6 max-md:px-3";
 const PAGE_CONTENT_CLS = "flex-1 overflow-y-auto px-6 py-4";
 const EMPTY_CLS =
   "flex items-center justify-center p-12 text-[length:var(--text-base)] text-[var(--text-muted)]";
