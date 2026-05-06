@@ -182,6 +182,38 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
 
 
 @pytest.mark.asyncio
+async def test_parent_holistic_waits_for_in_flight_child_with_real_context(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Parent delivery epic",
+        task_type="epic",
+        category="planning",
+    )
+    child = manager.create_task(
+        project_id=sample_project["id"],
+        title="In-flight child leaf",
+        parent_task_id=parent.id,
+        task_type="task",
+        category="docs",
+    )
+    update_task(temp_db, parent.id, allow_automation=True, isolation="worktree")
+    initialize_manifest(temp_db, parent.id, [spec("holistic_qa", 0), spec("merge", 1)])
+    initialize_manifest(temp_db, child.id, [spec("development", 0), spec("merge", 1)])
+    set_stage_state(temp_db, child.id, "development", "in_progress")
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "ready"
+
+
+@pytest.mark.asyncio
 async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

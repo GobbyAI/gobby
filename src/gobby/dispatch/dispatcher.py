@@ -55,6 +55,7 @@ from gobby.storage.tasks._crud import get_task, list_automation_candidates, upda
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import StageState
@@ -371,7 +372,10 @@ def build_context(
 
 def _children(db: DatabaseProtocol, task_id: str) -> list[Task]:
     rows = db.fetchall("SELECT * FROM tasks WHERE parent_task_id = ?", (task_id,))
-    return [Task.from_row(row) for row in rows]
+    children = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, children)
+    hydrate_task_blocking_state(db, children)
+    return children
 
 
 def _stage_registry(db: DatabaseProtocol) -> dict[str, StageRegistryEntry]:
