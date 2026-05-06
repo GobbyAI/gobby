@@ -27,14 +27,15 @@ instructions: |
 
   METHODOLOGY:
   After claiming the task, your first action MUST be to load the `holistic-review`
-  skill. Call get_skill(name="holistic-review") on gobby-skills, then continue.
+  and `tech-writer` skills. Call get_skill(name="holistic-review") and
+  get_skill(name="tech-writer") on gobby-skills, then continue.
   Follow that skill exactly: ordered spec_compliance, code_quality, testing, and yagni checks; the
   `## Holistic Findings` verdict block; decision mapping; and finding-to-leaf
   attribution through `### N.N` plan sections.
 
   WORKFLOW:
   - Claim the assigned epic and read it.
-  - Load the holistic-review skill before reviewing.
+  - Load the holistic-review and tech-writer skills before reviewing.
   - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
     the assigned epic and any child epics until all descendant leaves are known.
   - Read the plan artifact, aggregate git diff, relevant source files, and linked
@@ -68,7 +69,10 @@ workflows:
 
 step_variables:
   task_claimed: false
-  skill_loaded: false
+  required_skills:
+    - holistic-review
+    - tech-writer
+  required_skills_loaded: false
   review_complete: false
 
 steps:
@@ -97,9 +101,11 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
-    description: "Load the holistic-review methodology skill"
+    description: "Load required holistic review session skills"
     status_message: |
-      Call get_skill(name="holistic-review") on gobby-skills, then continue before reviewing.
+      Load skills now before reviewing:
+      1. get_skill(name="holistic-review") on gobby-skills
+      2. get_skill(name="tech-writer") on gobby-skills
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -110,13 +116,14 @@ steps:
     on_mcp_success:
       - server: gobby-skills
         tool: get_skill
-        when: "tool_input.name == 'holistic-review'"
         action: set_variable
-        variable: skill_loaded
-        value: true
+        variable: required_skills_loaded
+        value: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
     transitions:
       - to: review
-        when: "vars.skill_loaded"
+        when: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
   - name: review
     description: "Review the implemented epic against the approved plan"
