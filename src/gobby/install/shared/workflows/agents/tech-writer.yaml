@@ -37,9 +37,10 @@ instructions: |
   Your task ID is in assigned_task_id.
 
   METHODOLOGY:
-  After claiming the task, load the `tech-writer` skill. Call
-  get_skill(name="tech-writer") on gobby-skills, then continue. Follow that
-  skill's documentation workflow before editing docs.
+  After claiming the task, load all required session skills: `tech-writer`,
+  `task-transitions`, and `verification-before-completion`. Call get_skill on
+  gobby-skills for each, then continue. Follow the tech-writer documentation
+  workflow before editing docs.
 
   HANDOFF:
   Inspect the assigned task's stage manifest. If the current development row has
@@ -62,10 +63,15 @@ workflows:
       - "tag:worker-safety"
     exclude:
       - "tag:sync"
+      - "tag:task-skill-injection"
 
 step_variables:
   task_claimed: false
-  skill_loaded: false
+  required_skills:
+    - tech-writer
+    - task-transitions
+    - verification-before-completion
+  required_skills_loaded: false
   implementation_complete: false
 
 steps:
@@ -88,13 +94,16 @@ steps:
         variable: task_claimed
         value: true
     transitions:
-      - to: load_skill
+      - to: load_skills
         when: "vars.task_claimed"
 
-  - name: load_skill
-    description: "Load the technical writing skill"
+  - name: load_skills
+    description: "Load required docs implementation session skills"
     status_message: |
-      Call get_skill(name="tech-writer") on gobby-skills, then continue.
+      Load skills now before implementation:
+      1. get_skill(name="tech-writer") on gobby-skills
+      2. get_skill(name="task-transitions") on gobby-skills
+      3. get_skill(name="verification-before-completion") on gobby-skills
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -105,13 +114,14 @@ steps:
     on_mcp_success:
       - server: gobby-skills
         tool: get_skill
-        when: "tool_input.name == 'tech-writer'"
         action: set_variable
-        variable: skill_loaded
-        value: true
+        variable: required_skills_loaded
+        value: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
     transitions:
       - to: implement
-        when: "vars.skill_loaded"
+        when: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
   - name: implement
     description: "Implement, validate, and hand off or close"
