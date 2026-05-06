@@ -20,6 +20,24 @@ describe('activity-panel typography ladder (#14245)', () => {
     )
   })
 
+  it('uses one shared activity status-bar height and readable title size', () => {
+    const activitySource = readSource('src/components/chat/styles/activity-panel.css')
+    const taskSource = readSource('src/components/tasks/task-execution.css')
+    const sessionsSource = readSource('src/components/activity/SessionsTab.tsx')
+
+    expect(activitySource).toContain('--activity-panel-bar-height: 2.5rem')
+    expect(activitySource).toMatch(
+      /\.activity-panel-status-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height\)/,
+    )
+    expect(activitySource).toMatch(
+      /\.activity-panel-status-bar__title\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
+    )
+    expect(taskSource).toMatch(
+      /\.activity-task-pane-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height,\s*2\.5rem\)/,
+    )
+    expect(sessionsSource).toContain('activity-panel-status-bar__title')
+  })
+
   it('locks the tasks row title to --text-base / medium', () => {
     const source = readSource('src/components/tasks/task-execution.css')
 

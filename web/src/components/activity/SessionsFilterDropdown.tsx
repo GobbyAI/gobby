@@ -140,14 +140,14 @@ export function SessionsFilterDropdown({
       />
       <div
         ref={panelRef}
-        className="absolute top-full right-2 z-[100] w-[min(280px,calc(100vw-1.5rem))] max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
+        className="absolute top-full right-2 z-[100] w-[min(34rem,calc(100vw-1.5rem))] max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
         style={{ background: "var(--bg-secondary)" }}
         role="dialog"
         aria-label="Session filters"
       >
         <div className="flex flex-col p-1.5 gap-0.5">
           {/* Mode */}
-          <Section label="Mode">
+          <Section label="Mode" columns>
             {MODE_OPTIONS.map((option) => (
               <CheckboxRow
                 key={option.value}
@@ -159,7 +159,7 @@ export function SessionsFilterDropdown({
           </Section>
 
           {/* Provider */}
-          <Section label="Provider">
+          <Section label="Provider" columns>
             {sortedProviderOptions.length === 0 ? (
               <EmptyHint>No providers available</EmptyHint>
             ) : (
@@ -187,11 +187,11 @@ export function SessionsFilterDropdown({
 
           {/* Task ref */}
           <Section label="Task ref">
-            <div className="flex items-center gap-2 px-2 py-1">
+            <div className="grid grid-cols-2 gap-0.5 px-2 py-1">
               {TASK_REF_ROLES.map((role) => (
                 <label
                   key={role.value}
-                  className="flex items-center gap-1 text-[length:var(--text-md)] text-muted-foreground cursor-pointer"
+                  className="flex min-w-0 items-center gap-1 text-[length:var(--text-md)] text-muted-foreground cursor-pointer"
                 >
                   <input
                     type="checkbox"
@@ -289,13 +289,21 @@ export function SessionsFilterDropdown({
   );
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({
+  label,
+  children,
+  columns = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  columns?: boolean;
+}) {
   return (
     <div className="flex flex-col gap-0.5 py-0.5">
       <div className="px-2 py-1 text-[length:var(--text-sm)] font-medium uppercase tracking-wide text-muted-foreground/80">
         {label}
       </div>
-      {children}
+      {columns ? <div className="grid grid-cols-2 gap-0.5">{children}</div> : children}
     </div>
   );
 }
@@ -310,7 +318,7 @@ function CheckboxRow({
   onToggle: () => void;
 }) {
   return (
-    <label className="flex items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-muted-foreground cursor-pointer hover:bg-muted/50">
+    <label className="flex min-w-0 items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-muted-foreground cursor-pointer hover:bg-muted/50">
       <input type="checkbox" className="w-3 h-3" checked={checked} onChange={onToggle} />
       <span className="truncate">{label}</span>
     </label>

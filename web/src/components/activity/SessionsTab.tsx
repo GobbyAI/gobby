@@ -654,6 +654,8 @@ export const SessionsTab = memo(function SessionsTab({
           onChange={setStatusMode}
           options={STATUS_MODE_OPTIONS}
           ariaLabel="Session status filter"
+          size="md"
+          className="activity-panel-toolbar-segmented"
         />
         <button
           type="button"
@@ -784,12 +786,9 @@ export const SessionsTab = memo(function SessionsTab({
 
       {selectedSessionId && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div
-            className="flex items-center gap-3 px-3 border-b border-border"
-            style={{ height: 40, background: "var(--bg-secondary)" }}
-          >
+          <div className="activity-panel-status-bar activity-panel-status-bar--detail">
             <div className="min-w-0 flex-1">
-              <span className="block truncate text-xs text-muted-foreground">
+              <span className="activity-panel-status-bar__title">
                 Watching{" "}
                 {selectedEntry
                   ? selectedEntry.seqNum
@@ -798,7 +797,7 @@ export const SessionsTab = memo(function SessionsTab({
                   : "session"}
               </span>
             </div>
-            <div className="flex flex-none items-center gap-3">
+            <div className="activity-panel-status-bar__actions">
               {showSummaryButton && (
                 <button
                   type="button"

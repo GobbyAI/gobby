@@ -70,6 +70,151 @@ describe("TasksTab", () => {
     expect(screen.getAllByRole("treeitem")).toHaveLength(11);
   });
 
+  it("checks all stage filters by default and narrows by exclusion", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTitle("Filter by task state"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Development")).toBeChecked();
+      expect(screen.getByLabelText("Operator Review")).toBeChecked();
+    });
+
+    mockFetch.fn.mockClear();
+    fireEvent.click(screen.getByLabelText("Development"));
+
+    await waitFor(() => {
+      const taskRequest = mockFetch.fn.mock.calls
+        .map(([url]) => String(url))
+        .find((url) => url.includes("/api/tasks?") && url.includes("stage=operator_review"));
+      expect(taskRequest).toBeTruthy();
+      expect(taskRequest).not.toContain("stage=development");
+    });
+  });
+
+  it("separates review-rejected tasks from ordinary ready tasks", async () => {
+    mockFetch.resetRoutes();
+    const rejectedStage = {
+      ...stagePayload("ready"),
+      review_round_count: 1,
+    };
+    const plainReadyStage = stagePayload("ready");
+    mockFetch.mockJsonResponse("/api/stages/registry", {
+      stages: [
+        {
+          name: "development",
+          display_label: "Development",
+          category: "implementation",
+          review_policy: "required",
+          position_hint: 10,
+        },
+      ],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      tasks: [
+        {
+          id: "task-review-rejected",
+          ref: "#601",
+          title: "Review rejected task",
+          state: taskStatePayload("ready", { current_stage: rejectedStage }),
+          current_stage: rejectedStage,
+          stages: [rejectedStage],
+          priority: 2,
+          task_type: "task",
+          parent_task_id: null,
+          created_at: "2026-04-05T00:00:00Z",
+          updated_at: "2026-04-05T00:00:00Z",
+          seq_num: 601,
+          path_cache: "601",
+          requires_user_review: false,
+          assignee: null,
+          agent_name: null,
+          sequence_order: null,
+          start_date: null,
+          due_date: null,
+          project_id: "proj-1",
+        },
+        {
+          id: "task-ready",
+          ref: "#602",
+          title: "Plain ready task",
+          state: taskStatePayload("ready", { current_stage: plainReadyStage }),
+          current_stage: plainReadyStage,
+          stages: [plainReadyStage],
+          priority: 2,
+          task_type: "task",
+          parent_task_id: null,
+          created_at: "2026-04-06T00:00:00Z",
+          updated_at: "2026-04-06T00:00:00Z",
+          seq_num: 602,
+          path_cache: "602",
+          requires_user_review: false,
+          assignee: null,
+          agent_name: null,
+          sequence_order: null,
+          start_date: null,
+          due_date: null,
+          project_id: "proj-1",
+        },
+      ],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+      task: {
+        id: "task-review-rejected",
+        ref: "#601",
+        title: "Review rejected task",
+        state: taskStatePayload("ready", { current_stage: rejectedStage }),
+        current_stage: rejectedStage,
+        stages: [rejectedStage],
+        priority: 2,
+        task_type: "task",
+        parent_task_id: null,
+        created_at: "2026-04-05T00:00:00Z",
+        updated_at: "2026-04-05T00:00:00Z",
+        seq_num: 601,
+        path_cache: "601",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+        description: null,
+        category: null,
+        validation_criteria: null,
+        closed_at: null,
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review rejected task")).toBeTruthy();
+      expect(screen.getByText("Plain ready task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTitle("Filter by task state"));
+    expect(screen.getByLabelText("Review Rejected")).toBeChecked();
+
+    fireEvent.click(screen.getByLabelText("Ready"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Review rejected task")).toBeTruthy();
+      expect(screen.queryByText("Plain ready task")).toBeNull();
+    });
+
+    fireEvent.click(screen.getByLabelText("Review Rejected"));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Review rejected task")).toBeNull();
+    });
+  });
+
   it("limits closed tasks to the 20 most recently closed entries", async () => {
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {

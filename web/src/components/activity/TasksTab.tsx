@@ -96,24 +96,41 @@ export const TasksTab = memo(function TasksTab({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
+  const [excludedStageFilters, setExcludedStageFilters] = useState<Set<string>>(
     () => new Set(),
   );
   const [statusFilters, setStatusFilters] = useState<Set<TaskFilterKey>>(
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const availableStageNames = useMemo(
+    () => stagesRegistry.map((stage) => stage.name).filter(Boolean).sort(),
+    [stagesRegistry],
+  );
   const selectedStageList = useMemo(
-    () => Array.from(selectedStageFilters).sort(),
-    [selectedStageFilters],
+    () =>
+      availableStageNames.filter((stageName) => !excludedStageFilters.has(stageName)),
+    [availableStageNames, excludedStageFilters],
+  );
+  const selectedStageSet = useMemo(
+    () => new Set(selectedStageList),
+    [selectedStageList],
+  );
+  const stageQueryKey = useMemo(
+    () => (excludedStageFilters.size > 0 ? selectedStageList.join("\u0000") : ""),
+    [excludedStageFilters.size, selectedStageList],
+  );
+  const stageQueryList = useMemo(
+    () => (stageQueryKey ? stageQueryKey.split("\u0000") : []),
+    [stageQueryKey],
   );
   const activeFilterCount = useMemo(() => {
     const symmetricDifference = new Set([...DEFAULT_FILTERS, ...statusFilters]);
     const statusFilterCount = [...symmetricDifference].filter(
       (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
     ).length;
-    return statusFilterCount + selectedStageList.length;
-  }, [selectedStageList, statusFilters]);
+    return statusFilterCount + excludedStageFilters.size;
+  }, [excludedStageFilters, statusFilters]);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -147,7 +164,13 @@ export const TasksTab = memo(function TasksTab({
     params.set("sort_by", "updated_at");
     params.set("sort_order", "desc");
     params.set("include_stages", "1");
-    selectedStageList.forEach((stageName) => params.append("stage", stageName));
+    if (excludedStageFilters.size > 0) {
+      if (stageQueryList.length === 0) {
+        params.append("stage", "__none__");
+      } else {
+        stageQueryList.forEach((stageName) => params.append("stage", stageName));
+      }
+    }
     fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : { tasks: [] }))
       .then((data) => setTasks(normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[]))
@@ -157,7 +180,7 @@ export const TasksTab = memo(function TasksTab({
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-  }, [projectId, selectedStageList]);
+  }, [excludedStageFilters.size, projectId, stageQueryList]);
 
   useEffect(() => {
     fetchTasks();
@@ -330,7 +353,7 @@ export const TasksTab = memo(function TasksTab({
   }, []);
 
   const toggleStageFilter = useCallback((stageName: string) => {
-    setSelectedStageFilters((prev) => {
+    setExcludedStageFilters((prev) => {
       const next = new Set(prev);
       if (next.has(stageName)) next.delete(stageName);
       else next.add(stageName);
@@ -717,7 +740,7 @@ export const TasksTab = memo(function TasksTab({
           <TasksTabFilters
             filters={statusFilters}
             stages={stagesRegistry}
-            selectedStages={selectedStageFilters}
+            selectedStages={selectedStageSet}
             onToggle={toggleFilter}
             onToggleStage={toggleStageFilter}
             onClose={() => setShowFilterDropdown(false)}

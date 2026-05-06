@@ -121,9 +121,11 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.55rem 0.75rem;
+  min-height: var(--activity-panel-bar-height, 2.5rem);
+  padding: 0 0.75rem;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .activity-task-pane-bar--detail {
@@ -135,8 +137,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: var(--activity-panel-control-height, 2.25rem);
+  height: var(--activity-panel-control-height, 2.25rem);
   flex-shrink: 0;
   background: var(--bg-primary);
   border: 1px solid var(--border);
@@ -333,7 +335,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-size: calc(var(--font-size-base) * 0.875);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
 }
 
 .activity-task-pane-bar__chips {
