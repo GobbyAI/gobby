@@ -4,7 +4,6 @@ import type {
   ChatMode,
   ChatModeInfo,
   ChatSendOptions,
-  SessionObservationMeta,
 } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
@@ -15,7 +14,6 @@ import { ChatInputModelControls } from './ChatInputModelControls'
 import { ModeSelector } from './ModeSelector'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
-import { AttachedSessionMetadataStrip } from './AttachedSessionMetadataStrip'
 import { useChatInputProviderSelection } from './useChatInputProviderSelection'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import {
@@ -97,7 +95,6 @@ interface ChatInputProps {
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
   isAttached?: boolean
-  attachedSessionMeta?: SessionObservationMeta | null
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -171,7 +168,6 @@ export function ChatInput({
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
   isAttached = false,
-  attachedSessionMeta = null,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -408,7 +404,7 @@ export function ChatInput({
 
   const resolvePrimaryButtonKind = (): PrimaryButtonKind => {
     if (isStreaming) return 'stop'
-    if (pttEnabled && !hasInput) {
+    if (pttEnabled && !hasInput && !isAttached) {
       return isRecording ? 'mic-recording' : 'mic-idle'
     }
     return 'send'
@@ -872,11 +868,8 @@ export function ChatInput({
             </div>
           </div>
 
-          {isAttached && attachedSessionMeta ? (
-            <AttachedSessionMetadataStrip meta={attachedSessionMeta} />
-          ) : (
-            canSelectModel && (
-              <ChatInputModelControls
+          {!isAttached && canSelectModel && (
+            <ChatInputModelControls
                 currentBranch={currentBranch}
                 disabled={disabled}
                 effectiveProvider={effectiveProvider}
@@ -896,7 +889,6 @@ export function ChatInput({
                 worktreePath={worktreePath}
                 worktreePickerDisabled={worktreePickerDisabled}
               />
-            )
           )}
           {showObserveOverlay && (
             <div className="chat-input-overlay">

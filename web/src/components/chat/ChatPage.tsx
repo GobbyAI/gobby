@@ -858,7 +858,6 @@ export function ChatPage({
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
               attachmentsDisabled={isProxyAttached}
               isAttached={isProxyAttached}
-              attachedSessionMeta={chat.attachedSessionMeta ?? null}
             />
           )}
         </ArtifactContext.Provider>
