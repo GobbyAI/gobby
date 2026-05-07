@@ -185,17 +185,18 @@ export function ChatInput({
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
   const metaRef = useRef<HTMLDivElement>(null)
-  // Track the chat-column ancestor. Threshold is 480px because below that the
-  // 3-row layout (Mode + 4 toolbar icons / textarea+send / provider+model+
-  // reasoning+branch) physically can't fit — the size="md" SegmentedControl
-  // renders Plan|Act|YOLO at ~310px on its own, so the 4 toolbar icons get
-  // pushed to a wrap row.
-  const [isCompact, setIsCompact] = useState(false)
+  // Track the chat-column ancestor. At <=479px we stay on the 3-row layout
+  // but compress: model name + branch label truncate, toolbar buttons show
+  // as glyphs only, and ModeSelector shrinks to size="sm" so Mode + the 4
+  // toolbar buttons all fit on one row down to the 320px floor.
+  const [isNarrow, setIsNarrow] = useState(false)
   useEffect(() => {
     const el = metaRef.current?.closest('.chat-column')
-    if (!el || typeof ResizeObserver === 'undefined') return
+    if (!el) return
+    setIsNarrow(el.getBoundingClientRect().width <= 479)
+    if (typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(([entry]) => {
-      setIsCompact(entry.contentRect.width <= 480)
+      setIsNarrow(entry.contentRect.width <= 479)
     })
     ro.observe(el)
     return () => ro.disconnect()
@@ -689,12 +690,13 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
-              {!isCompact && !isAttached && onModeChange && (
+              {!isAttached && onModeChange && (
                 <ModeSelector
                   mode={mode}
                   onModeChange={onModeChange}
                   disabled={disabled || modeDisabled}
                   modes={modeOptions}
+                  size={isNarrow ? 'sm' : 'md'}
                 />
               )}
               {!isAttached && (
@@ -884,34 +886,13 @@ export function ChatInput({
             </div>
           </div>
 
-          {isCompact && !isAttached && onModeChange && (
-            <div className="chat-input-mode-row">
-              <ModeSelector
-                mode={mode}
-                onModeChange={onModeChange}
-                disabled={disabled || modeDisabled}
-                modes={modeOptions}
-              />
-              {canSelectModel && onWorktreeChange && (
-                <BranchIndicator
-                  currentBranch={currentBranch ?? null}
-                  worktreePath={worktreePath ?? null}
-                  projectId={projectId ?? null}
-                  onWorktreeChange={onWorktreeChange}
-                  disabled={disabled || worktreePickerDisabled}
-                  variant="select"
-                  compact={isCompact}
-                />
-              )}
-            </div>
-          )}
           {!isAttached && canSelectModel && (
             <ChatInputModelControls
-                compact={isCompact}
+                compact={isNarrow}
                 currentBranch={currentBranch}
                 disabled={disabled}
                 effectiveProvider={effectiveProvider}
-                hideBranch={isCompact}
+                hideBranch={false}
                 modelOptions={modelOptions}
                 onModelSelect={handleModelSelect}
                 onProviderSelect={handleProviderSelect}

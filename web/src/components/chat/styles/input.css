@@ -547,16 +547,6 @@
 
 /* Mode (Plan|Act|YOLO) sits on its own row between the textarea row and the
    model controls row so chat input lays out as a clean 4-row grid even at
-   the 320px floor:
-     row 1 — toolbar icons (paperclip + persona + tts + stt)
-     row 2 — textarea + send
-     row 3 — mode (this row)
-     row 4 — provider + model + reasoning + branch */
-.chat-input-mode-row {
-  display: flex;
-  align-items: center;
-}
-
 /* Container for chat-column-scoped responsive behavior. Used by AgentStatusBar
    (New Chat button) and chat-input controls to react to the chat panel's own
    width, independent of viewport. */
@@ -842,24 +832,27 @@
   }
 }
 
-/* Below ~360px chat-column width, compact the chat-input area so the layout
-   stays at four rows: icons / textarea / mode / model controls. New Chat
-   button drops its label, and the model-controls row tightens its padding so
-   [Provider][Model][Reasoning][Branch] fit on one row.
+/* Below 480px chat-column width, drop button labels so toolbar buttons
+   render as glyphs only, and reclaim the toolbar's right gutter (it's a
+   send-button alignment reserve that, at narrow widths, forces Mode + the
+   4 toolbar buttons to wrap to a second row). The 4-row compact layout
+   doesn't engage until <=320px — between 320 and 480 we keep the 3-row
+   layout and just compress to fit.
 
    Placed last in the file so its rules win over earlier base declarations
    that share the same specificity. !important is needed to beat Tailwind
    utility classes (px-2.5) on SelectTrigger / BranchIndicator buttons. */
-@container chat-column (max-width: 480px) {
+@container chat-column (max-width: 479px) {
   .chat-new-chat-btn__label {
     display: none;
   }
   .chat-input-toolbar {
     padding-right: 0;
   }
+  /* Tighten the toolbar gap so Mode (now size="sm" via ChatInput, ~110px)
+     plus the four 36px icon buttons fit on one row down to the 320px floor. */
+  .chat-input-toolbar__left {
+    gap: 0.25rem;
+  }
 }
 
-/* Mode row: at narrow widths Mode and Branch share this row. */
-.chat-input-mode-row {
-  gap: 0.5rem;
-}

@@ -322,8 +322,9 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('mode-selector')).toBeTruthy()
     expect(screen.getByText('accept_edits')).toBeTruthy()
 
-    // At default (non-compact) widths, ModeSelector lives in toolbar__left as
-    // the first child. The chat-input-mode-row only renders at <=360px.
+    // ModeSelector always lives in toolbar__left as the first child; the
+    // mode-row variant was removed in favor of a single 3-row layout that
+    // compresses (size="sm") at narrow widths.
     const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
     expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
     expect(container.querySelector('.chat-input-mode-row')).toBeNull()
