@@ -71,9 +71,13 @@ import "./reports-page.css";
 export function ReportsPage({
   projectId,
   onNavigateToTrace,
+  initialPipelineExecutionId,
+  onInitialPipelineExecutionConsumed,
 }: {
   projectId?: string;
   onNavigateToTrace?: (traceId: string) => void;
+  initialPipelineExecutionId?: string | null;
+  onInitialPipelineExecutionConsumed?: () => void;
 }) {
   const [subTab, setSubTab] = useState<SubTab>("pipelines");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -134,6 +138,14 @@ export function ReportsPage({
     cancelRun,
     fetchRunDetail,
   } = useAgentRuns(projectId);
+
+  useEffect(() => {
+    if (!initialPipelineExecutionId) return;
+    setSubTab("pipelines");
+    setStatusFilter("all");
+    setSelectedId(initialPipelineExecutionId);
+    onInitialPipelineExecutionConsumed?.();
+  }, [initialPipelineExecutionId, onInitialPipelineExecutionConsumed]);
 
   const pipelineCounts = useMemo(() => {
     const statuses = pipelineExecutions.map((pe) => pe.status);
