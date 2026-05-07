@@ -51,13 +51,24 @@ Collect only options the user explicitly wants to change:
 7. `--target-branch <branch>`, optional.
 8. `--agent <agent-name>`, optional.
 9. `--reset-expansion-output`, only when rebuilding a task ref with existing expansion output.
+10. `--max-active-agents <n>`, optional bounded concurrency for dispatcher ticks.
+
+## Interactive E2E Validation
+
+For an unattended build-flow test, do not use the same task as both the tracking work and the automation target.
+
+- Keep a separate claimed coordinator/tracking epic for the active session; use it for blocker fixes and to prevent stopping mid-run.
+- Create a separate build or document epic as the `gobby build #epic` target. Fix and merge blockers before starting the final automation epic.
+- Use `--quick` only for smoke checks of one lifecycle step. For real end-to-end validation, run without `--quick`, usually with bounded concurrency such as `--max-active-agents <n>`.
+- Be explicit about docs scope. For `docs/guides` refreshes, leave root `README.md` out unless it is named in scope; run `docs/guides/README.md` last when it indexes the other guides.
+- Final acceptance must verify that the document epic is closed, the merge stage records the real merge SHA, no agents are running, no tasks remain claimed for the build, no stale build worktrees or clones remain, and any intentionally preserved dirty or conflicted workspace is explained.
 
 ## Confirmation
 
 Before running, show the equivalent command:
 
 ```text
-gobby build <input> --quick --skip-stage <stage,...> --stage <stage>:max_review_rounds=<n> --clone --no-merge --target-branch <branch> --agent <agent>
+gobby build <input> --quick --skip-stage <stage,...> --stage <stage>:max_review_rounds=<n> --clone --no-merge --target-branch <branch> --agent <agent> --max-active-agents <n>
 ```
 
 Omit flags that are unset.
