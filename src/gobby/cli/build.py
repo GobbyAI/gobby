@@ -29,6 +29,8 @@ from .utils import resolve_project_ref
 
 logger = logging.getLogger(__name__)
 
+DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS = 900.0
+
 
 def resolve_project_id() -> str:
     """Resolve the current project id for build requests."""
@@ -185,6 +187,8 @@ def _payload_string_list(value: object) -> list[str]:
 
 def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
     try:
+        import httpx
+
         from gobby.config.app import load_config
         from gobby.utils.daemon_client import DaemonClient
 
@@ -197,7 +201,7 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
             "/api/build",
             method="POST",
             json_data=_build_payload(opts, input_ref),
-            timeout=300.0,
+            timeout=DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS,
         )
         if response.status_code == 200:
             return _result_from_payload(response.json())
@@ -207,6 +211,13 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         return None
     except click.ClickException:
         raise
+    except httpx.TimeoutException as exc:
+        raise click.ClickException(
+            "Daemon build request timed out before the initial dispatcher result returned. "
+            "The daemon may still be running accepted build work; local fallback was skipped. "
+            "Check progress with `gobby agents runs list --status running` or rerun "
+            f"`gobby build {input_ref}` later."
+        ) from exc
     except Exception:
         logger.debug("Daemon build request failed; falling back to local build", exc_info=True)
         return None
