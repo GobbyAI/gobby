@@ -1,499 +1,259 @@
 # Integrations Guide
 
-Gobby integrates with external project management tools to sync tasks bidirectionally.
+Gobby's task integrations connect local tasks to GitHub issues, GitHub pull
+requests, and Linear issues. GitHub and Linear operations run through configured
+external MCP servers, while Gobby stores the linkage fields on local project and
+task records.
 
-## Overview
+## Integration Surface
 
-| Integration | Features |
-|-------------|----------|
-| **GitHub** | Import issues, sync tasks, create PRs |
-| **Linear** | Import issues, sync tasks, create issues |
+| Integration | Main use | Required external capability |
+|-------------|----------|------------------------------|
+| GitHub | Import issues, sync linked issue title/body, create task PRs, close linked issues after merge | MCP server named `github`; some MCP task tools use the `gh` CLI |
+| Linear | Import issues, create Linear issues from tasks, push/pull project-scoped updates, periodic sync | MCP server named `linear`; GraphQL fallback may use configured Linear API credentials |
 
-## GitHub Integration
+```mermaid
+flowchart LR
+    GitHub[GitHub issue or PR] <--> GitHubMCP[github MCP server]
+    Linear[Linear issue] <--> LinearMCP[linear MCP server]
+    GitHubMCP <--> Gobby[Gobby task store]
+    LinearMCP <--> Gobby
+    Gobby --> TaskFields["github_* and linear_* task fields"]
+```
 
-### Setup
+## Prerequisites
 
-Link a GitHub repository to your project:
+Run integration commands from a Gobby project directory. If a command reports
+that no project context is available, initialize or select the project first.
+
+External MCP servers are project/user configuration, not task data. Discover the
+live server state before troubleshooting integration commands:
 
 ```bash
-# Link repository
-gobby github link https://github.com/owner/repo
+gobby mcp-proxy list-servers
+gobby mcp-proxy list-tools --server github
+gobby mcp-proxy list-tools --server linear
+```
 
-# Check status
+Use `gobby mcp-proxy add-server` or `gobby mcp-proxy import-server` to add
+missing servers. See [mcp-tools.md](./mcp-tools.md) for the proxy model and
+progressive discovery workflow.
+
+## GitHub
+
+GitHub project commands live under `gobby github`. Repository identifiers use
+`owner/repo` format.
+
+### Link a repository
+
+```bash
+gobby github link owner/repo
 gobby github status
 ```
 
-**Authentication:**
+`gobby github link` stores the default GitHub repo on the local Gobby project.
+`gobby github status` reports the linked repo, whether the `github` MCP server is
+available, and how many local tasks are linked to GitHub issues.
 
-GitHub integration uses the `gh` CLI for authentication. Ensure you're logged in:
-
-```bash
-gh auth login
-```
-
-### CLI Commands
-
-#### `gobby github status`
-
-Show GitHub integration status.
-
-```bash
-gobby github status
-```
-
-Displays:
-- Linked repository
-- Authentication status
-- Sync statistics
-
-#### `gobby github link`
-
-Link a GitHub repo to this project.
-
-```bash
-gobby github link REPO_URL
-```
-
-**Examples:**
-
-```bash
-gobby github link https://github.com/owner/repo
-gobby github link owner/repo  # Shorthand
-```
-
-#### `gobby github unlink`
-
-Remove GitHub repo link from this project.
+Remove the default repo with:
 
 ```bash
 gobby github unlink
 ```
 
-#### `gobby github import`
-
-Import GitHub issues as gobby tasks.
+### Import issues
 
 ```bash
-gobby github import [OPTIONS]
+gobby github import [REPO] [--labels LABELS] [--state open|closed|all] [--json]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--state` | Issue state: open, closed, all (default: open) |
-| `--labels` | Filter by labels (comma-separated) |
-| `--limit N` | Max issues to import |
-| `--assignee` | Filter by assignee |
+If `REPO` is omitted, Gobby uses the repo from `gobby github link`. `--labels`
+accepts a comma-separated list. Imported issues are deduplicated by
+`github_repo` plus `github_issue_number`; re-importing updates the existing task
+instead of creating another one.
 
-**Examples:**
+Example:
 
 ```bash
-# Import all open issues
-gobby github import
-
-# Import bugs only
-gobby github import --labels bug
-
-# Import with limit
-gobby github import --limit 50 --state all
+gobby github import owner/repo --labels bug,priority-high --state open
 ```
 
-#### `gobby github sync`
-
-Sync a task to its linked GitHub issue.
+### Sync a linked task to its issue
 
 ```bash
-gobby github sync TASK_ID
+gobby github sync TASK_ID [--json]
 ```
 
-Updates the GitHub issue with:
-- Task status
-- Comments/notes
-- Labels
+GitHub sync updates the linked issue's title and body from the local task. The
+task must already have `github_issue_number`, and either the task or project must
+provide `github_repo`.
 
-#### `gobby github pr`
-
-Create a GitHub PR for a task.
+### Create a pull request for a task
 
 ```bash
-gobby github pr TASK_ID [OPTIONS]
+gobby github pr TASK_ID --head BRANCH [--base main] [--draft] [--json]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--branch` | Source branch (auto-detected from task worktree) |
-| `--base` | Base branch (default: main) |
-| `--draft` | Create as draft PR |
+`--head` is required. When GitHub returns a PR number, Gobby records it on the
+task as `github_pr_number`.
 
-**Examples:**
+Example:
 
 ```bash
-# Create PR for task
-gobby github pr #123
-
-# Create draft PR
-gobby github pr #123 --draft
-
-# Specify branches
-gobby github pr #123 --branch feature/auth --base develop
+gobby github pr #123 --head task-123-fix-login --base main --draft
 ```
 
-### MCP Tools
+### GitHub MCP tools
 
-GitHub tools are available via `gobby-tasks`:
+The task integration tools are exposed through `gobby-tasks-ops`.
 
-#### import_github_issues
+| Tool | Signature | Notes |
+|------|-----------|-------|
+| `import_github_issues` | `repo`, optional `labels`, `state="open"`, optional `parent_task_id` | Uses the `gh` CLI and deduplicates imported tasks. |
+| `link_task_to_github_issue` | `task_id`, `repo`, `issue_number` | Sets GitHub linkage fields on an existing task. |
+| `close_linked_github_issue` | `task_id`, optional `merge_sha` | Comments, labels, and closes the linked issue after a merge. |
 
-Import GitHub issues as tasks.
+Example:
 
 ```python
-call_tool(server_name="gobby-tasks", tool_name="import_github_issues", arguments={
-    "state": "open",
-    "labels": ["bug", "priority-high"],
-    "limit": 50
-})
+call_tool(
+    "gobby-tasks-ops",
+    "import_github_issues",
+    {
+        "repo": "owner/repo",
+        "labels": ["bug", "priority-high"],
+        "state": "open",
+        "parent_task_id": "#120",
+    },
+)
 ```
 
-#### sync_task_to_github
+Sync, PR creation, and project GitHub status are CLI workflows in the current
+Gobby surface.
 
-Sync task status to linked GitHub issue.
+## Linear
 
-```python
-call_tool(server_name="gobby-tasks", tool_name="sync_task_to_github", arguments={
-    "task_id": "#123"
-})
-```
+Linear project commands live under `gobby linear`. Linear sync uses a team
+binding and, for project-scoped sync, a Linear project binding.
 
-#### create_pr_for_task
-
-Create a GitHub PR for a task.
-
-```python
-call_tool(server_name="gobby-tasks", tool_name="create_pr_for_task", arguments={
-    "task_id": "#123",
-    "base_branch": "main",
-    "draft": False
-})
-```
-
-#### link_github_repo
-
-Link a GitHub repository to the project.
-
-```python
-call_tool(server_name="gobby-tasks", tool_name="link_github_repo", arguments={
-    "repo_url": "https://github.com/owner/repo"
-})
-```
-
-#### unlink_github_repo
-
-Remove GitHub repo link.
-
-```python
-call_tool(server_name="gobby-tasks", tool_name="unlink_github_repo", arguments={})
-```
-
-#### get_github_status
-
-Get GitHub integration status.
-
-```python
-call_tool(server_name="gobby-tasks", tool_name="get_github_status", arguments={})
-```
-
-### Mapping
-
-| GitHub | Gobby |
-|--------|-------|
-| Issue | Task |
-| Issue title | Task title |
-| Issue body | Task description |
-| Labels | Task labels |
-| Assignee | Task assignee |
-| Open | open |
-| Closed | closed |
-
-### Workflow Example
+### Inspect available teams
 
 ```bash
-# 1. Link repository
-gobby github link owner/repo
-
-# 2. Import issues
-gobby github import --labels "priority-high"
-
-# 3. Work on task
-gobby tasks update #123 --status in_progress
-
-# 4. Create PR when done
-gobby github pr #123
-
-# 5. Sync status back
-gobby github sync #123
+gobby linear teams [--json]
 ```
 
----
+This lists teams available to the configured Linear auth. Use the team ID or key
+in setup and import commands.
 
-## Linear Integration
+### Link or set up Linear
 
-### Setup
-
-Link a Linear team to your project:
-
-```bash
-# Link team
-gobby linear link TEAM_ID
-
-# Check status
-gobby linear status
-```
-
-**Authentication:**
-
-Set your Linear API key:
-
-```bash
-export LINEAR_API_KEY="lin_api_..."
-```
-
-Or configure in `~/.gobby/config.yaml`:
-
-```yaml
-integrations:
-  linear:
-    api_key: "lin_api_..."
-```
-
-### CLI Commands
-
-#### `gobby linear status`
-
-Show Linear integration status.
-
-```bash
-gobby linear status
-```
-
-#### `gobby linear link`
-
-Link a Linear team to this project.
+For a simple team binding:
 
 ```bash
 gobby linear link TEAM_ID
+gobby linear status
 ```
 
-#### `gobby linear unlink`
+For project-scoped sync, use setup:
 
-Remove Linear team link from this project.
+```bash
+gobby linear setup --bootstrap [--team-id TEAM_ID] [--project-id PROJECT_ID] [--project-name NAME]
+```
+
+`--bootstrap` creates or reuses a Linear project by name. `--project-id` binds an
+existing Linear project. Setup can also import issues, create missing Linear
+issues for active Gobby tasks, and enable periodic sync:
+
+```bash
+gobby linear setup --bootstrap --import --create-missing --auto-sync --interval 300
+```
+
+Remove the Linear binding with:
 
 ```bash
 gobby linear unlink
 ```
 
-#### `gobby linear import`
-
-Import Linear issues as gobby tasks.
+### Import issues
 
 ```bash
-gobby linear import [OPTIONS]
+gobby linear import [TEAM_ID] [--state STATE] [--labels LABELS] [--json]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--state` | Issue state filter |
-| `--labels` | Filter by labels |
-| `--limit N` | Max issues to import |
-| `--project` | Filter by Linear project |
+If `TEAM_ID` is omitted, Gobby uses the linked team. When a project binding
+exists, imports are scoped to that Linear project. Imported issues are
+deduplicated by `linear_issue_id`; titles that begin with `#123:` can also
+reconnect to the matching Gobby sequence number.
 
-**Examples:**
+### Sync one task
 
 ```bash
-# Import all active issues
-gobby linear import
-
-# Import from specific project
-gobby linear import --project "Backend"
-
-# Import with label filter
-gobby linear import --labels "bug"
+gobby linear sync TASK_ID [--json]
 ```
 
-#### `gobby linear sync`
+The task must already be linked to a Linear issue. Sync pushes title,
+description, priority, and mapped state from Gobby to Linear.
 
-Sync a task to its linked Linear issue.
+### Sync the project
 
 ```bash
-gobby linear sync TASK_ID
+gobby linear sync-all [TEAM_ID] [--json]
+gobby linear sync-all [TEAM_ID] --forward [--json]
 ```
 
-#### `gobby linear create`
+Default `sync-all` pulls newer Linear updates into linked tasks, pushes dirty
+linked tasks back to Linear, then updates the project's Linear sync cursor.
+`--forward` is for initial setup from Gobby into Linear: it creates Linear
+issues for active unlinked tasks, pushes active linked tasks, and avoids pulling
+closed local history.
 
-Create a Linear issue from a gobby task.
+Periodic sync is managed with:
 
 ```bash
-gobby linear create TASK_ID [OPTIONS]
+gobby linear auto-sync [--interval 300]
+gobby linear auto-sync --disable
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--project` | Linear project to create in |
-| `--labels` | Labels to apply |
-
-### Mapping
-
-| Linear | Gobby |
-|--------|-------|
-| Issue | Task |
-| Title | Task title |
-| Description | Task description |
-| Labels | Task labels |
-| Assignee | Task assignee |
-| Backlog/Todo | open |
-| In Progress | in_progress |
-| Done | closed |
-
-### Workflow Example
+### Create a Linear issue from a task
 
 ```bash
-# 1. Link team
-gobby linear link TEAM_123
-
-# 2. Import issues
-gobby linear import --project "Q1 Sprint"
-
-# 3. Work on task
-gobby tasks update #123 --status in_progress
-
-# 4. Sync changes back to Linear
-gobby linear sync #123
-
-# 5. Or create new Linear issue from task
-gobby linear create #456
+gobby linear create TASK_ID [--team TEAM_ID] [--json]
 ```
 
----
+Created issue titles are prefixed with the Gobby reference, for example
+`#123: Fix login flow`. Gobby stores the returned Linear issue ID on the task.
 
-## Bidirectional Sync
+### State mapping
 
-Both integrations support bidirectional sync:
+| Gobby state | Linear state |
+|-------------|--------------|
+| `ready` | `Todo` |
+| `in_progress` | `In Progress` |
+| `needs_review` | `In Review` |
+| `review_approved` | `Done` |
+| `closed` | `Done` |
+| `escalated` | `Canceled` |
 
-### Import Flow
-
-```text
-GitHub/Linear Issue → gobby tasks import → Gobby Task
-                                              ↓
-                                    external_id stored
-```
-
-### Export Flow
-
-```text
-Gobby Task → gobby github/linear sync → GitHub/Linear Issue
-     ↓
-Updates:
-- Status
-- Comments
-- Labels
-```
-
-### Conflict Resolution
-
-When both sides have changes:
-
-1. **Last-write-wins**: Most recent change takes precedence
-2. **Manual resolution**: Review conflicts in CLI output
-3. **Force sync**: `--force` flag overwrites remote
-
----
-
-## Configuration
-
-Configure integrations in `~/.gobby/config.yaml`:
-
-```yaml
-integrations:
-  github:
-    enabled: true
-    auto_sync: false  # Auto-sync on task close
-    default_labels: ["gobby-managed"]
-
-  linear:
-    enabled: true
-    api_key: "${LINEAR_API_KEY}"  # Environment variable
-    auto_sync: false
-    default_project: "Backlog"
-```
-
-### Project-Level Configuration
-
-Configure per-project in `.gobby/project.json`:
-
-```json
-{
-  "integrations": {
-    "github": {
-      "repo": "owner/repo",
-      "import_labels": ["bug", "feature"],
-      "sync_on_close": true
-    },
-    "linear": {
-      "team_id": "TEAM_123",
-      "project_id": "PROJECT_456"
-    }
-  }
-}
-```
-
----
-
-## Best Practices
-
-### Do
-
-- Link integrations at project start
-- Import existing issues before creating tasks
-- Use consistent labels across systems
-- Sync regularly to keep systems aligned
-
-### Don't
-
-- Create duplicate tasks manually
-- Ignore sync conflicts
-- Delete linked issues without unlinking
-- Store API keys in project files
+When pulling from Linear, `Backlog` and `Triage` map to `ready`, `In Review`
+maps to `in_progress`, and `Done` or `Canceled` map to closed task semantics.
 
 ## Troubleshooting
 
-### GitHub: Authentication failed
-
-```bash
-# Re-authenticate with gh CLI
-gh auth login
-gh auth status
-```
-
-### Linear: API key invalid
-
-```bash
-# Verify key is set
-echo $LINEAR_API_KEY
-
-# Test with curl
-curl -H "Authorization: $LINEAR_API_KEY" https://api.linear.app/graphql
-```
-
-### Sync conflicts
-
-```bash
-# Force sync from Gobby to remote
-gobby github sync #123 --force
-
-# Or re-import from remote
-gobby github import --force
-```
+| Issue | Check |
+|-------|-------|
+| `github` or `linear` is unavailable | Run `gobby mcp-proxy list-servers`; the server must be configured and connected or lazily connectable. |
+| GitHub repo format is rejected | Use `owner/repo`, not a full `https://github.com/...` URL. |
+| `gobby github import` cannot find a repo | Pass `REPO` explicitly or run `gobby github link owner/repo`. |
+| `gobby github pr` errors about a missing branch | Pass `--head BRANCH`; it is required. |
+| GitHub task MCP import fails | Confirm the `gh` CLI is installed and authenticated; `gobby-tasks-ops:import_github_issues` uses it directly. |
+| Linear import or sync cannot find a team | Run `gobby linear teams`, then `gobby linear setup --bootstrap --team-id TEAM_ID` or pass `TEAM_ID` to the command. |
+| Linear `sync-all` touches too much history on first setup | Use `gobby linear sync-all --forward` for active forward-only setup. |
 
 ## See Also
 
-- [tasks.md](tasks.md) - Task management
-- [cli-commands.md](cli-commands.md) - Full CLI reference
-- [mcp-tools.md](mcp-tools.md) - MCP tool reference
+- [tasks.md](./tasks.md) - task management
+- [cli-commands.md](./cli-commands.md) - CLI command index
+- [mcp-tools.md](./mcp-tools.md) - MCP tool reference
+- [github-issue-triage.md](./github-issue-triage.md) - GitHub triage automation
+
+_Last verified: 2026-05-07_
