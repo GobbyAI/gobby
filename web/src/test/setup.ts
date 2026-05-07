@@ -4,6 +4,22 @@ import '@testing-library/jest-dom/vitest'
 // jsdom doesn't implement canvas — mock getContext to suppress warnings
 HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(null)
 
+// jsdom doesn't implement matchMedia — stub to a desktop-default mock so any
+// component using useIsMobile renders without crashing in tests. Tests that
+// need to assert mobile behavior can override window.matchMedia per-suite.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }))
+}
+
 // Node 25 ships a built-in `globalThis.localStorage` getter that warns about a
 // missing `--localstorage-file` flag whenever it's touched. Vitest's jsdom env
 // uses `populateGlobal()` to copy window props onto globalThis, but it skips

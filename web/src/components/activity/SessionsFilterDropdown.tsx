@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { getProviderDisplayName } from "../../lib/providerModels";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import {
   countActiveFilters,
   defaultSessionsFilters,
@@ -79,6 +80,7 @@ export function SessionsFilterDropdown({
 }: SessionsFilterDropdownProps) {
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
   const panelRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
   const sortedProviderOptions = useMemo(
     () =>
       [...providerOptions].sort((left, right) =>
@@ -130,6 +132,15 @@ export function SessionsFilterDropdown({
 
   const activeCount = countActiveFilters(filters);
 
+  // Width is capped at 320px on every viewport. On mobile (<768px) the panel
+  // becomes a centered popup modal; on larger viewports it's a right-anchored
+  // dropdown attached to the filter button. Both share the same internal
+  // 2-column body so the visual treatment is identical — only positioning
+  // changes.
+  const panelClass = isMobile
+    ? "fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] w-80 max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
+    : "absolute top-full right-2 z-[100] w-80 max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col";
+
   return (
     <>
       <div
@@ -140,128 +151,130 @@ export function SessionsFilterDropdown({
       />
       <div
         ref={panelRef}
-        className="absolute top-full right-2 z-[100] w-[min(34rem,calc(100vw-1.5rem))] max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
+        className={panelClass}
         style={{ background: "var(--bg-secondary)" }}
         role="dialog"
         aria-label="Session filters"
+        aria-modal={isMobile || undefined}
       >
-        <div className="flex flex-col p-1.5 gap-0.5">
-          {/* Mode */}
-          <Section label="Mode" columns>
-            {MODE_OPTIONS.map((option) => (
-              <CheckboxRow
-                key={option.value}
-                label={option.label}
-                checked={isInclusiveSetChecked(filters.modes, option.value)}
-                onToggle={() => handleModeToggle(option.value)}
-              />
-            ))}
-          </Section>
-
-          {/* Provider */}
-          <Section label="Provider" columns>
-            {sortedProviderOptions.length === 0 ? (
-              <EmptyHint>No providers available</EmptyHint>
-            ) : (
-              sortedProviderOptions.map((provider) => (
+        <div className="grid grid-cols-2 divide-x divide-border">
+          {/* Left column: Mode + Provider */}
+          <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
+            <Section label="Mode">
+              {MODE_OPTIONS.map((option) => (
                 <CheckboxRow
-                  key={provider}
-                  label={getProviderDisplayName(provider) || provider}
-                  checked={isInclusiveSetChecked(filters.providers, provider)}
-                  onToggle={() => handleProviderToggle(provider)}
+                  key={option.value}
+                  label={option.label}
+                  checked={isInclusiveSetChecked(filters.modes, option.value)}
+                  onToggle={() => handleModeToggle(option.value)}
                 />
-              ))
-            )}
-          </Section>
-
-          {/* Session ref */}
-          <Section label="Session ref">
-            <RefRangeInputs
-              minValue={filters.sessionRefMin}
-              maxValue={filters.sessionRefMax}
-              onChangeMin={(value) => update({ sessionRefMin: value })}
-              onChangeMax={(value) => update({ sessionRefMax: value })}
-              ariaLabelPrefix="Session ref"
-            />
-          </Section>
-
-          {/* Task ref */}
-          <Section label="Task ref">
-            <div className="grid grid-cols-2 gap-0.5 px-2 py-1">
-              {TASK_REF_ROLES.map((role) => (
-                <label
-                  key={role.value}
-                  className="flex min-w-0 items-center gap-1 text-[length:var(--text-md)] text-muted-foreground cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    className="w-3 h-3"
-                    checked={filters.taskRefRoles.has(role.value)}
-                    onChange={() => handleTaskRefRoleToggle(role.value)}
-                  />
-                  <span>{role.label}</span>
-                </label>
               ))}
-            </div>
-            <RefRangeInputs
-              minValue={filters.taskRefMin}
-              maxValue={filters.taskRefMax}
-              onChangeMin={(value) => update({ taskRefMin: value })}
-              onChangeMax={(value) => update({ taskRefMax: value })}
-              ariaLabelPrefix="Task ref"
-            />
-          </Section>
+            </Section>
 
-          {/* Date range */}
-          <Section label="Date range">
-            <div className="px-2 py-1">
-              <SegmentedControl<DatePreset>
-                value={filters.datePreset === "custom" ? "all" : filters.datePreset}
-                onChange={handleDatePresetChange}
-                options={DATE_PRESET_OPTIONS}
-                ariaLabel="Date preset"
+            <Section label="Provider">
+              {sortedProviderOptions.length === 0 ? (
+                <EmptyHint>No providers available</EmptyHint>
+              ) : (
+                sortedProviderOptions.map((provider) => (
+                  <CheckboxRow
+                    key={provider}
+                    label={getProviderDisplayName(provider) || provider}
+                    checked={isInclusiveSetChecked(filters.providers, provider)}
+                    onToggle={() => handleProviderToggle(provider)}
+                  />
+                ))
+              )}
+            </Section>
+          </div>
+
+          {/* Right column: Session ref + Task ref + Date range */}
+          <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
+            <Section label="Session ref">
+              <RefRangeInputs
+                minValue={filters.sessionRefMin}
+                maxValue={filters.sessionRefMax}
+                onChangeMin={(value) => update({ sessionRefMin: value })}
+                onChangeMax={(value) => update({ sessionRefMax: value })}
+                ariaLabelPrefix="Session ref"
               />
-            </div>
-            <button
-              type="button"
-              className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground hover:text-foreground text-left"
-              onClick={() => {
-                const next = !showCustomDate;
-                setShowCustomDate(next);
-                if (next) {
-                  update({ datePreset: "custom" });
-                } else if (filters.datePreset === "custom") {
-                  update({ datePreset: "all" });
-                }
-              }}
-              aria-expanded={showCustomDate}
-            >
-              {showCustomDate ? "▾" : "▸"} Custom range
-            </button>
-            {showCustomDate && (
-              <div className="flex items-center gap-1 px-2 py-1">
-                <input
-                  type="date"
-                  className="w-[7.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
-                  value={filters.dateCustomFrom ?? ""}
-                  onChange={(e) =>
-                    update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
-                  }
-                  aria-label="Custom date from"
-                />
-                <span className="text-[length:var(--text-md)] text-muted-foreground">→</span>
-                <input
-                  type="date"
-                  className="w-[7.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
-                  value={filters.dateCustomTo ?? ""}
-                  onChange={(e) =>
-                    update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
-                  }
-                  aria-label="Custom date to"
+            </Section>
+
+            <Section label="Task ref">
+              <div className="flex flex-col gap-0.5 px-2 py-1">
+                {TASK_REF_ROLES.map((role) => (
+                  <label
+                    key={role.value}
+                    className="flex min-w-0 items-center gap-1.5 text-[length:var(--text-md)] text-muted-foreground cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      className="w-3 h-3"
+                      checked={filters.taskRefRoles.has(role.value)}
+                      onChange={() => handleTaskRefRoleToggle(role.value)}
+                    />
+                    <span>{role.label}</span>
+                  </label>
+                ))}
+              </div>
+              <RefRangeInputs
+                minValue={filters.taskRefMin}
+                maxValue={filters.taskRefMax}
+                onChangeMin={(value) => update({ taskRefMin: value })}
+                onChangeMax={(value) => update({ taskRefMax: value })}
+                ariaLabelPrefix="Task ref"
+              />
+            </Section>
+
+            <Section label="Date range">
+              <div className="px-2 py-1">
+                <SegmentedControl<DatePreset>
+                  value={filters.datePreset === "custom" ? "all" : filters.datePreset}
+                  onChange={handleDatePresetChange}
+                  options={DATE_PRESET_OPTIONS}
+                  ariaLabel="Date preset"
+                  className="w-full"
                 />
               </div>
-            )}
-          </Section>
+              <button
+                type="button"
+                className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground hover:text-foreground text-left"
+                onClick={() => {
+                  const next = !showCustomDate;
+                  setShowCustomDate(next);
+                  if (next) {
+                    update({ datePreset: "custom" });
+                  } else if (filters.datePreset === "custom") {
+                    update({ datePreset: "all" });
+                  }
+                }}
+                aria-expanded={showCustomDate}
+              >
+                {showCustomDate ? "▾" : "▸"} Custom range
+              </button>
+              {showCustomDate && (
+                <div className="flex flex-col gap-1 px-2 py-1">
+                  <input
+                    type="date"
+                    className="w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                    value={filters.dateCustomFrom ?? ""}
+                    onChange={(e) =>
+                      update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
+                    }
+                    aria-label="Custom date from"
+                  />
+                  <input
+                    type="date"
+                    className="w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                    value={filters.dateCustomTo ?? ""}
+                    onChange={(e) =>
+                      update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
+                    }
+                    aria-label="Custom date to"
+                  />
+                </div>
+              )}
+            </Section>
+          </div>
         </div>
 
         <div
@@ -292,18 +305,16 @@ export function SessionsFilterDropdown({
 function Section({
   label,
   children,
-  columns = false,
 }: {
   label: string;
   children: React.ReactNode;
-  columns?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-0.5 py-0.5">
       <div className="px-2 py-1 text-[length:var(--text-sm)] font-medium uppercase tracking-wide text-muted-foreground/80">
         {label}
       </div>
-      {columns ? <div className="grid grid-cols-2 gap-0.5">{children}</div> : children}
+      {children}
     </div>
   );
 }
@@ -343,7 +354,7 @@ function RefRangeInputs({
   ariaLabelPrefix: string;
 }) {
   const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
-  const inputClassName = `w-16 px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
+  const inputClassName = `min-w-0 flex-1 px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
     isInvalid
       ? "border-[var(--color-error)] focus:border-[var(--color-error)]"
       : "border-border focus:border-accent"
@@ -355,7 +366,7 @@ function RefRangeInputs({
         <input
           type="number"
           className={inputClassName}
-          placeholder="from #"
+          placeholder="from"
           value={minValue !== null ? String(minValue) : ""}
           onChange={(e) => onChangeMin(parseRefBound(e.target.value))}
           aria-label={`${ariaLabelPrefix} minimum`}
@@ -365,7 +376,7 @@ function RefRangeInputs({
         <input
           type="number"
           className={inputClassName}
-          placeholder="to #"
+          placeholder="to"
           value={maxValue !== null ? String(maxValue) : ""}
           onChange={(e) => onChangeMax(parseRefBound(e.target.value))}
           aria-label={`${ariaLabelPrefix} maximum`}
