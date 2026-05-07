@@ -10,16 +10,21 @@ Use this guide to decide what has to be installed before running Gobby 0.4.0.
 
 | Setup | Required | Good default |
 |-------|----------|--------------|
-| Daemon only | Python 3.13+, 1 GB free disk, localhost ports 60887 and 60888 | 4+ CPU cores, 8 GB RAM |
+| Daemon only | Python 3.13+, `uv`, 1 GB free disk, localhost ports 60887 and 60888 | 4+ CPU cores, 8 GB RAM |
 | Daemon + web UI | Daemon requirements plus localhost port 60889 | 8 GB RAM |
 | Full local search stack | Docker with Compose v2, Qdrant, Neo4j, embedding endpoint | 16 GB RAM minimum, 32 GB RAM preferred, SSD/NVMe storage |
-| Local embedding model | OpenAI-compatible local provider such as LM Studio or Ollama | 16 GB RAM, GPU or unified memory when also running a chat model |
+| Local embedding model | LM Studio with `lms` or Ollama with `ollama` | 16 GB RAM, GPU or unified memory when also running a chat model |
 
-If you only use cloud-hosted LLMs and embeddings, you can skip Docker services during install:
+If you need the daemon and hooks without installer-managed Qdrant or Neo4j, skip external
+services during install:
 
 ```bash
 uv run gobby install --no-ext-services
 ```
+
+Semantic search still needs an embedding provider and a reachable vector backend. Choosing
+`None` in the embedding provider prompt disables semantic search and also skips Qdrant/Neo4j
+installation.
 
 ## Platform Notes
 
@@ -44,6 +49,7 @@ server, and optional UI dev server.
 | Resource | Current value |
 |----------|---------------|
 | Python | 3.13+ (`requires-python = ">=3.13"`) |
+| Package runner | `uv` for source/development commands such as `uv run gobby start` |
 | Database | `~/.gobby/gobby-hub.db` by default |
 | HTTP API | `localhost:60887` by default |
 | WebSocket | `localhost:60888` by default |
@@ -58,7 +64,10 @@ database and is managed by the UI or `gobby-config` MCP tools.
 
 ## Optional Services
 
-Gobby 0.4.0 ships a unified Docker Compose service template with two local datastore profiles:
+Gobby 0.4.0 ships a unified Docker Compose service template with two local datastore profiles.
+The default interactive installer offers an embedding provider first. When the selected provider
+is not `none` and Docker is available, the installer configures Qdrant and Neo4j; `--no-ext-services`
+skips this Docker step.
 
 | Service | Image | Default endpoint | Purpose |
 |---------|-------|------------------|---------|
@@ -89,13 +98,14 @@ stores vectors in Qdrant when the local vector stack is enabled.
 
 | Provider path | Typical model/config | Notes |
 |---------------|----------------------|-------|
-| Ollama | `nomic-embed-text`, `http://localhost:11434/v1` | Local default-style model, 768 dimensions |
-| LM Studio | `text-embedding-nomic-embed-text-v1.5@f16`, `http://localhost:1234/v1` | Installer can use LM Studio when detected |
-| OpenAI-compatible hosted endpoint | Provider-specific model and API key | Skips local embedding-model hardware needs |
+| Ollama | `nomic-embed-text`, `http://localhost:11434/v1` | Uses the `ollama` CLI, 768 dimensions |
+| LM Studio | `text-embedding-nomic-embed-text-v1.5@f16`, `http://localhost:1234/v1` | Uses the `lms` CLI, 768 dimensions |
+| OpenAI | `text-embedding-3-small` with an OpenAI API key | Hosted embeddings, 1536 dimensions |
 | None | No embedding provider | Installer skips Qdrant/Neo4j setup when embeddings are disabled |
 
-The default embedding config is `nomic-embed-text` with 768 dimensions. If you change models,
-make sure `databases.embeddings.dim` matches the model output.
+The default configuration model is `nomic-embed-text` with 768 dimensions. Installer-selected
+OpenAI embeddings set dimensions to 1536. If you change models, make sure `embeddings.dim`
+matches the model output.
 
 For provider details, see [search.md](./search.md).
 
@@ -133,7 +143,8 @@ Default ports are chosen to avoid common development-server conflicts.
 | 8687 | Neo4j Bolt, mapped from container port 7687 |
 
 If a port is already in use, change the matching bootstrap/config value before starting the
-daemon or pass the relevant installer flag where one exists.
+daemon or pass the relevant installer flag where one exists. Qdrant exposes `--port` on
+`gobby qdrant install`; Neo4j's shipped Compose mapping uses the fixed 8474/8687 host ports.
 
 ## Storage
 
@@ -189,4 +200,4 @@ more RAM or VRAM than the embedding model.
 - [memory.md](./memory.md) - Memory backend configuration
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development environment setup
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-05-07_
