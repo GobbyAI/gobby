@@ -1,186 +1,268 @@
 # Communications Integrations Guide
 
-Connect external messaging platforms to Gobby so that inbound messages create sessions and outbound notifications reach your team wherever they are.
+Gobby's communications framework connects external message channels to the
+daemon through channel adapters, HTTP webhooks, polling loops, and MCP tools.
+The framework is disabled by default.
 
-## Overview
+## Enable the framework
 
-Gobby's communications framework supports 7 channel types:
+Communications routes, adapters, storage cleanup, and MCP tools are only wired
+when `communications.enabled` is true in daemon config. The current defaults
+are:
 
-| Platform | Type | Inbound | Outbound | Protocol |
-|----------|------|---------|----------|----------|
-| Slack | `slack` | Webhooks | Bot API | HTTP |
-| Telegram | `telegram` | Webhooks / Polling | Bot API | HTTP |
-| Discord | `discord` | Gateway (WebSocket) | Bot API | WebSocket + HTTP |
-| Microsoft Teams | `teams` | Webhooks | Bot Framework | HTTP |
-| Email | `email` | IMAP polling | SMTP | IMAP / SMTP |
-| SMS (Twilio) | `sms` | Webhooks | REST API | HTTP |
-| Gobby Chat | `gobby_chat` | WebSocket | WebSocket | Internal |
+| Field | Default |
+|-------|---------|
+| `communications.enabled` | `false` |
+| `communications.webhook_base_url` | `""` |
+| `communications.inbound_enabled` | `true` |
+| `communications.outbound_enabled` | `true` |
+| `communications.auto_create_sessions` | `true` |
+| `communications.channel_defaults.rate_limit_per_minute` | `30` |
+| `communications.channel_defaults.burst` | `5` |
+| `communications.channel_defaults.retry_count` | `3` |
+| `communications.channel_defaults.poll_interval_seconds` | `30` |
+| `communications.channel_defaults.retention_days` | `90` |
 
-**Gobby Chat** is the built-in native channel that bridges the web UI's WebSocket chat to the communications framework. It's auto-created on startup and requires no configuration.
+The manager auto-creates an enabled `gobby_chat` channel on startup when the
+adapter is registered and no `gobby_chat` channel exists.
 
-## Quick Start
+## Supported Adapters
 
-### Via Web UI
+| Channel type | Inbound | Outbound | Polling | Files | Notes |
+|--------------|---------|----------|---------|-------|-------|
+| `slack` | Events API webhook | Slack Web API | No | Yes | Handles message events and reactions. |
+| `telegram` | Bot API webhook | Bot API | Yes | Yes | Polling fallback uses `getUpdates`. |
+| `discord` | Interaction/webhook payloads | Discord REST API | No | Yes | Gateway connection code exists, but the HTTP webhook path is the daemon entrypoint. |
+| `teams` | Bot Framework webhook | Bot Framework API | No | Capability says yes | Proactive sends require a prior inbound conversation reference. |
+| `email` | No webhooks | SMTP | Yes | Yes | IMAP polling reads unseen inbox messages. |
+| `sms` | Twilio webhook | Twilio REST API | No | MMS URL only | Signature verification needs the exact webhook URL. |
+| `gobby_chat` | WebSocket chat handler | WebSocket broadcast | No | Capability says yes | Internal bridge, no external credentials. |
 
-1. Navigate to **Integrations** in the sidebar
-2. Click a platform card in the empty state (or **+ Add Integration**)
-3. Fill in credentials and click **Add Channel**
-4. Copy the webhook URL from the channel detail panel
+Adapters are registered from `src/gobby/communications/adapters/`. Unknown
+`channel_type` values can be stored, but they cannot initialize because no
+adapter is registered for them.
 
-### Via CLI
+The outbound column means the adapter implements `send_message`; it does not
+mean every adapter has a complete daemon-level destination path. See
+"Outbound destination behavior" below before relying on generic sends.
+
+## CLI Surface
+
+The CLI group is `gobby comms`:
 
 ```bash
-gobby comms channels add slack my-team
-# Follow interactive prompts for Bot Token, Signing Secret, Channel ID
+gobby comms status
+gobby comms send CHANNEL_NAME MESSAGE
+gobby comms channels list
+gobby comms channels add CHANNEL_TYPE NAME
+gobby comms channels remove NAME
 ```
 
-## Platform Setup Guides
+`channels add` prompts for type-specific fields and sends this HTTP request to
+the daemon:
 
-### Slack
-
-1. Create a Slack App at [api.slack.com/apps](https://api.slack.com/apps)
-2. Under **OAuth & Permissions**, add Bot Token Scopes: `chat:write`, `channels:read`, `channels:history`
-3. Install the app to your workspace and copy the **Bot User OAuth Token** (`xoxb-...`)
-4. Under **Basic Information**, copy the **Signing Secret**
-5. Under **Event Subscriptions**, enable events and set the Request URL to your webhook URL
-6. Subscribe to bot events: `message.channels`, `message.groups`, `message.im`
-
-**Gobby config:**
-- Bot Token: `xoxb-...` (stored securely in SecretStore)
-- Signing Secret: from Basic Information (stored securely)
-- Channel ID: optional, limits bot to one channel
-
-### Telegram
-
-1. Message [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot`, follow prompts, copy the **Bot Token**
-3. Optionally set the webhook: `https://api.telegram.org/bot<TOKEN>/setWebhook?url=<WEBHOOK_URL>`
-
-**Gobby config:**
-- Bot Token: from BotFather (stored securely)
-- Chat ID: optional, target a specific chat
-
-### Discord
-
-1. Create an application at [discord.com/developers](https://discord.com/developers/applications)
-2. Go to **Bot**, click **Add Bot**, copy the **Token**
-3. Enable **Message Content Intent** under Privileged Gateway Intents
-4. Go to **OAuth2 > URL Generator**, select `bot` scope + `Send Messages`, `Read Message History` permissions
-5. Use the generated URL to add the bot to your server
-
-**Gobby config:**
-- Bot Token: from Bot settings (stored securely)
-- Channel ID: optional, right-click channel > Copy Channel ID
-
-### Microsoft Teams
-
-1. Register an Azure Bot at [portal.azure.com](https://portal.azure.com)
-2. Create an **App Registration** and note the Application (client) ID
-3. Generate a client secret under **Certificates & secrets**
-4. Configure the messaging endpoint to your webhook URL
-
-**Gobby config:**
-- App ID: Application (client) ID (stored securely)
-- App Password: client secret (stored securely)
-
-### Email
-
-1. Generate an App Password for your email provider (Gmail: Security > App Passwords)
-2. Note your SMTP and IMAP server addresses and ports
-
-**Gobby config:**
-- Password: app password (stored securely)
-- SMTP Host: e.g., `smtp.gmail.com`
-- SMTP Port: e.g., `587` (TLS) or `465` (SSL)
-- IMAP Host: e.g., `imap.gmail.com`
-- IMAP Port: e.g., `993`
-- From Address: your email address
-
-### SMS (Twilio)
-
-1. Create an account at [twilio.com](https://www.twilio.com)
-2. From the Console Dashboard, copy your **Account SID** and **Auth Token**
-3. Purchase a phone number under **Phone Numbers > Manage > Buy a Number**
-4. Under the phone number settings, set the Messaging webhook URL
-
-**Gobby config:**
-- Auth Token: from Twilio Console (stored securely)
-- Account SID: `AC...` from Console
-- From Number: your Twilio number (e.g., `+15551234567`)
-
-## Web UI Walkthrough
-
-The **Integrations** page in the Gobby web dashboard provides:
-
-- **Channel grid**: All configured channels shown as cards with platform-colored borders, status indicators, and quick actions (edit, toggle, remove)
-- **Add/Edit modal**: Type-specific forms with secret field handling (password inputs, show/hide toggles)
-- **Channel detail panel**: Slide-out panel with live status, webhook URL (copyable), configuration overview, and management actions
-- **Messages tab**: Browsable message history with channel/direction filters, expandable message detail, and pagination
-
-### Channel Filters
-
-Use the filter chips above the channel grid to filter by platform type. The search bar filters by channel name.
-
-## Webhook Configuration
-
-Channels that support webhooks (Slack, Telegram, Discord, Teams, SMS) receive inbound messages via HTTP POST to:
-
+```http
+POST /api/comms/channels
 ```
+
+with a JSON body containing `name`, `channel_type`, `config`, and optional
+`secrets`.
+
+Current CLI limitations:
+
+- `gobby comms send` posts to `/api/comms/send`, but the HTTP router does not
+  define that route in the current codebase. Use the MCP `send_message` tool
+  for outbound sends until a route exists.
+- `gobby comms status` calls `/api/comms/channels?status=true` and expects a
+  wrapped `{"channels": [...]}` response. The current HTTP route returns a bare
+  list and ignores the `status` query parameter.
+- There is no `gobby comms routes` command. Routing rules are implemented in
+  storage and `MessageRouter`, but this guide should not claim CLI route
+  management.
+
+## HTTP Routes
+
+The communications router is mounted at `/api/comms` when the framework is
+enabled.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/comms/webhooks/{channel_name}` | Receive an inbound webhook for an active channel. |
+| `GET` | `/api/comms/webhooks/{channel_name}` | Echo `validationToken` or `challenge` query parameters for webhook verification. |
+| `GET` | `/api/comms/channels` | Return all channels as a JSON list. |
+| `POST` | `/api/comms/channels` | Create and initialize a channel. |
+| `PUT` | `/api/comms/channels/{channel_id}` | Update channel `config` and/or `enabled`. |
+| `DELETE` | `/api/comms/channels/{channel_id}` | Remove a channel by UUID. |
+| `GET` | `/api/comms/channels/{channel_id}/status` | Return active/inactive status for one channel. |
+| `GET` | `/api/comms/messages` | List messages with optional filters. |
+
+`GET /api/comms/messages` accepts:
+
+| Query parameter | Type |
+|-----------------|------|
+| `channel_id` | string |
+| `session_id` | string |
+| `direction` | `inbound` or `outbound` |
+| `limit` | integer, 1 through 1000, default 50 |
+| `offset` | integer, default 0 |
+
+There is no HTTP send route in the current router.
+
+## MCP Tools
+
+When a `CommunicationsManager` is available, the MCP proxy registers an
+internal registry named `gobby-communications`.
+
+| Tool | Signature |
+|------|-----------|
+| `send_message` | `channel`, `content`, optional `session_id`, optional `thread_id`, `content_type="text"` |
+| `list_channels` | no arguments |
+| `get_messages` | optional `channel`, optional `session_id`, optional `direction`, `limit=50` |
+| `add_channel` | `channel_type`, `name`, `config`, optional `secrets` |
+| `remove_channel` | `name` |
+| `send_proactive_message` | `channel`, `conversation_id`, `content`, `content_type="text"` |
+| `link_identity` | `channel`, `external_user_id`, `session_id` |
+| `list_identities` | optional `session_id`, optional `channel` |
+| `unlink_identity` | `identity_id` |
+
+Example outbound send:
+
+```python
+call_tool(
+    "gobby-communications",
+    "send_message",
+    {
+        "channel": "team-slack",
+        "content": "Build completed successfully.",
+        "session_id": "#1234",
+    },
+)
+```
+
+Current MCP send limitation: `send_message` does not accept arbitrary metadata.
+It can pass `thread_id` and `content_type`, but not adapter-specific fields such
+as Telegram `chat_id`, Teams `service_url`, Email `to_address`, or a generic
+`platform_destination`.
+
+## Secret and Config Behavior
+
+`add_channel` stores each supplied secret in the daemon `SecretStore` and writes
+a `$secret:NAME` reference into the channel config, except `webhook_secret`,
+which is stored on the channel record for signature verification.
+
+Current implementation limitations:
+
+- `CommunicationsManager.add_channel` writes secrets with category `comms`, but
+  `SecretStore` currently allows `general`, `llm`, `mcp_server`, `memory`, and
+  `integration`. Secret-bearing channel creation can fail until that category
+  mismatch is fixed.
+- Slack, Teams, and SMS adapters resolve fixed secret names
+  (`SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `TEAMS_APP_ID`,
+  `TEAMS_APP_PASSWORD`, `TWILIO_AUTH_TOKEN`) instead of the channel-scoped
+  secret references produced by `add_channel`.
+- Telegram, Discord, and Email adapters read token/password/OAuth references
+  from `channel.config_json` and can resolve `$secret:` references there.
+
+Adapter-specific config fields:
+
+| Channel type | Required or recognized fields |
+|--------------|-------------------------------|
+| `slack` | Secrets `SLACK_BOT_TOKEN`; optional `SLACK_SIGNING_SECRET`. |
+| `telegram` | `bot_token`; outbound messages need `chat_id` in message metadata. |
+| `discord` | `bot_token`; optional `enable_gateway`; outbound adapter uses message destination fields, not channel config. |
+| `teams` | Secrets `TEAMS_APP_ID`, `TEAMS_APP_PASSWORD`; outbound needs `service_url` metadata or a stored conversation reference. |
+| `email` | `smtp_host`, `smtp_port`, `imap_host`, `imap_port`, `from_address`, optional `to_address` or `default_destination`, `auth_method`, OAuth2 fields. |
+| `sms` | Secret `TWILIO_AUTH_TOKEN`, `account_sid`, plus `from_number` or `messaging_service_sid`; optional `webhook_url`. |
+| `gobby_chat` | No external fields. |
+
+## Outbound Destination Behavior
+
+`CommunicationsManager.send_message` creates a `CommsMessage` with
+`channel_id` set to the internal Gobby channel UUID. It also copies
+`default_destination` from channel config into metadata key
+`platform_destination` when present.
+
+Current adapter behavior differs:
+
+| Channel type | Destination used by adapter |
+|--------------|-----------------------------|
+| `slack` | `message.channel_id`, which is currently the internal channel UUID. |
+| `discord` | `message.platform_thread_id` or `message.channel_id`, so generic sends also use the internal channel UUID unless a thread is tracked. |
+| `teams` | `message.channel_id` as conversation ID plus `service_url` metadata. |
+| `sms` | `message.channel_id` as the Twilio `To` number. |
+| `telegram` | `message.metadata_json["chat_id"]`; generic MCP sends cannot supply it. |
+| `email` | `platform_destination`, `to_address`, or configured `default_destination`. |
+| `gobby_chat` | Broadcasts to WebSocket clients; no external destination. |
+
+For now, Email and Gobby Chat have the clearest generic outbound path. Other
+channels may need a prior inbound thread/identity or a code change that maps
+configured destinations into the adapter's expected field.
+
+## Webhooks and Polling
+
+External webhook providers should target:
+
+```text
 https://<your-gobby-host>:60887/api/comms/webhooks/<channel-name>
 ```
 
-The webhook URL is displayed in the channel detail panel with a Copy button.
+The POST route passes the raw body, parsed JSON payload when applicable, and
+headers to `CommunicationsManager.handle_inbound`.
 
-### Important Notes
+Webhook signature verification only runs when the channel has
+`webhook_secret` set. Verification behavior is adapter-specific:
 
-- **HTTPS required**: Most platforms require HTTPS for webhooks. Use a reverse proxy (nginx, Caddy) or tunnel (ngrok, Cloudflare Tunnel) for local development.
-- **Firewall**: Ensure port 60887 is accessible from the platform's webhook IPs.
-- **Verification**: Gobby verifies webhook signatures automatically using the channel's signing secret / auth token.
+| Channel type | Verification |
+|--------------|--------------|
+| `slack` | HMAC SHA-256 using `x-slack-request-timestamp` and `x-slack-signature`. |
+| `telegram` | Compares `x-telegram-bot-api-secret-token` with `webhook_secret`. |
+| `discord` | Ed25519 signature verification using Discord signature headers and `webhook_secret` as the public key. |
+| `teams` | Validates Bot Framework bearer JWT against Microsoft JWKS and the app ID. |
+| `sms` | Validates `x-twilio-signature` against the configured webhook URL and payload parameters. |
+| `email` | No webhook support. |
+| `gobby_chat` | No webhook support. |
 
-## Message Routing
+Polling starts for adapters where `supports_polling` is true and the top-level
+`communications.webhook_base_url` is empty. Telegram and Email currently poll.
+Polling interval is read from channel config key `poll_interval`; otherwise the
+polling manager uses 30 seconds.
 
-Routing rules determine how inbound messages are processed. Rules can match by channel, event pattern, and project. Management is currently available via CLI and API:
+Current Telegram webhook caveat: `TelegramAdapter.initialize` looks for
+`webhook_base_url` in channel config and registers
+`/v1/comms/webhooks/{config.id}` with Telegram. The current HTTP router exposes
+`/api/comms/webhooks/{channel_name}`, so automatic Telegram webhook
+registration does not match the daemon route.
 
-```bash
-# List routing rules
-gobby comms routes list
+## Inbound Routing and Sessions
 
-# Rules are configured via the REST API or MCP tools
+Inbound messages are parsed by the adapter, identity-linked, stored, and emitted
+through the communications event callback as `comms.message_received`.
+
+When `communications.auto_create_sessions` is true, a previously unseen
+external identity creates a Gobby session with:
+
+```text
+external_id = comms:<channel_id>:<external_user_id>
+machine_id = comms
+source = comms
 ```
 
-## MCP Tools Reference
-
-The `gobby-comms` MCP server exposes these tools:
-
-| Tool | Description |
-|------|-------------|
-| `send_message` | Send a message to a communication channel |
-| `list_channels` | List configured channels and their status |
-| `get_messages` | Get message history for a channel |
-| `add_channel` | Add a new communication channel (accepts `secrets` param) |
-| `remove_channel` | Remove a communication channel |
-| `link_identity` | Link an external user to a Gobby session |
-| `list_identities` | List identity mappings with optional filters |
-| `unlink_identity` | Remove session link from an identity |
-
-### Example: Send a message
-
-```python
-call_tool("gobby-comms", "send_message", {
-    "channel_name": "my-slack",
-    "content": "Build completed successfully!",
-    "session_id": "#1234"
-})
-```
+Routing rules are stored in `comms_routing_rules` and matched by
+`MessageRouter` using glob patterns such as `task.*`. Matching can be scoped by
+`project_id` or `session_id`, and the rule cache is refreshed every 30 seconds.
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Webhook verification fails | Check that the signing secret / auth token matches what the platform expects. For Slack, ensure you're using the Signing Secret (not the Bot Token). |
-| Messages not appearing | Verify the channel is enabled (`gobby comms channels list`). Check the webhook URL is reachable from the platform. |
-| Adapter initialization error | Check daemon logs (`tail -f ~/.gobby/logs/gobby.log`). Common causes: invalid credentials, network issues, missing bot permissions. |
-| Polling vs webhook mode | If `webhook_base_url` is not set in config, adapters that support both will fall back to polling mode. Set the base URL for webhook mode. |
-| Discord bot not receiving messages | Ensure **Message Content Intent** is enabled in the Developer Portal. The bot needs this privileged intent to read message content. |
-| Email connection timeout | Verify SMTP/IMAP hosts and ports are correct. Gmail requires an App Password, not your regular password. |
-| Rate limiting | Gobby includes built-in rate limiting per channel. Adjust `rate_limit_per_minute` in channel config if needed. |
+| Issue | Check |
+|-------|-------|
+| Communications routes return 404 | Confirm `communications.enabled` is true and the daemon was restarted after config changes. |
+| CLI `send` fails | The CLI targets `/api/comms/send`, which does not exist in the current HTTP router. Use MCP `send_message`. |
+| CLI `status` errors or shows no status | The CLI expects a wrapped response, while the route returns a bare list. Use `GET /api/comms/channels/{channel_id}/status` for per-channel status. |
+| MCP `send_message` fails for Slack, Discord, Teams, Telegram, or SMS | Check the outbound destination behavior above; generic sends do not currently provide every adapter's required destination metadata. |
+| Channel creation with secrets fails | Check for the current `comms` SecretStore category mismatch. |
+| Slack, Teams, or SMS adapter cannot resolve credentials | Confirm the fixed secret names expected by those adapters exist. |
+| Telegram webhook does not receive events | Manually point Telegram at `/api/comms/webhooks/<channel-name>`; the adapter's automatic registration path currently differs. |
+| Polling does not start | Polling only starts for polling-capable adapters when top-level `communications.webhook_base_url` is empty. |
+| Twilio verification fails | Set channel config `webhook_url` or provide `x-original-url`/`x-gobby-webhook-url` so the signature base URL is exact. |
+
+_Last verified: 2026-05-07_
