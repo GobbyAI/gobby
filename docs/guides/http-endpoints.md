@@ -1,6 +1,14 @@
 # Gobby HTTP Endpoints
 
-This document lists all HTTP endpoints exposed by the Gobby daemon's HTTP server.
+This guide is the HTTP reference for the Gobby daemon. The daemon exposes three
+HTTP-facing surfaces:
+
+- JSON REST endpoints under `/api/*`
+- FastMCP HTTP transport mounted at `/mcp`
+- WebSocket proxy routes mounted at `/ws`
+
+The route source of truth is `src/gobby/servers/app_factory.py` plus the router
+modules under `src/gobby/servers/routes/`.
 
 ## Base URL
 
@@ -8,17 +16,91 @@ This document lists all HTTP endpoints exposed by the Gobby daemon's HTTP server
 http://localhost:60887
 ```
 
-The port is configurable via `~/.gobby/config.yaml` (default: 60887).
+The default daemon port is `60887`. Bootstrap config can override it with
+`daemon_port`; runtime config exposes it as `daemon.daemon_port`.
 
----
+## Request Context
 
-## Admin Endpoints
+Most agent and MCP calls should include project/session context headers when
+they are made outside the stdio MCP proxy:
 
-### `GET /admin/status`
+| Header | Purpose |
+| --- | --- |
+| `X-Gobby-Session-Id` | Identifies the calling Gobby session. Accepts canonical session UUIDs and session refs when the server can resolve them. |
+| `X-Gobby-Project-Id` | Identifies the project scope when no session header is available. |
 
-Comprehensive status check endpoint.
+The project context middleware reads these headers before route handlers run.
+For MCP tool execution, the session header identifies the caller/workflow
+context; any `session_id` inside the JSON body remains a target-tool argument.
 
-**Response:**
+## Authentication
+
+Authentication is optional. When no UI credentials are configured, every route
+passes through unchanged. When username/password auth is configured, API routes
+require a valid UI session cookie except the public surfaces below:
+
+- `/api/auth/*`
+- `/api/hooks/*`
+- `/api/github/webhooks/*`
+- `/api/sessions/*`
+- `/api/mcp/*`
+- `/api/admin/health`
+- `/api/admin/status`
+- `/api/admin/metrics`
+- `/api/admin/config`
+- `/assets/*`
+- `/ws` and `/ws/*`
+
+Unauthenticated protected API requests return `401` with:
+
+```json
+{
+  "error": "Authentication required"
+}
+```
+
+## Mounted Non-API Surfaces
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/mcp` | MCP HTTP transport | FastMCP protocol mount. JSON-RPC clients use this mount directly. |
+| `/__gobby__/canvas/*` | `GET` | Static Canvas sandbox files from `~/.gobby/canvas`. |
+| `/ws` | WebSocket | Proxy to the standalone WebSocket server. |
+| `/ws/{path}` | WebSocket | Proxy subpaths to the standalone WebSocket server. |
+| `/assets/*` | `GET` | Production UI assets, mounted only when production UI mode is enabled and assets exist. |
+| `/{path}` | `GET` | Production UI SPA fallback, mounted only when production UI mode is enabled. Does not intercept `/api`, `/ws`, or `/health` paths. |
+
+Use `/api/admin/health` for daemon health checks. The main HTTP app does not
+register a top-level `/health` REST route.
+
+## Admin
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/admin/health` | Lightweight startup health check. |
+| `GET` | `/api/admin/startup-progress` | Startup tracker state for CLI progress display. |
+| `GET` | `/api/admin/status` | Full daemon status, subsystem health, task/session counts, MCP health, and process metrics. |
+| `GET` | `/api/admin/metrics` | Prometheus text exposition. |
+| `GET` | `/api/admin/config` | Daemon version, enabled subsystem flags, and selected endpoint hints. |
+| `POST` | `/api/admin/shutdown` | Graceful daemon shutdown. |
+| `POST` | `/api/admin/restart` | Restart the daemon through service-managed or direct restart helpers. |
+| `POST` | `/api/admin/workflows/reload` | Reload installed workflow definitions. |
+| `GET` | `/api/admin/setup-state` | Read web onboarding setup state. |
+| `POST` | `/api/admin/setup-state` | Update web onboarding setup state. |
+| `GET` | `/api/admin/savings` | Current token/cost savings tracker data. |
+| `GET` | `/api/admin/savings/cumulative` | Cumulative savings totals. |
+| `POST` | `/api/admin/savings/record` | Record a savings event. |
+| `GET` | `/api/admin/stats` | Aggregate daemon statistics. |
+| `GET` | `/api/admin/usage` | Usage metrics. |
+| `GET` | `/api/admin/tokens/timeseries` | Token usage time series. |
+| `POST` | `/api/admin/test/register-project` | Test helper for registering a project. |
+| `POST` | `/api/admin/test/register-agent` | Test helper for registering an agent run. |
+| `DELETE` | `/api/admin/test/unregister-agent/{run_id}` | Test helper for removing an agent run. |
+| `POST` | `/api/admin/test/set-session-usage` | Test helper for setting session usage. |
+
+### `GET /api/admin/status`
+
+Returns a JSON object with daemon health and runtime details:
 
 ```json
 {
@@ -29,117 +111,79 @@ Comprehensive status check endpoint.
     "running": true,
     "uptime_seconds": 3600
   },
-  "daemon": { ... },
   "process": {
     "memory_rss_mb": 45.2,
     "memory_vms_mb": 120.5,
     "cpu_percent": 2.5,
     "num_threads": 8
   },
-  "background_tasks": {
-    "active": 0,
-    "total": 10,
-    "completed": 10,
-    "failed": 0
+  "sessions": {
+    "active": 1,
+    "paused": 0,
+    "handoff_ready": 0,
+    "total": 12
+  },
+  "tasks": {
+    "ready": 3,
+    "in_progress": 1,
+    "closed": 20
   },
   "mcp_servers": {
-    "context7": {
+    "gobby-tasks": {
       "connected": true,
-      "status": "connected",
+      "transport": "internal",
       "health": "healthy",
-      "consecutive_failures": 0,
-      "last_health_check": "2024-01-01T00:00:00Z",
-      "response_time_ms": 50
+      "tool_count": 31
     }
   },
   "response_time_ms": 5.2
 }
 ```
 
----
+## Auth
 
-### `GET /admin/metrics`
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/auth/login` | Create a UI auth session cookie. |
+| `POST` | `/api/auth/logout` | Clear the UI auth session cookie. |
+| `GET` | `/api/auth/status` | Report whether auth is enabled and whether the request is authenticated. |
 
-Prometheus-compatible metrics endpoint.
+## Sessions
 
-**Response:** `text/plain; version=0.0.4`
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/sessions` | List sessions with query filters and resumability metadata. |
+| `POST` | `/api/sessions/register` | Register CLI/session metadata. |
+| `POST` | `/api/sessions/web-chat` | Create a durable web-chat session row. |
+| `POST` | `/api/sessions/find_current` | Find a session by `external_id`, `machine_id`, `source`, and project. |
+| `POST` | `/api/sessions/find_parent` | Find the most recent parent session for a handoff. |
+| `POST` | `/api/sessions/update_status` | Update a session status. |
+| `POST` | `/api/sessions/update_summary` | Update a session summary path. |
+| `POST` | `/api/sessions/statusline` | Record statusline activity for a CLI session. |
+| `GET` | `/api/sessions/usage` | Return session usage breakdowns. |
+| `POST` | `/api/sessions/bulk-move` | Move session rows to another project. |
+| `GET` | `/api/sessions/{session_id}` | Get one session. |
+| `POST` | `/api/sessions/{session_id}/expire` | Expire a session. |
+| `POST` | `/api/sessions/{session_id}/rename` | Rename a session. |
+| `POST` | `/api/sessions/{session_id}/generate-summary` | Generate a session summary. |
+| `GET` | `/api/sessions/{session_id}/messages` | Read persisted session messages. |
+| `GET` | `/api/sessions/{session_id}/transcript/status` | Inspect transcript availability. |
+| `GET` | `/api/sessions/{session_id}/transcript` | Read transcript content. |
+| `POST` | `/api/sessions/{session_id}/restore-transcript` | Restore an archived transcript. |
+| `GET` | `/api/sessions/{session_id}/token-events` | Read token events for a session. |
+| `POST` | `/api/sessions/{session_id}/stop` | Set a stop signal. |
+| `GET` | `/api/sessions/{session_id}/stop` | Read stop-signal state. |
+| `DELETE` | `/api/sessions/{session_id}/stop` | Clear stop-signal state. |
 
-Returns metrics in Prometheus text exposition format including:
+### `POST /api/sessions/register`
 
-- HTTP request counts and durations
-- Background task metrics
-- Daemon health metrics
-- Memory and CPU usage
-
----
-
-### `GET /admin/config`
-
-Get daemon configuration and version information.
-
-**Response:**
-
-```json
-{
-  "status": "success",
-  "config": {
-    "server": {
-      "port": 60887,
-      "test_mode": false,
-      "running": true,
-      "version": "1.0.0"
-    },
-    "features": {
-      "session_manager": true,
-      "mcp_manager": true
-    },
-    "endpoints": {
-      "mcp": ["/mcp/{server_name}/tools/{tool_name}"],
-      "sessions": ["/sessions/register", "/sessions/{id}"],
-      "admin": ["/admin/status", "/admin/metrics", "/admin/config", "/admin/shutdown"]
-    }
-  },
-  "response_time_ms": 1.2
-}
-```
-
----
-
-### `POST /admin/shutdown`
-
-Graceful daemon shutdown endpoint.
-
-**Response:**
+Required body field: `external_id`.
 
 ```json
 {
-  "status": "shutting_down",
-  "message": "Graceful shutdown initiated",
-  "response_time_ms": 0.5
-}
-```
-
-**Behavior:**
-
-- Waits for pending background tasks to complete (up to 30s)
-- Disconnects all MCP servers
-- Shuts down gracefully
-
----
-
-## Session Endpoints
-
-### `POST /sessions/register`
-
-Register session metadata in local storage.
-
-**Request Body:**
-
-```json
-{
-  "cli_key": "session-abc123",
+  "external_id": "session-abc123",
   "machine_id": "machine-xyz",
-  "jsonl_path": "/path/to/transcript.jsonl",
+  "transcript_path": "/path/to/transcript.jsonl",
   "title": "Session Title",
   "source": "Claude Code",
   "parent_session_id": "uuid-of-parent",
@@ -147,289 +191,378 @@ Register session metadata in local storage.
   "project_id": "project-uuid",
   "project_path": "/path/to/project",
   "git_branch": "main",
-  "cwd": "/current/working/dir"
+  "cwd": "/current/working/dir",
+  "sandbox_enabled": true
 }
 ```
 
-**Required Fields:** `cli_key`
-
-**Response:**
+Response:
 
 ```json
 {
   "status": "registered",
-  "cli_key": "session-abc123",
+  "external_id": "session-abc123",
   "id": "generated-uuid",
   "machine_id": "machine-xyz"
 }
 ```
 
----
+### `POST /api/sessions/find_current`
 
-### `GET /sessions/{session_id}`
-
-Get session by ID from local storage.
-
-**Path Parameters:**
-
-| Parameter    | Description  |
-| :----------- | :----------- |
-| `session_id` | Session UUID |
-
-**Response:**
+Required body fields: `external_id`, `machine_id`, `source`, and either
+`project_id` or `cwd`.
 
 ```json
 {
-  "status": "success",
-  "session": {
-    "id": "session-uuid",
-    "cli_key": "session-abc123",
-    "machine_id": "machine-xyz",
-    "source": "Claude Code",
-    "status": "active",
-    "cwd": "/path/to/project",
-    "title": "Session Title",
-    "created_at": "2024-01-01T00:00:00Z"
-  },
-  "response_time_ms": 2.1
-}
-```
-
----
-
-### `POST /sessions/find_current`
-
-Find current active session by composite key.
-
-**Request Body:**
-
-```json
-{
-  "cli_key": "session-abc123",
+  "external_id": "session-abc123",
   "machine_id": "machine-xyz",
-  "source": "Claude Code"
+  "source": "Claude Code",
+  "cwd": "/current/working/dir"
 }
 ```
 
-**Required Fields:** `cli_key`, `machine_id`, `source`
+Returns `{ "session": null }` when no matching session exists.
 
-**Response:**
+## MCP Proxy
+
+The REST MCP proxy is under `/api/mcp`. The raw FastMCP protocol mount remains
+available at `/mcp`.
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/mcp/servers` | List internal and configured external MCP servers. |
+| `POST` | `/api/mcp/servers` | Add an MCP server config. |
+| `POST` | `/api/mcp/servers/import` | Import MCP server config from a project, GitHub repo, or search query. |
+| `DELETE` | `/api/mcp/servers/{name}` | Remove an MCP server config. |
+| `GET` | `/api/mcp/status` | Return MCP registry/status data. |
+| `POST` | `/api/mcp/refresh` | Refresh MCP tool registry data. |
+| `GET` | `/api/mcp/tools` | List tools across servers. |
+| `POST` | `/api/mcp/tools/search` | Search tools. |
+| `POST` | `/api/mcp/tools/recommend` | Recommend tools for a task. |
+| `POST` | `/api/mcp/tools/embed` | Generate tool embeddings. |
+| `POST` | `/api/mcp/tools/schema` | Get one tool schema. |
+| `POST` | `/api/mcp/tools/call` | Call a tool through the progressive-discovery REST endpoint. |
+| `GET` | `/api/mcp/{server_name}/tools` | List tools for one MCP server. |
+| `POST` | `/api/mcp/{server_name}/tools/{tool_name}` | Backward-compatible direct tool call endpoint. |
+
+### Preferred Tool Calls
+
+Use progressive discovery for agent/tool clients:
+
+```http
+GET /api/mcp/servers
+GET /api/mcp/{server_name}/tools
+POST /api/mcp/tools/schema
+POST /api/mcp/tools/call
+```
+
+The discovery sequence is: list servers, list tools for the selected server,
+fetch the schema for the selected tool, then call the tool.
+
+`POST /api/mcp/tools/schema` body:
 
 ```json
 {
-  "session": { ... }
+  "server_name": "gobby-tasks",
+  "tool_name": "get_task"
 }
 ```
 
-Returns `{ "session": null }` if not found.
-
----
-
-### `POST /sessions/find_parent`
-
-Find parent session for handoff.
-
-**Request Body:**
+`POST /api/mcp/tools/call` body:
 
 ```json
 {
-  "cwd": "/path/to/project",
-  "source": "Claude Code"
+  "server_name": "gobby-tasks",
+  "tool_name": "get_task",
+  "arguments": {
+    "task_id": "#14375",
+    "brief": false
+  }
 }
 ```
 
-**Required Fields:** `cwd`, `source`
+The legacy `POST /api/mcp/{server_name}/tools/{tool_name}` route still exists,
+but new automation should prefer the schema/call endpoints so discovery and
+context tracking are consistent.
 
-**Behavior:** Looks for most recent session in same `cwd` with completed/paused status.
+## Hooks And Webhooks
 
-**Response:**
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/hooks/execute` | Execute a CLI hook envelope through the adapter layer. |
+| `GET` | `/api/webhooks` | List configured MCP webhooks. |
+| `POST` | `/api/webhooks/test` | Test an MCP webhook. |
+| `POST` | `/api/github/webhooks/triage/{project_id}` | Receive GitHub issue triage webhook events. |
+
+### `POST /api/hooks/execute`
+
+Required body fields after envelope normalization: `hook_type` and `source`.
 
 ```json
 {
-  "session": { ... }
+  "hook_type": "turn_start",
+  "source": "codex",
+  "input_data": {
+    "prompt": "Implement the task"
+  }
 }
 ```
 
-Returns `{ "session": null }` if not found.
+Hook rule authors should use semantic lifecycle events such as `turn_start` and
+`turn_end`. Raw provider/runtime events such as `before_agent`, `after_agent`,
+and `stop` are adapter details. Agent termination is a separate lifecycle step
+and still requires `end_agent_run`.
 
----
+## Tasks And Stages
 
-### `POST /sessions/update_status`
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/tasks` | List tasks. |
+| `POST` | `/api/tasks` | Create a task. |
+| `GET` | `/api/tasks/{task_id}` | Get one task. |
+| `PATCH` | `/api/tasks/{task_id}` | Update task fields. |
+| `DELETE` | `/api/tasks/{task_id}` | Delete a task. |
+| `POST` | `/api/tasks/{task_id}/claim` | Claim a task. |
+| `POST` | `/api/tasks/{task_id}/release-claim` | Release a task claim. |
+| `POST` | `/api/tasks/{task_id}/escalate` | Escalate a task. |
+| `POST` | `/api/tasks/{task_id}/de-escalate` | Return an escalated task to its preserved stage. |
+| `POST` | `/api/tasks/{task_id}/close` | Close a task. |
+| `POST` | `/api/tasks/{task_id}/reopen` | Reopen a task. |
+| `GET` | `/api/tasks/{task_id}/comments` | List task comments. |
+| `POST` | `/api/tasks/{task_id}/comments` | Create a task comment. |
+| `DELETE` | `/api/tasks/{task_id}/comments/{comment_id}` | Delete a task comment. |
+| `GET` | `/api/tasks/{task_id}/dependencies` | Read task dependency tree. |
+| `POST` | `/api/tasks/{task_id}/dependencies` | Add a dependency. |
+| `DELETE` | `/api/tasks/{task_id}/dependencies/{depends_on_id}` | Remove a dependency. |
+| `GET` | `/api/tasks/{task_id}/stages` | Read a task stage manifest. |
+| `PATCH` | `/api/tasks/{task_id}/stages/{stage_name}` | Apply a stage transition or stage manifest mutation. |
+| `GET` | `/api/stages/registry` | List stage registry entries. |
+| `GET` | `/api/task-types/{task_type}/default-stages` | Read default stages for a task type. |
 
-Update session status.
+## Agents And Build Automation
 
-**Request Body:**
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/agents/definitions` | List agent definitions. |
+| `POST` | `/api/agents/definitions` | Create an agent definition. |
+| `GET` | `/api/agents/definitions/{name}` | Get an agent definition. |
+| `GET` | `/api/agents/definitions/{name}/export` | Export an agent definition. |
+| `POST` | `/api/agents/definitions/{name}/install` | Install a bundled agent template. |
+| `POST` | `/api/agents/definitions/import/{name}` | Import an agent definition. |
+| `PUT` | `/api/agents/definitions/{definition_id}` | Update an agent definition. |
+| `DELETE` | `/api/agents/definitions/{definition_id}` | Delete an agent definition. |
+| `POST` | `/api/agents/definitions/{definition_id}/restore` | Restore a deleted agent definition. |
+| `PATCH` | `/api/agents/definitions/{definition_id}/rules` | Patch agent rules. |
+| `PATCH` | `/api/agents/definitions/{definition_id}/rule-selectors` | Patch agent rule selectors. |
+| `PATCH` | `/api/agents/definitions/{definition_id}/variables` | Patch agent variables. |
+| `GET` | `/api/agents/running` | List running agents. |
+| `GET` | `/api/agents/runs` | List agent runs. |
+| `GET` | `/api/agents/runs/{run_id}` | Get one agent run. |
+| `POST` | `/api/agents/runs/{run_id}/cancel` | Cancel an agent run. |
+| `POST` | `/api/agents/spawn` | Spawn one agent. |
+| `POST` | `/api/agents/spawn/batch` | Spawn multiple agents. |
+| `POST` | `/api/agents/spawn/prompt-preview` | Preview a spawn prompt. |
+| `GET` | `/api/agents/launch-defaults` | Read agent launch defaults. |
+| `PUT` | `/api/agents/launch-defaults` | Save agent launch defaults. |
+| `POST` | `/api/build` | Start lifecycle automation. |
+| `POST` | `/api/build/stop` | Stop lifecycle automation. |
+| `POST` | `/api/build/resume` | Resume lifecycle automation. |
+| `POST` | `/api/build/clean` | Clean lifecycle automation artifacts. |
+| `POST` | `/api/build/restart` | Restart lifecycle automation. |
 
-```json
-{
-  "session_id": "session-uuid",
-  "status": "completed"
-}
-```
+## Memory, Skills, Workflows, And Rules
 
-**Required Fields:** `session_id`, `status`
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/memories` | List memories. |
+| `POST` | `/api/memories` | Create a memory. |
+| `GET` | `/api/memories/search` | Search memories. |
+| `GET` | `/api/memories/stats` | Memory statistics. |
+| `GET` | `/api/memories/{memory_id}` | Get a memory. |
+| `PUT` | `/api/memories/{memory_id}` | Update a memory. |
+| `DELETE` | `/api/memories/{memory_id}` | Delete a memory. |
+| `GET` | `/api/memories/graph` | Memory graph overview. |
+| `GET` | `/api/memories/graph/entities` | Knowledge-graph entities. |
+| `GET` | `/api/memories/graph/entities/{entity_key}/neighbors` | Entity neighbors. |
+| `POST` | `/api/memories/graph/clear` | Clear the knowledge graph. |
+| `POST` | `/api/memories/graph/rebuild` | Rebuild the knowledge graph. |
+| `GET` | `/api/memories/graph/rebuild/status` | Read knowledge-graph rebuild status. |
+| `POST` | `/api/memories/crossrefs/rebuild` | Rebuild memory cross-references. |
+| `POST` | `/api/memories/embeddings/reindex` | Reindex memory embeddings. |
+| `POST` | `/api/memories/reconcile` | Reconcile memory stores. |
+| `POST` | `/api/memories/invalidate` | Invalidate memory caches. |
+| `GET` | `/api/skills` | List skills. |
+| `POST` | `/api/skills` | Create a skill. |
+| `GET` | `/api/skills/search` | Search skills. |
+| `GET` | `/api/skills/stats` | Skill statistics. |
+| `GET` | `/api/skills/hubs` | List configured skill hubs. |
+| `GET` | `/api/skills/hubs/search` | Search skill hubs. |
+| `POST` | `/api/skills/hubs/install` | Install a skill from a hub. |
+| `POST` | `/api/skills/import` | Import a skill. |
+| `POST` | `/api/skills/scan` | Scan a skill. |
+| `POST` | `/api/skills/restore-defaults` | Restore default skills. |
+| `POST` | `/api/skills/install-all-templates` | Legacy template install endpoint. |
+| `GET` | `/api/skills/{skill_id}` | Get a skill. |
+| `PUT` | `/api/skills/{skill_id}` | Update a skill. |
+| `DELETE` | `/api/skills/{skill_id}` | Delete a skill. |
+| `GET` | `/api/skills/{skill_id}/export` | Export a skill. |
+| `POST` | `/api/skills/{skill_id}/install` | Install a bundled skill template. |
+| `POST` | `/api/skills/{skill_id}/move-to-project` | Move a skill to project scope. |
+| `POST` | `/api/skills/{skill_id}/move-to-installed` | Move a project skill to installed scope. |
+| `POST` | `/api/skills/{skill_id}/restore` | Restore a deleted skill. |
+| `GET` | `/api/workflows` | List workflows. |
+| `POST` | `/api/workflows` | Create a workflow. |
+| `POST` | `/api/workflows/import` | Import a workflow. |
+| `GET` | `/api/workflows/templates` | List workflow templates. |
+| `POST` | `/api/workflows/install-all-templates` | Legacy template install endpoint. |
+| `POST` | `/api/workflows/variables/set` | Set a workflow variable. |
+| `POST` | `/api/workflows/variables/get` | Get a workflow variable. |
+| `GET` | `/api/workflows/{definition_id}` | Get a workflow. |
+| `PUT` | `/api/workflows/{definition_id}` | Update a workflow. |
+| `DELETE` | `/api/workflows/{definition_id}` | Delete a workflow. |
+| `GET` | `/api/workflows/{definition_id}/export` | Export a workflow. |
+| `POST` | `/api/workflows/{definition_id}/duplicate` | Duplicate a workflow. |
+| `POST` | `/api/workflows/{definition_id}/install` | Install a bundled workflow template. |
+| `POST` | `/api/workflows/{definition_id}/restore` | Restore a deleted workflow. |
+| `POST` | `/api/workflows/{definition_id}/restore-from-template` | Restore a workflow from its template. |
+| `POST` | `/api/workflows/{definition_id}/move-to-project` | Move a workflow to project scope. |
+| `POST` | `/api/workflows/{definition_id}/move-to-global` | Move a workflow to global scope. |
+| `PUT` | `/api/workflows/{definition_id}/toggle` | Toggle a workflow. |
+| `GET` | `/api/rules` | List rules. |
+| `POST` | `/api/rules` | Create a rule. |
+| `PUT` | `/api/rules` | Replace/update the rules collection. |
+| `GET` | `/api/rules/groups` | List rule groups. |
+| `GET` | `/api/rules/tags` | List rule tags. |
+| `PUT` | `/api/rules/bulk-toggle` | Toggle multiple rules. |
+| `GET` | `/api/rules/{name}` | Get a rule. |
+| `PUT` | `/api/rules/{name}` | Update a rule. |
+| `DELETE` | `/api/rules/{name}` | Delete a rule. |
+| `PUT` | `/api/rules/{name}/toggle` | Toggle one rule. |
 
-**Response:**
+## Source Control, Files, Projects, And Config
 
-```json
-{
-  "session": { ... }
-}
-```
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/source-control/status` | Repository status. |
+| `GET` | `/api/source-control/branches` | List branches. |
+| `POST` | `/api/source-control/branches/checkout` | Check out a branch. |
+| `GET` | `/api/source-control/branches/{branch_name:path}/commits` | List branch commits. |
+| `GET` | `/api/source-control/diff` | Get repository diff. |
+| `GET` | `/api/source-control/prs` | List pull requests. |
+| `GET` | `/api/source-control/prs/{number}` | Get a pull request. |
+| `GET` | `/api/source-control/prs/{number}/checks` | Get PR checks. |
+| `GET` | `/api/source-control/issues` | List issues. |
+| `GET` | `/api/source-control/issues/{number}` | Get an issue. |
+| `GET` | `/api/source-control/cicd/runs` | List CI/CD runs. |
+| `GET` | `/api/source-control/worktrees` | List worktrees. |
+| `GET` | `/api/source-control/worktrees/stats` | Worktree statistics. |
+| `POST` | `/api/source-control/worktrees/cleanup` | Clean worktrees. |
+| `DELETE` | `/api/source-control/worktrees/{worktree_id}` | Delete a worktree. |
+| `POST` | `/api/source-control/worktrees/{worktree_id}/sync` | Sync a worktree. |
+| `GET` | `/api/source-control/clones` | List clones. |
+| `DELETE` | `/api/source-control/clones/{clone_id}` | Delete a clone. |
+| `POST` | `/api/source-control/clones/{clone_id}/sync` | Sync a clone. |
+| `GET` | `/api/files/projects` | List project roots for file browsing. |
+| `GET` | `/api/files/tree` | List a directory. |
+| `GET` | `/api/files/read` | Read a file. |
+| `GET` | `/api/files/image` | Read an image. |
+| `POST` | `/api/files/write` | Write a file. |
+| `GET` | `/api/files/git-status` | File-browser git status. |
+| `GET` | `/api/files/git-diff` | File-browser git diff. |
+| `GET` | `/api/projects` | List projects. |
+| `GET` | `/api/projects/{project_id}` | Get a project. |
+| `PUT` | `/api/projects/{project_id}` | Update a project. |
+| `DELETE` | `/api/projects/{project_id}` | Delete a project. |
+| `GET` | `/api/projects/{project_id}/github-triage` | Read GitHub triage config. |
+| `PUT` | `/api/projects/{project_id}/github-triage` | Update GitHub triage config. |
+| `GET` | `/api/config/schema` | Read config schema. |
+| `GET` | `/api/config/values` | Read config values. |
+| `PUT` | `/api/config/values` | Save config values. |
+| `POST` | `/api/config/values/validate` | Validate config values. |
+| `POST` | `/api/config/values/reset` | Reset config values. |
+| `GET` | `/api/config/template` | Read config template. |
+| `PUT` | `/api/config/template` | Save config template. |
+| `GET` | `/api/config/secrets` | List secret names. |
+| `POST` | `/api/config/secrets` | Save a secret. |
+| `DELETE` | `/api/config/secrets/{name}` | Delete a secret. |
+| `GET` | `/api/config/prompts` | List prompt overrides. |
+| `GET` | `/api/config/prompts/{path:path}` | Read a prompt override. |
+| `PUT` | `/api/config/prompts/{path:path}` | Save a prompt override. |
+| `DELETE` | `/api/config/prompts/{path:path}` | Delete a prompt override. |
+| `POST` | `/api/config/export` | Export config. |
+| `POST` | `/api/config/import` | Import config. |
+| `GET` | `/api/config/ui-settings` | Read UI settings. |
+| `PUT` | `/api/config/ui-settings` | Save UI settings. |
+| `DELETE` | `/api/config/ui-settings/{key}` | Delete a UI setting. |
+| `GET` | `/api/config/tool-approvals/global` | Read global tool approval rules. |
+| `PUT` | `/api/config/tool-approvals/global` | Save global tool approval rules. |
 
----
+## Code Index, Metrics, Pipelines, And Other Feature APIs
 
-### `POST /sessions/update_summary`
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/code-index/graph` | Code graph overview. |
+| `GET` | `/api/code-index/graph/file/{file_path:path}` | File graph data. |
+| `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | Symbol neighbors. |
+| `GET` | `/api/code-index/graph/blast-radius` | Blast-radius query. |
+| `GET` | `/api/code-index/graph/search` | Search code graph. |
+| `POST` | `/api/code-index/graph/clear` | Clear graph projection. |
+| `POST` | `/api/code-index/graph/rebuild` | Rebuild graph projection. |
+| `POST` | `/api/code-index/invalidate` | Invalidate code index data. |
+| `GET` | `/api/metrics/current` | Current metrics snapshot. |
+| `GET` | `/api/metrics/snapshots` | Historical metric snapshots. |
+| `GET` | `/api/pipelines/executions` | List pipeline executions. |
+| `GET` | `/api/pipelines/executions/search` | Search pipeline executions. |
+| `GET` | `/api/pipelines/{execution_id}` | Get pipeline execution. |
+| `POST` | `/api/pipelines/run` | Run a pipeline. |
+| `POST` | `/api/pipelines/approve/{token}` | Approve a pipeline gate. |
+| `POST` | `/api/pipelines/reject/{token}` | Reject a pipeline gate. |
+| `GET` | `/api/cron/jobs` | List cron jobs. |
+| `POST` | `/api/cron/jobs` | Create a cron job. |
+| `GET` | `/api/cron/jobs/{job_id}` | Get a cron job. |
+| `PATCH` | `/api/cron/jobs/{job_id}` | Update a cron job. |
+| `DELETE` | `/api/cron/jobs/{job_id}` | Delete a cron job. |
+| `POST` | `/api/cron/jobs/{job_id}/toggle` | Toggle a cron job. |
+| `POST` | `/api/cron/jobs/{job_id}/run` | Run a cron job now. |
+| `GET` | `/api/cron/jobs/{job_id}/runs` | List cron job runs. |
+| `GET` | `/api/cron/runs/{run_id}` | Get a cron run. |
+| `GET` | `/api/providers` | List CLI providers and availability. |
+| `GET` | `/api/providers/models` | List provider model catalogs. |
+| `GET` | `/api/chat/{conversation_id}/messages` | Read chat messages. |
+| `DELETE` | `/api/chat/{conversation_id}/messages` | Delete chat messages. |
+| `GET` | `/api/traces` | List traces. |
+| `GET` | `/api/traces/{trace_id}` | Get a trace. |
+| `GET` | `/api/voice/status` | Voice subsystem status. |
+| `POST` | `/api/voice/transcribe` | Transcribe audio. |
 
-Update session summary path.
+## Communications
 
-**Request Body:**
+The communications router is registered only when communications are enabled in
+daemon config.
 
-```json
-{
-  "session_id": "session-uuid",
-  "summary_path": "/path/to/summary.md"
-}
-```
-
-**Required Fields:** `session_id`, `summary_path`
-
-**Response:**
-
-```json
-{
-  "session": { ... }
-}
-```
-
----
-
-## MCP Proxy Endpoints
-
-### `GET /mcp/{server_name}/tools`
-
-List available tools from an MCP server.
-
-**Path Parameters:**
-
-| Parameter     | Description                                           |
-| :------------ | :---------------------------------------------------- |
-| `server_name` | Name of the MCP server (e.g., "supabase", "context7") |
-
-**Response:**
-
-```json
-{
-  "status": "success",
-  "server": "context7",
-  "tools": [
-    {
-      "name": "get-library-docs",
-      "description": "Fetch documentation for a library",
-      "inputSchema": { ... }
-    }
-  ],
-  "tool_count": 5,
-  "response_time_ms": 150
-}
-```
-
----
-
-### `POST /mcp/{server_name}/tools/{tool_name}`
-
-Call a tool on an MCP server.
-
-**Path Parameters:**
-
-| Parameter     | Description              |
-| :------------ | :----------------------- |
-| `server_name` | Name of the MCP server   |
-| `tool_name`   | Name of the tool to call |
-
-**Request Body:** Tool-specific arguments as JSON object.
-
-**Response:**
-
-```json
-{
-  "status": "success",
-  "result": { ... },
-  "response_time_ms": 200
-}
-```
-
----
-
-## Hook Endpoints
-
-### `POST /hooks/execute`
-
-Execute CLI hook via adapter pattern.
-
-**Request Body:**
-
-```json
-{
-  "hook_type": "session-start",
-  "input_data": { ... },
-  "source": "claude"
-}
-```
-
-**Supported Sources:** `claude`, `gemini`, `codex`
-
-**Response:**
-
-```json
-{
-  "continue": true,
-  "systemMessage": "Session registered: abc123"
-}
-```
-
-Note: Use `systemMessage` for context injection (works for all hook types). The `hookSpecificOutput.additionalContext` field only works for specific hooks (SessionStart, UserPromptSubmit, PostToolUse).
-
----
-
-## MCP Server Mount
-
-### `/mcp/*`
-
-The FastMCP server is mounted at `/mcp`. This provides the MCP protocol interface via HTTP transport.
-
-**Usage:**
-
-- Tools are accessible via JSON-RPC at `/mcp/`
-- Uses stateless HTTP transport with JSON responses
-
----
-
-## Health Check
-
-### `GET /health`
-
-Simple health check endpoint (via FastMCP mount).
-
-**Response:** `200 OK` if healthy.
-
----
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/comms/channels` | List communication channels. |
+| `POST` | `/api/comms/channels` | Create a channel. |
+| `PUT` | `/api/comms/channels/{channel_id}` | Update a channel. |
+| `DELETE` | `/api/comms/channels/{channel_id}` | Remove a channel. |
+| `GET` | `/api/comms/channels/{channel_id}/status` | Channel status. |
+| `GET` | `/api/comms/messages` | List communication messages. |
+| `GET` | `/api/comms/webhooks/{channel_name}` | Verify a channel webhook. |
+| `POST` | `/api/comms/webhooks/{channel_name}` | Receive a channel webhook. |
 
 ## Error Handling
 
-All endpoints return 200 OK to prevent CLI hook failures. Errors are logged and returned with an error status:
+Routes use FastAPI status codes for validation and service errors:
 
-```json
-{
-  "status": "error",
-  "message": "Internal error occurred but request acknowledged",
-  "error_logged": true
-}
-```
+- `400` for invalid or missing request data
+- `401` for unauthenticated protected API requests when UI auth is enabled
+- `404` for missing resources or non-mounted UI fallback exclusions
+- `500` for unhandled server errors
+- `503` when a required daemon manager or subsystem is unavailable
 
-For endpoints that need to indicate actual errors, HTTP status codes are used:
+Hook execution is the exception: adapter-compatible hook failures are usually
+acknowledged with a response that lets the caller continue, because CLI hooks
+must not crash the calling agent runtime.
 
-- `400` - Bad request (missing required fields)
-- `404` - Resource not found
-- `500` - Internal server error
-- `503` - Service unavailable (manager not initialized)
+_Last verified: 2026-05-07_
