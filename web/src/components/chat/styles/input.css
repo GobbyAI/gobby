@@ -545,6 +545,27 @@
   gap: 0.625rem;
 }
 
+/* Mode (Plan|Act|YOLO) sits on its own row between the textarea row and the
+   model controls row so chat input lays out as a clean 4-row grid even at
+   the 320px floor:
+     row 1 — toolbar icons (paperclip + persona + tts + stt)
+     row 2 — textarea + send
+     row 3 — mode (this row)
+     row 4 — provider + model + reasoning + branch */
+.chat-input-mode-row {
+  display: flex;
+  align-items: center;
+}
+
+/* Container for chat-column-scoped responsive behavior. Used by AgentStatusBar
+   (New Chat button) and chat-input controls to react to the chat panel's own
+   width, independent of viewport. */
+.chat-column {
+  container-type: inline-size;
+  container-name: chat-column;
+}
+
+
 .chat-input-overlay {
   position: absolute;
   inset: 0;
@@ -819,4 +840,26 @@
   .chat-session-status {
     align-items: center;
   }
+}
+
+/* Below ~360px chat-column width, compact the chat-input area so the layout
+   stays at four rows: icons / textarea / mode / model controls. New Chat
+   button drops its label, and the model-controls row tightens its padding so
+   [Provider][Model][Reasoning][Branch] fit on one row.
+
+   Placed last in the file so its rules win over earlier base declarations
+   that share the same specificity. !important is needed to beat Tailwind
+   utility classes (px-2.5) on SelectTrigger / BranchIndicator buttons. */
+@container chat-column (max-width: 360px) {
+  .chat-new-chat-btn__label {
+    display: none;
+  }
+  .chat-input-toolbar {
+    padding-right: 0;
+  }
+}
+
+/* Mode row: at narrow widths Mode and Branch share this row. */
+.chat-input-mode-row {
+  gap: 0.5rem;
 }

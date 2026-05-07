@@ -143,12 +143,14 @@ export function AgentStatusBar({
         )}
         <button
           type="button"
-          className="btn btn-accent btn-sm"
+          className="btn btn-accent btn-sm chat-new-chat-btn"
           onClick={onNewChat}
           disabled={!onNewChat}
+          aria-label="New Chat"
+          title="New Chat"
         >
           <PlusIcon />
-          New Chat
+          <span className="chat-new-chat-btn__label">New Chat</span>
         </button>
       </div>
     </div>

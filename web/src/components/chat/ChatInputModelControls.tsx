@@ -15,6 +15,7 @@ interface ChatInputModelControlsProps {
   currentBranch?: string | null
   disabled?: boolean
   effectiveProvider: string
+  hideBranch?: boolean
   modelOptions: ProviderModelOption[]
   onModelSelect: (model: string) => void
   onProviderSelect: (provider: string) => void
@@ -36,6 +37,7 @@ export function ChatInputModelControls({
   currentBranch,
   disabled = false,
   effectiveProvider,
+  hideBranch = false,
   modelOptions,
   onModelSelect,
   onProviderSelect,
@@ -148,7 +150,7 @@ export function ChatInputModelControls({
           </SelectContent>
         </Select>
 
-        {onWorktreeChange && (
+        {onWorktreeChange && !hideBranch && (
           <BranchIndicator
             currentBranch={currentBranch ?? null}
             worktreePath={worktreePath ?? null}

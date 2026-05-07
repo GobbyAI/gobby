@@ -184,6 +184,19 @@ export function ChatInput({
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
+  const metaRef = useRef<HTMLDivElement>(null)
+  // Track our own container width so [Branch] can move from the model row
+  // into the mode row at <=360px (where four pills won't fit on one line).
+  const [isCompact, setIsCompact] = useState(false)
+  useEffect(() => {
+    const el = metaRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([entry]) => {
+      setIsCompact(entry.contentRect.width <= 360)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
 
@@ -661,7 +674,7 @@ export function ChatInput({
           </div>
         )}
 
-        <div className="chat-input-meta">
+        <div ref={metaRef} className="chat-input-meta">
           <div
             className={`chat-input-notice-slot${proxyDeliveryNotice ? ' has-notice' : ''}`}
             aria-live="polite"
@@ -673,14 +686,6 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
-              {!isAttached && onModeChange && (
-                <ModeSelector
-                  mode={mode}
-                  onModeChange={onModeChange}
-                  disabled={disabled || modeDisabled}
-                  modes={modeOptions}
-                />
-              )}
               {!isAttached && (
                 <Button
                   size="icon"
@@ -868,11 +873,32 @@ export function ChatInput({
             </div>
           </div>
 
+          {!isAttached && onModeChange && (
+            <div className="chat-input-mode-row">
+              <ModeSelector
+                mode={mode}
+                onModeChange={onModeChange}
+                disabled={disabled || modeDisabled}
+                modes={modeOptions}
+              />
+              {isCompact && canSelectModel && onWorktreeChange && (
+                <BranchIndicator
+                  currentBranch={currentBranch ?? null}
+                  worktreePath={worktreePath ?? null}
+                  projectId={projectId ?? null}
+                  onWorktreeChange={onWorktreeChange}
+                  disabled={disabled || worktreePickerDisabled}
+                  variant="select"
+                />
+              )}
+            </div>
+          )}
           {!isAttached && canSelectModel && (
             <ChatInputModelControls
                 currentBranch={currentBranch}
                 disabled={disabled}
                 effectiveProvider={effectiveProvider}
+                hideBranch={isCompact}
                 modelOptions={modelOptions}
                 onModelSelect={handleModelSelect}
                 onProviderSelect={handleProviderSelect}
