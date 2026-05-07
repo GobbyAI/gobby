@@ -86,6 +86,12 @@ class TaskRecoveryHandler:
         try:
             resolved = await self.resolve_claimed_task_for_run(db_run)
             if resolved is None:
+                if outcome == "cancelled" and db_run.task_id:
+                    await asyncio.to_thread(
+                        self._clear_claim_session_variables,
+                        db_run,
+                        db_run.task_id,
+                    )
                 return
 
             task_id, task = resolved
@@ -97,6 +103,7 @@ class TaskRecoveryHandler:
                     self._task_manager.release_task_claim,
                     task_id,
                 )
+                await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
                 logger.info(
                     "Recovered task %s after agent %s cancelled (status=%s)",
                     task_ref,
@@ -116,6 +123,7 @@ class TaskRecoveryHandler:
 
             if lifecycle_stage != "in_progress":
                 await asyncio.to_thread(self._task_manager.release_task_claim, task_id)
+                await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
                 logger.info(
                     "Released stale ownership on task %s after agent %s failed (status=%s)",
                     task_ref,
@@ -136,6 +144,7 @@ class TaskRecoveryHandler:
                     escalated_at=datetime.now(UTC).isoformat(),
                     escalation_reason=f"Failed {failure_count} dispatch attempts",
                 )
+                await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
                 logger.warning(
                     "Task %s escalated after %s dispatch attempts",
                     task_ref,
@@ -148,6 +157,7 @@ class TaskRecoveryHandler:
                 task_id,
                 dispatch_failure_count=failure_count,
             )
+            await asyncio.to_thread(self._clear_claim_session_variables, db_run, task_id)
             logger.info(
                 "Recovered task %s to open after agent %s failed",
                 task_ref,
@@ -155,6 +165,36 @@ class TaskRecoveryHandler:
             )
         except Exception as e:
             logger.warning("Failed to recover task for agent %s: %s", db_run.id, e)
+
+    def _clear_claim_session_variables(self, db_run: AgentRun, task_id: str) -> None:
+        """Remove recovered task from any agent-owned session claim variables."""
+        if not self._task_manager:
+            return
+        db = getattr(self._task_manager, "db", None)
+        if db is None:
+            return
+
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
+            from gobby.workflows.task_claim_state import remove_claimed_task
+
+            session_var_manager = SessionVariableManager(db)
+            session_ids = {
+                session_id
+                for session_id in (db_run.child_session_id, db_run.claimed_session_id)
+                if session_id
+            }
+            for session_id in session_ids:
+                session_vars = session_var_manager.get_variables(session_id)
+                merge_dict = remove_claimed_task(session_vars, task_id)
+                session_var_manager.merge_variables(session_id, merge_dict)
+        except Exception as e:
+            logger.debug(
+                "Best-effort claimed_tasks cleanup failed for agent %s task %s: %s",
+                db_run.id,
+                task_id,
+                e,
+            )
 
     async def recover_task_from_failed_agent(self, run_id: str) -> None:
         """Recover task ownership after a failed agent run."""

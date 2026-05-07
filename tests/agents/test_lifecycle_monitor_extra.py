@@ -1,15 +1,20 @@
 """Additional tests for AgentLifecycleMonitor."""
 
+from datetime import UTC, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.storage.agents import AgentRun
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
+from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+from gobby.workflows.task_claim_state import add_claimed_task
 
 pytestmark = pytest.mark.unit
 
@@ -928,6 +933,185 @@ class TestTerminalizeCancelledRun:
 
         assert transitioned is True
         mock_task_mgr.release_task_claim.assert_called_once_with("task-review")
+
+    @pytest.mark.asyncio
+    async def test_cancelled_task_linked_run_cleans_child_session_claim_state(
+        self,
+        temp_db: LocalDatabase,
+        sample_project: dict,
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        parent = session_manager.register(
+            external_id="parent-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        child = session_manager.register(
+            external_id="child-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Child work",
+            task_type="task",
+            category="code",
+        )
+        task_manager.initialize_task_manifest(task.id, stage_names=["development"])
+        task_manager.stage_states.start_stage(task.id, "development", by_session_id=child.id)
+        claimed = task_manager.claim_task(task.id, child.id)
+
+        session_vars = SessionVariableManager(temp_db)
+        session_vars.merge_variables(
+            child.id,
+            add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
+        )
+        workflow_instances = WorkflowInstanceManager(temp_db)
+        workflow_instances.save_instance(
+            WorkflowInstance(
+                id="inst-child-agent",
+                session_id=child.id,
+                workflow_name="developer-workflow",
+                enabled=True,
+                priority=100,
+                current_step="implement",
+                step_entered_at=datetime.now(UTC),
+                variables={"task_claimed": True},
+            )
+        )
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=child.id,
+            claimed_session_id=child.id,
+            provider="claude",
+            prompt="do work",
+            run_id="run-cancel-task",
+            task_id=task.id,
+        )
+        run_manager.start(run.id)
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+        )
+
+        transitioned = await monitor.terminalize_cancelled_run(
+            run.id,
+            terminal_reason="user_cancelled",
+        )
+
+        updated_task = task_manager.get_task(task.id)
+        child_vars = session_vars.get_variables(child.id)
+
+        assert transitioned is True
+        assert updated_task is not None
+        assert updated_task.claimed_by_session_id is None
+        assert child_vars["task_claimed"] is False
+        assert child_vars["claimed_tasks"] == {}
+        assert workflow_instances.get_instance(child.id, "developer-workflow") is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_run_preserves_replacement_claim_and_cleans_old_child_state(
+        self,
+        temp_db: LocalDatabase,
+        sample_project: dict,
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        parent = session_manager.register(
+            external_id="parent-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        old_child = session_manager.register(
+            external_id="old-child-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        replacement = session_manager.register(
+            external_id="replacement-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Replacement work",
+            task_type="task",
+            category="code",
+        )
+        task_manager.initialize_task_manifest(task.id, stage_names=["development"])
+        task_manager.stage_states.start_stage(task.id, "development", by_session_id=old_child.id)
+        claimed = task_manager.claim_task(task.id, replacement.id)
+
+        session_vars = SessionVariableManager(temp_db)
+        session_vars.merge_variables(
+            old_child.id,
+            add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
+        )
+        session_vars.merge_variables(
+            replacement.id,
+            add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
+        )
+        WorkflowInstanceManager(temp_db).save_instance(
+            WorkflowInstance(
+                id="inst-old-child-agent",
+                session_id=old_child.id,
+                workflow_name="developer-workflow",
+                enabled=True,
+                priority=100,
+                current_step="implement",
+                step_entered_at=datetime.now(UTC),
+                variables={"task_claimed": True},
+            )
+        )
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=old_child.id,
+            claimed_session_id=old_child.id,
+            provider="claude",
+            prompt="old work",
+            run_id="run-cancel-replaced",
+            task_id=task.id,
+        )
+        run_manager.start(run.id)
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+        )
+
+        transitioned = await monitor.terminalize_cancelled_run(
+            run.id,
+            terminal_reason="user_cancelled",
+        )
+
+        updated_task = task_manager.get_task(task.id)
+        old_vars = session_vars.get_variables(old_child.id)
+        replacement_vars = session_vars.get_variables(replacement.id)
+
+        assert transitioned is True
+        assert updated_task is not None
+        assert updated_task.claimed_by_session_id == replacement.id
+        assert old_vars["task_claimed"] is False
+        assert old_vars["claimed_tasks"] == {}
+        assert replacement_vars["task_claimed"] is True
+        assert replacement_vars["claimed_tasks"] == {claimed.id: f"#{claimed.seq_num}"}
+        assert (
+            WorkflowInstanceManager(temp_db).get_instance(old_child.id, "developer-workflow")
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_no_second_notification_when_run_already_terminal(self) -> None:
