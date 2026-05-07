@@ -1,8 +1,8 @@
 # Gobby MCP Tools
 
-Reference for the MCP surface exposed by the Gobby daemon: the native tools
-served from the `gobby` server itself, plus the 17 internal `gobby-*`
-registries reached through `call_tool`.
+Reference for the MCP surface exposed by the Gobby daemon: the native proxy
+tools exposed at the top level, plus the 17 internal `gobby-*` registries
+reached through `call_tool`.
 
 The exact live surface drifts as the daemon evolves. Treat
 `list_mcp_servers()` and `list_tools(server_name=...)` as the source of
@@ -13,8 +13,8 @@ fresh discovery call always wins on disagreement.
 
 There are two ways to reach a tool from an MCP client:
 
-1. **Native tools** — registered directly on the `gobby` MCP server (e.g.
-   `call_tool`, `list_tools`, `recommend_tools`). Call them directly.
+1. **Native tools** — exposed directly by the proxy (e.g. `call_tool`,
+   `list_tools`, `recommend_tools`). Call them directly.
 2. **Internal registries** — `gobby-*` servers reached through the proxy
    (`call_tool(server_name="gobby-tasks", tool_name="create_task", ...)`).
 
@@ -54,8 +54,8 @@ tokens that the proxy will happily deliver lazily.
 
 ## Native Tools
 
-These are wired in `src/gobby/mcp_proxy/server.py` (`create_mcp_server`)
-and called directly on the `gobby` server.
+These are wired in `src/gobby/mcp_proxy/server.py` (`create_mcp_server`) and
+the stdio proxy wrapper in `src/gobby/mcp_proxy/stdio.py`.
 
 ### System
 
@@ -82,10 +82,10 @@ Execute a tool on any connected MCP server.
 Routing: `gobby-*` is handled locally by the matching internal registry;
 all others are proxied to the downstream MCP server.
 
-#### `list_tools(server_name?)`
+#### `list_tools(server_name)`
 
-Light metadata for tools on a server. Omit `server_name` to enumerate every
-connected server's tools.
+Light metadata for tools on a single server. Use `list_mcp_servers()` first,
+then pass one discovered server name.
 
 #### `get_tool_schema(server_name, tool_name)`
 
@@ -122,6 +122,12 @@ Remove a configured MCP server from the current project.
 Import server definitions from another project, a GitHub repo, an explicit
 list, or a natural-language query against the recommendation index.
 
+#### `init_project(name, project_path?)`
+
+Stdio proxy helper that reports project initialization must be run through
+the CLI (`gobby init`). It exists so MCP clients get a structured error
+instead of silently attempting unsupported daemon-side initialization.
+
 ### Discovery
 
 #### `recommend_tools(task_description, agent_id?, search_mode?)`
@@ -135,13 +141,14 @@ Semantic similarity search across the tool index.
 
 ### Session Variables
 
-#### `set_variable(name, value, ...)`
+#### `set_variable(name, value, session_id)`
 
 Set a session-scoped variable readable by hooks, rules, and workflows.
 
-#### `get_variable(name, ...)`
+#### `get_variable(session_id, name?)`
 
-Read a session-scoped variable.
+Read one session-scoped variable, or all variables for the session when
+`name` is omitted.
 
 ---
 
@@ -185,9 +192,9 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `create_task` | Create a new task. `claim=true` to auto-assign. `validation_criteria` required when `category="code"`. |
 | `get_task` | Get task details, including dependencies. Accepts `#N`, path, or UUID. |
 | `update_task` | Update task fields, including `assigned_agent` and `additional_skills`. |
-| `close_task` | Close a task. Pass `commit_sha` to link the closing commit. |
+| `close_task` | Close a task. Pass `commit_sha` to link the closing commit; leaf closes require `changes_summary`. |
 | `reopen_task` | Reopen a closed or escalated task. |
-| `delete_task` | Delete a task. `cascade=true` removes subtasks. |
+| `delete_task` | Delete a task. `cascade=true` removes subtasks and dependent tasks; `unlink=true` preserves dependents by removing links. |
 | `list_tasks` | List tasks with filters. |
 | `claim_task` | Claim a task for the current session. `force=true` overrides another session's claim. |
 | `escalate_task` | Escalate a task for human intervention. Preserves the current stage state. |
@@ -272,6 +279,7 @@ call_tool("gobby-tasks", "get_task", {"task_id": "#123"})
 call_tool("gobby-tasks", "close_task", {
     "task_id": "#123",
     "commit_sha": "abc1234",
+    "changes_summary": "Updated task validation flow and covered it with focused tests.",
 })
 ```
 
@@ -584,10 +592,11 @@ pipeline-run query compatibility entries may still appear in discovery.
 | `pipeline_eval` | Evaluate a structured data expression inside a running pipeline. |
 | `fail_pipeline` | Mark the current pipeline as failed from inside a run. |
 
-For broad pipeline-run discovery, use the CLI run-history surface:
+For broad pipeline-run discovery, prefer the CLI run-history surface:
 `gobby pipelines runs list`, `gobby pipelines runs show`, and
 pipeline-specific history commands. Use `get_pipeline_status` when you
-already have an `execution_id`.
+already have an `execution_id`. Compatibility query tools may still appear
+in live discovery so older clients do not break.
 
 There is **no `wait_for_completion` MCP tool**. Start the run, persist its
 `execution_id` or `run_id`, and resume from the daemon's durable
@@ -989,4 +998,4 @@ retry without an extra `get_tool_schema` round-trip.
 - [orchestration.md](./orchestration.md) — Dispatch and automation model
 - [code-index.md](./code-index.md) — `gcode` for code search and retrieval
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-05-07_
