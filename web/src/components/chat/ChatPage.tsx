@@ -899,7 +899,7 @@ export function ChatPage({
         chatSessionId={activityPanelChatSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
-        onSwapSession={handleSwapSession}
+        onSwapSession={chat.dbSessionId ? handleSwapSession : undefined}
         onResumeSession={handleResumeSessionFromActivity}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
