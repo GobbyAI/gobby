@@ -37,7 +37,8 @@ def _branches(path: Path) -> set[str]:
 
 @pytest.mark.asyncio
 async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
-    from gobby.build.controls import _default_branch_dir_name, build_clean_target
+    from gobby.build.branch_cleanup import default_task_branch_name
+    from gobby.build.controls import build_clean_target
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
@@ -53,7 +54,7 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
         task_type="task",
         category="docs",
     )
-    stale_branch = _default_branch_dir_name(task)
+    stale_branch = default_task_branch_name(task)
     _git(repo, "branch", stale_branch)
     _git(repo, "branch", "task-999-unrelated")
 
@@ -73,7 +74,8 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_clean_deletes_stale_integration_branch(temp_db, tmp_path: Path) -> None:
-    from gobby.build.controls import _integration_branch_name, build_clean_target
+    from gobby.build.branch_cleanup import integration_branch_name
+    from gobby.build.controls import build_clean_target
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
@@ -89,7 +91,7 @@ async def test_clean_deletes_stale_integration_branch(temp_db, tmp_path: Path) -
         task_type="epic",
         category="docs",
     )
-    stale_branch = _integration_branch_name(epic)
+    stale_branch = integration_branch_name(epic)
     _git(repo, "branch", stale_branch)
 
     result = await build_clean_target(
