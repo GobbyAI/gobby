@@ -13,6 +13,12 @@ Pytest is run through `uv` so it uses the project environment:
 uv run pytest tests/tasks/test_validation.py -v
 ```
 
+Agents must also enable Gobby's test protection switch on every pytest run:
+
+```bash
+GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v
+```
+
 Run a package or marker slice when the affected surface spans more than one
 file:
 
@@ -82,11 +88,18 @@ The root `tests/conftest.py` provides common isolation and test helpers:
 - `protect_production_resources` is applied automatically. It sets safe
   `GOBBY_*` paths and patches config loading/saving so tests do not touch the
   user's real daemon database, home directory, logs, or hooks.
+- `GOBBY_TEST_PROTECT=1` is the explicit subprocess safety switch used by
+  daemon and CLI tests to keep process-discovery helpers away from the user's
+  running daemon.
 
 Domain test packages may add narrower fixtures in their own `conftest.py`
 files. For example, `tests/tasks/conftest.py` provides a validation prompt
 loader mock, and `tests/servers/conftest.py` provides HTTP server and
 `TestClient` fixtures.
+
+E2E daemon tests under `tests/e2e/` spawn isolated daemon processes. Use their
+fixtures rather than connecting to a real local daemon; the e2e environment sets
+temporary `HOME`, database, config, log paths, and free high-numbered ports.
 
 ## Frontend Tests
 
@@ -123,7 +136,10 @@ Choose validation based on the changed surface:
 | Frontend type or lint change | `cd web && npm run type-check` or `cd web && npm run lint` |
 | Browser flow | `cd web && npx playwright test tests/<file>.spec.ts` |
 
+For agent-run backend validation, prefix the pytest examples above with
+`GOBBY_TEST_PROTECT=1`.
+
 When a test fails, keep the rerun focused on the failing file or marker until
 the failure is understood. Broaden only when the change touches shared behavior.
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-05-07_
