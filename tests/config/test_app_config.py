@@ -652,6 +652,20 @@ class TestLoadConfig:
         assert not hasattr(config, "task_description")
         assert not hasattr(config.gobby_tasks, "enrichment")
 
+    def test_load_config_clamps_legacy_cron_interval_from_db(self, temp_dir: Path) -> None:
+        """Legacy cron intervals below the scheduler floor do not block startup."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {"cron.check_interval_seconds": 30}
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.cron.check_interval_seconds == 60
+
 
 class TestBootstrapConfig:
     """Tests for bootstrap configuration loading."""

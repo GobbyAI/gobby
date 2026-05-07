@@ -37,7 +37,7 @@ class CronConfig(BaseModel):
     @classmethod
     def validate_check_interval(cls, v: int) -> int:
         if v < 60:
-            raise ValueError("check_interval_seconds must be at least 60")
+            return 60
         return v
 
     @field_validator("max_concurrent_jobs")
