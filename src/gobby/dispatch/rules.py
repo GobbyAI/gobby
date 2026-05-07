@@ -761,7 +761,13 @@ def _task_id(task: object) -> str:
 
 
 def _task_ref(task: object) -> str:
-    return str(_field(task, "ref", _task_id(task)))
+    value = _field(task, "ref") or _field(task, "task_ref")
+    if value:
+        return str(value)
+    seq_num = _field(task, "seq_num")
+    if seq_num not in (None, ""):
+        return f"#{seq_num}"
+    return _task_id(task)
 
 
 def _prompt_context(context: object) -> dict[str, object]:

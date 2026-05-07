@@ -51,6 +51,17 @@ def test_qa_reviewer_prompt_builder_registered() -> None:
     assert "#42" in prompt
 
 
+def test_prompt_builder_uses_seq_ref_when_loaded_task_has_no_ref() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    task = SimpleNamespace(id="2bc4656b-f91a-4434-8272-8167e6cb924b", seq_num=14370, title="E2E")
+
+    prompt = PROMPT_BUILDERS["analyst"](task, {"reason": "stage"})
+
+    assert "#14370" in prompt
+    assert "2bc4656b-f91a-4434-8272-8167e6cb924b" not in prompt
+
+
 def test_doc_reviewer_prompt_builder_registered() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 

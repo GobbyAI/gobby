@@ -165,6 +165,27 @@ def test_planning_review_rule_fires_on_needs_review_stage() -> None:
     }
 
 
+def test_spawn_agent_action_uses_seq_ref_when_loaded_task_has_no_ref() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "ideation",
+            "in_progress",
+            id="2bc4656b-f91a-4434-8272-8167e6cb924b",
+            ref=None,
+            seq_num=14370,
+            title="Docs E2E",
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.task_id == "2bc4656b-f91a-4434-8272-8167e6cb924b"
+    assert action.task_ref == "#14370"
+    assert "#14370" in action.prompt
+    assert "2bc4656b-f91a-4434-8272-8167e6cb924b" not in action.prompt
+
+
 def test_expansion_work_rule_fires_and_holds_when_cap_reached() -> None:
     from gobby.dispatch.actions import StartPipelineAction
 

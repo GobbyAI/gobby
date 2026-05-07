@@ -14,7 +14,13 @@ def _field(obj: object, name: str, default: object = "") -> object:
 
 
 def _task_ref(task: object) -> str:
-    value = _field(task, "ref") or _field(task, "task_ref") or _field(task, "id")
+    value = _field(task, "ref") or _field(task, "task_ref")
+    if value:
+        return str(value)
+    seq_num = _field(task, "seq_num")
+    if seq_num not in (None, ""):
+        return f"#{seq_num}"
+    value = _field(task, "id")
     return str(value or "the assigned task")
 
 
