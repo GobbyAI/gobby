@@ -189,28 +189,6 @@ def _reset_context(tokens: SeededContextTokens) -> None:
     reset_seeded_contexts(tokens)
 
 
-async def _emit_proxy_after_tool(
-    server: "HTTPServer",
-    *,
-    session_id: str | None = None,
-    tool_name: str,
-    tool_input: dict[str, Any],
-    result: dict[str, Any],
-    is_failure: bool = False,
-) -> None:
-    """Emit synthetic proxy AFTER_TOOL events for HTTP discovery routes."""
-    if server.tool_proxy is None:
-        return
-
-    await server.tool_proxy.emit_synthetic_proxy_after_tool(
-        session_id=session_id or get_current_session_id(),
-        tool_name=tool_name,
-        tool_input=tool_input,
-        result=result,
-        is_failure=is_failure,
-    )
-
-
 def _process_tool_proxy_result(
     result: Any,
     server_name: str,
@@ -366,13 +344,6 @@ async def list_mcp_tools(
                     "tool_count": len(tools),
                     "response_time_ms": response_time_ms,
                 }
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="list_tools",
-                    tool_input={"server_name": server_name},
-                    result=result,
-                )
                 return result
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {
@@ -380,14 +351,6 @@ async def list_mcp_tools(
                 "error": f"Internal server '{server_name}' not found",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
         if mcp_manager is None:
@@ -397,14 +360,6 @@ async def list_mcp_tools(
                 "error": "MCP manager not available",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
         # Check if server is configured
@@ -420,14 +375,6 @@ async def list_mcp_tools(
         except KeyError as e:
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
         except Exception as e:
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -436,14 +383,6 @@ async def list_mcp_tools(
                 "error": f"MCP server '{server_name}' connection failed: {e}",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
         # List tools using MCP SDK
@@ -492,12 +431,6 @@ async def list_mcp_tools(
                 "tool_count": len(tools),
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-            )
             return result
 
         except Exception as e:
@@ -512,13 +445,6 @@ async def list_mcp_tools(
                 "error": f"Failed to list tools: {e}",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
     except HTTPException:
@@ -566,7 +492,6 @@ async def get_tool_schema(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
-        requested_session_id = _get_discovery_session_id(body, request)
         ctx_token = _set_context_for_request(server, body, request)
 
         try:
@@ -577,8 +502,6 @@ async def get_tool_schema(
                     schema = registry.get_schema(tool_name)
                     if schema:
                         response_time_ms = (time.perf_counter() - start_time) * 1000
-                        # unlocked_tools is owned by the track-schema-lookup
-                        # rule fired off the synthetic AFTER_TOOL emitted below.
                         # Build response with description only if present
                         result: dict[str, Any] = {
                             "success": True,
@@ -589,13 +512,6 @@ async def get_tool_schema(
                         }
                         if schema.get("description"):
                             result["description"] = schema["description"]
-                        await _emit_proxy_after_tool(
-                            server,
-                            session_id=requested_session_id,
-                            tool_name="get_tool_schema",
-                            tool_input={"server_name": server_name, "tool_name": tool_name},
-                            result=result,
-                        )
                         return result
                     raise HTTPException(
                         status_code=404,
@@ -615,8 +531,6 @@ async def get_tool_schema(
             try:
                 tool_info = await server.mcp_manager.get_tool_info(server_name, tool_name)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
-                # unlocked_tools is owned by the track-schema-lookup rule fired
-                # off the synthetic AFTER_TOOL emitted below.
 
                 # Build response with description only if present
                 response: dict[str, Any] = {
@@ -628,27 +542,12 @@ async def get_tool_schema(
                 }
                 if tool_info.get("description"):
                     response["description"] = tool_info["description"]
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="get_tool_schema",
-                    tool_input={"server_name": server_name, "tool_name": tool_name},
-                    result=response,
-                )
                 return response
 
             except (KeyError, ValueError) as e:
                 # Tool or server not found
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 response = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="get_tool_schema",
-                    tool_input={"server_name": server_name, "tool_name": tool_name},
-                    result=response,
-                    is_failure=True,
-                )
                 return response
             except Exception as e:
                 # Connection, timeout, or internal errors
@@ -662,14 +561,6 @@ async def get_tool_schema(
                     "error": f"Failed to get tool schema: {e}",
                     "response_time_ms": response_time_ms,
                 }
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="get_tool_schema",
-                    tool_input={"server_name": server_name, "tool_name": tool_name},
-                    result=response,
-                    is_failure=True,
-                )
                 return response
         finally:
             _reset_context(ctx_token)

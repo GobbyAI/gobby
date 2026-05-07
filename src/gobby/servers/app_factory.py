@@ -96,14 +96,6 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
             app.state.hook_manager = HookManager(**hook_manager_kwargs)
             server._hook_manager = app.state.hook_manager
-
-            # Back-link HookManager into SessionMessageProcessor so the processor
-            # can synthesize BEFORE_TOOL/AFTER_TOOL events from the Codex
-            # rollout tail (Codex's experimental hooks don't fire for MCP tool
-            # calls; the rule engine would otherwise never see them).
-            mp = server.services.message_processor
-            if mp is not None:
-                mp._hook_manager = app.state.hook_manager
         logger.debug("HookManager initialized in daemon")
 
         # Initialize PendingInteractionManager for web chat approval flows

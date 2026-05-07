@@ -351,6 +351,33 @@ class TestCombinedNormalization:
         assert result["mcp_tool"] == "create_task"
         assert result["tool_output"] == {"id": "task-123"}
 
+    def test_native_codex_mcp_post_tool_use_payload(self) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {"title": "Test"},
+            },
+            "tool_response": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '{"success": true, "result": {"ref": "#42"}}',
+                    }
+                ],
+                "isError": False,
+            },
+        }
+
+        result = normalize_tool_fields(data)
+
+        assert result["tool_name"] == "mcp__gobby__call_tool"
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "create_task"
+        assert result["tool_input"]["arguments"] == {"title": "Test"}
+        assert result["tool_output"] == {"success": True, "result": {"ref": "#42"}}
+
     def test_mutates_in_place(self) -> None:
         data = {"tool_name": "mcp__s__t"}
         returned = normalize_mcp_fields(data)

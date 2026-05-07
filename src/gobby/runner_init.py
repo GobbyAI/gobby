@@ -462,10 +462,7 @@ def init_services(runner: GobbyRunner) -> None:
                 logger.error(f"Failed to initialize MemorySyncManager: {e}")
 
     # Session Message Processor (Phase 6)
-    # Created here and passed to HTTPServer which injects it into HookManager.
-    # session_manager is required for the Codex rollout-tail synthesis path
-    # to resolve the (external_id, machine_id, project_id) composite key that
-    # HookManager.session_lookup uses to attribute rule effects.
+    # Created here for transcript-derived session history and stats.
     runner.message_processor = None
     if getattr(runner.config, "message_tracking", None) and runner.config.message_tracking.enabled:
         runner.message_processor = SessionMessageProcessor(

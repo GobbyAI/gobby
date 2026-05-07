@@ -264,7 +264,6 @@ async def call_tool(
                         tool_name=tool_name,
                         arguments=arguments,
                         effective_session_id=effective_session_id,
-                        enforce_workflow=enforce_workflow,
                     )
                 if strip_unknown:
                     properties = input_schema.get("properties", {})
@@ -303,7 +302,6 @@ async def call_tool(
         tool_name=tool_name,
         arguments=arguments,
         effective_session_id=effective_session_id,
-        enforce_workflow=enforce_workflow,
     )
 
 
@@ -314,24 +312,13 @@ async def _execute_tool(
     tool_name: str,
     arguments: dict[str, Any],
     effective_session_id: str | None,
-    enforce_workflow: bool,
 ) -> Any:
     try:
         if service._internal_manager and service._internal_manager.is_internal(server_name):
             registry = service._internal_manager.get_registry(server_name)
             if registry:
                 result = await registry.call(tool_name, arguments)
-                normalized_result = normalize_internal_success_result(result)
-                await service._emit_synthetic_after_tool(
-                    effective_session_id=effective_session_id,
-                    server_name=server_name,
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    result=normalized_result,
-                    enforce_workflow=enforce_workflow,
-                    is_failure=False,
-                )
-                return normalized_result
+                return normalize_internal_success_result(result)
 
             error_msg = f"Internal server '{server_name}' not found"
             suggestion = service._get_server_suggestion(server_name)
@@ -341,15 +328,6 @@ async def _execute_tool(
 
         result = await service._mcp_manager.call_tool(
             server_name, tool_name, arguments, session_id=effective_session_id
-        )
-        await service._emit_synthetic_after_tool(
-            effective_session_id=effective_session_id,
-            server_name=server_name,
-            tool_name=tool_name,
-            arguments=arguments,
-            result=result,
-            enforce_workflow=enforce_workflow,
-            is_failure=False,
         )
         return result
 
@@ -408,15 +386,6 @@ async def _execute_tool(
         else:
             response["fallback_suggestions"] = []
 
-        await service._emit_synthetic_after_tool(
-            effective_session_id=effective_session_id,
-            server_name=server_name,
-            tool_name=tool_name,
-            arguments=arguments,
-            result=response,
-            enforce_workflow=enforce_workflow,
-            is_failure=True,
-        )
         return response
 
 

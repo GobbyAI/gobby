@@ -834,7 +834,7 @@ class TestProcessSessionTranscriptTokenPreservation:
 
         with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
             # spec=ParsedMessage so the lifecycle path's ParsedToolEvent filter
-            # (added when Codex MCP synthesis was wired) doesn't drop the mock.
+            # doesn't drop the mock.
             msg = MagicMock(spec=ParsedMessage)
             msg.model = None
             msg.usage = None

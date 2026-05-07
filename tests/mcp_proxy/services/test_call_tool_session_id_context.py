@@ -45,7 +45,6 @@ def tool_proxy() -> tuple[ToolProxyService, MagicMock]:
         internal_manager=internal_manager,
         validate_arguments=True,
     )
-    proxy._emit_synthetic_after_tool = AsyncMock()
     return proxy, mcp_manager
 
 
@@ -77,7 +76,6 @@ def resolving_tool_proxy() -> tuple[ToolProxyService, MagicMock, MagicMock]:
         validate_arguments=True,
         hook_manager_resolver=lambda: hook_manager,
     )
-    proxy._emit_synthetic_after_tool = AsyncMock()
     return proxy, mcp_manager, session_manager
 
 

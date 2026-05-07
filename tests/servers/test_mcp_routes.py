@@ -328,8 +328,10 @@ class TestListMCPTools:
             session_id="123e4567-e89b-12d3-a456-426614174000",
         )
 
-    def test_list_tools_emits_proxy_after_tool(self, session_storage: SessionManager) -> None:
-        """Successful list_tools should emit the synthetic proxy AFTER_TOOL event."""
+    def test_list_tools_does_not_emit_proxy_after_tool(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Successful list_tools should not emit a proxy AFTER_TOOL event."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -347,14 +349,7 @@ class TestListMCPTools:
             )
 
         assert response.status_code == 200
-        result = response.json()
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="123e4567-e89b-12d3-a456-426614174000",
-            tool_name="list_tools",
-            tool_input={"server_name": "gobby-tasks"},
-            result=result,
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
     def test_list_tools_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test listing tools falls through to MCP manager when internal registry not found."""
@@ -824,15 +819,10 @@ class TestGetToolSchema:
         assert data["server"] == "gobby-tasks"
         assert "inputSchema" in data
 
-    def test_get_schema_emits_after_tool_with_session_header(
+    def test_get_schema_does_not_emit_after_tool_with_session_header(
         self, session_storage: SessionManager
     ) -> None:
-        """Session header should propagate to the synthetic AFTER_TOOL event.
-
-        ``unlocked_tools`` is now owned by the ``track-schema-lookup`` rule
-        firing off this synthetic event (no direct mutation), so the test
-        asserts the dispatch carries the session id.
-        """
+        """Session header should not trigger proxy AFTER_TOOL synthesis."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -854,17 +844,12 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        result = response.json()
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="123e4567-e89b-12d3-a456-426614174000",
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
-            result=result,
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
-    def test_get_schema_emits_proxy_after_tool(self, session_storage: SessionManager) -> None:
-        """Successful get_tool_schema should emit the synthetic proxy AFTER_TOOL event."""
+    def test_get_schema_does_not_emit_proxy_after_tool(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Successful get_tool_schema should not emit a proxy AFTER_TOOL event."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -886,14 +871,7 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        result = response.json()
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="123e4567-e89b-12d3-a456-426614174000",
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
-            result=result,
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
     def test_get_schema_resolves_numeric_body_session_ref_via_header_session_project(
         self,
@@ -931,13 +909,7 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id=session.id,
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
-            result=response.json(),
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
     def test_get_schema_internal_server_tool_not_found(
         self, session_storage: SessionManager

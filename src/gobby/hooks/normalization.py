@@ -727,9 +727,9 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
         if parsed is not None:
             data["tool_output"] = parsed
 
-    # 2d. Unwrap standard MCP result envelopes. Codex transcript synthesis
-    # preserves the outer {content, structuredContent, isError} wrapper, but
-    # rules and step enforcement need the semantic tool payload itself.
+    # 2d. Unwrap standard MCP result envelopes. Native MCP hooks preserve the
+    # outer {content, structuredContent, isError} wrapper, but rules and step
+    # enforcement need the semantic tool payload itself.
     if "tool_output" in data:
         data["tool_output"] = _unwrap_mcp_tool_output(data["tool_output"])
 

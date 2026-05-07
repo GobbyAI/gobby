@@ -335,10 +335,9 @@ def _parse_lines(
 ) -> list[ParsedMessage]:
     """Parse lines into ParsedMessage objects.
 
-    Codex's parser may also yield ParsedToolEvent records for MCP tool-call
+    Some parsers may also yield ParsedToolEvent records for tool-call
     lifecycle; this reader path only consumes message fields, so we filter
-    them out and let SessionMessageProcessor handle tool events on its own
-    rule-engine path.
+    them out.
     """
     parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
     parsed = parser.parse_lines(lines, start_index=0)

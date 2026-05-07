@@ -73,7 +73,7 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
 
 
 def _is_pipeline_direct_mcp_event(event: HookEvent) -> bool:
-    """Return True for synthetic direct MCP calls emitted by pipeline sessions."""
+    """Return True for direct MCP calls emitted by pipeline sessions."""
     if event.source != SessionSource.PIPELINE:
         return False
 

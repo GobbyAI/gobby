@@ -46,7 +46,6 @@ def _make_server() -> tuple[MagicMock, MagicMock]:
         validate_arguments=False,
         hook_manager_resolver=lambda: hook_manager,
     )
-    server.tool_proxy._emit_synthetic_after_tool = AsyncMock()
     server._internal_manager = None
     server.mcp_manager = None
     return server, mcp_manager

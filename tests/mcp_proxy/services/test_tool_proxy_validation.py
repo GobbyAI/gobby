@@ -12,15 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import HookResponse, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -41,15 +35,6 @@ def mock_internal_manager():
     manager = MagicMock()
     manager.is_internal.return_value = False
     return manager
-
-
-@pytest.fixture
-def temp_db(tmp_path):
-    """Create a real workflow DB for integration-style rule tests."""
-    db_path = tmp_path / "test_tool_proxy_validation.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
-    return database
 
 
 @pytest.fixture
@@ -1051,13 +1036,12 @@ class TestWorkflowBeforeToolEnforcement:
 
     # NOTE: A previous test asserted that get_tool_schema directly mutated
     # `unlocked_tools` via SessionVariableManager. That direct write was
-    # removed in favor of the `track-schema-lookup` rule firing off the
-    # synthetic AFTER_TOOL event (see TestSyntheticCodexMcpAfterTool below
-    # and tests/workflows/test_codex_skill_injection.py for end-to-end coverage).
+    # removed; native MCP PostToolUse hook payloads now drive schema lookup
+    # tracking through the rule engine.
 
 
-class TestSyntheticCodexMcpAfterTool:
-    """Tests for the internal Codex-terminal MCP AFTER_TOOL compatibility shim."""
+class TestNoSyntheticCodexMcpAfterTool:
+    """Codex MCP calls rely on native MCP hook payloads, not proxy AFTER_TOOL shims."""
 
     @pytest.fixture
     def mock_hook_manager(self):
@@ -1095,10 +1079,10 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
     @pytest.mark.asyncio
-    async def test_internal_tool_success_emits_synthetic_after_tool(
+    async def test_internal_tool_success_does_not_emit_after_tool(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
-        """Successful Codex-terminal MCP calls should emit one synthetic AFTER_TOOL event."""
+        """Successful MCP calls should not emit proxy-synthesized AFTER_TOOL events."""
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
         mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
@@ -1112,60 +1096,13 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         assert result == {"id": "task-123", "ref": "#123"}
-        mock_hook_manager.handle.assert_called_once()
-
-        event = mock_hook_manager.handle.call_args.args[0]
-        assert event.event_type == HookEventType.AFTER_TOOL
-        assert event.session_id == "conv-123"
-        assert event.source == SessionSource.CODEX
-        assert event.metadata["_platform_session_id"] == "session-123"
-        assert event.metadata["_synthetic_codex_mcp_after_tool"] is True
-        assert event.data["tool_name"] == "mcp__gobby__call_tool"
-        assert event.data["tool_input"] == {
-            "server_name": "gobby-tasks",
-            "tool_name": "create_task",
-            "arguments": {"title": "Test task"},
-        }
-        assert event.data["tool_output"] == {"result": {"id": "task-123", "ref": "#123"}}
-        assert event.data["mcp_server"] == "gobby-tasks"
-        assert event.data["mcp_tool"] == "create_task"
+        mock_hook_manager.handle.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_internal_tool_success_resolves_numbered_session_ref(
+    async def test_internal_tool_exception_does_not_emit_failed_after_tool(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
-        """Synthetic AFTER_TOOL events should resolve #N refs before session lookup."""
-        resolved_session_id = "f4b198e5-7688-45d5-82f5-5606732c7a96"
-        session = mock_hook_manager._session_manager.get.return_value
-        mock_hook_manager._session_manager.resolve_session_reference.side_effect = (
-            lambda session_id, project_id=None: (
-                resolved_session_id if session_id == "#2985" else session_id
-            )
-        )
-        mock_hook_manager._session_manager.get.side_effect = (
-            lambda session_id: session if session_id == resolved_session_id else None
-        )
-        mock_internal_manager.is_internal.return_value = True
-        mock_registry = MagicMock()
-        mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
-        mock_internal_manager.get_registry.return_value = mock_registry
-
-        await tool_proxy_with_hooks.call_tool(
-            server_name="gobby-tasks",
-            tool_name="create_task",
-            arguments={"title": "Test task"},
-            session_id="#2985",
-        )
-
-        mock_hook_manager.handle.assert_called_once()
-        event = mock_hook_manager.handle.call_args.args[0]
-        assert event.metadata["_platform_session_id"] == resolved_session_id
-
-    @pytest.mark.asyncio
-    async def test_internal_tool_exception_marks_synthetic_after_tool_failure(
-        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
-    ) -> None:
-        """Execution exceptions should emit a failed synthetic AFTER_TOOL event."""
+        """Execution exceptions should return errors without proxy AFTER_TOOL dispatch."""
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
         mock_registry.call = AsyncMock(side_effect=RuntimeError("boom"))
@@ -1180,64 +1117,13 @@ class TestSyntheticCodexMcpAfterTool:
 
         assert result["success"] is False
         assert result["error"] == "boom"
-        mock_hook_manager.handle.assert_called_once()
-
-        event = mock_hook_manager.handle.call_args.args[0]
-        assert event.metadata["is_failure"] is True
-        assert event.data["is_error"] is True
-        assert event.data["tool_output"]["success"] is False
-        assert event.data["tool_output"]["error"] == "boom"
-        assert event.data["tool_output"]["result"]["error"] == "boom"
-
-    @pytest.mark.asyncio
-    async def test_non_codex_sessions_do_not_emit_synthetic_after_tool(
-        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
-    ) -> None:
-        """Other CLI sources should stay on their native AFTER_TOOL paths."""
-        mock_hook_manager._session_manager.get.return_value.source = "claude"
-        mock_internal_manager.is_internal.return_value = True
-        mock_registry = MagicMock()
-        mock_registry.call = AsyncMock(return_value={"id": "task-123"})
-        mock_internal_manager.get_registry.return_value = mock_registry
-
-        await tool_proxy_with_hooks.call_tool(
-            server_name="gobby-tasks",
-            tool_name="create_task",
-            arguments={"title": "Test task"},
-            session_id="session-123",
-        )
-
         mock_hook_manager.handle.assert_not_called()
-        assert mock_hook_manager.handle.call_count == 0
-        assert not mock_hook_manager.handle.called
 
     @pytest.mark.asyncio
-    async def test_web_chat_sessions_do_not_emit_synthetic_after_tool(
+    async def test_internal_dispatch_paths_do_not_emit_after_tool(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
-        """Codex app-server/web-chat sessions should keep their native completion events."""
-        mock_hook_manager._session_manager.get.return_value.session_type = "web_chat"
-        mock_internal_manager.is_internal.return_value = True
-        mock_registry = MagicMock()
-        mock_registry.call = AsyncMock(return_value={"id": "task-123"})
-        mock_internal_manager.get_registry.return_value = mock_registry
-
-        await tool_proxy_with_hooks.call_tool(
-            server_name="gobby-tasks",
-            tool_name="create_task",
-            arguments={"title": "Test task"},
-            session_id="session-123",
-        )
-
-        mock_hook_manager.handle.assert_not_called()
-        assert mock_hook_manager.handle.call_count == 0
-        assert not mock_hook_manager.handle.called
-
-    @pytest.mark.asyncio
-    async def test_internal_dispatch_paths_skip_synthetic_after_tool(
-        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
-    ) -> None:
-        """Internal rule-engine MCP calls should not emit compatibility AFTER_TOOL events."""
+        """Internal rule-engine MCP calls should not emit AFTER_TOOL events."""
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
         mock_registry.call = AsyncMock(return_value={"id": "task-123"})
@@ -1252,61 +1138,6 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         mock_hook_manager.handle.assert_not_called()
-        assert mock_hook_manager.handle.call_count == 0
-        assert not mock_hook_manager.handle.called
-
-    @pytest.mark.asyncio
-    async def test_proxy_schema_after_tool_injects_task_creation(
-        self, mock_mcp_manager, mock_internal_manager, temp_db
-    ) -> None:
-        """Codex terminal proxy schema shims should resolve #N refs before directives."""
-        sync_bundled_rules(temp_db, get_bundled_rules_path())
-        temp_db.execute(
-            "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
-        )
-
-        workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=temp_db))
-
-        session = SimpleNamespace(
-            source="codex",
-            session_type="terminal",
-            project_id="project-123",
-            external_id="conv-123",
-        )
-        numbered_session_ref = "#2985"
-        resolved_session_id = "f4b198e5-7688-45d5-82f5-5606732c7a96"
-        session_manager = MagicMock()
-        session_manager.get.side_effect = (
-            lambda session_id: session if session_id == resolved_session_id else None
-        )
-        session_manager.resolve_session_reference.side_effect = (
-            lambda session_id, project_id=None: (
-                resolved_session_id if session_id == numbered_session_ref else session_id
-            )
-        )
-
-        hook_manager = MagicMock()
-        hook_manager._workflow_handler = workflow_handler
-        hook_manager._session_manager = session_manager
-        hook_manager._database = temp_db
-        hook_manager.handle = workflow_handler.evaluate
-
-        tool_proxy = ToolProxyService(
-            mcp_manager=mock_mcp_manager,
-            internal_manager=mock_internal_manager,
-            validate_arguments=False,
-            hook_manager_resolver=lambda: hook_manager,
-        )
-
-        await tool_proxy.emit_synthetic_proxy_after_tool(
-            session_id=numbered_session_ref,
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
-            result={"success": True, "tool": {"name": "create_task", "inputSchema": {}}},
-        )
-
-        variables = SessionVariableManager(temp_db).get_variables(resolved_session_id)
-        assert "task-creation" not in variables.get("loaded_skills", [])
 
 
 class TestStripUnknownParameters:

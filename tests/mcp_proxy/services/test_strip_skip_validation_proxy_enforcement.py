@@ -1,5 +1,5 @@
 """Regression test for #13048: bundled strip-skip-validation rule fires on the
-proxy synthetic event shape, and ``apply_before_tool_enforcement`` propagates
+proxy before-tool event shape, and ``apply_before_tool_enforcement`` propagates
 the rewrite into the dispatched arguments.
 """
 
@@ -112,7 +112,7 @@ class _StubService:
 async def test_apply_before_tool_enforcement_strips_skip_validation(tmp_path: Path) -> None:
     """End-to-end regression for #13048.
 
-    Builds the same synthetic event the proxy emits, runs it through the real
+    Builds the same before_tool event the proxy emits, runs it through the real
     RuleEngine with the bundled YAML rule loaded, then calls the production
     ``apply_before_tool_enforcement`` helper. The dispatched arguments must
     have ``skip_validation: False`` after the rewrite is applied.
@@ -172,7 +172,7 @@ async def test_apply_before_tool_enforcement_passthrough_without_commits(
     assert arguments == {"task_id": "t-1", "skip_validation": True}
 
 
-def test_proxy_synthetic_event_shape_unchanged() -> None:
+def test_proxy_before_tool_event_shape_unchanged() -> None:
     """If ``build_before_tool_event`` ever stops emitting ``mcp__gobby__call_tool``
     as the wrapper tool_name, the rule's ``when:`` clause needs to be revisited.
     """
