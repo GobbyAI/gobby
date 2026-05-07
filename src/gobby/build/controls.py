@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import subprocess  # nosec B404 # git subprocesses use fixed argument vectors.
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -84,6 +86,7 @@ class BuildTargetControlResult:
     mutexes_cleared: int = 0
     claims_released: int = 0
     stages_reset: int = 0
+    branches_deleted: int = 0
     escalations_cleared: int = 0
     dispatch_failures_reset: int = 0
     dispatcher_tick: DispatcherTickSummary | None = None
@@ -208,8 +211,14 @@ async def build_clean_target(
 
     _delete_artifacts(db, project_id, artifacts, force=force)
     delete_errors = [artifact.error for artifact in artifacts if artifact.error]
-    if delete_errors:
-        raise ValueError("; ".join(delete_errors))
+    branches_deleted, branch_errors = _delete_orphan_build_branches(
+        db,
+        project_id,
+        tasks,
+    )
+    cleanup_errors = [*delete_errors, *branch_errors]
+    if cleanup_errors:
+        raise ValueError("; ".join(cleanup_errors))
 
     mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
     claims_released = _release_stale_agent_claims(task_manager, db, tasks)
@@ -226,6 +235,7 @@ async def build_clean_target(
         mutexes_cleared=mutexes_cleared,
         claims_released=claims_released,
         stages_reset=stages_reset,
+        branches_deleted=branches_deleted,
     )
 
 
@@ -245,7 +255,12 @@ def cleanup_successful_merge_artifacts(
         return []
 
     _delete_artifacts(db, cleanup_project_id, artifacts, force=False)
-    errors = [artifact.error for artifact in artifacts if artifact.error]
+    _branches_deleted, branch_errors = _delete_orphan_build_branches(
+        db,
+        cleanup_project_id,
+        tasks,
+    )
+    errors = [artifact.error for artifact in artifacts if artifact.error] + branch_errors
     if errors:
         logger.warning(
             "successful_build_cleanup_incomplete",
@@ -854,6 +869,117 @@ def _delete_artifacts(
             artifact.deleted = True
         except Exception as exc:
             artifact.error = str(exc)
+
+
+def _delete_orphan_build_branches(
+    db: DatabaseProtocol,
+    project_id: str,
+    tasks: list[Task],
+) -> tuple[int, list[str]]:
+    repo_path = _project_path(db, project_id)
+    candidates = _build_branch_candidates(db, project_id, tasks, repo_path=repo_path)
+    if not candidates:
+        return 0, []
+
+    existing = _local_branches(repo_path)
+    current = _current_branch(repo_path)
+    deleted = 0
+    errors: list[str] = []
+
+    for branch in sorted(candidates & existing):
+        if branch == current:
+            errors.append(f"refusing to delete current branch {branch}")
+            continue
+        result = _git(repo_path, ["branch", "-D", branch], timeout=30)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            errors.append(f"failed to delete build branch {branch}: {detail}")
+            continue
+        deleted += 1
+
+    return deleted, errors
+
+
+def _build_branch_candidates(
+    db: DatabaseProtocol,
+    project_id: str,
+    tasks: list[Task],
+    *,
+    repo_path: Path,
+) -> set[str]:
+    worktrees = LocalWorktreeManager(db)
+    clones = LocalCloneManager(db)
+    task_manager = LocalTaskManager(db)
+    local_branches = _local_branches(repo_path)
+    candidates: set[str] = set()
+
+    for task in tasks:
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        if artifacts.integration_branch:
+            candidates.add(artifacts.integration_branch)
+        if task.task_type == "epic":
+            candidates.add(_integration_branch_name(task))
+        if task.seq_num:
+            default_branch = _default_branch_dir_name(task)
+            candidates.add(default_branch)
+            prefix = f"task-{task.seq_num}-"
+            candidates.update(branch for branch in local_branches if branch.startswith(prefix))
+
+        for worktree_id in (artifacts.worktree_id, artifacts.integration_workspace_id):
+            if not worktree_id:
+                continue
+            worktree = worktrees.get(worktree_id)
+            if worktree is not None:
+                candidates.add(worktree.branch_name)
+        if artifacts.clone_id:
+            clone = clones.get(artifacts.clone_id)
+            if clone is not None:
+                candidates.add(clone.branch_name)
+        if artifacts.integration_clone_id:
+            clone = clones.get(artifacts.integration_clone_id)
+            if clone is not None:
+                candidates.add(clone.branch_name)
+
+        worktree = worktrees.get_by_task(task.id)
+        if worktree is not None:
+            candidates.add(worktree.branch_name)
+        clone = clones.get_by_task(task.id)
+        if clone is not None:
+            candidates.add(clone.branch_name)
+
+    return {branch for branch in candidates if branch}
+
+
+def _local_branches(repo_path: Path) -> set[str]:
+    result = _git(repo_path, ["branch", "--format=%(refname:short)"], timeout=30)
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _current_branch(repo_path: Path) -> str | None:
+    result = _git(repo_path, ["branch", "--show-current"], timeout=10)
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
+def _integration_branch_name(task: Task) -> str:
+    ref = str(task.seq_num or task.id[:8])
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", task.title.lower()).strip("-")[:36]
+    return f"gobby/integration/{ref}-{slug or 'epic'}"
+
+
+def _git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # nosec B603 # git args are fixed by callers.
+        ["git", *args],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
 
 
 def _project_path(db: DatabaseProtocol, project_id: str) -> Path:

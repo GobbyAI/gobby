@@ -63,8 +63,6 @@ def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> 
         [
             "#42",
             "--quick",
-            "--isolation",
-            "worktree",
             "--no-merge",
             "--stage",
             "development:max_review_rounds=2",
