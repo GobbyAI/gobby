@@ -1,184 +1,222 @@
 # Webhook Workflow Action Schema
 
-## Overview
+This guide documents the webhook action model implemented by
+`src/gobby/workflows/webhook.py` and the request executor implemented by
+`src/gobby/workflows/webhook_executor.py` for Gobby 0.4.0.
 
-This document defines the schema for webhook actions in Gobby workflows. Webhook actions allow workflows to make HTTP requests to external services during execution.
+The webhook action schema is a workflow helper model. It is separate from:
 
-## Action Name
+- `hook_extensions.webhooks`, which dispatches hook events to configured HTTP
+  endpoints.
+- Pipeline `webhooks`, which notify on pipeline approval, completion, and
+  failure.
+- Rule effects. Rules use effect types such as `mcp_call`, `set_variable`, and
+  `block`; `webhook` is not a rule effect type.
 
-```yaml
-action: webhook
-```
+When authoring rules that run near agent lifecycle boundaries, target semantic
+events such as `turn_start` and `turn_end`. Raw `before_agent`, `after_agent`,
+and `stop` events remain provider/runtime details. Agent termination is a
+separate lifecycle action and still requires `gobby-agents:end_agent_run`.
 
-## Schema Definition
+## Schema
 
-### Required Fields (one of)
+Webhook action dictionaries are parsed with `WebhookAction.from_dict(data)`.
+
+### Required Fields
+
+Exactly one of these fields is required:
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `url` | string | Direct HTTP(S) URL to call |
-| `webhook_id` | string | Reference to a registered webhook in config |
+| --- | --- | --- |
+| `url` | string | Literal `http://` or `https://` URL to call. |
+| `webhook_id` | string | Key looked up in a caller-provided webhook registry. |
 
-**Note:** Exactly one of `url` or `webhook_id` must be provided.
+Providing both fields raises a validation error. Providing neither field also
+raises a validation error.
 
 ### Optional Fields
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `method` | enum | `POST` | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE` |
-| `headers` | dict | `{"Content-Type": "application/json"}` | Request headers (supports interpolation) |
-| `payload` | string/dict | `null` | Request body template (supports interpolation) |
-| `timeout` | int | `30` | Request timeout in seconds (1-300) |
-| `retry` | object | `null` | Retry configuration (see below) |
-| `on_success` | string | `null` | Action to execute on 2xx response |
-| `on_failure` | string | `null` | Action to execute after all retries exhausted |
-| `capture_response` | object | `null` | Variables to capture from response (see below) |
+| --- | --- | --- | --- |
+| `method` | string enum | `POST` | HTTP method. Parsed case-insensitively and stored uppercase. |
+| `headers` | object | `{}` | Request headers. The executor interpolates `${secrets.NAME}` in string header values. |
+| `payload` | string, object, or null | `null` | Request body. Dict payloads are sent as JSON; string payloads are sent as raw data. |
+| `timeout` | integer | `30` | Total request timeout in seconds. Must be 1-300. |
+| `retry` | object or null | `null` | Retry configuration. No retry is attempted when omitted. |
+| `on_success` | string or null | `null` | Parsed and serialized by the model. Executor callers provide callbacks directly. |
+| `on_failure` | string or null | `null` | Parsed and serialized by the model. Executor callers provide callbacks directly. |
+| `capture_response` | object or null | `null` | Names for response fields a caller may capture after execution. |
 
-### Retry Configuration
+Valid methods are:
+
+- `GET`
+- `POST`
+- `PUT`
+- `PATCH`
+- `DELETE`
+
+## Retry Configuration
+
+`retry` is optional. If it is omitted, the executor performs one request attempt.
+If `retry: {}` is provided, these model defaults apply:
 
 ```yaml
 retry:
-  max_attempts: 3          # Total attempts including first (1-10)
-  backoff_seconds: 2       # Base backoff delay (doubles each retry)
-  retry_on_status:         # HTTP status codes to retry on
-    - 429                  # Rate limited
-    - 500                  # Server error
-    - 502                  # Bad gateway
-    - 503                  # Service unavailable
-    - 504                  # Gateway timeout
+  max_attempts: 3
+  backoff_seconds: 1
+  retry_on_status: [429, 500, 502, 503, 504]
 ```
 
-### Response Capture
+`max_attempts` is the total number of attempts, including the first request. The
+model accepts values from 1 through 10. Retry sleeps use exponential backoff:
+
+```text
+delay = backoff_seconds * 2 ** (attempt - 1)
+```
+
+The executor retries these failure classes until attempts are exhausted:
+
+- HTTP responses whose status code is in `retry_on_status`.
+- `TimeoutError`.
+- `aiohttp.ClientError`.
+
+Non-2xx HTTP responses outside `retry_on_status` return immediately as failures.
+
+## Response Capture
+
+`capture_response` is parsed as a `CaptureConfig`:
 
 ```yaml
 capture_response:
-  status_var: "webhook_status"      # Variable for HTTP status code
-  body_var: "webhook_body"          # Variable for response body (parsed as JSON if possible)
-  headers_var: "webhook_headers"    # Variable for response headers dict
+  status_var: webhook_status
+  body_var: webhook_body
+  headers_var: webhook_headers
 ```
 
-## Variable Interpolation
+The executor returns a `WebhookResult` with:
 
-All string fields support variable interpolation using `${...}` syntax:
+- `success`
+- `status_code`
+- `body`
+- `headers`
+- `error`
 
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `${var}` | Workflow state variable | `${session_id}` |
-| `${context.var}` | Workflow context variable | `${context.user_prompt}` |
-| `${secrets.VAR}` | Secret from secure storage | `${secrets.SLACK_TOKEN}` |
-| `${env.VAR}` | Environment variable | `${env.API_URL}` |
+`WebhookResult.json_body()` returns a parsed JSON object when the body is valid
+JSON and returns `None` otherwise. The action model stores the capture variable
+names, but the executor does not mutate workflow variables by itself; the caller
+is responsible for writing returned fields into state.
 
-**Security:** Values from `${secrets.*}` are:
-- Never logged in plaintext
-- Redacted in error messages
-- Not stored in workflow state
+## Interpolation
+
+Current interpolation is intentionally narrow:
+
+| Location | Behavior |
+| --- | --- |
+| `headers` | String values support `${secrets.NAME}` interpolation through the executor's `secrets` dict. Missing secrets raise `ValueError`. |
+| string `payload` | Rendered through the provided `TemplateRenderer`, when one is supplied. |
+| dict `payload` | Sent as-is; the executor does not deep-render nested strings. |
+| `url` | Not interpolated by the action model or executor. Direct `url` values must already parse as `http://` or `https://`. |
+
+Do not use `${env.NAME}` or `${secrets.NAME}` as a direct `url` value for this
+action schema. The model validates the URL before any executor call.
+
+## Registered Webhooks
+
+`webhook_id` is resolved by `WebhookExecutor.execute_by_webhook_id()` from the
+executor's in-memory registry:
+
+```python
+registry = {
+    "slack_alerts": {
+        "url": "https://hooks.slack.com/services/xxx",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "timeout": 30,
+    }
+}
+```
+
+Registry headers are merged with per-call headers, and per-call headers win on
+key conflicts. `method` and `timeout` passed to `execute_by_webhook_id()`
+override registry values. A missing registry key raises `ValueError`.
+
+This registry is supplied by the caller. It is not the same schema as
+`hook_extensions.webhooks.endpoints` in the daemon config.
 
 ## Examples
 
-### Example 1: Simple POST Webhook
+### Minimal Direct URL
 
 ```yaml
-steps:
-  - name: notify
-    on_enter:
-      - action: webhook
-        url: "https://hooks.slack.com/services/xxx"
-        payload:
-          text: "Session ${session_id} started"
+url: "https://api.example.com/events"
 ```
 
-### Example 2: Webhook with Retry and Error Handling
+Parsed defaults:
 
 ```yaml
-on_session_end:
-  - action: webhook
-    url: "https://api.example.com/events"
-    method: POST
-    headers:
-      Authorization: "Bearer ${secrets.API_TOKEN}"
-      X-Session-Id: "${session_id}"
-    payload:
-      event: "session_ended"
-      summary: "${context.summary}"
-    timeout: 10
-    retry:
-      max_attempts: 3
-      backoff_seconds: 2
-      retry_on_status: [429, 500, 502, 503]
-    on_failure: log_webhook_failure
+method: POST
+headers: {}
+payload: null
+timeout: 30
+retry: null
 ```
 
-### Example 3: Chained Webhooks Using Captured Response
+### Full Action Shape
 
 ```yaml
-steps:
-  - name: create_ticket
-    on_enter:
-      - action: webhook
-        url: "https://api.jira.com/issue"
-        method: POST
-        headers:
-          Authorization: "Bearer ${secrets.JIRA_TOKEN}"
-        payload:
-          project: "DEV"
-          summary: "${context.task_title}"
-        capture_response:
-          body_var: "jira_response"
-          status_var: "jira_status"
-
-      # Use captured response in next webhook
-      - action: webhook
-        url: "https://hooks.slack.com/services/xxx"
-        payload:
-          text: "Created ticket: ${jira_response.key}"
-        when: "${jira_status} == 201"
+url: "https://api.example.com/events"
+method: PUT
+headers:
+  Authorization: "Bearer ${secrets.API_TOKEN}"
+  X-Custom: "value"
+payload:
+  event: "session_end"
+  session_id: "sess-123"
+timeout: 60
+retry:
+  max_attempts: 3
+  backoff_seconds: 2
+  retry_on_status: [429, 500, 502]
+on_success: log_success
+on_failure: alert_failure
+capture_response:
+  status_var: response_status
+  body_var: response_body
+  headers_var: response_headers
 ```
 
-### Example 4: Using Registered Webhook
+### Registered Webhook Reference
 
 ```yaml
-# In ~/.gobby/config.yaml:
-# webhooks:
-#   slack_alerts:
-#     url: "https://hooks.slack.com/services/xxx"
-#     headers:
-#       Content-Type: "application/json"
-
-on_error:
-  - action: webhook
-    webhook_id: "slack_alerts"
-    payload:
-      text: "Workflow error: ${error_message}"
+webhook_id: "slack_alerts"
+payload:
+  text: "Build finished"
 ```
 
-## URL Validation
+The registry lookup must provide the target URL. If the registry value has no
+`url`, execution raises `ValueError`.
 
-- Only `http://` and `https://` schemes are allowed
-- Other schemes (ftp://, file://, etc.) are rejected with a clear error
-- URL must be well-formed (validated at parse time)
+## Validation And Serialization
 
-## Error Handling
+`WebhookAction.from_dict()` validates:
 
-| Error Type | Behavior |
-|------------|----------|
-| Network error | Retry if retry configured, else fail |
-| Timeout | Retry if retry configured, else fail |
-| HTTP 4xx (except 429) | Fail immediately (no retry) |
-| HTTP 429 | Retry with backoff if configured |
-| HTTP 5xx | Retry if status in retry_on_status |
-| Invalid URL | Fail at parse time with clear error |
-| Missing url/webhook_id | Fail at parse time |
+- `url` and `webhook_id` are mutually exclusive.
+- one target field is present.
+- direct `url` values use `http` or `https`.
+- `method` is one of the supported HTTP methods.
+- `timeout` is between 1 and 300.
+- `retry.max_attempts` is between 1 and 10.
 
-## Logging
+`WebhookAction.to_dict()` serializes only populated optional fields, plus the
+stored `method` and `timeout`.
 
-- Request: Log URL and method (not headers/payload with secrets)
-- Response: Log status code and timing
-- Retry: Log attempt number and backoff delay
-- Secrets: All `${secrets.*}` values redacted as `[REDACTED]`
+## Related Files
 
-## Integration Points
+- `src/gobby/workflows/webhook.py`
+- `src/gobby/workflows/webhook_executor.py`
+- `tests/workflows/test_webhook_action.py`
+- `tests/workflows/test_webhook_executor.py`
+- [Rules](./rules.md)
+- [Configuration](./configuration.md)
 
-1. **ActionExecutor**: Register `webhook` handler in `actions.py`
-2. **WebhookExecutor**: New class in `src/gobby/workflows/webhook_executor.py`
-3. **Config**: Webhook registry in `~/.gobby/config.yaml` under `webhooks:`
-4. **Secrets**: Integration with existing secrets storage (if available) or env vars
+_Last verified: 2026-05-07_

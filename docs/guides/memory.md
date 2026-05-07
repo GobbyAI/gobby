@@ -1,632 +1,504 @@
 # Memory System Guide
 
-Gobby's memory system enables AI agents to maintain persistent knowledge across sessions. Unlike traditional AI assistants that start fresh each conversation, agents using Gobby can remember facts, learn preferences, and apply patterns automatically.
+Gobby's memory system stores durable project facts, user preferences, and
+working conventions in the local hub database so future sessions can recall
+them. It is separate from tasks, session transcripts, and native provider memory
+files.
 
 ## Quick Start
 
 ```bash
-# Store a memory via CLI
-gobby memory create "This project uses pytest fixtures in conftest.py" --type fact
+# Store a user-authored memory. Without --project this creates an unscoped memory.
+gobby memory create "Use focused pytest files for task validation" --type preference
 
-# Recall memories
-gobby memory recall "testing"
+# Store a memory for a specific Gobby project.
+gobby memory create "This project uses uv for Python commands" --type fact --project gobby
 
-# List all memories
-gobby memory list
+# Recall memories with semantic or FTS-backed search.
+gobby memory recall "validation commands" --limit 5
 
-# Via MCP tools (in AI session)
+# List and inspect memories.
+gobby memory list --type preference
+gobby memory show MEMORY_ID_OR_PREFIX
+```
+
+```python
+# MCP tools are project-scoped by the current session context.
 call_tool(server_name="gobby-memory", tool_name="create_memory", arguments={
-    "content": "User prefers tabs over spaces",
+    "content": "User prefers task-linked commits.",
     "memory_type": "preference",
-    "importance": 0.9
+    "tags": ["workflow", "commits"],
+    "session_id": "#4767"
+})
+
+call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
+    "query": "commit workflow",
+    "limit": 5,
+    "tags_any": ["workflow", "commits"]
 })
 ```
+
+Use progressive discovery before relying on an MCP signature:
+
+```python
+list_mcp_servers()
+list_tools(server_name="gobby-memory")
+get_tool_schema(server_name="gobby-memory", tool_name="search_memories")
+call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={...})
+```
+
+## What Belongs in Memory
+
+Use memories for durable context that future agents need and cannot cheaply
+derive from code or git history.
+
+| Store as memory | Use another system |
+| --- | --- |
+| User preferences and workflow conventions | Bugs, failures, and work to do: create a Gobby task |
+| Design rationale that is not obvious in code | Current implementation state: read the code |
+| External references that are hard to rediscover | Recent changes: use git log or linked commits |
+| Stable cross-session facts about a project | One-turn instructions or temporary task notes |
+
+Good memories are specific and time-resilient:
+
+- "The project treats Markdown guide line count as documentation scope, not the source-file monolith rule."
+- "Use `GOBBY_TEST_PROTECT=1` for pytest in this repo so tests cannot touch the production daemon state."
+- "The memory backup file is a JSONL backup/export path, not the memory source of truth."
+
+Avoid storing secrets, API keys, passwords, transient debug notes, duplicate
+facts, or facts that are already obvious from source files.
 
 ## Concepts
 
 ### Memory Types
 
-| Type | Purpose | Examples |
-| ---- | ------- | -------- |
-| `fact` | Objective information about the project | "Uses PostgreSQL with Prisma ORM", "Main entry point is src/index.ts" |
-| `preference` | User preferences and coding style | "Prefers functional components", "Use single quotes" |
-| `pattern` | Recurring patterns and conventions | "All API routes follow /api/v1/{resource}", "Tests use describe/it blocks" |
-| `context` | Session-specific or temporary context | "Currently refactoring auth module", "Debugging production issue #123" |
+The storage model accepts these common types:
 
-### Importance Levels
+| Type | Use for |
+| --- | --- |
+| `fact` | Objective project or environment facts |
+| `preference` | User preferences and durable workflow choices |
+| `pattern` | Repeated conventions or design patterns |
+| `context` | Broader project context that should be injected as prose |
 
-Importance (0.0-1.0) determines recall priority:
+The MCP and CLI accept a string `memory_type`, so additional values may be
+stored, but the formatter groups the four types above into the cleanest
+`<project-memory>` output.
 
-| Range | Level | Use For |
-| ----- | ----- | ------- |
-| 0.8-1.0 | Critical | Must-know facts, breaking changes, security concerns |
-| 0.5-0.8 | Important | Key patterns, strong preferences, architectural decisions |
-| 0.3-0.5 | Useful | Helpful context, nice-to-know information |
-| 0.0-0.3 | Low | Minor details, temporary notes |
+### Scope
 
-### Memory Scope
+Scope differs by surface:
 
-- **Project memories**: Tied to a specific project (`project_id` set)
-- **Global memories**: Available across all projects (`project_id` is NULL)
+| Surface | Scope behavior |
+| --- | --- |
+| MCP `gobby-memory` tools | Use the current project context from the MCP proxy. |
+| HTTP `/api/memories` routes | Accept explicit `project_id` query/body fields where supported. |
+| CLI `gobby memory ...` | Use `--project` when you want project-scoped create, list, recall, show, delete, or stats behavior. |
+| CLI without `--project` | Creates unscoped memories or lists/searches without a project filter, depending on command. |
 
-Use `--global` flag in CLI or omit `project_id` in MCP tools for global memories.
+### Tags
 
-## CLI Commands
+Tags support boolean filters on both CLI and MCP surfaces:
 
-### Adding Memories
+| Filter | Meaning |
+| --- | --- |
+| `tags_all` / `--tags-all` | Memory must have every listed tag. |
+| `tags_any` / `--tags-any` | Memory must have at least one listed tag. |
+| `tags_none` / `--tags-none` | Memory must have none of the listed tags. |
 
-```bash
-# Basic memory
-gobby memory create "Content here"
+Use tags for stable concepts such as `workflow`, `testing`, `security`,
+`architecture`, `preference`, and `external-reference`.
 
-# With type and importance
-gobby memory create "API uses JWT auth" --type fact --importance 0.8
+## CLI Reference
 
-# Global memory (available in all projects)
-gobby memory create "Always use conventional commits" --type preference --global
-
-# With tags
-gobby memory create "Use pnpm, not npm" --type preference --tags "tooling,package-manager"
-```
-
-### Searching and Listing
+### Create, Recall, List
 
 ```bash
-# Semantic search
-gobby memory search "authentication"
-
-# List all memories
-gobby memory list
-
-# Filter by type
-gobby memory list --type preference
-
-# Filter by minimum importance
-gobby memory list --min-importance 0.7
-
-# Limit results
-gobby memory list --limit 10
-
-# Include global memories
-gobby memory list --include-global
+gobby memory create "CONTENT" [--type TYPE] [--project REF]
+gobby memory recall [QUERY] [--project REF] [--limit N] \
+  [--tags-all TAGS] [--tags-any TAGS] [--tags-none TAGS]
+gobby memory list [--type TYPE] [--project REF] [--limit N] \
+  [--tags-all TAGS] [--tags-any TAGS] [--tags-none TAGS]
 ```
 
-### Tag Filtering
+`TAGS` is a comma-separated list.
 
-Filter memories using boolean tag logic with `--tags-all`, `--tags-any`, and `--tags-none`:
+### Inspect and Update
 
 ```bash
-# Require ALL specified tags (AND logic)
-gobby memory recall --tags-all "auth,security"
-
-# Require ANY of the specified tags (OR logic)
-gobby memory recall --tags-any "frontend,ui,react"
-
-# Exclude memories with these tags (NOT logic)
-gobby memory recall --tags-none "deprecated,legacy"
-
-# Combine filters for precise queries
-gobby memory recall "API" --tags-all "backend" --tags-none "deprecated"
-
-# Works with list command too
-gobby memory list --type fact --tags-any "database,storage"
+gobby memory show MEMORY_ID_OR_PREFIX [--project REF]
+gobby memory update MEMORY_ID_OR_PREFIX [--content "NEW CONTENT"] [--tags "tag1,tag2"] [--project REF]
+gobby memory delete MEMORY_ID_OR_PREFIX [--project REF]
+gobby memory stats [--project REF]
 ```
 
-| Flag | Logic | Description |
-| ---- | ----- | ----------- |
-| `--tags-all` | AND | Memory must have ALL specified tags |
-| `--tags-any` | OR | Memory must have at least ONE of the tags |
-| `--tags-none` | NOT | Memory must have NONE of the specified tags |
+Memory references can be full UUIDs or unambiguous prefixes.
 
-### Managing Memories
+### Markdown Export
 
 ```bash
-# Show details of a specific memory
-gobby memory show MEMORY_ID
-
-# Update an existing memory
-gobby memory update MEMORY_ID --importance 0.9 --tags "updated,important"
-
-# Delete a memory
-gobby memory delete MEMORY_ID
-
-# Export memories as markdown
-gobby memory export [--output FILE]
-
-# Get statistics
-gobby memory stats
+gobby memory export [--project REF] [--output FILE] [--no-metadata] [--no-stats]
 ```
 
-### Syncing to Git
+This writes a human-readable Markdown report. It is separate from the JSONL
+backup path.
+
+### Backup and Restore
 
 ```bash
-# Export memories to .gobby/memories.jsonl
-gobby memory sync --export
-
-# Import memories from .gobby/memories.jsonl
-gobby memory sync --import
-
-# Full sync (import then export)
-gobby memory sync
+gobby memory backup [--output PATH] [--quiet]
+gobby memory restore [--input PATH] [--quiet]
 ```
+
+The default JSONL path is `.gobby/memories.jsonl`. Backup is a filesystem
+export for disaster recovery or migration. SQLite remains the source of truth.
+
+### Maintenance
+
+```bash
+gobby memory dedupe [--dry-run]
+gobby memory fix-null-project [--dry-run]
+gobby memory reindex-embeddings
+gobby memory reconcile [--dry-run]
+gobby memory rebuild-crossrefs [--project REF]
+gobby memory clear-graph [--project REF] [--yes]
+gobby memory rebuild-graph [--project REF] [--wait] [--timeout SECONDS]
+gobby memory invalidate [--project REF] [--yes]
+```
+
+Daemon-backed commands require the Gobby daemon because they call HTTP routes
+for vector, graph, and index maintenance.
 
 ## MCP Tools
 
-Access via `call_tool(server_name="gobby-memory", ...)`:
+Access memory tools through the `gobby-memory` server. Use `get_tool_schema`
+for the authoritative signature before calling a tool.
 
-### create_memory
+| Tool | Purpose |
+| --- | --- |
+| `create_memory` | Store a memory. Accepts `content`, optional `memory_type`, `tags`, and `session_id`. Returns similar memories to help catch duplicates. |
+| `search_memories` | Search project-scoped memories with `query`, `limit`, `min_score`, and tag filters. |
+| `list_memories` | List project-scoped memories with optional `memory_type`, `limit`, and tag filters. |
+| `get_memory` | Read one memory by ID. |
+| `update_memory` | Update content or tags for one memory. |
+| `delete_memory` | Delete one memory by ID. |
+| `get_related_memories` | Return cross-reference neighbors for one memory. |
+| `memory_stats` | Return counts and summary stats. |
+| `remember_with_image` | Store an image-derived memory using the configured LLM service. |
+| `remember_screenshot` | Store a base64 screenshot-derived memory. |
+| `search_knowledge_graph` | Search extracted Neo4j memory entities. |
+| `rebuild_crossrefs` | Rebuild memory-to-memory cross-reference edges. |
+| `rebuild_knowledge_graph` | Extract entities and relationships into Neo4j. |
+| `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
+| `sync_import` | Import `.gobby/memories.jsonl` into SQLite. |
+| `sync_export` | Export project memories from SQLite to `.gobby/memories.jsonl`. |
+| `audit_memories` | Report stale, duplicate, code-derivable, and orphaned memory candidates. |
+| `cleanup_memories` | Delete or dry-run cleanup of problematic memories. |
+| `bootstrap_session_title` | System lifecycle tool for heuristic session titles. |
+| `build_turn_and_digest` | System lifecycle tool for turn records and session digest updates. |
 
-Store a new memory:
+### Common Calls
 
 ```python
-call_tool(server_name="gobby-memory", tool_name="create_memory", arguments={
-    "content": "This project uses ESLint with Prettier",
-    "memory_type": "fact",
-    "importance": 0.7,
-    "tags": ["tooling", "linting"]
-})
-```
-
-### search_memories
-
-Retrieve memories with optional filtering:
-
-```python
-# Semantic search
-call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
-    "query": "testing setup"
-})
-
-# With filters
-call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
+call_tool(server_name="gobby-memory", tool_name="list_memories", arguments={
     "memory_type": "preference",
-    "min_importance": 0.5,
-    "limit": 10
-})
-
-# With tag filtering (AND/OR/NOT logic)
-call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
-    "query": "API design",
-    "tags_all": ["backend", "api"],     # Must have ALL these tags
-    "tags_any": ["rest", "graphql"],    # Must have at least ONE
-    "tags_none": ["deprecated"]         # Must not have any of these
+    "limit": 20,
+    "tags_none": ["stale"]
 })
 ```
-
-### list_memories
-
-List all memories with filtering:
-
-```python
-call_tool(server_name="gobby-memory", tool_name="list_memories", arguments={
-    "memory_type": "fact",
-    "limit": 20
-})
-
-# With tag filtering
-call_tool(server_name="gobby-memory", tool_name="list_memories", arguments={
-    "tags_any": ["architecture", "design-decision"],
-    "min_importance": 0.6
-})
-```
-
-### get_memory
-
-Get full details of a specific memory:
-
-```python
-call_tool(server_name="gobby-memory", tool_name="get_memory", arguments={
-    "memory_id": "mm-abc123"
-})
-```
-
-### update_memory
-
-Update an existing memory:
 
 ```python
 call_tool(server_name="gobby-memory", tool_name="update_memory", arguments={
     "memory_id": "mm-abc123",
-    "importance": 0.9,
-    "tags": ["updated", "important"]
+    "content": "Use task-linked commits for Gobby work.",
+    "tags": ["workflow", "commits"]
 })
 ```
 
-### delete_memory
-
-Delete a memory:
-
 ```python
-call_tool(server_name="gobby-memory", tool_name="delete_memory", arguments={
-    "memory_id": "mm-abc123"
+call_tool(server_name="gobby-memory", tool_name="audit_memories", arguments={
+    "categories": ["stale", "duplicates"]
 })
 ```
 
-### memory_stats
-
-Get memory statistics:
-
-```python
-call_tool(server_name="gobby-memory", tool_name="memory_stats", arguments={})
-# Returns: count by type, average importance, total count
-```
-
-### get_related_memories
-
-Get memories related via cross-references:
+`audit_memories` does not take `dry_run`; it is always report-only. Use
+`cleanup_memories` with `dry_run=true` when you want cleanup diagnostics through
+the cleanup tool.
 
 ```python
-call_tool(server_name="gobby-memory", tool_name="get_related_memories", arguments={
-    "memory_id": "mm-abc123"
+call_tool(server_name="gobby-memory", tool_name="cleanup_memories", arguments={
+    "dry_run": True,
+    "categories": ["stale", "duplicates", "code_derivable", "orphaned"]
 })
 ```
 
-### remember_with_image
+## HTTP Routes
 
-Create a memory from an image (uses LLM to describe):
+The daemon exposes memory routes under `/api/memories`.
 
-```python
-call_tool(server_name="gobby-memory", tool_name="remember_with_image", arguments={
-    "image_path": "/path/to/screenshot.png",
-    "memory_type": "context",
-    "importance": 0.7
-})
-```
-
-### remember_screenshot
-
-Create a memory from raw screenshot bytes (base64 encoded):
-
-```python
-call_tool(server_name="gobby-memory", tool_name="remember_screenshot", arguments={
-    "image_data": "<base64_encoded_bytes>",
-    "memory_type": "context"
-})
-```
-
-### export_memory_graph
-
-Export memories as an interactive HTML knowledge graph:
-
-```python
-call_tool(server_name="gobby-memory", tool_name="export_memory_graph", arguments={
-    "output_path": "/path/to/graph.html"
-})
-```
+| Method and route | Purpose |
+| --- | --- |
+| `GET /api/memories` | List memories with `project_id`, `memory_type`, `limit`, and `offset`. |
+| `POST /api/memories` | Create a memory from `content`, `memory_type`, `project_id`, `source_type`, `source_session_id`, and `tags`. |
+| `GET /api/memories/search` | Search memories with required query parameter `q`, plus `project_id` and `limit`. |
+| `GET /api/memories/stats` | Return memory counts, optionally scoped by `project_id`. |
+| `GET /api/memories/{memory_id}` | Read one memory, optionally scoped by `project_id`. |
+| `PUT /api/memories/{memory_id}` | Update memory `content` and/or `tags`. |
+| `DELETE /api/memories/{memory_id}` | Delete one memory. |
+| `GET /api/memories/graph` | Return recent memories and cross-reference edges for graph views. |
+| `GET /api/memories/graph/entities` | Search extracted knowledge-graph entities. |
+| `GET /api/memories/graph/entities/{entity_key}/neighbors` | Return entity neighbors. |
+| `POST /api/memories/crossrefs/rebuild` | Rebuild memory cross-references. |
+| `POST /api/memories/graph/clear` | Clear the Neo4j memory graph projection. |
+| `POST /api/memories/graph/rebuild` | Rebuild the knowledge graph, optionally in the background. |
+| `GET /api/memories/graph/rebuild/status` | Inspect background rebuild status. |
+| `POST /api/memories/embeddings/reindex` | Regenerate embedding vectors. |
+| `POST /api/memories/reconcile` | Reconcile Qdrant and Neo4j with SQLite. |
+| `POST /api/memories/invalidate` | Clear secondary indices and start a background rebuild. |
 
 ## Architecture
 
-### Storage Model
+SQLite in `~/.gobby/gobby-hub.db` is the source of truth. The default path can
+move when `GOBBY_HOME` or bootstrap `database_path` is configured.
 
-SQLite is always the source of truth for memories. All memories are stored locally in `~/.gobby/gobby-hub.db` via the `LocalMemoryManager`. The `StorageAdapter` wraps this with an async `MemoryBackendProtocol` interface for consistent CRUD operations.
-
-### Operating Modes
-
-Gobby's memory system operates in one of two modes:
-
-**Standalone mode** (default):
-- SQLite storage + local search (TF-IDF, embeddings, or hybrid)
-- Search powered by `SearchCoordinator` → `UnifiedSearcher`
-- Zero external dependencies for TF-IDF; embedding modes require an API key (OpenAI, etc.)
-- Works out of the box with no additional setup
-
-### Search Pipeline
-
-```
-Query → SearchCoordinator
-         ├─ tfidf/text modes → sync SearchBackend (TF-IDF or substring)
-         ├─ auto/embedding/hybrid → UnifiedSearcher (async)
-         │    ├─ TF-IDF scoring
-         │    ├─ Embedding similarity (cosine)
-         │    └─ Hybrid: weighted combination
-         └─ Fallback → text search (on any error)
+```mermaid
+flowchart LR
+    Agent[Agent or CLI] --> MCP[gobby-memory MCP]
+    Agent --> CLI[gobby memory CLI]
+    MCP --> Manager[MemoryManager]
+    CLI --> Manager
+    HTTP[/api/memories] --> Manager
+    Manager --> SQLite[(SQLite hub DB)]
+    Manager --> FTS[SQLite FTS5]
+    Manager --> Qdrant[Qdrant vectors]
+    Manager --> Neo4j[Neo4j knowledge graph]
+    Manager --> JSONL[.gobby/memories.jsonl backup]
 ```
 
-## Search Modes
+`MemoryManager` coordinates storage, FTS search, vector search, cross-references,
+image ingestion, cleanup, and the optional knowledge graph. `StorageAdapter`
+provides the async backend interface over the local SQLite storage layer.
 
-The `search_backend` config controls how memories are recalled. Each mode trades off between accuracy and dependency requirements.
+### Search
 
-| Mode | Description | Requirements |
-| ---- | ----------- | ------------ |
-| `tfidf` | TF-IDF scoring — fast, local, no API calls | None |
-| `text` | Simple substring matching — fastest, least accurate | None |
-| `embedding` | Semantic search via embeddings — most accurate | Embedding API key |
-| `auto` | Tries embeddings first, falls back to TF-IDF | None (degrades gracefully) |
-| `hybrid` | Weighted combination of TF-IDF + embedding scores | Embedding API key |
+Search uses the best available local infrastructure:
 
-### Choosing a Search Mode
+1. With Qdrant and embeddings configured, the query is embedded and matched
+   against memory vectors.
+2. If Neo4j graph search is available, graph matches join vector and FTS results
+   through reciprocal-rank fusion.
+3. FTS5 keyword search participates when semantic search is available and is the
+   fallback when vectors are unavailable.
+4. Result metadata can include `similarity`, `search_via`, `ranking_score`,
+   `raw_semantic_score`, `temporal_decay_factor`, and `ranking_mode`.
 
-- **Starting out?** Use `auto` (the default). It tries embeddings if an API key is available, otherwise falls back to TF-IDF.
-- **No API key / air-gapped?** Use `tfidf` for zero-dependency local search.
-- **Best recall quality?** Use `hybrid` — combines semantic understanding with keyword matching.
-- **Minimal latency?** Use `tfidf` or `text` to avoid embedding API calls.
+`search_memories` supports an explicit `min_score` threshold. The automatic
+memory-recall rule currently uses `limit: 2` and `min_score: 0.7`.
 
-### Embedding Providers
+### Knowledge Graph
 
-Embedding generation uses LiteLLM under the hood, supporting multiple providers:
-
-```yaml
-# OpenAI (default)
-memory:
-  search_backend: auto
-  embedding_model: text-embedding-3-small
-
-# OpenAI large model (higher quality, slower)
-memory:
-  search_backend: hybrid
-  embedding_model: text-embedding-3-large
-
-# Local via Ollama (no API key needed)
-memory:
-  search_backend: embedding
-  embedding_model: ollama/nomic-embed-text
-```
-
-### Hybrid Search Weights
-
-In `hybrid` mode (and the hybrid component of `auto`), you can tune the balance between TF-IDF keyword matching and semantic embedding similarity:
-
-```yaml
-memory:
-  search_backend: hybrid
-  embedding_weight: 0.6    # Weight for semantic similarity (0.0-1.0)
-  tfidf_weight: 0.4        # Weight for keyword matching (0.0-1.0)
-```
-
-Higher `embedding_weight` favors conceptual matches ("authentication" finds "login flow"). Higher `tfidf_weight` favors exact keyword overlap.
+The knowledge graph extracts entities and relationships from memories into
+Neo4j. It is optional and depends on an LLM service, embeddings, a vector store,
+and Neo4j. Use it for relationship exploration, graph visualization, and
+entity-oriented recall. SQLite memories remain authoritative.
 
 ## Configuration
 
-All memory settings live under `memory:` in `~/.gobby/config.yaml`:
+Memory-specific settings live under `memory:`. Shared vector and graph
+connection settings live under `databases:` and shared embedding settings live
+under `embeddings:`.
 
 ```yaml
 memory:
-  enabled: true                     # Enable memory system
-  backend: local                    # Storage backend: 'local' (SQLite) or 'null' (testing)
+  enabled: true
+  backend: local
+  auto_crossref: false
+  crossref_threshold: 0.3
+  crossref_max_links: 5
+  access_debounce_seconds: 60
+  temporal_decay_half_life_days: 30.0
+  min_recall_score: 0.6
+  code_link_min_score: 0.82
+  kg:
+    enabled: true
+    model: haiku
+  stale_audit:
+    enabled: true
+    model: haiku
+    prompt_path: memory/stale_audit
+    max_tokens: 4096
 
-  # Search
-  search_backend: auto              # tfidf | text | embedding | auto | hybrid
-  embedding_model: text-embedding-3-small  # LiteLLM model for embeddings
-  embedding_weight: 0.6             # Hybrid: embedding similarity weight
-  tfidf_weight: 0.4                 # Hybrid: keyword matching weight
+embeddings:
+  model: nomic-embed-text
+  dim: 768
+  api_base: null
+  api_key: null
 
-  # Importance & Decay
-  importance_threshold: 0.7         # Minimum importance for memory injection
-  decay_enabled: true               # Enable importance decay over time
-  decay_rate: 0.05                  # Importance decay rate per month
-  decay_floor: 0.1                  # Never decay below this importance
-
-  # Cross-references
-  auto_crossref: false              # Auto-link similar memories
-  crossref_threshold: 0.3           # Minimum similarity for cross-references
-  crossref_max_links: 5             # Max cross-references per memory
-
-  # Access tracking
-  access_debounce_seconds: 60       # Min seconds between access stat updates
+databases:
+  qdrant:
+    url: http://localhost:6333
+    port: 6333
+    collection_prefix: code_symbols_
+  neo4j:
+    url: http://localhost:8474
+    auth: ${NEO4J_AUTH:-}
+    database: neo4j
+    graph_search: true
+    graph_min_score: 0.5
+    rrf_k: 60
 
 memory_sync:
-  enabled: true                     # Enable filesystem backup
-  export_debounce: 5.0              # Seconds to wait before export
-  export_path: .gobby/memories.jsonl  # Backup file path
-```
-
-### Environment Variable Expansion
-
-Config values support `${VAR}` syntax for environment variable expansion at load time:
-
-- `${VAR}` — replaced with the value of `VAR`, or left unchanged if unset
-- `${VAR:-default}` — replaced with `VAR`'s value, or `default` if unset/empty
-
-This is useful for API keys:
-
-### Example Configurations
-
-**Standalone with TF-IDF only** (zero dependencies):
-
-```yaml
-memory:
   enabled: true
-  search_backend: tfidf
+  export_debounce: 5.0
+  export_path: .gobby/memories.jsonl
 ```
 
-**Standalone with OpenAI embeddings**:
+`memory_sync` is retained as the configuration key, but the implementation is a
+backup/export manager. Treat `.gobby/memories.jsonl` as a backup and migration
+artifact, not a live bidirectional source of truth.
 
-```yaml
-memory:
-  enabled: true
-  search_backend: auto              # Falls back to TF-IDF if API unavailable
-  embedding_model: text-embedding-3-small
+## Lifecycle Rules
+
+Memory lifecycle automation is installed as rules against semantic workflow
+events.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant RuleEngine
+    participant Memory as gobby-memory
+    participant Agent
+
+    User->>RuleEngine: turn_start(prompt)
+    RuleEngine->>Memory: bootstrap_session_title
+    RuleEngine->>Memory: search_memories(limit=2, min_score=0.7)
+    RuleEngine-->>Agent: inject <project-memory>
+    RuleEngine-->>Agent: one-time memory capture nudge
+    Agent-->>User: response
+    RuleEngine->>Memory: build_turn_and_digest on turn_end
 ```
 
-**Standalone with local Ollama** (no API key needed):
+Current bundled memory rules:
 
-```yaml
-memory:
-  enabled: true
-  search_backend: embedding
-  embedding_model: ollama/nomic-embed-text
-```
+| Rule | Event | Behavior |
+| --- | --- | --- |
+| `bootstrap-session-title-on-prompt` | `turn_start` | Sets a heuristic title before the first completed turn. |
+| `memory-recall-on-prompt` | `turn_start` | Searches relevant memories and injects a `<project-memory>` block. |
+| `memory-capture-nudge` | `turn_start` | Reminds the agent once per session to save durable facts or preferences. |
+| `digest-on-response` | `turn_end` | Builds a turn record and appends to the session digest in the background. |
+| `digest-on-plan-turn-end` | `after_tool` | Builds a digest when plan mode ends through supported plan tools. |
+| `require-memory-review-before-status` | `before_tool` | Blocks close/review transitions after edits until memory review is complete. |
+| `clear-memory-review-on-create` | `before_tool` | Marks memory review complete when `create_memory` is called. |
+| `reset-memory-tracking-on-start` | `session_start` | Clears injected-memory tracking after clear, compact, or selected resume events. |
 
-**Hybrid search** (best quality):
+Author new lifecycle rules against semantic events such as `turn_start` and
+`turn_end`. Raw provider/runtime hook names are transport details.
 
-```yaml
-memory:
-  enabled: true
-  search_backend: hybrid
-  embedding_model: text-embedding-3-small
-  embedding_weight: 0.6
-  tfidf_weight: 0.4
-```
+## Automatic Injection
 
-## Automatic Memory Injection
-
-Gobby automatically injects relevant memories at session start via the `memory-lifecycle.yaml` workflow.
-
-### How Injection Works
-
-1. On `session-start`, the workflow triggers `memory_recall_relevant`
-2. Memories are retrieved based on project context and importance
-3. Formatted as `<project-memory>` block and injected into agent context
-
-### What Gets Injected
+When the prompt is long enough, `memory-recall-on-prompt` calls
+`search_memories` through the MCP proxy and injects the result:
 
 ```markdown
 <project-memory>
-## Preferences
-- User prefers tabs over spaces
-- Always use TypeScript strict mode
-
-## Facts
-- This project uses PostgreSQL with Prisma ORM
-- Main entry point is src/index.ts
-
-## Patterns
-- API routes follow /api/v1/{resource} convention
+- Use task-linked commits for Gobby work. (score: 0.8123, via: semantic)
+- Markdown guide line count is not subject to the source-file monolith rule.
 </project-memory>
 ```
 
-## Git Synchronization
+Injected memory IDs are tracked in the `injected_memory_ids` session variable so
+the same memory is not repeatedly injected in one session. Context reset rules
+clear that tracking after compaction or selected resumes.
 
-Memories can be synced to `.gobby/memories.jsonl` for version control and team sharing.
+## Backup Format
 
-### File Format
+`.gobby/memories.jsonl` stores one JSON object per line. The backup manager
+deduplicates by memory ID and updated timestamp during import/export.
 
-{"id":"mm-abc123","memory_type":"fact","content":"Uses PostgreSQL","importance":0.8,"tags":["database"]}
-{"id":"mm-def456","memory_type":"preference","content":"Prefers functional style","importance":0.6,"tags":[]}
-
-### Automatic Sync
-
-Configure automatic sync in `~/.gobby/config.yaml`:
-
-```yaml
-memory_sync:
-  enabled: true              # Enable filesystem backup
-  export_debounce: 5.0       # Seconds to wait before export
-  export_path: .gobby/memories.jsonl  # Relative to project root or absolute
+```jsonl
+{"id":"mm-abc123","memory_type":"fact","content":"Use uv for local development","tags":["tooling"],"project_id":"..."}
+{"id":"mm-def456","memory_type":"preference","content":"Prefer focused validation over full suite runs","tags":["testing"]}
 ```
 
-## Cross-CLI Memory Sharing
+Use `gobby memory backup` or MCP `sync_export` to write the file. Use
+`gobby memory restore` or MCP `sync_import` to import it.
 
-Memories work seamlessly across Claude Code, Gemini CLI, and Codex CLI:
+## Maintenance Checklist
 
-### How Sharing Works
-
-1. **Unified Storage**: All memories stored in `~/.gobby/gobby-hub.db`
-2. **Project Binding**: Memories linked to projects via `.gobby/project.json`
-3. **Session Source Tracking**: Each memory tracks which CLI created it
-
-### CLI-Specific Notes
-
-| CLI | Memory Support | Notes |
-| --- | -------------- | ----- |
-| Claude Code | Full | All memory operations supported |
-| Gemini CLI | Full | Requires PR #9070 for hooks |
-| Codex CLI | Limited | Read-only via MCP tools |
-
-## Workflow Actions
-
-Use memory in workflow YAML files. See example workflow:
-
-- `memory-aware-dev.yaml` - Development workflow with memory-driven context awareness
-
-### memory_inject
-
-Inject relevant project memories into context:
-
-```yaml
-on_session_start:
-  - action: memory_inject
-    min_importance: 0.3
-    description: "Load project context from memories"
-```
-
-### memory_sync_import
-
-Import memories from `.gobby/memories.jsonl`:
-
-```yaml
-on_session_start:
-  - action: memory_sync_import
-    description: "Import any new memories from filesystem"
-```
-
-### memory_sync_export
-
-Export memories to `.gobby/memories.jsonl` for git sync:
-
-```yaml
-on_session_end:
-  - action: memory_sync_export
-    description: "Export memories to filesystem"
-```
-
-### Example: Memory-Aware Development Workflow
-
-```yaml
-name: memory-aware-dev
-description: "Development workflow with memory-driven context"
-
-phases:
-  - name: understand
-    on_enter:
-      - action: memory_inject
-        min_importance: 0.3
-      - action: inject_message
-        content: |
-          Review the project memories above.
-          Note new patterns for memory storage.
-
-triggers:
-  on_session_start:
-    - action: memory_sync_import
-
-  on_session_end:
-    - action: memory_sync_export
-```
-
-## Best Practices
-
-### Do
-
-- Use high importance (0.8+) for critical project facts
-- Store preferences early to establish coding style
-- Use semantic descriptions for better recall
-- Periodically review and clean up low-value memories
-- Export memories to git for team sharing
-
-### Don't
-
-- Store sensitive data (API keys, passwords) in memories
-- Create duplicate memories for the same fact
-- Use memories for temporary task tracking (use gobby-tasks instead)
-- Set all memories to high importance (dilutes signal)
+- Search before creating a memory to avoid duplicates.
+- Delete stale memories when you discover them.
+- Use `audit_memories` for a report-only hygiene pass.
+- Use `cleanup_memories` with `dry_run=true` before deletion.
+- Rebuild cross-references after large imports or cleanup.
+- Reindex embeddings after changing embedding providers or models.
+- Rebuild or clear the knowledge graph when entity extraction changes.
+- Reconcile stores when Qdrant or Neo4j may contain orphaned records.
 
 ## Troubleshooting
 
-### Memories not being recalled
+### Memories are not injected
 
-1. Check importance threshold: `gobby memory list --min-importance 0`
-2. Verify project binding: memories may be in different project
-3. Check if memory sync is enabled: `gobby memory sync --import`
+Check that memory is enabled, the prompt has enough content to trigger recall,
+and the relevant memories are in the current project scope. Then search manually:
 
-### Memory injection not working
+```python
+call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
+    "query": "the missing context",
+    "limit": 10,
+    "min_score": 0.0
+})
+```
 
-1. Verify daemon is running: `gobby status`
-2. Check workflow is loaded: look for `memory-lifecycle.yaml`
-3. Review config: ensure `memory.enabled: true`
+### Search quality is poor
 
-### Sync conflicts
+Run a tag-filtered search to confirm the memory exists, then verify embeddings
+and Qdrant are available. Without embeddings, Gobby falls back to FTS5 keyword
+search.
+
+```bash
+gobby memory recall "query words" --tags-any "architecture,workflow"
+gobby memory reindex-embeddings
+```
+
+### Backup file is missing
+
+Run an explicit backup:
+
+```bash
+gobby memory backup
+```
+
+If the file exists but restored memories do not appear, check project scope and
+run `gobby memory restore --input .gobby/memories.jsonl`.
+
+### Graph views are empty
+
+The knowledge graph is optional. Verify Neo4j, embeddings, and an LLM provider
+are configured, then rebuild:
+
+```bash
+gobby memory rebuild-graph --wait
+```
 
 ## File Locations
 
 | Path | Description |
-| ---- | ----------- |
-| `~/.gobby/gobby-hub.db` | SQLite database with memories table |
-| `.gobby/memories.jsonl` | Git-synced memory export |
-| `.gobby/memories_meta.json` | Sync metadata (checksums, timestamps) |
-| `~/.gobby/config.yaml` | Memory configuration |
+| --- | --- |
+| `~/.gobby/gobby-hub.db` | Default SQLite hub database. |
+| `~/.gobby/bootstrap.yaml` | Bootstrap settings, including `database_path`. |
+| `.gobby/memories.jsonl` | JSONL memory backup/export file. |
+| `.gobby/resources/` | Screenshot/image resources created by multimodal memory tools. |
+| `src/gobby/memory/` | Memory manager, search, graph, indexing, cleanup, and ingestion code. |
+| `src/gobby/mcp_proxy/tools/memory.py` | `gobby-memory` MCP tool definitions. |
+| `src/gobby/cli/memory.py` | CLI command implementation. |
+| `src/gobby/servers/routes/memory.py` | HTTP memory routes. |
+| `src/gobby/install/shared/workflows/rules/memory-lifecycle/` | Bundled memory lifecycle rules. |
 
 ## Related Documentation
 
-- [Memory V4 Plan](../plans/memory-v4.md) - Embeddings integration plan
-- [Task Tracking](tasks.md) - Task tracking system
+- [Tasks](./tasks.md) - Track actionable work instead of storing it as memory.
+- [Sessions](./sessions.md) - Session transcripts, summaries, and handoffs.
+- [MCP Tools](./mcp-tools.md) - Progressive discovery and internal MCP tool usage.
+- [Workflow Rules](./workflow-rules.md) - Semantic lifecycle events and rule effects.
+
+_Last verified: 2026-05-07_
