@@ -8,6 +8,11 @@ vi.mock("../useWebSocketEvent", () => ({
 }));
 
 import { useSessionCatalog } from "../useSessionCatalog";
+import { useWebSocketEvent } from "../useWebSocketEvent";
+import {
+  defaultSessionsFilters,
+  matchesSessionsFilters,
+} from "../../components/activity/sessionsFilters";
 
 let mockFetch: MockFetchInstance;
 
@@ -240,6 +245,64 @@ describe("useSessionCatalog", () => {
     expect(result.current.sessions).toHaveLength(2);
     expect(result.current.hasMore).toBe(false);
     expect(callCount).toBe(2);
+  });
+
+  it("session_event with event=session_expired patches the catalog and Live filter drops the row", async () => {
+    const mockedUseWS = vi.mocked(useWebSocketEvent);
+    mockedUseWS.mockClear();
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const before = result.current.sessions.find((s) => s.id === "sess-1");
+    expect(before?.status).toBe("active");
+
+    const liveFilter = defaultSessionsFilters();
+    const now = new Date("2026-03-01T13:00:00Z");
+    expect(matchesSessionsFilters(before!, liveFilter, now)).toBe(true);
+
+    const sessionEventRegistration = mockedUseWS.mock.calls.find(
+      ([type]) => type === "session_event",
+    );
+    expect(sessionEventRegistration).toBeDefined();
+    const sessionEventHandler = sessionEventRegistration![1];
+
+    act(() => {
+      sessionEventHandler({
+        type: "session_event",
+        event: "session_expired",
+        session_id: "sess-1",
+      });
+    });
+
+    const after = result.current.sessions.find((s) => s.id === "sess-1");
+    expect(after?.status).toBe("expired");
+    expect(matchesSessionsFilters(after!, liveFilter, now)).toBe(false);
+  });
+
+  it("session_event with event=session_deleted removes the session from the catalog", async () => {
+    const mockedUseWS = vi.mocked(useWebSocketEvent);
+    mockedUseWS.mockClear();
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.sessions.some((s) => s.id === "sess-2")).toBe(true);
+
+    const sessionEventRegistration = mockedUseWS.mock.calls.find(
+      ([type]) => type === "session_event",
+    );
+    const sessionEventHandler = sessionEventRegistration![1];
+
+    act(() => {
+      sessionEventHandler({
+        type: "session_event",
+        event: "session_deleted",
+        session_id: "sess-2",
+      });
+    });
+
+    expect(result.current.sessions.some((s) => s.id === "sess-2")).toBe(false);
   });
 
   it("renameSession restores the previous title when the API call fails", async () => {
