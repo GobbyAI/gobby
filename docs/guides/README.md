@@ -36,7 +36,7 @@ Documentation guides for using Gobby's features.
 
 | Guide | Description |
 |-------|-------------|
-| [mcp-tools.md](mcp-tools.md) | Complete MCP tool reference (145+ tools) |
+| [mcp-tools.md](mcp-tools.md) | MCP tool reference for the native proxy and 280+ Gobby tools |
 | [cli-commands.md](cli-commands.md) | Full CLI command reference |
 | [configuration.md](configuration.md) | Full configuration reference (config.yaml, project.json) |
 
@@ -106,4 +106,4 @@ Documentation guides for using Gobby's features.
 - **List ready work**: `gobby tasks ready` or `list_ready_tasks` MCP tool
 - **Spawn an agent**: `gobby agents spawn "Prompt"` or `spawn_agent` MCP tool
 - **Create memory**: `gobby memory create "Content"` or `create_memory` MCP tool
-- **Session handoff**: `gobby sessions create-handoff` or `create_handoff` MCP tool
+- **Session handoff**: `gobby sessions create-handoff` or `set_handoff_context` MCP tool

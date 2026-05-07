@@ -6,8 +6,8 @@ registries reached through `call_tool`.
 
 The exact live surface drifts as the daemon evolves. Treat
 `list_mcp_servers()` and `list_tools(server_name=...)` as the source of
-truth — this guide names every tool that exists today, but a fresh
-discovery call always wins on disagreement.
+truth. This guide names the stable authoring and operations surface, but a
+fresh discovery call always wins on disagreement.
 
 ## Tool Surfaces
 
@@ -24,17 +24,22 @@ own non-`gobby-*` names.
 
 ## Progressive Discovery Pattern
 
-For token efficiency, use the three-step workflow on demand. Schemas are
-cached per session — fetch once, call repeatedly.
+For token efficiency, use the progressive workflow on demand. Schemas are
+cached per session — fetch once, call repeatedly. Call each discovery step
+as its own native tool; do not try to invoke `list_tools` or
+`get_tool_schema` through `call_tool`.
 
 ```python
-# 1. Discover — lightweight metadata (~100 tokens/tool)
+# 1. Discover connected servers
+list_mcp_servers()
+
+# 2. Discover tools — lightweight metadata (~100 tokens/tool)
 list_tools(server_name="gobby-tasks")
 
-# 2. Inspect — full schema when needed (~500 tokens/tool)
+# 3. Inspect — full schema when needed (~500 tokens/tool)
 get_tool_schema(server_name="gobby-tasks", tool_name="create_task")
 
-# 3. Execute — run the tool
+# 4. Execute — run the tool
 call_tool("gobby-tasks", "create_task", {
     "title": "Fix bug",
     "category": "code",
@@ -150,7 +155,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | Registry | Purpose | Tools |
 | :--- | :--- | :--- |
 | `gobby-tasks` | Task lifecycle, dependencies, claim/close, search | 31 |
-| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 38 |
+| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 39 |
 | `gobby-plans` | Plan-Coverage Contract registry | 8 |
 | `gobby-sessions` | Session lifecycle, handoffs, transcripts, tmux integration | 18 |
 | `gobby-memory` | Persistent memory, embeddings, knowledge graph | 20 |
@@ -274,7 +279,7 @@ call_tool("gobby-tasks", "close_task", {
 
 ## Task Operations (`gobby-tasks-ops`)
 
-38 tools for expansion runs, sparse dispatch artifacts, stage transitions,
+39 tools for expansion runs, sparse dispatch artifacts, stage transitions,
 PR/merge delivery state, GitHub issues, and the shared `build_task` entry
 point.
 
@@ -317,6 +322,7 @@ point.
 
 | Tool | Description |
 | :--- | :--- |
+| `initialize_task_manifest` | Initialize a task lifecycle manifest from task-type defaults or explicit stages. |
 | `start_stage` | Transition a ready stage to in-progress. |
 | `complete_stage` | Complete a stage according to its review policy. |
 | `fail_stage` | Return a failed in-progress stage to ready or escalate after caps. |
@@ -356,10 +362,12 @@ point.
 | :--- | :--- |
 | `build_task` | Start lifecycle automation for a plan, epic, or leaf. The MCP entry to the same shared service used by CLI `gobby build` and HTTP `POST /api/build`. |
 
-`build_task` accepts a profile (`quick`, `review`, `full`,
-`default_unattended`, `full-unattended`, `default_yolo`, `full-yolo`,
-`auto`), an isolation mode, optional stage caps, and an optional explicit
-agent. See [orchestration.md](./orchestration.md) for the dispatch model.
+`build_task` requires `input_ref` and accepts the MCP-native automation
+options exposed by its schema: `quick`, `skip_stages`, `workspace_backend`
+(`worktree` or `clone`), `clone`, `no_merge`, `pr`, `stage`,
+`target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
+`max_retries`, and `project_id`. See [orchestration.md](./orchestration.md)
+for the dispatch model.
 
 ---
 
@@ -410,8 +418,8 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `capture_output` | Capture the last N lines of a session's tmux terminal output. |
 | `compact_self` | Trigger context compaction in the calling session via the appropriate slash command. |
 
-Session creation/handoff is now CLI-driven (`gobby sessions handoff`,
-`gobby sessions pickup`); the MCP surface focuses on context manipulation.
+Session handoff generation is CLI-driven (`gobby sessions create-handoff`);
+the MCP surface focuses on context manipulation.
 
 ### Example: Session Handoff
 
@@ -500,9 +508,11 @@ call_tool("gobby-memory", "search_memories", {
 
 ## Workflows, Rules, Pipelines, Agent Definitions (`gobby-workflows`)
 
-47 tools. The umbrella registry for declarative definitions and pipeline
-execution. Standalone rules, reusable variables, persona-capable agent
-definitions, generic workflows, and pipelines all live here.
+47 discoverable tools. The umbrella registry for declarative definitions
+and pipeline execution. Standalone rules, reusable variables,
+persona-capable agent definitions, generic workflows, and pipelines all
+live here. The table below lists the stable primary surface; older
+pipeline-run query compatibility entries may still appear in discovery.
 
 ### Workflow Definitions
 
@@ -571,10 +581,13 @@ definitions, generic workflows, and pipelines all live here.
 | `reject_pipeline` | Resolve a pipeline approval gate (reject). |
 | `cancel_pipeline` | Cancel a running pipeline execution and kill its agents. |
 | `get_pipeline_status` | Inspect a pipeline execution and its steps. |
-| `list_pipeline_executions` | List pipeline executions with filters. |
-| `search_pipeline_executions` | Text search across pipeline executions. |
 | `pipeline_eval` | Evaluate a structured data expression inside a running pipeline. |
 | `fail_pipeline` | Mark the current pipeline as failed from inside a run. |
+
+For broad pipeline-run discovery, use the CLI run-history surface:
+`gobby pipelines runs list`, `gobby pipelines runs show`, and
+pipeline-specific history commands. Use `get_pipeline_status` when you
+already have an `execution_id`.
 
 There is **no `wait_for_completion` MCP tool**. Start the run, persist its
 `execution_id` or `run_id`, and resume from the daemon's durable
@@ -644,6 +657,10 @@ registry is the runtime side.
 | `get_inter_session_messages` | Read message history. |
 
 The agent depth limit is 5; spawn requests beyond that are rejected.
+Rule authors should treat `turn_start` and `turn_end` as the semantic
+lifecycle events. Provider/runtime hooks such as `before_agent`,
+`after_agent`, and `stop` are transport details. Agent termination is a
+separate runtime transition and still requires `end_agent_run`.
 
 ### Example: Agent Spawning
 
