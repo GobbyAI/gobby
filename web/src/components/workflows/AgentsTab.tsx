@@ -1,85 +1,66 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import {
-  AGENT_DEF_BADGE_CHIP_CLS,
-  AGENT_DEF_BADGE_CHIP_LOCAL_CLS,
-  AGENT_DEF_BADGE_CLS,
-  AGENT_DEF_BADGE_DIM_CLS,
-  AGENT_DEF_BADGE_FILLED_CLS,
-  AGENT_DEF_BADGES_CLS,
-  AGENT_DEF_CARD_CLS,
-  AGENT_DEF_CARD_DELETED_CLS,
-  AGENT_DEF_CARD_FOOTER_PAD_CLS,
-  AGENT_DEF_DESC_CLS,
-  AGENT_DEF_HEADER_CLS,
-  AGENT_DEF_HEADER_TOP_CLS,
-  AGENT_DEF_IMPORT_RESULT_CLS,
-  AGENT_DEF_IMPORT_RESULT_ERR_CLS,
-  AGENT_DEF_IMPORT_RESULT_OK_CLS,
-  AGENT_DEF_NAME_CLS,
-  AGENT_DEF_NAME_DELETED_CLS,
-  AGENT_DEFS_TAB_CLS,
-} from '../agents/agents-styles'
-import {
-  WORKFLOWS_CONTENT_CLS,
-  WORKFLOWS_LOADING_CLS,
-  WORKFLOWS_EMPTY_CLS,
-  WORKFLOWS_GRID_CLS,
-  WORKFLOWS_CARD_TEMPLATE_CLS,
-  WORKFLOWS_CARD_TYPE_CLS,
-  WORKFLOWS_CARD_TYPE_VARIANT_CLS,
-  WORKFLOWS_CARD_BADGE_CLS,
-  WORKFLOWS_CARD_BADGE_SOURCE_CLS,
-  WORKFLOWS_CARD_BADGE_DRIFT_CLS,
-  WORKFLOWS_CARD_FOOTER_CLS,
-  WORKFLOWS_CARD_ACTIONS_CLS,
-  WORKFLOWS_ACTION_BTN_CLS,
-  WORKFLOWS_ACTION_BTN_DRIFT_CLS,
-  WORKFLOWS_ACTION_BTN_RESTORE_CLS,
-  WORKFLOWS_ACTION_ICON_CLS,
-  WORKFLOWS_ACTION_ICON_DANGER_CLS,
-} from './workflows-styles'
-import * as yaml from 'js-yaml'
+import { AGENT_DEFS_TAB_CLS } from '../agents/agents-styles'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { YamlEditorModal } from './WorkflowsPage'
 import { AgentEditForm } from '../agents/AgentEditForm'
 import type { AgentFormData } from '../agents/AgentEditForm'
 import type { WorkflowStep } from '../agents/AgentStepsEditor'
-import { getProviderColorVar } from '../shared/sourceTheme'
+import type { ProviderModelEntry } from '../../lib/providerModels'
+import { AgentDefinitionsGrid } from './AgentsTab.cards'
 import {
-  AUTO_REASONING_EFFORT,
-  fetchProviderModelCatalog,
-  type ProviderModelEntry,
-} from '../../lib/providerModels'
+  createAgentDefinition,
+  deleteAgentDefinition,
+  downloadAgentDefinition,
+  duplicateAgentDefinition,
+  importAgentDefinition,
+  installAgentFromTemplate,
+  moveAgentToGlobal,
+  moveAgentToProject,
+  restoreAgentDefinition,
+  restoreAgentFromTemplate,
+  saveSidebarYamlAgentDefinition,
+  saveYamlAgentDefinition,
+  updateAgentDefinition,
+} from './AgentsTab.actions'
 import {
-  type AgentDefInfo,
-  SOURCE_LABELS,
+  filterAgentDefinitions,
+  getAgentNames,
+  getAllTags,
+  getInstalledNames,
+  getProviders,
+  loadAgentDefinitions,
+  loadBranchStatus,
+  loadPipelineList,
+  loadProviderCatalog,
+} from './AgentsTab.data'
+import {
   DEFAULT_FORM,
-  agentDefToYaml,
-  getBaseUrl,
+  type AgentDefInfo,
+  type AgentsTabProps,
+  type RuleSelectors,
 } from './AgentsTab.types'
-import { getIsolationColorVar } from './isolationColors'
+import {
+  agentDefToYaml,
+  agentToFormData,
+  defaultSidebarYaml,
+  extractAgentEditWorkflowState,
+} from './AgentsTab.payloads'
 
-// =============================================================================
-// Component
-// =============================================================================
-
-interface AgentsTabProps {
-  searchText: string
-  sourceFilter: 'installed' | 'project' | 'templates' | 'deleted'
-  devMode: boolean
-  showCreateForm: boolean
-  onToggleCreateForm: (show: boolean) => void
-  refreshKey?: number
-  projectId?: string
-  hideGobby?: boolean
-  hideInstalled?: boolean
-  filterProvider: string
-  onProvidersChange: (providers: string[]) => void
-  tagFilter?: string | null
-  onTagsChange?: (tags: string[]) => void
-}
-
-export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, onToggleCreateForm, refreshKey = 0, projectId, hideGobby, hideInstalled, filterProvider, onProvidersChange, tagFilter, onTagsChange }: AgentsTabProps) {
+export function AgentsTab({
+  searchText,
+  sourceFilter,
+  devMode,
+  showCreateForm,
+  onToggleCreateForm,
+  refreshKey = 0,
+  projectId,
+  hideGobby,
+  hideInstalled,
+  filterProvider,
+  onProvidersChange,
+  tagFilter,
+  onTagsChange,
+}: AgentsTabProps) {
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [definitions, setDefinitions] = useState<AgentDefInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -88,60 +69,34 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
   const [importingName, setImportingName] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<{ name: string; ok: boolean } | null>(null)
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
-
-  // YAML editor state
   const [yamlAgent, setYamlAgent] = useState<AgentDefInfo | null>(null)
   const [yamlContent, setYamlContent] = useState('')
   const [yamlLoading] = useState(false)
+  const [createForm, setCreateForm] = useState<AgentFormData>({ ...DEFAULT_FORM })
+  const [branches, setBranches] = useState<string[]>([])
+  const [isGitProject, setIsGitProject] = useState(true)
+  const [editRules, setEditRules] = useState<string[]>([])
+  const [editRuleSelectors, setEditRuleSelectors] = useState<RuleSelectors | null>(null)
+  const [editVariables, setEditVariables] = useState<Record<string, unknown>>({})
+  const [editSkills, setEditSkills] = useState<string[]>([])
+  const [editSteps, setEditSteps] = useState<WorkflowStep[]>([])
+  const [editBlockedTools, setEditBlockedTools] = useState<string[]>([])
+  const [editBlockedMcpTools, setEditBlockedMcpTools] = useState<string[]>([])
+  const [sidebarView, setSidebarView] = useState<'form' | 'yaml'>('form')
+  const [sidebarYamlContent, setSidebarYamlContent] = useState('')
+  const [pipelineList, setPipelineList] = useState<{ id: string; name: string }[]>([])
+  const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([])
 
   const showToast = useCallback((text: string, type: 'success' | 'error') => {
     setToastMessage({ text, type })
     setTimeout(() => setToastMessage(null), 4000)
   }, [])
 
-  const [createForm, setCreateForm] = useState<AgentFormData>({ ...DEFAULT_FORM })
-
-  // Branch / git state for the edit form
-  const [branches, setBranches] = useState<string[]>([])
-  const [isGitProject, setIsGitProject] = useState(true)
-  const [editRules, setEditRules] = useState<string[]>([])
-  const [editRuleSelectors, setEditRuleSelectors] = useState<{ include: string[]; exclude: string[] } | null>(null)
-  const [editVariables, setEditVariables] = useState<Record<string, unknown>>({})
-  const [editSkills, setEditSkills] = useState<string[]>([])
-  const [editSteps, setEditSteps] = useState<WorkflowStep[]>([])
-  const [editBlockedTools, setEditBlockedTools] = useState<string[]>([])
-  const [editBlockedMcpTools, setEditBlockedMcpTools] = useState<string[]>([])
-
-  // Sidebar view state (form vs YAML)
-  const [sidebarView, setSidebarView] = useState<'form' | 'yaml'>('form')
-  const [sidebarYamlContent, setSidebarYamlContent] = useState('')
-
-  // Pipeline list for selector
-  const [pipelineList, setPipelineList] = useState<{ id: string; name: string }[]>([])
-
-  // Installed/project agent names for fallback dropdown (deduplicated, project wins, excludes current agent)
-  const agentNames = useMemo(() => {
-    const nameMap = new Map<string, string>()
-    for (const d of definitions) {
-      if (d.deleted_at) continue
-      if (d.source !== 'installed' && d.source !== 'project') continue
-      if (!nameMap.has(d.definition.name) || d.source === 'project') {
-        nameMap.set(d.definition.name, d.source)
-      }
-    }
-    const currentName = createForm.name
-    return Array.from(nameMap.keys()).filter(n => n !== currentName).sort()
-  }, [definitions, createForm.name])
-
   const fetchDefinitions = useCallback(async (includeDeleted = false) => {
     setLoading(true)
     try {
-      const params = includeDeleted ? '?include_deleted=true' : ''
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions${params}`)
-      const data = await res.json()
-      if (data.status === 'success') {
-        setDefinitions(data.definitions)
-      }
+      const nextDefinitions = await loadAgentDefinitions(includeDeleted)
+      if (nextDefinitions) setDefinitions(nextDefinitions)
     } catch (e) {
       console.error('Failed to fetch agent definitions:', e)
     } finally {
@@ -149,9 +104,10 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     }
   }, [])
 
-  useEffect(() => { fetchDefinitions(true) }, [fetchDefinitions])
+  useEffect(() => {
+    fetchDefinitions(true)
+  }, [fetchDefinitions])
 
-  // Re-fetch when refreshKey changes (skip initial render)
   const initialRef = useRef(true)
   useEffect(() => {
     if (initialRef.current) {
@@ -161,7 +117,6 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     fetchDefinitions(true)
   }, [refreshKey, fetchDefinitions])
 
-  // Clear editing state when form closes; reset form when opening for create
   useEffect(() => {
     if (!showCreateForm) {
       setEditingId(null)
@@ -178,294 +133,152 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       setEditBlockedMcpTools([])
       setSelectedAgent(null)
       setSidebarView('form')
-      setSidebarYamlContent(yaml.dump({
-        name: '', provider: 'inherit', mode: 'inherit',
-        base_branch: 'inherit', timeout: 0, max_turns: 0,
-      }, { lineWidth: 120, noRefs: true }))
+      setSidebarYamlContent(defaultSidebarYaml())
     }
   }, [showCreateForm, editingId])
 
-  // Fetch git branches and project status
   useEffect(() => {
-    const params = new URLSearchParams()
-    if (projectId) params.set('project_id', projectId)
-    Promise.allSettled([
-      fetch(`${getBaseUrl()}/api/source-control/branches?${params}`),
-      fetch(`${getBaseUrl()}/api/source-control/status?${params}`),
-    ]).then(([brRes, statusRes]) => {
-      if (brRes.status === 'fulfilled' && brRes.value.ok) {
-        brRes.value.json().then((data: { branches?: { name: string; is_remote: boolean }[] }) => {
-          setBranches((data.branches || []).filter(b => !b.is_remote).map(b => b.name))
-        })
-      }
-      if (statusRes.status === 'fulfilled' && statusRes.value.ok) {
-        statusRes.value.json().then((data: { repo_path?: string }) => {
-          setIsGitProject(!!data.repo_path)
-        })
-      }
+    loadBranchStatus(projectId).then((status) => {
+      if (status.branches) setBranches(status.branches)
+      if (status.isGitProject !== undefined) setIsGitProject(status.isGitProject)
     })
   }, [projectId])
 
-  const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([])
-
   useEffect(() => {
-    fetchProviderModelCatalog()
+    loadProviderCatalog()
       .then(setProviderCatalog)
-      .catch(e => console.error('Failed to fetch provider catalog:', e))
+      .catch((e) => console.error('Failed to fetch provider catalog:', e))
   }, [])
 
-  // Fetch pipeline list for selector
   useEffect(() => {
-    fetch(`${getBaseUrl()}/api/workflows?workflow_type=pipeline`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.workflows) {
-          setPipelineList(data.workflows
-            .filter((w: { deleted_at?: string | null }) => !w.deleted_at)
-            .map((w: { id: string; name: string }) => ({ id: w.id, name: w.name }))
-          )
-        }
-      })
+    loadPipelineList()
+      .then(setPipelineList)
       .catch(() => setPipelineList([]))
   }, [])
 
-  const installedNames = useMemo(() => {
-    const names = new Set<string>()
-    for (const d of definitions) {
-      if (d.source === 'installed' && !d.deleted_at) {
-        names.add(d.definition.name)
-      }
-    }
-    return names
-  }, [definitions])
-
-  const filtered = useMemo(() => definitions.filter(d => {
-    // Hide gobby-tagged items
-    if (hideGobby && d.tags && d.tags.includes('gobby')) return false
-    // Source filter (exclusive)
-    if (sourceFilter === 'installed') {
-      if (d.source === 'template' || d.source === 'project' || d.deleted_at) return false
-    } else if (sourceFilter === 'project') {
-      if (d.source !== 'project' || d.deleted_at) return false
-    } else if (sourceFilter === 'templates') {
-      if (d.source !== 'template' || d.deleted_at) return false
-    } else if (sourceFilter === 'deleted') {
-      if (!d.deleted_at) return false
-    }
-
-    if (hideInstalled && installedNames.has(d.definition.name)) return false
-    if (filterProvider !== 'all' && d.definition.provider !== filterProvider) return false
-    if (tagFilter && !(d.tags && d.tags.includes(tagFilter))) return false
-    if (searchText.trim()) {
-      const q = searchText.toLowerCase()
-      if (
-        !d.definition.name.toLowerCase().includes(q) &&
-        !(d.definition.description && d.definition.description.toLowerCase().includes(q)) &&
-        !(d.definition.role && d.definition.role.toLowerCase().includes(q)) &&
-        !d.definition.provider.toLowerCase().includes(q)
-      ) return false
-    }
-    return true
-  }), [definitions, installedNames, sourceFilter, filterProvider, searchText, hideGobby, hideInstalled, tagFilter])
-
-  const providers = useMemo(
-    () => [...new Set(definitions.map(d => d.definition.provider))].sort(),
-    [definitions]
+  const agentNames = useMemo(
+    () => getAgentNames(definitions, createForm.name),
+    [definitions, createForm.name],
   )
+  const installedNames = useMemo(() => getInstalledNames(definitions), [definitions])
+  const filtered = useMemo(
+    () => filterAgentDefinitions(definitions, installedNames, {
+      sourceFilter,
+      filterProvider,
+      searchText,
+      hideGobby,
+      hideInstalled,
+      tagFilter,
+    }),
+    [
+      definitions,
+      installedNames,
+      sourceFilter,
+      filterProvider,
+      searchText,
+      hideGobby,
+      hideInstalled,
+      tagFilter,
+    ],
+  )
+  const providers = useMemo(() => getProviders(definitions), [definitions])
+  const allTags = useMemo(() => getAllTags(definitions), [definitions])
 
   useEffect(() => {
     onProvidersChange(providers)
   }, [providers, onProvidersChange])
 
-  const allTags = useMemo(() => {
-    const tags = new Set<string>()
-    for (const d of definitions) {
-      if (d.tags) for (const t of d.tags) tags.add(t)
-    }
-    return [...tags].sort()
-  }, [definitions])
-
   useEffect(() => {
     onTagsChange?.(allTags)
   }, [allTags, onTagsChange])
 
-  const handleCreate = async () => {
-    try {
-      const body: Record<string, unknown> = {
-        name: createForm.name,
-        provider: createForm.provider,
-        surfaces: createForm.surfaces,
-        mode: createForm.mode,
-        isolation: createForm.isolation,
-        base_branch: createForm.base_branch,
-        timeout: createForm.timeout,
-        max_turns: createForm.max_turns,
-        reasoning_effort:
-          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_effort : null,
-        reasoning_required:
-          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_required : false,
-      }
-      if (createForm.description) body.description = createForm.description
-      if (createForm.role) body.role = createForm.role
-      if (createForm.goal) body.goal = createForm.goal
-      if (createForm.personality) body.personality = createForm.personality
-      if (createForm.instructions) body.instructions = createForm.instructions
-      if (createForm.model) body.model = createForm.model
-      if (createForm.fallback_agent) body.fallback_agent = createForm.fallback_agent
-      // Nest rules, rule_selectors, variables, pipeline under workflows
-      const workflows: Record<string, unknown> = {}
-      if (editRules.length > 0) workflows.rules = editRules
-      if (editRuleSelectors) workflows.rule_selectors = editRuleSelectors
-      if (Object.keys(editVariables).length > 0) workflows.variables = editVariables
-      if (createForm.pipeline) workflows.pipeline = createForm.pipeline
-      if (editSkills.length > 0) {
-        workflows.skill_selectors = { include: editSkills }
-      }
-      if (Object.keys(workflows).length > 0) body.workflows = workflows
-      if (editSteps.length > 0) body.steps = editSteps
-      body.blocked_tools = editBlockedTools
-      body.blocked_mcp_tools = editBlockedMcpTools
+  const mutationContext = useMemo(() => ({
+    form: createForm,
+    rules: editRules,
+    ruleSelectors: editRuleSelectors,
+    variables: editVariables,
+    skills: editSkills,
+    steps: editSteps,
+    blockedTools: editBlockedTools,
+    blockedMcpTools: editBlockedMcpTools,
+    fetchDefinitions,
+    showToast,
+    onToggleCreateForm,
+    setCreateForm,
+  }), [
+    createForm,
+    editRules,
+    editRuleSelectors,
+    editVariables,
+    editSkills,
+    editSteps,
+    editBlockedTools,
+    editBlockedMcpTools,
+    fetchDefinitions,
+    showToast,
+    onToggleCreateForm,
+  ])
 
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) {
-        onToggleCreateForm(false)
-        setCreateForm({ ...DEFAULT_FORM })
-        fetchDefinitions(true)
-        showToast(`Agent "${createForm.name}" created`, 'success')
-      } else {
-        showToast('Failed to create agent definition', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to create agent definition:', e)
-      showToast('Failed to create agent definition', 'error')
-    }
-  }
+  const handleCreate = useCallback(
+    () => createAgentDefinition(mutationContext),
+    [mutationContext],
+  )
 
-  const handleEdit = (item: AgentDefInfo) => {
-    const d = item.definition
-    setCreateForm({
-      name: d.name,
-      description: d.description || '',
-      surfaces: d.surfaces || ['spawn'],
-      role: d.role || '',
-      goal: d.goal || '',
-      personality: d.personality || '',
-      instructions: d.instructions || '',
-      provider: d.provider,
-      model: d.model || '',
-      reasoning_effort: d.reasoning_effort || AUTO_REASONING_EFFORT,
-      reasoning_required: !!d.reasoning_required,
-      fallback_agent: d.fallback_agent || '',
-      mode: d.mode,
-      isolation: d.isolation || 'inherit',
-      base_branch: d.base_branch,
-      timeout: d.timeout,
-      max_turns: d.max_turns,
-      pipeline: (d.workflows?.pipeline as string) || '',
-    })
+  const handleEdit = useCallback((item: AgentDefInfo) => {
+    setCreateForm(agentToFormData(item))
     setEditingId(item.db_id)
-    setEditSteps(((d as Record<string, unknown>).steps as WorkflowStep[]) || [])
-    setEditBlockedTools(((d as Record<string, unknown>).blocked_tools as string[]) || [])
-    setEditBlockedMcpTools(((d as Record<string, unknown>).blocked_mcp_tools as string[]) || [])
-    setEditRules((d.workflows?.rules as string[]) || [])
-    const rs = d.workflows?.rule_selectors as { include: string[]; exclude: string[] } | undefined
-    setEditRuleSelectors(rs || null)
-    setEditVariables((d.workflows?.variables as Record<string, unknown>) || {})
-    // Load from skill_selectors.include (preferred) or legacy skill_profile
-    const skillSelectors = d.workflows?.skill_selectors as { include?: string[]; exclude?: string[] } | undefined
-    if (skillSelectors?.include && skillSelectors.include.length > 0) {
-      setEditSkills(skillSelectors.include.filter(s => s !== '*'))
-    } else if (d.skill_profile) {
-      setEditSkills(Object.keys(d.skill_profile))
-    } else {
-      setEditSkills([])
-    }
+    const workflowState = extractAgentEditWorkflowState(item)
+    setEditSteps(workflowState.steps)
+    setEditBlockedTools(workflowState.blockedTools)
+    setEditBlockedMcpTools(workflowState.blockedMcpTools)
+    setEditRules(workflowState.rules)
+    setEditRuleSelectors(workflowState.ruleSelectors)
+    setEditVariables(workflowState.variables)
+    setEditSkills(workflowState.skills)
     setSelectedAgent(null)
     setSidebarView('form')
-    setSidebarYamlContent(agentDefToYaml(d))
+    setSidebarYamlContent(agentDefToYaml(item.definition))
     onToggleCreateForm(true)
-  }
+  }, [onToggleCreateForm])
 
-  const handleUpdate = async () => {
-    if (!editingId) return
-    try {
-      const body: Record<string, unknown> = {
-        name: createForm.name,
-        description: createForm.description || null,
-        surfaces: createForm.surfaces,
-        role: createForm.role || null,
-        goal: createForm.goal || null,
-        personality: createForm.personality || null,
-        instructions: createForm.instructions || null,
-        provider: createForm.provider,
-        model: createForm.model || null,
-        reasoning_effort:
-          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_effort : null,
-        reasoning_required:
-          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_required : false,
-        fallback_agent: createForm.fallback_agent || null,
-        mode: createForm.mode,
-        isolation: createForm.isolation,
-        base_branch: createForm.base_branch,
-        timeout: createForm.timeout,
-        max_turns: createForm.max_turns,
-      }
-      // Include full workflows state
-      const workflows: Record<string, unknown> = {}
-      if (createForm.pipeline) workflows.pipeline = createForm.pipeline
-      if (editRules.length > 0) workflows.rules = editRules
-      if (editRuleSelectors) workflows.rule_selectors = editRuleSelectors
-      if (Object.keys(editVariables).length > 0) workflows.variables = editVariables
-      if (editSkills.length > 0) {
-        workflows.skill_selectors = { include: editSkills }
-      }
-      if (Object.keys(workflows).length > 0) body.workflows = workflows
-      if (editSteps.length > 0) body.steps = editSteps
-      body.blocked_tools = editBlockedTools
-      body.blocked_mcp_tools = editBlockedMcpTools
-
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) {
-        onToggleCreateForm(false)
-        setEditingId(null)
-        setCreateForm({ ...DEFAULT_FORM })
-        fetchDefinitions(true)
-        // silent success — panel closes, grid refreshes
-      } else {
-        showToast('Failed to update agent definition', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to update agent definition:', e)
-      showToast('Failed to update agent definition', 'error')
-    }
-  }
+  const handleUpdate = useCallback(
+    () => updateAgentDefinition({ ...mutationContext, editingId, setEditingId }),
+    [mutationContext, editingId],
+  )
 
   const handleEditRulesChange = useCallback((newRules: string[]) => {
     setEditRules(newRules)
     if (editingId) {
-      setDefinitions(prev => prev.map(def =>
-        def.db_id === editingId
-          ? { ...def, definition: { ...def.definition, workflows: { ...def.definition.workflows, rules: newRules } } }
-          : def
+      setDefinitions((prev) => prev.map((definition) =>
+        definition.db_id === editingId
+          ? {
+            ...definition,
+            definition: {
+              ...definition.definition,
+              workflows: { ...definition.definition.workflows, rules: newRules },
+            },
+          }
+          : definition,
       ))
     }
   }, [editingId])
 
-  const handleEditRuleSelectorsChange = useCallback((newSelectors: { include: string[]; exclude: string[] }) => {
+  const handleEditRuleSelectorsChange = useCallback((newSelectors: RuleSelectors) => {
     setEditRuleSelectors(newSelectors)
     if (editingId) {
-      setDefinitions(prev => prev.map(def =>
-        def.db_id === editingId
-          ? { ...def, definition: { ...def.definition, workflows: { ...def.definition.workflows, rule_selectors: newSelectors } } }
-          : def
+      setDefinitions((prev) => prev.map((definition) =>
+        definition.db_id === editingId
+          ? {
+            ...definition,
+            definition: {
+              ...definition.definition,
+              workflows: {
+                ...definition.definition.workflows,
+                rule_selectors: newSelectors,
+              },
+            },
+          }
+          : definition,
       ))
     }
   }, [editingId])
@@ -473,290 +286,106 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
   const handleEditVariablesChange = useCallback((newVars: Record<string, unknown>) => {
     setEditVariables(newVars)
     if (editingId) {
-      setDefinitions(prev => prev.map(def =>
-        def.db_id === editingId
-          ? { ...def, definition: { ...def.definition, workflows: { ...def.definition.workflows, variables: newVars } } }
-          : def
+      setDefinitions((prev) => prev.map((definition) =>
+        definition.db_id === editingId
+          ? {
+            ...definition,
+            definition: {
+              ...definition.definition,
+              workflows: { ...definition.definition.workflows, variables: newVars },
+            },
+          }
+          : definition,
       ))
     }
   }, [editingId])
 
-  const handleDuplicate = useCallback(async (item: AgentDefInfo) => {
-    const newName = window.prompt('New agent name:', `${item.definition.name}-copy`)
-    if (!newName) return
-    const d = item.definition
-    const body: Record<string, unknown> = {
-      name: newName,
-      provider: d.provider,
-      surfaces: d.surfaces || ['spawn'],
-      mode: d.mode,
-      base_branch: d.base_branch,
-      timeout: d.timeout,
-      max_turns: d.max_turns,
-    }
-    if (d.description) body.description = d.description
-    if (d.role) body.role = d.role
-    if (d.goal) body.goal = d.goal
-    if (d.personality) body.personality = d.personality
-    if (d.instructions) body.instructions = d.instructions
-    if (d.model) body.model = d.model
-    if (d.reasoning_effort) body.reasoning_effort = d.reasoning_effort
-    if (d.reasoning_required !== undefined && d.reasoning_required !== null) {
-      body.reasoning_required = d.reasoning_required
-    }
-    if (d.fallback_agent) body.fallback_agent = d.fallback_agent
-    if (d.isolation) body.isolation = d.isolation
-    if (d.workflows) body.workflows = d.workflows
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) {
-        fetchDefinitions(true)
-        showToast(`Agent "${newName}" duplicated`, 'success')
-      } else {
-        showToast('Failed to duplicate agent definition', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to duplicate agent definition:', e)
-      showToast('Failed to duplicate agent definition', 'error')
-    }
-  }, [fetchDefinitions, showToast])
+  const handleDuplicate = useCallback(
+    (item: AgentDefInfo) => duplicateAgentDefinition(item, fetchDefinitions, showToast),
+    [fetchDefinitions, showToast],
+  )
 
-  const handleDelete = async (dbId: string) => {
-    if (!await confirm({ title: 'Delete agent definition?', confirmLabel: 'Delete', destructive: true })) return
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${dbId}`, {
-        method: 'DELETE',
-      })
-      if (res.ok) {
-        fetchDefinitions(true)
-        showToast('Agent definition deleted', 'success')
-      } else {
-        showToast('Failed to delete agent definition', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to delete agent definition:', e)
-      showToast('Failed to delete agent definition', 'error')
-    }
-  }
+  const handleDelete = useCallback(
+    (dbId: string) => deleteAgentDefinition(dbId, confirm, fetchDefinitions, showToast),
+    [confirm, fetchDefinitions, showToast],
+  )
 
-  const handleRestore = async (dbId: string) => {
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${dbId}/restore`, {
-        method: 'POST',
-      })
-      if (res.ok) {
-        fetchDefinitions(true)
-        showToast('Agent definition restored', 'success')
-      } else {
-        showToast('Failed to restore agent definition', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to restore agent definition:', e)
-      showToast('Failed to restore agent definition', 'error')
-    }
-  }
+  const handleRestore = useCallback(
+    (dbId: string) => restoreAgentDefinition(dbId, fetchDefinitions, showToast),
+    [fetchDefinitions, showToast],
+  )
 
-  const handleDownload = useCallback(async (name: string) => {
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${name}/export`)
-      if (res.ok) {
-        const text = await res.text()
-        const blob = new Blob([text], { type: 'application/x-yaml' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${name}.yaml`
-        a.click()
-        URL.revokeObjectURL(url)
-      }
-    } catch (e) {
-      console.error('Failed to download agent:', e)
-    }
-  }, [])
+  const handleDownload = useCallback(
+    (name: string) => downloadAgentDefinition(name),
+    [],
+  )
 
   const handleYamlSave = useCallback(async () => {
-    if (!yamlAgent) return
-    let parsed: Record<string, unknown>
-    try {
-      parsed = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>
-    } catch (e) {
-      throw new Error(`Invalid YAML: ${e instanceof Error ? e.message : String(e)}`)
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Invalid YAML: expected an object')
-    }
-    const isDb = yamlAgent.source.endsWith('-db')
-    if (isDb && yamlAgent.db_id) {
-      const body: Record<string, unknown> = {
-        name: (parsed.name as string) || yamlAgent.definition.name,
-        description: parsed.description ?? null,
-        sources: parsed.sources ?? null,
-        surfaces: parsed.surfaces ?? yamlAgent.definition.surfaces ?? ['spawn'],
-        role: parsed.role ?? null,
-        goal: parsed.goal ?? null,
-        personality: parsed.personality ?? null,
-        instructions: parsed.instructions ?? null,
-        provider: parsed.provider || yamlAgent.definition.provider,
-        model: parsed.model ?? null,
-        reasoning_effort: parsed.reasoning_effort ?? null,
-        reasoning_required: parsed.reasoning_required ?? false,
-        mode: parsed.mode || yamlAgent.definition.mode,
-        isolation: parsed.isolation ?? null,
-        base_branch: (parsed.base_branch as string) || yamlAgent.definition.base_branch,
-        timeout: parsed.timeout ?? yamlAgent.definition.timeout,
-        max_turns: parsed.max_turns ?? yamlAgent.definition.max_turns,
-      }
-      if (parsed.workflows) body.workflows = parsed.workflows
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${yamlAgent.db_id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) throw new Error('Failed to save agent definition')
-    } else {
-      // For file-based agents, import to DB
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/import/${yamlAgent.definition.name}`, {
-        method: 'POST',
-      })
-      if (!res.ok) throw new Error('Failed to import agent definition to DB')
-    }
+    await saveYamlAgentDefinition({ yamlAgent, yamlContent, fetchDefinitions })
     setYamlAgent(null)
-    fetchDefinitions(true)
   }, [yamlAgent, yamlContent, fetchDefinitions])
 
-  // YAML save from sidebar
-  const handleSidebarYamlSave = useCallback(async () => {
-    if (!editingId) return
-    let parsed: Record<string, unknown>
-    try {
-      parsed = yaml.load(sidebarYamlContent, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>
-    } catch (e) {
-      window.alert(`Invalid YAML: ${e instanceof Error ? e.message : String(e)}`)
-      return
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      window.alert('Invalid YAML: expected an object')
-      return
-    }
-    try {
-      const body: Record<string, unknown> = {
-        name: (parsed.name as string) || createForm.name,
-        description: parsed.description ?? null,
-        sources: parsed.sources ?? null,
-        surfaces: parsed.surfaces ?? createForm.surfaces,
-        role: parsed.role ?? null,
-        goal: parsed.goal ?? null,
-        personality: parsed.personality ?? null,
-        instructions: parsed.instructions ?? null,
-        provider: parsed.provider || createForm.provider,
-        model: parsed.model ?? null,
-        reasoning_effort: parsed.reasoning_effort ?? null,
-        reasoning_required: parsed.reasoning_required ?? false,
-        mode: parsed.mode || createForm.mode,
-        isolation: parsed.isolation ?? null,
-        base_branch: (parsed.base_branch as string) || createForm.base_branch,
-        timeout: parsed.timeout ?? createForm.timeout,
-        max_turns: parsed.max_turns ?? createForm.max_turns,
-      }
-      if (parsed.workflows) body.workflows = parsed.workflows
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) {
-        onToggleCreateForm(false)
-        setEditingId(null)
-        setCreateForm({ ...DEFAULT_FORM })
-        fetchDefinitions(true)
-      } else {
-        showToast('Failed to save agent from YAML', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to save agent from YAML:', e)
-      showToast('Failed to save agent from YAML', 'error')
-    }
-  }, [editingId, sidebarYamlContent, createForm, fetchDefinitions, onToggleCreateForm, showToast])
+  const handleSidebarYamlSave = useCallback(
+    () => saveSidebarYamlAgentDefinition({
+      editingId,
+      sidebarYamlContent,
+      form: createForm,
+      fetchDefinitions,
+      onToggleCreateForm,
+      setEditingId,
+      setCreateForm,
+      showToast,
+    }),
+    [
+      editingId,
+      sidebarYamlContent,
+      createForm,
+      fetchDefinitions,
+      onToggleCreateForm,
+      showToast,
+    ],
+  )
 
-  const handleInstallFromTemplate = async (name: string) => {
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${encodeURIComponent(name)}/install`, {
-        method: 'POST',
-      })
-      if (res.ok) {
-        fetchDefinitions(true)
-      } else {
-        const data = await res.json().catch(() => ({}))
-        showToast(data.detail || 'Failed to install from template', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to install agent from template:', e)
-      showToast('Failed to install from template', 'error')
-    }
-  }
+  const handleInstallFromTemplate = useCallback(
+    (name: string) => installAgentFromTemplate(name, fetchDefinitions, showToast),
+    [fetchDefinitions, showToast],
+  )
 
-  const handleMoveToProject = useCallback(async (item: AgentDefInfo) => {
-    if (!projectId || !item.db_id) return
-    if (!await confirm({ title: 'Move to project?', description: `Move "${item.definition.name}" to the current project? It will no longer apply globally.`, confirmLabel: 'Move' })) return
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/workflows/${item.db_id}/move-to-project`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectId }),
-      })
-      if (res.ok) fetchDefinitions(true)
-    } catch (e) {
-      console.error('Failed to move agent to project:', e)
-    }
-  }, [confirm, projectId, fetchDefinitions])
+  const handleMoveToProject = useCallback(
+    (item: AgentDefInfo) => moveAgentToProject(item, projectId, confirm, fetchDefinitions),
+    [confirm, projectId, fetchDefinitions],
+  )
 
-  const handleMoveToGlobal = useCallback(async (item: AgentDefInfo) => {
-    if (!item.db_id) return
-    if (!await confirm({ title: 'Move to global?', description: `Move "${item.definition.name}" to global scope? It will apply to all projects.`, confirmLabel: 'Move' })) return
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/workflows/${item.db_id}/move-to-global`, {
-        method: 'POST',
-      })
-      if (res.ok) fetchDefinitions(true)
-    } catch (e) {
-      console.error('Failed to move agent to global:', e)
-    }
-  }, [confirm, fetchDefinitions])
+  const handleMoveToGlobal = useCallback(
+    (item: AgentDefInfo) => moveAgentToGlobal(item, confirm, fetchDefinitions),
+    [confirm, fetchDefinitions],
+  )
 
-  const handleRestoreFromTemplate = useCallback(async (item: AgentDefInfo) => {
-    if (!item.db_id) return
-    if (!await confirm({ title: 'Restore from template?', description: `Reset "${item.definition.name}" to the bundled template version? Your customizations will be lost.`, confirmLabel: 'Restore' })) return
-    try {
-      const res = await fetch(`${getBaseUrl()}/api/workflows/${item.db_id}/restore-from-template`, {
-        method: 'POST',
-      })
-      if (res.ok) fetchDefinitions(true)
-    } catch (e) {
-      console.error('Failed to restore agent from template:', e)
-    }
-  }, [confirm, fetchDefinitions])
+  const handleRestoreFromTemplate = useCallback(
+    (item: AgentDefInfo) => restoreAgentFromTemplate(item, confirm, fetchDefinitions),
+    [confirm, fetchDefinitions],
+  )
 
-  const handleImport = async (name: string) => {
+  const handleImport = useCallback(async (name: string) => {
     setImportingName(name)
     setImportResult(null)
     try {
-      const res = await fetch(`${getBaseUrl()}/api/agents/definitions/import/${name}`, {
-        method: 'POST',
-      })
-      setImportResult({ name, ok: res.ok })
-      if (res.ok) fetchDefinitions(true)
-    } catch (e) {
-      console.error('Failed to import agent definition:', e)
-      setImportResult({ name, ok: false })
+      const ok = await importAgentDefinition(name, fetchDefinitions)
+      setImportResult({ name, ok })
     } finally {
       setImportingName(null)
       setTimeout(() => setImportResult(null), 3000)
     }
-  }
+  }, [fetchDefinitions])
+
+  const handleOpenAgent = useCallback((item: AgentDefInfo) => {
+    if (item.db_id) {
+      handleEdit(item)
+    } else {
+      setSelectedAgent(item)
+      setSidebarYamlContent(agentDefToYaml(item.definition))
+    }
+  }, [handleEdit])
 
   return (
     <div className={AGENT_DEFS_TAB_CLS}>
@@ -770,186 +399,26 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         </div>
       )}
 
+      <AgentDefinitionsGrid
+        loading={loading}
+        definitions={filtered}
+        devMode={devMode}
+        installedNames={installedNames}
+        importingName={importingName}
+        importResult={importResult}
+        projectId={projectId}
+        onOpenAgent={handleOpenAgent}
+        onDuplicate={handleDuplicate}
+        onDelete={handleDelete}
+        onRestore={handleRestore}
+        onDownload={handleDownload}
+        onInstallFromTemplate={handleInstallFromTemplate}
+        onMoveToProject={handleMoveToProject}
+        onMoveToGlobal={handleMoveToGlobal}
+        onRestoreFromTemplate={handleRestoreFromTemplate}
+        onImport={handleImport}
+      />
 
-      {/* Card grid */}
-      <div className={WORKFLOWS_CONTENT_CLS}>
-        {loading ? (
-          <div className={WORKFLOWS_LOADING_CLS}>Loading agent definitions...</div>
-        ) : filtered.length === 0 ? (
-          <div className={WORKFLOWS_EMPTY_CLS}>No agent definitions found</div>
-        ) : (
-          <div className={WORKFLOWS_GRID_CLS}>
-            {filtered.map(item => {
-              const d = item.definition
-              const isDb = !!item.db_id
-              const isTemplate = item.source === 'template'
-              const wfMeta = ['rules', 'variables', 'pipeline']
-              const workflowCount = d.workflows
-                ? Object.entries(d.workflows).filter(([k]) => !wfMeta.includes(k) && typeof d.workflows![k] === 'object' && d.workflows![k] !== null && !Array.isArray(d.workflows![k])).length
-                : 0
-
-              return (
-                <div
-                  key={d.name}
-                  data-testid="agent-def-card"
-                  className={`${AGENT_DEF_CARD_CLS}${item.deleted_at ? ' ' + AGENT_DEF_CARD_DELETED_CLS : ''}${isTemplate ? ' ' + WORKFLOWS_CARD_TEMPLATE_CLS : ''}`}
-                >
-                  {/* Card header */}
-                  <button
-                    className={AGENT_DEF_HEADER_CLS}
-                    onClick={() => {
-                      if (item.deleted_at) return
-                      if (isDb) {
-                        handleEdit(item)
-                      } else {
-                        setSelectedAgent(item)
-                        setSidebarYamlContent(agentDefToYaml(item.definition))
-                      }
-                    }}
-                  >
-                    <div className={AGENT_DEF_HEADER_TOP_CLS}>
-                      <span className={`${AGENT_DEF_NAME_CLS}${item.deleted_at ? ' ' + AGENT_DEF_NAME_DELETED_CLS : ''}`}>{d.name}</span>
-                      <span className={`${WORKFLOWS_CARD_TYPE_CLS} ${WORKFLOWS_CARD_TYPE_VARIANT_CLS.agent}`}>agent</span>
-                    </div>
-                    {d.description && (
-                      <div className={AGENT_DEF_DESC_CLS}>
-                        {d.description.split('\n')[0].slice(0, 100)}
-                      </div>
-                    )}
-                    <div className={AGENT_DEF_BADGES_CLS}>
-                      <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_SOURCE_CLS}`}>
-                        {SOURCE_LABELS[item.source] || item.source}
-                      </span>
-                      <span
-                        className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_FILLED_CLS}`}
-                        style={{ background: getProviderColorVar(d.provider) }}
-                      >
-                        {d.provider}
-                      </span>
-                      {d.is_local && (
-                        <span
-                          data-testid="agent-local-chip"
-                          className={`${AGENT_DEF_BADGE_CHIP_CLS} ${AGENT_DEF_BADGE_CHIP_LOCAL_CLS}`}
-                        >
-                          LOCAL
-                        </span>
-                      )}
-                      {d.isolation && (
-                        <span
-                          className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_FILLED_CLS}`}
-                          style={{ background: getIsolationColorVar(d.isolation) }}
-                        >
-                          {d.isolation}
-                        </span>
-                      )}
-                      {workflowCount > 0 && (
-                        <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>
-                          {workflowCount} workflow{workflowCount !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                      <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>
-                        {d.timeout}s
-                      </span>
-                      {item.has_template_update && (
-                        <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_DRIFT_CLS}`}>Template updated</span>
-                      )}
-                    </div>
-                  </button>
-
-                  {/* Card footer - always visible */}
-                  <div className={`${WORKFLOWS_CARD_FOOTER_CLS} ${AGENT_DEF_CARD_FOOTER_PAD_CLS}`}>
-                    {item.deleted_at ? (
-                      <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
-                        {item.db_id && (
-                          <button
-                            type="button"
-                            className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_RESTORE_CLS}`}
-                            onClick={() => handleRestore(item.db_id!)}
-                            title="Restore this agent"
-                          >
-                            Restore
-                          </button>
-                        )}
-                      </div>
-                    ) : isTemplate ? (
-                      <>
-                        <div />
-                        <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
-                          {devMode ? (
-                            <>
-                              {installedNames.has(d.name)
-                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
-                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleInstallFromTemplate(d.name)} title="Create an installed copy">Install</button>}
-                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDuplicate(item)} title="Duplicate" aria-label="Duplicate agent">
-                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
-                              </button>
-                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
-                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
-                              </button>
-                              {item.db_id && (
-                                <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={() => handleDelete(item.db_id!)} title="Delete" aria-label="Delete agent">
-                                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
-                                </button>
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              {installedNames.has(d.name)
-                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
-                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleInstallFromTemplate(d.name)} title="Create an installed copy">Install</button>}
-                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
-                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div />
-                        <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
-                          {item.source === 'installed' && projectId && item.db_id && d.name !== 'default' && (
-                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleMoveToProject(item)} title="Move to current project">To Project</button>
-                          )}
-                          {item.source === 'project' && item.db_id && (
-                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleMoveToGlobal(item)} title="Move to global scope">To Global</button>
-                          )}
-                          {item.has_template_update && item.db_id && (
-                            <button type="button" className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_DRIFT_CLS}`} onClick={() => handleRestoreFromTemplate(item)} title="Restore to bundled template version">Restore</button>
-                          )}
-                          <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDuplicate(item)} title="Duplicate" aria-label="Duplicate agent">
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
-                          </button>
-                          <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDownload(d.name)} title="Download YAML" aria-label="Download agent as YAML">
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
-                          </button>
-                          {item.db_id ? (
-                            <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={() => handleDelete(item.db_id!)} title="Delete" aria-label="Delete agent">
-                              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
-                            </button>
-                          ) : (
-                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleImport(d.name)} disabled={importingName === d.name} title="Import to DB for customization">
-                              {importingName === d.name ? '...' : 'Import'}
-                            </button>
-                          )}
-                          {importResult?.name === d.name && (
-                            <span className={`${AGENT_DEF_IMPORT_RESULT_CLS} ${importResult.ok ? AGENT_DEF_IMPORT_RESULT_OK_CLS : AGENT_DEF_IMPORT_RESULT_ERR_CLS}`}>
-                              {importResult.ok ? 'OK' : 'Fail'}
-                            </span>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* YAML editor modal (kept for non-sidebar YAML edits) */}
       {yamlAgent && (
         <YamlEditorModal
           workflowName={yamlAgent.definition.name}
@@ -961,7 +430,6 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         />
       )}
 
-      {/* Agent detail/edit panel */}
       <AgentEditForm
         isOpen={showCreateForm || selectedAgent !== null}
         readOnly={!showCreateForm && selectedAgent !== null && !selectedAgent.db_id}
