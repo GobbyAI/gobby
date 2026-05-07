@@ -82,6 +82,18 @@ def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
     assert "operational_risk" not in skill_text
 
 
+def test_holistic_review_skill_allows_docs_epic_plan_substitute() -> None:
+    skill_text = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
+
+    assert "Discovery Brief" in skill_text
+    assert "descendant task set" in skill_text
+    assert "do not escalate solely" in skill_text
+    assert "complete_stage(stage_name=\"holistic_qa\")" in skill_text
+    assert "fail_stage(stage_name=\"holistic_qa\")" in skill_text
+    assert "approve_review(stage_name=\"holistic_qa\")" not in skill_text
+    assert "reject_review(stage_name=\"holistic_qa\")" not in skill_text
+
+
 def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
     agent = _agent("holistic-reviewer")
     load_skill = _step(agent, "load_skill")
@@ -94,6 +106,8 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     )
     assert 'get_skill(name="holistic-review")' in load_skill["status_message"]
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
+    assert "Discovery Brief" in agent["instructions"]
+    assert "descendant task set" in agent["instructions"]
     assert review["allowed_tools"] == "all"
     assert {
         "gobby-tasks:close_task",

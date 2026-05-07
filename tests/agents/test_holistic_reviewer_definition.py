@@ -63,6 +63,20 @@ def test_reads_subtree() -> None:
     assert "list_tasks(parent_task_id=assigned_task_id)" in review_text
 
 
+def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    status = next(step for step in agent["steps"] if step["name"] == "review")[
+        "status_message"
+    ]
+
+    assert "Discovery Brief" in instructions
+    assert "descendant task set" in instructions
+    assert "task references" in instructions
+    assert "Discovery Brief" in status
+    assert "plan substitute" in status
+
+
 def test_holistic_review_order_is_spec_quality_testing_yagni() -> None:
     agent = _agent()
     instructions = agent["instructions"]

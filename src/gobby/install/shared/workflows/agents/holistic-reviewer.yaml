@@ -31,15 +31,20 @@ instructions: |
   get_skill(name="tech-writer") on gobby-skills, then continue.
   Follow that skill exactly: ordered spec_compliance, code_quality, testing, and yagni checks; the
   `## Holistic Findings` verdict block; decision mapping; and finding-to-leaf
-  attribution through `### N.N` plan sections.
+  attribution through `### N.N` plan sections when present, or through child
+  task references for docs/build epics that use a Discovery Brief plus
+  descendant task set as the review scope.
 
   WORKFLOW:
   - Claim the assigned epic and read it.
   - Load the holistic-review and tech-writer skills before reviewing.
   - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
     the assigned epic and any child epics until all descendant leaves are known.
-  - Read the plan artifact, aggregate git diff, relevant source files, and linked
-    subtask validation criteria. Filesystem reads are expected in the review step.
+  - Read the plan artifact when present. If no plan artifact exists for a
+    docs/build epic, use the task Discovery Brief, validation criteria, and full
+    descendant task set as the plan substitute.
+  - Read the aggregate git diff, relevant source files, and linked subtask
+    validation criteria. Filesystem reads are expected in the review step.
   - Review in order: spec_compliance first, then code_quality, then testing, then yagni.
     Missing plan items, child-work gaps, integration failures, or scope drift are
     spec_compliance findings and must not be deferred to quality commentary.
@@ -130,7 +135,9 @@ steps:
   - name: review
     description: "Review the implemented epic against the approved plan"
     status_message: |
-      Read the plan artifact, aggregate diff, changed files, and linked subtasks.
+      Read the plan artifact when present. For docs/build epics without one,
+      use the Discovery Brief, validation criteria, and descendant task set as
+      the plan substitute. Read the aggregate diff, changed files, and linked subtasks.
       Use list_tasks(parent_task_id=assigned_task_id) recursively to enumerate
       the epic subtree before deciding.
       Record the holistic-review verdict with complete_stage(stage_name="holistic_qa",
