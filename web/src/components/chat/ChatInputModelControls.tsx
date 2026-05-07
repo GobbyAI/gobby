@@ -1,4 +1,9 @@
-import { getProviderDisplayName, type ProviderModelOption, type ReasoningOption } from '../../lib/providerModels'
+import {
+  formatModelDisplayLabel,
+  getProviderDisplayName,
+  type ProviderModelOption,
+  type ReasoningOption,
+} from '../../lib/providerModels'
 import { SourceIcon } from '../shared/SourceIcon'
 import { BranchIndicator } from './BranchIndicator'
 import { BrainIcon } from './ChatInputIcons'
@@ -54,6 +59,8 @@ export function ChatInputModelControls({
   worktreePath,
   worktreePickerDisabled = false,
 }: ChatInputModelControlsProps) {
+  const reasoningOnlyDisabled =
+    reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled)
   return (
     <div className="chat-input-controls">
       <div className="chat-input-model-controls">
@@ -97,7 +104,7 @@ export function ChatInputModelControls({
             title={providerPickerDisabledReason ?? 'Select model'}
           >
             <div className="chat-input-select__value">
-              <span className="chat-input-select__text">{resolvedModelLabel}</span>
+              <span className="chat-input-select__text">{formatModelDisplayLabel(resolvedModelLabel)}</span>
             </div>
           </SelectTrigger>
           <SelectContent side="top" className="chat-input-select__content">
@@ -105,21 +112,18 @@ export function ChatInputModelControls({
               <SelectLabel className="chat-input-select__label">Model</SelectLabel>
               {modelOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
-                  {option.label}
+                  {formatModelDisplayLabel(option.label)}
                 </SelectItem>
               ))}
             </SelectGroup>
           </SelectContent>
         </Select>
 
+        {!reasoningOnlyDisabled && (
         <Select
           value={resolvedReasoning}
           onValueChange={onReasoningSelect}
-          disabled={
-            selectionDisabled ||
-            (reasoningOptions.length === 1 &&
-              Boolean(reasoningOptions[0]?.disabled))
-          }
+          disabled={selectionDisabled}
         >
           <SelectTrigger
             className="chat-input-select chat-input-select--reasoning !w-auto"
@@ -149,6 +153,7 @@ export function ChatInputModelControls({
             </SelectGroup>
           </SelectContent>
         </Select>
+        )}
 
         {onWorktreeChange && !hideBranch && (
           <BranchIndicator

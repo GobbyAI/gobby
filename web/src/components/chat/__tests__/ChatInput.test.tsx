@@ -618,7 +618,9 @@ describe('ChatInput', () => {
     expect(screen.queryByText('OpenAI')).toBeNull()
     expect(screen.getByLabelText('Select provider')).toHaveAttribute('title', 'OpenAI')
     expect(screen.getByText('Local')).toBeTruthy()
-    expect(screen.getByLabelText('Select reasoning effort')).toBeTruthy()
+    // Reasoning dropdown is hidden when no reasoning levels are supported
+    // (only the disabled Auto option) — see ChatInputModelControls.
+    expect(screen.queryByLabelText('Select reasoning effort')).toBeNull()
   })
 
   it('forwards non-local slash commands in proxy mode', async () => {

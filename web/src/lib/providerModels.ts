@@ -598,9 +598,25 @@ function versionScore(versionParts: number[]): number {
 function formatReasoningLabel(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (normalized === "xhigh") {
-    return "Extra-High";
+    return "XHigh";
+  }
+  if (normalized === "medium") {
+    return "Med";
   }
   return titleCase(normalized);
+}
+
+export function formatModelDisplayLabel(label: string | null | undefined): string {
+  const raw = label?.trim() ?? "";
+  if (!raw) return "";
+  return raw
+    .replace(/\bClaude\s+/g, "")
+    .replace(/\bDroid Core\s+/g, "")
+    .replace(/\s+Mode\b/g, "")
+    .replace(/\[Deprecated\]/g, "[D]")
+    .replace(/[()]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function humanizeFallbackModelLabel(value?: string | null): string {

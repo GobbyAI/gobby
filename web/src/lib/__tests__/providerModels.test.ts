@@ -157,7 +157,7 @@ describe("providerModels", () => {
     ).toEqual([
       { value: "auto", label: "Auto" },
       { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
+      { value: "medium", label: "Med" },
       { value: "high", label: "High" },
     ]);
     expect(
@@ -169,19 +169,19 @@ describe("providerModels", () => {
     expect(getReasoningOptionsForModel(catalog, "claude", "opus")).toEqual([
       { value: "auto", label: "Auto" },
       { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
+      { value: "medium", label: "Med" },
       { value: "high", label: "High" },
       { value: "max", label: "Max" },
     ]);
   });
 
-  it("renders Codex xhigh reasoning as Extra-High", () => {
+  it("renders Codex xhigh reasoning as XHigh", () => {
     expect(getReasoningOptionsForModel(catalog, "codex", "gpt-5.4")).toEqual([
       { value: "auto", label: "Auto" },
       { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
+      { value: "medium", label: "Med" },
       { value: "high", label: "High" },
-      { value: "xhigh", label: "Extra-High" },
+      { value: "xhigh", label: "XHigh" },
     ]);
   });
 
