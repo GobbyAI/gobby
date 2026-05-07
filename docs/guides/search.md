@@ -1,205 +1,195 @@
 # Search Guide
 
-Gobby provides a unified search system with multiple backends and automatic fallback for reliable search across memories, tasks, and skills.
+Gobby has several search surfaces. They share a preference for local-first
+results and graceful fallback, but each surface indexes a different kind of
+data.
 
 ## Quick Start
 
 ```bash
-# Search memories
-gobby memory search "authentication patterns"
+# Recall memories
+gobby memory recall "authentication patterns" --limit 10
 
 # Search tasks
-gobby tasks search "login bug" --status open
+gobby tasks search "login bug" --type bug --limit 20
 
-# Search skills
-gobby skills search "git commit"
+# Search installable skills from configured hubs
+gobby skills search "git commit" --limit 10
 ```
 
 ```python
-# MCP: Search memories
+# MCP: search memories
 call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
     "query": "authentication patterns",
-    "limit": 10
+    "limit": 10,
+    "tags_any": ["security"]
 })
 
-# MCP: Search tasks
+# MCP: search tasks
 call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
     "query": "login bug",
-    "status": ["open", "in_progress"],
+    "current_stage_state": ["ready", "in_progress"],
+    "task_type": "bug",
     "limit": 20
 })
 
-# MCP: Search skills
+# MCP: search installed skills
 call_tool(server_name="gobby-skills", tool_name="search_skills", arguments={
     "query": "git commit",
     "top_k": 5
 })
 ```
 
-## Concepts
+Use progressive MCP discovery before calling a searched tool:
 
-### Search Backends
-
-Gobby supports multiple search backends:
-
-| Backend | Description | Dependencies | Use Case |
-|---------|-------------|--------------|----------|
-| **TF-IDF** | Term frequency-inverse document frequency | scikit-learn (bundled) | Offline, always available |
-| **Embedding** | Semantic vector search | LiteLLM + API | High quality semantic matching |
-| **Text** | Simple substring matching | None | Zero-dependency fallback |
-
-### Search Modes
-
-The unified searcher supports four modes:
-
-| Mode | Behavior | Fallback | Use Case |
-|------|----------|----------|----------|
-| `tfidf` | TF-IDF only | None | Offline operation, guaranteed availability |
-| `embedding` | Embedding only | Fails if unavailable | Maximum semantic quality |
-| `auto` | Try embedding, fallback to TF-IDF | Automatic | **Recommended** for production |
-| `hybrid` | Combine both with weighted scores | TF-IDF only | Highest quality when API available |
-
-### Fallback Mechanism
-
-In `auto` mode, the system gracefully degrades:
-
-```text
-1. Try embedding search
-   ↓
-2. If API unavailable → Emit FallbackEvent
-   ↓
-3. Reindex into TF-IDF
-   ↓
-4. Return TF-IDF results
+```python
+list_mcp_servers()
+list_tools(server_name="gobby-tasks")
+get_tool_schema(server_name="gobby-tasks", tool_name="search_tasks")
+call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
+    "query": "login bug"
+})
 ```
 
-Fallback triggers:
-- No API key for embedding provider
-- Embedding provider connection fails
-- Rate limit or timeout during search
-- Indexing exceptions
+## Search Surfaces
+
+| Surface | Tool or command | Index | Best for |
+|---------|-----------------|-------|----------|
+| Memories | `gobby-memory.search_memories`, `gobby memory recall` | Memory content, tags, project scope | Persistent project facts and preferences |
+| Tasks | `gobby-tasks.search_tasks`, `gobby tasks search` | Title, description, labels, task type, category | Finding work by intent or topic |
+| Installed skills | `gobby-skills.search_skills` | Skill names, descriptions, metadata | Finding local workflow guidance |
+| Skill hubs | `gobby-skills.search_hub`, `gobby skills search` | Configured external skill hubs | Finding installable skills |
+| MCP tools | `search_tools`, `recommend_tools` | Registered MCP tools | Tool discovery during agent work |
+| Code | `gcode search` | Indexed repository symbols and content | Source navigation |
+
+## Unified Search Modes
+
+The shared `UnifiedSearcher` supports four modes:
+
+| Mode | Behavior | Fallback | Use case |
+|------|----------|----------|----------|
+| `keyword` | FTS5 keyword search only | None | Offline and deterministic search |
+| `embedding` | Embedding search only | Fails if unavailable | Strict semantic search |
+| `auto` | Try embeddings, then use FTS5 | Automatic | Default reliability |
+| `hybrid` | Combine FTS5 and embedding scores | Continues with FTS5 when embeddings fail | Higher quality when embeddings are available |
+
+Fallback in `auto` mode:
+
+```text
+1. Probe the embedding endpoint
+2. If unavailable, emit a FallbackEvent
+3. Fit the FTS5 keyword backend
+4. Serve this and later searches through FTS5
+```
+
+`hybrid` mode always indexes FTS5 first. If embedding indexing or searching
+fails, Gobby logs a fallback event and keeps returning keyword results.
 
 ## Configuration
 
-Configure search in `~/.gobby/config.yaml`:
+Embedding settings are shared by memory, skill search, MCP tool search, and code
+indexing:
+
+```yaml
+embeddings:
+  model: nomic-embed-text
+  dim: 768
+  api_base: http://localhost:11434/v1  # Ollama or another OpenAI-compatible endpoint
+  api_key: null                        # Optional; can use ${ENV_VAR}
+```
+
+Unified search behavior is configured separately:
 
 ```yaml
 search:
-  mode: auto                              # tfidf, embedding, auto, hybrid
-  embedding_model: text-embedding-3-small # LiteLLM model string
-  embedding_api_base: null                # For Ollama: http://localhost:11434/v1
-  embedding_api_key: null                 # Uses env if not set
-  tfidf_weight: 0.4                       # Weight in hybrid mode (0.0-1.0)
-  embedding_weight: 0.6                   # Weight in hybrid mode (0.0-1.0)
-  notify_on_fallback: true                # Log warning on fallback
+  mode: auto              # keyword, embedding, auto, hybrid
+  keyword_weight: 0.4     # Used by hybrid mode
+  embedding_weight: 0.6   # Used by hybrid mode
+  notify_on_fallback: true
+```
+
+MCP tool recommendation defaults live under `mcp_client_proxy`:
+
+```yaml
+mcp_client_proxy:
+  search_mode: llm        # llm, semantic, hybrid
+  min_similarity: 0.3
+  top_k: 10
 ```
 
 ### Embedding Providers
 
-Using LiteLLM's unified API, the system supports multiple providers:
+Gobby uses an OpenAI-compatible embedding client. Common configurations:
 
-| Provider | Model Format | API Key | Config |
-|----------|-------------|---------|--------|
-| **OpenAI** | `text-embedding-3-small` | `OPENAI_API_KEY` | Default |
-| **Ollama** | `openai/nomic-embed-text` | None (local) | `api_base: http://localhost:11434/v1` |
-| **Azure** | `azure/azure-embedding-model` | `AZURE_API_KEY` | `api_base`, `api_version` |
-| **Vertex AI** | `vertex_ai/text-embedding-004` | GCP credentials | Via env |
-| **Gemini** | `gemini/text-embedding-004` | `GEMINI_API_KEY` | Default |
-| **Mistral** | `mistral/mistral-embed` | `MISTRAL_API_KEY` | Default |
+| Provider | Model | Required config |
+|----------|-------|-----------------|
+| Ollama | `nomic-embed-text` | `embeddings.api_base: http://localhost:11434/v1` |
+| LM Studio | `nomic-embed-text` | `embeddings.api_base: http://localhost:1234/v1` |
+| OpenAI | `text-embedding-3-small` | `OPENAI_API_KEY` or `embeddings.api_key` |
 
-**Local with Ollama:**
+Set `embeddings.dim` to match the model output. The default `nomic-embed-text`
+uses `768`; `text-embedding-3-small` uses `1536`.
 
-```yaml
-search:
-  mode: auto
-  embedding_model: openai/nomic-embed-text
-  embedding_api_base: http://localhost:11434/v1
-```
+## Memory Search
 
-### TF-IDF Tuning
+Memory search combines the available memory stores:
 
-Advanced TF-IDF options (internal defaults):
+- Qdrant vector search when embeddings and the vector store are configured
+- FTS5 keyword search as local fallback
+- Neo4j graph search when memory graph search is enabled
+- Reciprocal Rank Fusion when multiple ranked lists are available
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `ngram_range` | (1, 2) | Min/max n-gram sizes |
-| `max_features` | 10000 | Maximum vocabulary size |
-| `min_df` | 1 | Minimum document frequency |
-| `stop_words` | "english" | Language for stop word removal |
-| `refit_threshold` | 10 | Updates before automatic refit |
-
-## Searchable Entities
-
-### Memory Search
-
-Search across persistent memories with filtering:
+MCP search supports tag filters and a score threshold:
 
 ```python
 call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
     "query": "authentication",
-    "project_id": "proj-123",        # Optional: filter by project
     "limit": 10,
-    "min_importance": 0.5,           # Only important memories
-    "tags_all": ["security"],        # Must have all tags
-    "tags_any": ["critical", "high"] # Must have any tag
+    "min_score": 0.6,
+    "tags_all": ["security"],
+    "tags_any": ["critical", "high"],
+    "tags_none": ["obsolete"]
 })
 ```
 
-**Memory-specific config:**
+The MCP tool automatically scopes results to the current project. The CLI also
+accepts an explicit project filter:
+
+```bash
+gobby memory recall "authentication" --project my-project --tags-any security --limit 10
+```
+
+Memory-specific ranking settings:
 
 ```yaml
 memory:
-  search_backend: tfidf              # tfidf or text
-  max_index_memories: 10000          # Maximum memories to index
+  temporal_decay_half_life_days: 30.0
+  min_recall_score: 0.6
+  auto_crossref: false
+  crossref_threshold: 0.3
+  crossref_max_links: 5
 ```
 
-### Task Search
+## Task Search
 
-Semantic search on task content:
+Task search is FTS5 full-text search over task title, description, labels, task
+type, and category. MCP supports more filters than the CLI:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
     "query": "fix login bug",
-    "status": ["open", "in_progress"],  # Filter by status
-    "task_type": "bug",                  # Filter by type
-    "priority": 1,                       # Filter by priority
+    "current_stage_state": "in_progress",
+    "task_type": "bug",
+    "priority": 1,
+    "parent_task_id": "#123",
+    "category": "code",
     "limit": 20,
-    "min_score": 0.0                     # Minimum relevance score
+    "min_score": 0.0,
+    "all_projects": False
 })
 ```
 
-Task search indexes: title, description, labels, type.
-
-### Skill Search
-
-Search skills by description, tags, and category:
-
-```python
-call_tool(server_name="gobby-skills", tool_name="search_skills", arguments={
-    "query": "git commit",
-    "top_k": 5,
-    "category": "vcs",                   # Filter by category
-    "tags_any": ["git"],                 # Filter by tags
-    "tags_all": ["recommended"]
-})
-```
-
-## CLI Commands
-
-### Memory Search
-
-```bash
-gobby memory search QUERY [OPTIONS]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--limit N` | Maximum results |
-| `--tags` | Filter by tags |
-| `--min-importance` | Minimum importance threshold |
-| `--json` | Output as JSON |
-
-### Task Search
+CLI task search:
 
 ```bash
 gobby tasks search QUERY [OPTIONS]
@@ -207,171 +197,133 @@ gobby tasks search QUERY [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--status` | Filter by status |
-| `--type` | Filter by task type |
-| `--priority` | Filter by priority |
-| `--limit N` | Maximum results |
+| `--type`, `-t` | Filter by task type: `task`, `bug`, `feature`, or `epic` |
+| `--priority`, `-p` | Filter by priority: `1`, `2`, or `3` |
+| `--project` | Filter by project name or UUID |
+| `--all-projects`, `-a` | Search every project |
+| `--limit`, `-n` | Maximum result count |
+| `--min-score` | Minimum relevance score |
+| `--json` | Output JSON |
 
-### Skill Search
+Use `gobby tasks reindex` or `gobby-tasks-ops.reindex_tasks` after bulk task
+changes if results seem stale.
 
-```bash
-gobby skills search QUERY [OPTIONS]
-```
+## Skill Search
 
-| Option | Description |
-|--------|-------------|
-| `--category` | Filter by category |
-| `--tags` | Filter by tags |
-| `--limit N` | Maximum results |
+There are two skill search paths:
 
-## Hybrid Mode Details
+- `gobby-skills.search_skills` searches installed skills.
+- `gobby-skills.search_hub` and `gobby skills search` search configured hubs for
+  installable skills.
 
-In hybrid mode, results are combined using weighted scores:
-
-```text
-final_score = (tfidf_weight × tfidf_score) + (embedding_weight × embedding_score)
-```
-
-**Example configuration:**
-
-```yaml
-search:
-  mode: hybrid
-  tfidf_weight: 0.4
-  embedding_weight: 0.6
-```
-
-**Hybrid behavior:**
-1. Index into both TF-IDF and embedding backends
-2. On search, get results from both
-3. If embedding unavailable, use TF-IDF only
-4. Merge and rank by weighted scores
-
-## MCP Tool Recommendations
-
-Gobby also uses search for tool discovery:
-
-```yaml
-mcp_client_proxy:
-  search_mode: llm                       # llm, semantic, hybrid
-  embedding_provider: openai
-  embedding_model: text-embedding-3-small
-  min_similarity: 0.3
-  top_k: 10
-```
+Installed skill search:
 
 ```python
-# Recommend tools for a task (direct proxy tools — no server_name needed)
+call_tool(server_name="gobby-skills", tool_name="search_skills", arguments={
+    "query": "source control",
+    "category": "core",
+    "tags_any": ["git"],
+    "top_k": 5,
+    "include_internal": False
+})
+```
+
+Hub search:
+
+```python
+call_tool(server_name="gobby-skills", tool_name="search_hub", arguments={
+    "query": "code review",
+    "hub_name": "clawdhub"
+})
+```
+
+```bash
+gobby skills search "code review" --hub clawdhub --limit 10
+```
+
+## MCP Tool Discovery
+
+Use lightweight discovery before tool calls:
+
+```python
+list_mcp_servers()
+list_tools(server_name="gobby-memory")
+get_tool_schema(server_name="gobby-memory", tool_name="search_memories")
+```
+
+Use direct proxy search when you need tool suggestions:
+
+```python
 recommend_tools(
-    task_description="I need to search for files",
+    task_description="Find memories related to authentication",
     search_mode="hybrid",
     top_k=10,
     min_similarity=0.3
 )
 
-# Semantic tool search (direct proxy tool)
 search_tools(
-    query="file search",
+    query="memory search",
     top_k=10,
     min_similarity=0.3,
-    server="filesystem"               # Optional: filter by server
+    server_name="gobby-memory"
 )
 ```
 
-## Statistics & Monitoring
+`recommend_tools` defaults to `llm` mode. `search_tools` is embedding-based and
+requires semantic tool embeddings to be available.
 
-Get search backend statistics:
+## Statistics
+
+Unified searchers expose `get_stats()` from code. The returned dictionary
+includes:
 
 ```python
-# All searchers provide get_stats() returning:
 {
-    "fitted": True,                      # Index is ready
-    "item_count": 1500,                  # Number of indexed items
-    "active_backend": "embedding",       # Current backend
-    "using_fallback": False,             # Using TF-IDF fallback
-    "fallback_reason": None,             # Why fallback occurred
-    # Backend-specific:
-    "vocabulary_size": 5000,             # TF-IDF only
-    "model": "text-embedding-3-small"    # Embedding only
+    "mode": "auto",
+    "fitted": True,
+    "fitted_mode": "auto",
+    "active_backend": "embedding",
+    "using_fallback": False,
+    "fallback_reason": None,
+    "item_count": 1500,
+    "keyword": {...},
+    "embedding": {...}
 }
 ```
 
-## Performance Tuning
-
-### For Speed
-
-```yaml
-search:
-  mode: tfidf                            # No API calls
-```
-
-### For Quality
-
-```yaml
-search:
-  mode: embedding
-  embedding_model: text-embedding-3-large
-```
-
-### For Reliability + Quality
-
-```yaml
-search:
-  mode: auto                             # Best of both
-  notify_on_fallback: true               # Know when degraded
-```
-
-### For Maximum Quality with Fallback
-
-```yaml
-search:
-  mode: hybrid
-  tfidf_weight: 0.3
-  embedding_weight: 0.7
-```
-
-## Best Practices
-
-### Do
-
-- Use `auto` mode in production for reliability
-- Set `notify_on_fallback: true` to monitor degradation
-- Configure Ollama for local embedding without API costs
-- Use task/memory filters to narrow search scope
-
-### Don't
-
-- Use `embedding` mode without fallback in critical paths
-- Ignore fallback notifications (may indicate API issues)
-- Index too many items in TF-IDF (max_features limits vocabulary)
-- Rely on exact matches (use filters for that)
+Memory search results may also include per-result diagnostics such as
+`search_via`, `ranking_score`, `raw_semantic_score`, `temporal_decay_factor`,
+and `ranking_mode`.
 
 ## Troubleshooting
 
 ### Search returns no results
 
-1. Check if items are indexed: `get_stats()` shows `item_count`
-2. Verify search mode supports your query type
-3. Lower `min_similarity` threshold
-4. Check filters aren't too restrictive
+1. Verify the query is non-empty.
+2. Remove restrictive filters such as tags, project, category, or stage state.
+3. Lower `min_score` or `min_similarity`.
+4. Reindex the relevant surface if bulk data changed.
 
-### Fallback keeps occurring
+### Embedding search falls back
 
-1. Verify API key is set: `echo $OPENAI_API_KEY`
-2. Check embedding provider is reachable
-3. Review logs for rate limiting
-4. Consider using Ollama for local embeddings
+1. Check `embeddings.model`, `embeddings.dim`, and `embeddings.api_base`.
+2. Confirm the endpoint exposes `/models`.
+3. Set an API key for cloud providers, or use a local OpenAI-compatible server.
+4. Use `search.mode: keyword` when offline behavior matters more than semantic quality.
 
-### Poor search quality
+### Tool search fails
 
-1. Switch from `tfidf` to `auto` or `embedding`
-2. Use a larger embedding model
-3. In hybrid mode, adjust weights toward embedding
-4. Ensure content is descriptive (short titles search poorly)
+1. Use progressive discovery first: `list_mcp_servers`, `list_tools`, then
+   `get_tool_schema`.
+2. For `search_tools`, confirm semantic tool embeddings are configured.
+3. For `recommend_tools`, use `search_mode="llm"` when semantic search is unavailable.
 
 ## See Also
 
-- [memory.md](memory.md) - Memory system
-- [tasks.md](tasks.md) - Task management
-- [skills.md](skills.md) - Skill system
-- [configuration.md](configuration.md) - Full config reference
+- [memory.md](./memory.md) - Memory system
+- [tasks.md](./tasks.md) - Task management
+- [skills.md](./skills.md) - Skill system
+- [code-index.md](./code-index.md) - Source code search
+- [configuration.md](./configuration.md) - Full config reference
+
+_Last verified: 2026-05-07_
