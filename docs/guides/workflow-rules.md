@@ -3,6 +3,11 @@
 This guide covers the engine behaviors that matter when writing rules. For the
 full reference for fields, events, and effects, see [rules.md](./rules.md).
 
+Gobby 0.4.0 treats `turn_start` and `turn_end` as the primary rule-authoring
+events for agent turns. Raw events such as `before_agent`, `after_agent`, and
+`stop` are normalized provider/runtime details that remain available for
+escape-hatch rules.
+
 ## Variable Safety In `when`
 
 Rule conditions are evaluated against session variables. If you reference a
@@ -35,31 +40,57 @@ Example path in the current bundled layout:
 src/gobby/install/shared/workflows/rules/...
 ```
 
-## Prefer `turn_end` For End-Of-Turn Policy
+## Author Against Semantic Turn Events
+
+The rule engine resolves one incoming raw hook into one or more rule events. A
+raw turn-start hook also evaluates `turn_start` rules; raw turn-end hooks also
+evaluate `turn_end` rules.
+
+```mermaid
+flowchart LR
+    before[before_agent] --> start[turn_start rules]
+    after[after_agent] --> end[turn_end rules]
+    stop[stop] --> end
+    stopFailure[stop_failure] --> end
+```
+
+### Prefer `turn_end` For End-Of-Turn Policy
 
 If a rule is intended to run when a turn finishes, prefer `turn_end` over a
-single raw hook such as `stop` or `after_agent`.
+single raw hook such as `stop`, `after_agent`, or `stop_failure`.
 
 Why:
 
-- `turn_end` is the cross-CLI semantic event.
-- The rule engine emits it alongside raw stop/after-agent boundaries.
-- One rule then covers Claude, Codex, and Gemini session endings consistently.
+- `turn_end` is the portable semantic event for end-of-turn gates.
+- The rule engine evaluates it alongside raw stop/after-agent boundaries.
+- One rule can cover CLIs that surface the boundary differently.
 
-Use raw `stop` or `after_agent` only when you truly need the distinction.
+Use raw `stop`, `after_agent`, or `stop_failure` only when the rule depends on
+provider-specific timing or payload shape.
 
-## Prefer `turn_start` For Start-Of-Turn Policy
+### Prefer `turn_start` For Start-Of-Turn Policy
 
 If a rule is intended to run when a new turn begins, prefer `turn_start` over
 the raw `before_agent` hook.
 
 Why:
 
-- `turn_start` is the cross-CLI semantic start-of-turn event.
-- The rule engine emits it alongside the raw pre-turn hook.
-- One rule then covers Claude, Codex, and Gemini prompt-entry consistently.
+- `turn_start` is the portable semantic start-of-turn event.
+- The rule engine evaluates it alongside the raw pre-turn hook.
+- One rule can cover prompt-entry, context-injection, and reset logic across
+  supported CLIs.
 
 Use raw `before_agent` only when you truly need provider-specific detail.
+
+### Keep Agent Termination Separate
+
+`turn_end` is a rule-evaluation boundary. It is not the same thing as ending a
+workflow agent process.
+
+Workflow agents that complete their stage still need to call the
+`gobby-agents:end_agent_run` MCP tool when their agent definition says to
+terminate. That lifecycle call releases the running agent; it does not replace
+`turn_end` rules, and `turn_end` rules do not replace it.
 
 ## Hard-Coded Engine Behaviors
 
@@ -78,13 +109,19 @@ recovery action.
 
 ### Tool-Block Stop Gate
 
-If a tool just failed or was blocked and the session immediately tries to stop,
-the engine can block the stop once and force recovery first.
+If a tool fails and the session immediately tries to end the turn, the engine
+can block once with `tool-failure-recovery` and clear `tool_block_pending`.
+
+If a write-like edit is pending after a failed or in-flight mutation, the engine
+can block turn end with `edit-write-recovery`. A small circuit breaker prevents
+that hard-coded gate from looping forever.
 
 ### Catastrophic Failure Escape Hatch
 
 Certain fatal provider/account errors set `force_allow_stop` so the next stop
-attempt is allowed unconditionally.
+attempt can bypass the tool-failure recovery gate. Claimed-task gates still win:
+if `task_claimed` is true, the engine suppresses the force-allow and leaves
+task-close rules in control.
 
 ### Stop Attempt Counting
 
@@ -99,6 +136,17 @@ On `turn_start`, the engine resets transient stop-cycle state such as:
 - `_last_blocked_tool`
 - `tool_block_pending`
 - `stop_attempts`
+- `_block_reasons_shown`
+
+On the first turn where `servers_listed` is false, the engine also queues the
+hard-coded auto-discovery MCP call that seeds available Gobby MCP servers.
+
+### Multi-Effect Ordering
+
+For a matching rule, the engine applies non-block effects before the block
+effect. That lets one rule set variables, inject context, or queue MCP calls and
+then block the event with a rendered reason. Per-effect `when` conditions are
+evaluated separately from the rule-level `when`.
 
 ## Practical Advice
 
@@ -106,6 +154,13 @@ On `turn_start`, the engine resets transient stop-cycle state such as:
 - Keep rule conditions cheap and explicit.
 - Prefer multi-effect rules when a block, rewrite, and context injection are
   all part of one policy.
+- Use `turn_start` for portable prompt-entry and reset behavior.
 - Use `turn_end` for cross-CLI end-of-turn behavior.
+- Treat raw lifecycle events as escape hatches for provider/runtime-specific
+  behavior.
+- Call `end_agent_run` when a workflow agent reaches its terminate step; do not
+  model termination as a rule event.
 - Treat hard-coded engine safety as part of the contract when debugging rule
   interactions.
+
+_Last verified: 2026-05-07_
