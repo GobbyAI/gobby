@@ -35,6 +35,11 @@ BuildTargetAction = Literal["stop", "resume", "clean", "restart"]
 ArtifactFamily = Literal["worktree", "clone"]
 
 
+def _default_branch_dir_name(task: Task) -> str:
+    """Return the default branch/workspace name for a task build artifact."""
+    return default_task_branch_name(task)
+
+
 @dataclass(frozen=True)
 class BuildTaskSummary:
     """Task touched by a task-scoped build control."""

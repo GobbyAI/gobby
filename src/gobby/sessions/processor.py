@@ -22,9 +22,11 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.server import WebSocketServer
     from gobby.storage.sessions import SessionManager
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts import get_parser
-from gobby.sessions.transcripts.base import ParsedMessage, TranscriptParser
+from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.storage.database import DatabaseProtocol
 
@@ -76,6 +78,57 @@ class SessionMessageProcessor:
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
+
+    @staticmethod
+    def _build_codex_hook_event(
+        session: dict[str, Any],
+        tool_event: ParsedToolEvent,
+    ) -> HookEvent | None:
+        """Build a Codex tool HookEvent from a parsed transcript lifecycle record."""
+        if not tool_event.tool:
+            return None
+        if tool_event.phase == "begin":
+            event_type = HookEventType.BEFORE_TOOL
+        elif tool_event.phase == "end":
+            event_type = HookEventType.AFTER_TOOL
+        else:
+            return None
+
+        server = tool_event.server or "codex"
+        data: dict[str, Any] = {
+            "tool_name": f"mcp__{server}__{tool_event.tool}",
+            "tool_input": dict(tool_event.arguments),
+        }
+        if tool_event.call_id:
+            data["call_id"] = tool_event.call_id
+            data["item_id"] = tool_event.call_id
+        if tool_event.raw_json:
+            data["raw_json"] = tool_event.raw_json
+        if event_type == HookEventType.AFTER_TOOL:
+            if tool_event.result is not None:
+                data["tool_output"] = tool_event.result
+            if tool_event.error is not None:
+                data["tool_error"] = tool_event.error
+                data["is_error"] = True
+            if tool_event.duration_ns is not None:
+                data["duration_ns"] = tool_event.duration_ns
+
+        normalize_tool_fields(data)
+        metadata: dict[str, Any] = {"_codex_synthesized_tool_event": True}
+        platform_session_id = session.get("platform_session_id")
+        if isinstance(platform_session_id, str) and platform_session_id:
+            metadata["_platform_session_id"] = platform_session_id
+
+        return HookEvent(
+            event_type=event_type,
+            session_id=str(session.get("external_id") or ""),
+            source=SessionSource.CODEX,
+            timestamp=tool_event.timestamp,
+            data=data,
+            machine_id=session.get("machine_id"),
+            project_id=session.get("project_id"),
+            metadata=metadata,
+        )
 
     def _accumulate_stats(self, session_id: str, messages: list[Any]) -> dict[str, Any]:
         """Accumulate incremental stats from parsed messages."""

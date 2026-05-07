@@ -38,12 +38,14 @@ def test_advance_stage_action_method_literal() -> None:
         "stage_name",
         "method",
         "by_session_id",
+        "validation_override_reason",
     )
     assert cls.__slots__ == (
         "task_id",
         "stage_name",
         "method",
         "by_session_id",
+        "validation_override_reason",
     )
 
     hints = get_type_hints(cls)
@@ -51,6 +53,7 @@ def test_advance_stage_action_method_literal() -> None:
 
     action = cls(task_id="task-1", stage_name="planning", method="complete_stage")
     assert action.by_session_id == "dispatcher"
+    assert action.validation_override_reason is None
     with pytest.raises(FrozenInstanceError):
         action.method = "approve_review"
 

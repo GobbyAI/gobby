@@ -130,7 +130,7 @@ def _assert_initialize_request(request: dict[str, Any]) -> None:
     assert request["jsonrpc"] == "2.0"
     assert request["params"]["protocolVersion"] == 1
     assert request["params"]["clientInfo"] == {"name": "gobby", "version": "1.0.0"}
-    assert request["params"]["capabilities"] == {}
+    assert request["params"]["clientCapabilities"] == {}
 
 
 def _assert_session_request(

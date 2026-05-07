@@ -443,9 +443,6 @@ def show_pipeline_run(ctx: click.Context, execution_id: str, json_format: bool) 
             click.echo(f"  {status_icon} {step.step_id} ({step.status.value})")
 
 
-pipelines.add_command(show_pipeline_run, "status")
-
-
 @pipelines.command("approve")
 @click.argument("token")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")

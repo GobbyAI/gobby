@@ -92,6 +92,14 @@ class TestSpawnAgentIsolation:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
             ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                new=AsyncMock(),
+            ),
         ):
             mock_ctx.return_value = {
                 "id": "proj-123",
@@ -156,6 +164,14 @@ class TestSpawnAgentIsolation:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
             ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                new=AsyncMock(),
+            ),
         ):
             mock_ctx.return_value = {
                 "id": "proj-123",

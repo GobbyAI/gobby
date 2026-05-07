@@ -939,12 +939,13 @@ class TestVariablePersistence:
         response = await handler._evaluate_rules(after_event)
 
         assert response.decision == "allow"
-        assert response.context is not None
-        assert (
-            'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
-            in response.context
-        )
-        assert "# Task transitions" not in response.context
+        assert after_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
+        assert after_event.data["mcp_server"] == "gobby"
+        assert after_event.data["mcp_tool"] == "get_tool_schema"
+        assert after_event.metadata["_codex_tool_context_rehydrated"] is True
 
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:

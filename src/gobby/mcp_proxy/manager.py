@@ -819,8 +819,7 @@ class MCPClientManager:
         # we try to fetch it. But standard MCP list_tools returns everything.
         # So we just filter the output of list_tools.
 
-        tools = await self.list_tools(server_name)
-        server_tools = tools.get(server_name, [])
+        server_tools = await self._list_tools_for_server(server_name)
 
         for tool in server_tools:
             # tool might be an object or dict
