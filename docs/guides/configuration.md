@@ -1,527 +1,339 @@
 # Configuration Guide
 
-Gobby uses YAML configuration for the daemon and JSON for project-specific settings. All options are validated via Pydantic with sensible defaults.
+Gobby uses a DB-backed daemon configuration for runtime settings, a small
+bootstrap YAML file for pre-database startup settings, and project-local JSON
+for repository verification and hook policy.
 
-## Quick Start
-
-```bash
-# View current configuration
-gobby config show
-
-# Set a value
-gobby config set daemon_port 60888
-
-# Reset to defaults
-gobby config reset
+```mermaid
+flowchart TB
+    A[Pydantic defaults] --> B[Bootstrap YAML]
+    B --> C[Optional config file]
+    C --> D[DB config_store]
+    D --> E[CLI overrides]
+    E --> F[Validated DaemonConfig]
 ```
 
-## Configuration Files
+## Configuration Sources
 
-| File | Scope | Format | Purpose |
-|------|-------|--------|---------|
-| `~/.gobby/config.yaml` | User | YAML | Daemon configuration |
-| `~/.gobby/.mcp.json` | User | JSON | MCP server registry |
-| `.gobby/project.json` | Project | JSON | Project metadata and verification |
+| Source | Scope | Purpose |
+| --- | --- | --- |
+| `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before SQLite is open |
+| `config_store` table in `~/.gobby/gobby-hub.db` | Machine | Runtime daemon settings and user overrides |
+| `~/.gobby/.mcp.json` | Machine | Persistent downstream MCP server registry |
+| `.gobby/project.json` | Project | Project identity, verification commands, and project hook settings |
+| `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
+| `<project>/.gobby/build.yaml` | Project | Build lifecycle defaults for one repository |
 
-## Environment Variables
+`~/.gobby/config.yaml` is an export/import artifact. It is useful for backup or
+migration, but normal daemon startup reads `bootstrap.yaml`, `config_store`, and
+Pydantic defaults.
 
-Config supports environment variable expansion:
+## Runtime Configuration
+
+`DaemonConfig` is the validated runtime model. The loader merges configuration
+in this order:
+
+1. Pydantic defaults from `src/gobby/config/`.
+2. `~/.gobby/bootstrap.yaml` for startup-only fields.
+3. An optional explicit config file when one is supplied.
+4. DB overrides from `config_store`.
+5. CLI overrides passed by daemon startup code.
+
+When the daemon has a `ConfigStore`, DB values win over file values. Values in
+`config_store` are flattened dotted keys such as
+`llm_providers.claude.models`; the storage layer JSON-encodes values so numbers,
+booleans, strings, and lists keep their type.
+
+### Bootstrap
+
+`~/.gobby/bootstrap.yaml` contains only values needed before the hub database is
+available:
 
 ```yaml
-# Use VAR, unchanged if unset
-api_key: ${OPENAI_API_KEY}
-
-# Use VAR, or "default" if unset/empty
-api_key: ${OPENAI_API_KEY:-sk-default}
-```
-
----
-
-## ~/.gobby/config.yaml Reference
-
-### Daemon Settings
-
-Core daemon configuration.
-
-```yaml
-# Port for daemon HTTP server (1024-65535)
+database_path: "~/.gobby/gobby-hub.db"
 daemon_port: 60887
-
-# Health check interval in seconds (1.0-300.0)
-daemon_health_check_interval: 10.0
-
-# Enable test endpoints
-test_mode: false
-
-# SQLite database for cross-project queries
-database_path: ~/.gobby/gobby-hub.db
-
-# Use V2 baseline schema (v75) for new databases
-use_flattened_baseline: true
+bind_host: "localhost"
+websocket_port: 60888
+ui_port: 60889
+neo4j_password: "gobbyneo4j"
 ```
 
-### WebSocket Server
+Changing bootstrap settings affects startup wiring. Restart the daemon after
+editing this file.
 
-Real-time event streaming.
+### Runtime Overrides
+
+Use the `gobby-config` MCP server or the web UI configuration routes for normal
+runtime changes. The MCP server exposes:
+
+| Tool | Purpose |
+| --- | --- |
+| `get_config` | Read one dotted key from the in-memory config |
+| `get_config_section` | Read one section as a nested object |
+| `set_config` | Validate and persist one scalar dotted key |
+| `set_config_batch` | Validate and persist several scalar keys atomically |
+| `delete_config` | Remove one DB override and fall back to defaults |
+| `list_config_keys` | List keys stored in the database |
+| `ensure_defaults` | Insert missing defaults for one section |
+
+Example MCP calls:
+
+```python
+call_tool("gobby-config", "get_config", {"key": "memory.enabled"})
+call_tool("gobby-config", "get_config_section", {"prefix": "llm_providers"})
+call_tool(
+    "gobby-config",
+    "set_config",
+    {"key": "llm_providers.default_model", "value": "sonnet"},
+)
+call_tool(
+    "gobby-config",
+    "set_config_batch",
+    {
+        "entries": [
+            {"key": "local.url", "value": "http://localhost:1234/v1"},
+            {"key": "local.model", "value": "local-model"},
+        ]
+    },
+)
+```
+
+Use `set_config_batch` when a section has multiple required fields. For example,
+`local` requires both `url` and `model`, so setting only one key does not produce
+a valid `DaemonConfig`.
+
+### HTTP Configuration API
+
+The daemon exposes configuration routes under `/api/config`:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/config/schema` | Return the JSON Schema for `DaemonConfig` |
+| `GET /api/config/values` | Return current config values with secrets masked |
+| `PUT /api/config/values` | Save a partial nested update |
+| `POST /api/config/values/validate` | Validate a nested update without saving |
+| `POST /api/config/values/reset` | Clear DB overrides and return to defaults |
+| `GET /api/config/template` | Return full current config as YAML |
+| `PUT /api/config/template` | Save YAML, storing only non-default values |
+| `POST /api/config/export` | Export config overrides, prompt overrides, and secret names |
+| `POST /api/config/import` | Import a config bundle |
+
+Secret values are encrypted through the secrets store. Secret-like keys are
+masked in read responses, and masked values are skipped when saving unchanged UI
+forms.
+
+### Environment And Secret Expansion
+
+Configuration strings support secret and environment references:
 
 ```yaml
+api_key: $secret:OPENAI_API_KEY
+fallback_key: ${OPENAI_API_KEY}
+local_key: ${OPENAI_API_KEY:-development-key}
+```
+
+`$secret:NAME` resolves only from the encrypted secrets store. `${VAR}` checks
+the secrets resolver first when one is available, then falls back to the process
+environment. `${VAR:-default}` uses the default when the value is unset or empty.
+
+## Core Runtime Sections
+
+This section lists the high-signal sections most operators tune. The complete
+shape is the `DaemonConfig` schema from `GET /api/config/schema`.
+
+### Daemon And Network
+
+```yaml
+daemon_port: 60887
+bind_host: localhost
+daemon_health_check_interval: 10.0
+test_mode: false
+cors_origins:
+  - http://localhost:*
+  - https://localhost:*
+
 websocket:
   enabled: true
-  port: 60888                    # 1024-65535
-  ping_interval: 30              # seconds
-  ping_timeout: 10               # seconds
+  port: 60888
+  ping_interval: 30
+  ping_timeout: 10
+
+ui:
+  enabled: false
+  mode: production
+  port: 60889
+  host: localhost
 ```
 
-### Logging
+Ports must be between `1024` and `65535`. Timeouts and intervals must be
+positive unless the field explicitly documents `0` as a special value.
 
-```yaml
-logging:
-  level: info                    # debug, info, warning, error
-  format: text                   # text, json
-
-  # Log file paths
-  client: ~/.gobby/logs/gobby.log
-  client_error: ~/.gobby/logs/gobby-error.log
-  hook_manager: ~/.gobby/logs/hook-manager.log
-  mcp_server: ~/.gobby/logs/mcp-server.log
-  mcp_client: ~/.gobby/logs/mcp-client.log
-
-  # Rotation
-  max_size_mb: 10
-  backup_count: 5
-```
-
-### MCP Client Proxy
-
-Tool discovery and recommendation.
+### MCP Proxy
 
 ```yaml
 mcp_client_proxy:
   enabled: true
-  connect_timeout: 30.0          # seconds
-  proxy_timeout: 30              # seconds
-  tool_timeout: 30               # seconds
-
-  # Per-tool timeouts
-  tool_timeouts:
-    expand_task: 300.0
-    validate_task: 120.0
-
-  # Semantic search for tool discovery
-  search_mode: llm               # llm, semantic, hybrid
-  embedding_provider: openai
-  embedding_model: text-embedding-3-small
-  min_similarity: 0.3            # 0.0-1.0
+  connect_timeout: 30.0
+  proxy_timeout: 30
+  tool_timeout: 30
+  tool_timeouts: {}
+  search_mode: llm
+  min_similarity: 0.3
   top_k: 10
-
-  # Refresh settings
   refresh_on_server_add: true
   refresh_timeout: 300.0
 ```
 
-### LLM Providers
+`search_mode` accepts `llm`, `semantic`, or `hybrid`. Embedding model settings
+live in `embeddings`, shared by memory, skills, code index, and semantic tool
+search.
 
-Multi-provider LLM configuration.
+### LLM Providers
 
 ```yaml
 llm_providers:
-  json_strict: true              # Strict JSON validation
-
+  default_model: opus
+  json_strict: true
   claude:
-    models: claude-haiku-4-5,claude-sonnet-4-5,claude-opus-4-5
-    auth_mode: subscription      # subscription, api_key, adc
-
-  codex:                         # OpenAI
-    models: gpt-4o-mini,gpt-5-mini,gpt-5
+    models: haiku,sonnet,opus
     auth_mode: subscription
-
-  gemini:
-    models: gemini-2.0-flash,gemini-2.5-pro
-    auth_mode: subscription
-
-  litellm:
-    models: mistral-large,command-r-plus
-    auth_mode: api_key
-
-  # API keys (can use ${ENV_VAR} syntax)
-  api_keys:
-    OPENAI_API_KEY: ${OPENAI_API_KEY}
-    MISTRAL_API_KEY: ${MISTRAL_API_KEY}
+  codex: null
+  gemini: null
+  qwen: null
 ```
 
-### Search
+Provider `auth_mode` accepts `subscription`, `api_key`, or `adc`. Provider
+`models` is a comma-separated string. `json_strict` controls LLM JSON validation
+and can be overridden per workflow with the `llm_json_strict` variable.
 
-Unified search configuration. See [search.md](search.md) for details.
-
-```yaml
-search:
-  mode: auto                     # tfidf, embedding, auto, hybrid
-  embedding_model: text-embedding-3-small
-  embedding_api_base: null       # For Ollama: http://localhost:11434/v1
-  embedding_api_key: null        # Uses env if not set
-  tfidf_weight: 0.4              # 0.0-1.0
-  embedding_weight: 0.6          # 0.0-1.0
-  notify_on_fallback: true
-```
-
-### Memory
-
-Persistent memory system. See [memory.md](memory.md) for details.
+### Storage, Embeddings, And Memory
 
 ```yaml
+databases:
+  qdrant:
+    url: http://localhost:6333
+    api_key: null
+    port: 6333
+    collection_prefix: code_symbols_
+  neo4j:
+    url: http://localhost:8474
+    auth: null
+    database: neo4j
+    graph_search: true
+
+embeddings:
+  model: nomic-embed-text
+  dim: 768
+  api_base: null
+  api_key: null
+
 memory:
   enabled: true
-  backend: local                  # local (preferred), sqlite (alias for local), or null (testing)
-
-  # Search
-  search_backend: auto            # tfidf, text, embedding, auto, hybrid
-  embedding_model: text-embedding-3-small
-  embedding_weight: 0.6           # 0.0-1.0 (hybrid mode)
-  tfidf_weight: 0.4               # 0.0-1.0 (hybrid mode)
-
-  # Importance & Decay
-  importance_threshold: 0.7       # 0.0-1.0
-  decay_enabled: true
-  decay_rate: 0.05                # 0.0-1.0
-  decay_floor: 0.1                # 0.0-1.0
-
-  # Cross-referencing
+  backend: local
   auto_crossref: false
-  crossref_threshold: 0.3         # 0.0-1.0
+  crossref_threshold: 0.3
   crossref_max_links: 5
-
   access_debounce_seconds: 60
-
 ```
 
-### Memory Sync
+`memory.backend` accepts `local` or `null`. Qdrant and Neo4j connection settings
+are shared infrastructure; memory-specific behavior lives under `memory`.
 
-Export memories to filesystem for git tracking.
-
-```yaml
-memory_sync:
-  enabled: true
-  export_debounce: 5.0           # seconds
-  export_path: .gobby/memories.jsonl
-```
-
-### Session Configuration
-
-#### Context Injection
-
-Context for subagent spawning.
+### Sessions
 
 ```yaml
 context_injection:
   enabled: true
   default_source: summary_markdown
-    # Options: summary_markdown, compact_markdown, session_id:<id>,
-    # transcript:<n>, file:<path>
-  max_file_size: 51200           # bytes
-  max_content_size: 51200        # bytes
+  max_file_size: 51200
+  max_content_size: 51200
   max_transcript_messages: 100
-  truncation_suffix: "\n\n[truncated: {bytes} bytes remaining]"
-  context_template: null         # Custom template with {{ context }}, {{ prompt }}
-```
 
-#### Session Summary
-
-Auto-generated session summaries.
-
-```yaml
 session_summary:
   enabled: true
   provider: claude
-  model: claude-haiku-4-5
-  prompt: |                      # Jinja2 template
-    Summarize this session...
-  summary_file_path: ~/.gobby/session_summaries
-```
+  model: sonnet
 
-#### Title Synthesis
-
-Auto-generated session titles.
-
-```yaml
-title_synthesis:
+digest:
   enabled: true
   provider: claude
-  model: claude-haiku-4-5
-  prompt: null                   # Custom template
-```
+  model: haiku
+  timeout: 30
 
-#### Message Tracking
-
-Session message processing.
-
-```yaml
 message_tracking:
   enabled: true
-  poll_interval: 5.0             # seconds
-  debounce_delay: 1.0            # seconds
+  poll_interval: 5.0
+  debounce_delay: 1.0
   max_message_length: 10000
   broadcast_enabled: true
-```
 
-#### Session Lifecycle
-
-```yaml
 session_lifecycle:
   active_session_pause_minutes: 30
   stale_session_timeout_hours: 24
   expire_check_interval_minutes: 60
   transcript_processing_interval_minutes: 5
   transcript_processing_batch_size: 10
+  transcript_archive_dir: ~/.gobby/session_transcripts
 ```
 
-#### Compact Handoff
-
-```yaml
-compact_handoff:
-  enabled: true
-```
-
-### Task Configuration
-
-Task expansion, validation, and enrichment. See [tasks.md](tasks.md) for details.
+### Tasks And Workflows
 
 ```yaml
 gobby-tasks:
   enabled: true
   show_result_on_create: false
-
-  # File extraction for task validation
-  file_extraction:
-    file_extensions:
-      - .py
-      - .js
-      - .ts
-      - .go
-      - .rs
-      - .md
-    known_files:
-      - Makefile
-      - Dockerfile
-      - package.json
-    path_prefixes:
-      - src/
-      - lib/
-      - test/
-      - tests/
-
-  # Task enrichment
-  enrichment:
-    enabled: true
-    provider: claude
-    model: claude-3-5-haiku-latest
-    enable_code_research: true
-    enable_web_research: false
-    enable_mcp_tools: false
-    generate_validation: true
-
-  # Task expansion (breaking down broad tasks)
   expansion:
     enabled: true
     provider: claude
-    model: claude-opus-4-5
-    prompt_path: null            # Custom prompt file
-    system_prompt_path: null
-    codebase_research_enabled: true
-    research_model: null
-    research_max_steps: 10
-    research_system_prompt: "You are a senior developer..."
-    web_research_enabled: true
-    max_subtasks: 15
-    default_strategy: auto       # auto, phased, sequential, parallel
-    timeout: 300.0               # seconds
+    model: opus
+    default_strategy: auto
+    timeout: 300.0
     research_timeout: 60.0
-
-    pattern_criteria:
-      patterns:
-        strangler-fig: [...]
-        tdd: [...]
-      detection_keywords:
-        strangler-fig: [migrate, legacy, ...]
-
-  # Task validation
   validation:
     enabled: true
     provider: claude
-    model: claude-opus-4-5
-    system_prompt: "You are a QA validator..."
-    criteria_system_prompt: "You are a QA engineer..."
-    prompt_path: null
-    criteria_prompt_path: null
-    # Validation loop control
+    model: sonnet
+    max_retries: 3
     max_iterations: 10
-    max_consecutive_errors: 3
-    recurring_issue_threshold: 3
-    issue_similarity_threshold: 0.8
-
-    # Build verification
     run_build_first: true
-    build_command: null          # Auto-detected if null
+    build_command: null
 
-    # Escalation
-    escalation_enabled: true
-    escalation_notify: none      # webhook, slack, none
-    escalation_webhook_url: null
-
-    # Auto-generation
-    auto_generate_on_create: true
-    auto_generate_on_expand: true
-```
-
-### Workflow Engine
-
-Step-based workflow enforcement. See [rules.md](rules.md) for details.
-
-```yaml
 workflow:
   enabled: true
-  timeout: 0.0                   # seconds, 0 = no timeout
-  require_task_before_edit: false
-  protected_tools:
-    - Edit
-    - Write
-    - Update
-    - NotebookEdit
+  timeout: 0.0
+  debug_echo_context: false
 ```
 
-### Tool Recommendation
+Task lifecycle automation is stage-manifest based. Docs leaf work can run inside
+a parent epic's isolation context. Agent process termination is separate from
+task lifecycle completion; agent runs still release resources through
+`gobby-agents:end_agent_run`.
+
+Rule authors should target semantic workflow events such as `turn_start`,
+`turn_end`, `before_tool`, and `after_tool`. Provider runtime events are adapter
+details below that authoring API. See [rules.md](./rules.md) for the complete
+rule model.
+
+### Code Index
 
 ```yaml
-recommend_tools:
+code_index:
   enabled: true
-  provider: claude
-  model: claude-sonnet-4-5
-  prompt: null                   # Custom template
-  hybrid_rerank_prompt_path: null
-  llm_prompt_path: null
+  auto_index_on_commit: true
+  maintenance_interval_seconds: 300
+  max_file_size_bytes: 1000000
+  embedding_enabled: true
+  graph_enabled: true
+  qdrant_collection_prefix: code_symbols_
+  summary_enabled: true
+  summary_provider: claude
+  summary_model: haiku
 ```
 
-### Tool Summarizer
+`databases.qdrant.collection_prefix` must match
+`code_index.qdrant_collection_prefix`; `DaemonConfig` rejects mismatches.
 
-```yaml
-tool_summarizer:
-  enabled: true
-  provider: claude
-  model: claude-haiku-4-5
-  prompt_path: null
-  system_prompt_path: null
-  server_description_prompt_path: null
-  server_description_system_prompt_path: null
-```
-
-### Task Description Generation
-
-```yaml
-task_description:
-  enabled: true
-  provider: claude
-  model: claude-haiku-4-5-20251001
-  min_structured_length: 50
-  prompt_path: null
-  system_prompt_path: null
-```
-
-### MCP Server Import
-
-```yaml
-import_mcp_server:
-  enabled: true
-  provider: claude
-  model: claude-haiku-4-5
-  prompt_path: null
-  github_fetch_prompt_path: null
-  search_fetch_prompt_path: null
-```
-
-### Metrics
-
-```yaml
-metrics:
-  list_limit: 10000              # Max items for counting, 0 = unbounded
-```
-
-### Verification Defaults
-
-Default commands for project verification.
-
-```yaml
-verification_defaults:
-  unit_tests: uv run pytest tests/ -v
-  type_check: uv run mypy src/
-  lint: uv run ruff check src/
-  format: uv run ruff format --check src/
-  integration: null
-  security: null
-  code_review: null
-  custom: {}
-```
-
-### Skills
-
-```yaml
-skills:
-  inject_core_skills: true
-  core_skills_path: null
-  injection_format: summary      # summary, full, none
-```
-
-### Build And Dispatch
-
-Build defaults can be defined globally in `~/.gobby/build.yaml` and overridden
-per project in `<project>/.gobby/build.yaml`. CLI, MCP, and HTTP build flags are
-applied on top of those files.
-
-```yaml
-default_skip_stages: []
-default_isolation: worktree        # none | worktree | clone
-default_yolo: false
-default_max_review_rounds: 3
-default_target_branch: null        # null resolves current git branch at build time
-clones_dir: ~/.gobby/clones
-cleanup_clones_on_merge: true
-max_active_agents: 10
-dispatch_interval_seconds: 60
-
-profiles:
-  quick:
-    skip_stages: [research, holistic_qa]
-    isolation: none
-    yolo: false
-  review:
-    skip_stages: []
-    isolation: worktree
-    yolo: false
-  full:
-    skip_stages: []
-    isolation: worktree
-    yolo: false
-  full-yolo:
-    skip_stages: [pr]
-    isolation: worktree
-    yolo: true
-```
-
-Profiles are build-time sugar. `gobby build` resolves them by pruning skipped
-stages from the persisted stage manifest and storing `isolation` and `yolo`
-values on the task. Changing a profile later does not rewrite already-built
-tasks.
-
-`max_active_agents` is the global dispatch slot cap. If all slots are full, the
-candidate waits until the next heartbeat; task state acts as the queue.
-
-### Retired Conductor Config
-
-The old LLM-driven conductor tick is retired. If an older config still has a
-`conductor:` block, leave it disabled or remove it during cleanup. It is
-historical compatibility context, not the active automation model.
-
-### Hook Extensions
-
-#### WebSocket Broadcasting
+### Hooks And Webhooks
 
 ```yaml
 hook_extensions:
@@ -533,54 +345,37 @@ hook_extensions:
       - pre-tool-use
       - post-tool-use
     include_payload: true
-```
-
-#### HTTP Webhooks
-
-```yaml
-hook_extensions:
   webhooks:
     enabled: true
-    default_timeout: 10.0        # 1.0-60.0
+    endpoints: []
+    default_timeout: 10.0
     async_dispatch: true
-
-    endpoints:
-      - name: slack-notify
-        url: https://hooks.slack.com/services/...
-        events:
-          - session-end
-          - task-completed
-        headers:
-          Content-Type: application/json
-        timeout: 10.0            # 1.0-60.0
-        retry_count: 3           # 0-10
-        retry_delay: 1.0         # 0.1-30.0
-        can_block: false
-        enabled: true
 ```
 
-#### Python Plugins
+Webhook endpoints support custom headers, retries, and blocking behavior through
+the `can_block` flag.
+
+### Tool Approval And Chat
 
 ```yaml
-hook_extensions:
-  plugins:
-    enabled: false               # Disabled by default for security
-    plugin_dirs:
-      - .gobby/plugins
-    auto_discover: true
+tool_approval:
+  enabled: false
+  default_policy: auto
+  policies: []
 
-    plugins:
-      my-plugin:
-        enabled: true
-        config:
-          key: value
+chat:
+  provider: claude
+  model: opus
+  default_mode: plan
 ```
 
----
+Tool approval policies use glob-style `server_pattern` and `tool_pattern`
+entries with policy values `auto`, `approve_once`, or `always_ask`.
 
-## ~/.gobby/.mcp.json Reference
+## MCP Server Registry
 
-MCP server registry.
+Downstream MCP servers are stored in `~/.gobby/.mcp.json` and synchronized into
+daemon state by the MCP manager. The file has a top-level `servers` array:
 
 ```json
 {
@@ -592,7 +387,6 @@ MCP server registry.
       "command": "npx",
       "args": ["@anthropic-ai/filesystem-mcp"],
       "env": null,
-      "description": "File system operations",
       "project_id": "global"
     },
     {
@@ -610,194 +404,129 @@ MCP server registry.
 }
 ```
 
-### Transport Types
+Supported transports are `stdio`, `http`, `websocket`, and `sse`. `stdio`
+servers use `command`, `args`, and `env`. Network transports use `url` and
+optional `headers`.
 
-| Transport | Fields | Description |
-|-----------|--------|-------------|
-| `stdio` | `command`, `args`, `env` | Local process with stdin/stdout |
-| `http` | `url`, `headers` | HTTP endpoint |
-| `websocket` | `url`, `headers` | WebSocket connection |
-| `sse` | `url`, `headers` | Server-Sent Events |
+## Project Configuration
 
----
-
-## .gobby/project.json Reference
-
-Project-specific configuration.
+`.gobby/project.json` binds a repository to a Gobby project and stores
+repository-local verification and hook settings:
 
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "my-project",
-  "created_at": "2024-01-15T10:30:00Z",
-
+  "created_at": "2026-01-15T10:30:00Z",
   "verification": {
-    "unit_tests": "npm test",
-    "type_check": "npm run typecheck",
-    "lint": "npm run lint",
-    "format": "npm run format:check",
-    "integration": "npm run test:integration",
-    "security": "npm audit",
+    "unit_tests": "uv run pytest tests/ -v",
+    "type_check": "uv run mypy src/ --no-incremental --strict",
+    "lint": "uv run ruff check src/",
+    "format": "uv run ruff format --check src/",
+    "integration": null,
+    "security": null,
     "code_review": null,
     "custom": {
-      "e2e": "npm run test:e2e"
+      "frontend_tests": "cd web && npm test"
     }
   },
-
   "hooks": {
     "pre-commit": {
       "run": ["lint", "format"],
       "fail_fast": true,
-      "timeout": 60,
+      "timeout": 120,
       "enabled": true
     },
     "pre-push": {
       "run": ["type_check", "unit_tests"],
       "fail_fast": false,
-      "timeout": 300,
-      "enabled": true
-    },
-    "pre-merge": {
-      "run": ["integration"],
-      "fail_fast": true,
-      "timeout": 300,
+      "timeout": 1800,
       "enabled": true
     }
   }
 }
 ```
 
----
+Verification commands are project-owned and should use the repository's normal
+toolchain. For Python projects in this repo, use `uv run` commands. Gobby hooks
+read this file through the project context utilities; task expansion also uses
+the verification section when generating validation criteria.
 
-## Feature Flags
+## Build Defaults
 
-Quick reference for enabling/disabling features:
+Build defaults are loaded from `~/.gobby/build.yaml`, then
+`<project>/.gobby/build.yaml`, then CLI/MCP/HTTP request flags:
 
-| Feature | Config Key | Default |
-|---------|-----------|---------|
-| WebSocket Server | `websocket.enabled` | true |
-| MCP Proxy | `mcp_client_proxy.enabled` | true |
-| Memory System | `memory.enabled` | true |
-| Session Summary | `session_summary.enabled` | true |
-| Title Synthesis | `title_synthesis.enabled` | true |
-| Message Tracking | `message_tracking.enabled` | true |
-| Workflows | `workflow.enabled` | true |
-| Task System | `gobby-tasks.enabled` | true |
-| Task Enrichment | `gobby-tasks.enrichment.enabled` | true |
-| Task Expansion | `gobby-tasks.expansion.enabled` | true |
-| Task Validation | `gobby-tasks.validation.enabled` | true |
-| Tool Recommendations | `recommend_tools.enabled` | true |
-| Tool Summarizer | `tool_summarizer.enabled` | true |
-| Task Descriptions | `task_description.enabled` | true |
-| MCP Import | `import_mcp_server.enabled` | true |
-| HTTP Webhooks | `hook_extensions.webhooks.enabled` | true |
-| WebSocket Broadcasting | `hook_extensions.websocket.enabled` | true |
-| Python Plugins | `hook_extensions.plugins.enabled` | **false** |
-| Skills Injection | `skills.inject_core_skills` | true |
-| Compact Handoff | `compact_handoff.enabled` | true |
-
----
-
-## CLI Commands
-
-### View Configuration
-
-```bash
-# Show full config
-gobby config show
-
-# Show specific section
-gobby config show --section memory
-
-# Show as YAML
-gobby config show --format yaml
+```yaml
+default_skip_stages: []
+default_isolation: worktree
+stage_caps:
+  development:
+    max_work_attempts: 3
+    max_review_rounds: 3
+default_target_branch: null
+clones_dir: ~/.gobby/clones
+cleanup_clones_on_merge: true
+max_active_agents: 10
+dispatch_interval_seconds: 60
 ```
 
-### Modify Configuration
+`default_isolation` accepts `none`, `worktree`, or `clone`.
+`default_skip_stages` accepts lifecycle stage names such as `research`,
+`development`, `holistic_qa`, `pr`, and `merge`. Runtime flags on
+`uv run gobby build` and the `gobby-tasks-ops:build_task` tool override these
+file defaults for the requested build.
 
-```bash
-# Set a value
-gobby config set daemon_port 60888
-gobby config set logging.level debug
+## Validation Rules
 
-# Reset to defaults
-gobby config reset
-
-# Reset specific section
-gobby config reset --section memory
-```
-
-### Validate Configuration
-
-```bash
-# Check config is valid
-gobby config validate
-
-# Check and show warnings
-gobby config validate --strict
-```
-
----
-
-## Type Validation Rules
-
-All values are validated via Pydantic:
+All config updates are validated with Pydantic before they are accepted. Common
+constraints include:
 
 | Type | Constraint |
-|------|------------|
-| Port | 1024-65535 |
-| Timeout | Positive float/int |
-| Weight | 0.0-1.0 |
-| Threshold | 0.0-1.0 |
-| Count | Positive integer |
-| Search mode | tfidf, embedding, auto, hybrid |
-| Log level | debug, info, warning, error |
-| Memory backend | local, sqlite (alias for local), null |
-| Auth mode | subscription, api_key, adc |
-
----
-
-## Best Practices
-
-### Do
-
-- Use environment variables for secrets: `${API_KEY}`
-- Set appropriate timeouts for slow operations
-- Enable `notify_on_fallback` to monitor search degradation
-- Configure verification commands for your project
-- Review feature flags to disable unused features
-
-### Don't
-
-- Commit API keys in config files
-- Set extremely high limits (memory usage)
-- Disable validation in production
-- Use `test_mode: true` in production
+| --- | --- |
+| Port | `1024` through `65535` |
+| Positive timeout | Greater than `0` |
+| Non-negative workflow timeout | `0` or greater |
+| Weight or threshold | `0.0` through `1.0` |
+| MCP search mode | `llm`, `semantic`, or `hybrid` |
+| Provider auth mode | `subscription`, `api_key`, or `adc` |
+| Memory backend | `local` or `null` |
+| Build isolation | `none`, `worktree`, or `clone` |
 
 ## Troubleshooting
 
-### Config not loading
+### Daemon Uses The Wrong Port
 
-1. Check YAML syntax: `python -c "import yaml; yaml.safe_load(open('~/.gobby/config.yaml'))"`
-2. Verify file permissions
-3. Check for invalid values with `gobby config validate`
+Check `~/.gobby/bootstrap.yaml` first. The HTTP, WebSocket, and UI ports are
+bootstrap values because the daemon needs them before the database is fully
+loaded.
 
-### Feature not working
+### Runtime Setting Does Not Stick
 
-1. Verify feature is enabled in config
-2. Check daemon logs: `tail -f ~/.gobby/logs/gobby.log`
-3. Restart daemon: `gobby restart`
+List DB overrides with `gobby-config:list_config_keys`. If a key is absent, the
+daemon is using the Pydantic default. If a key is present but behavior did not
+change, restart the daemon; the HTTP config save route reports
+`requires_restart: true` for config updates.
 
-### MCP server not connecting
+### Secret Is Masked Or Missing
 
-1. Check server is listed in `.mcp.json`
-2. Verify `enabled: true`
-3. Check connection settings match transport type
-4. Review MCP client logs: `~/.gobby/logs/mcp-client.log`
+Masked secret values are intentionally skipped on save. Re-enter the secret
+value through the web UI or call `set_config` with `is_secret=true` for a
+secret-like key.
+
+### MCP Server Does Not Connect
+
+Check `~/.gobby/.mcp.json` for the server entry, transport-specific fields, and
+`enabled: true`. For generated or imported servers, refresh the MCP registry
+after changing server definitions.
 
 ## See Also
 
-- [search.md](search.md) - Search configuration details
-- [memory.md](memory.md) - Memory system details
-- [rules.md](rules.md) - Rule engine configuration
-- [webhooks-and-plugins.md](webhooks-and-plugins.md) - Extension development
+- [cli-commands.md](./cli-commands.md) - CLI command reference
+- [dispatch.md](./dispatch.md) - Build lifecycle and dispatcher behavior
+- [memory.md](./memory.md) - Memory configuration and operations
+- [rules.md](./rules.md) - Rule engine configuration
+- [search.md](./search.md) - Search and embedding behavior
+- [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
+
+_Last verified: 2026-05-07_
