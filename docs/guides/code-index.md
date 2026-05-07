@@ -4,8 +4,8 @@ Gobby's code index is a native `gcode` CLI plus daemon-side storage and graph
 services. Use it to search symbols, inspect outlines, retrieve exact symbol
 source, and trace graph relationships without reading whole source files.
 
-The current authoring surface is `gcode`. Older Gobby CLI and MCP examples for
-code-index access are stale and should be replaced with the commands below.
+The current user-facing surface is `gcode`. Older Gobby CLI and MCP examples
+for direct code-index access are stale; use the commands below.
 
 ## Quick Start
 
@@ -28,7 +28,9 @@ gcode outline src/gobby/tasks/validation.py
 gcode symbol <symbol-id>
 ```
 
-Graph commands require the Gobby daemon and graph backend:
+Graph commands require the Gobby daemon. `callers`, `usages`, `imports`, and
+`blast-radius` read graph data through top-level commands; `gcode graph` is only
+for graph lifecycle operations:
 
 ```bash
 gcode callers validate_task
@@ -62,17 +64,20 @@ that store: background maintenance, optional vector and graph sync, optional
 symbol summaries, HTTP graph routes, and session variables.
 
 Files are indexed incrementally by content hash. Changed files are re-parsed;
-unchanged files are skipped. The post-edit trigger batches file notifications
-and runs:
+unchanged files are skipped. The post-edit trigger ignores `.gobby/` internal
+edits, batches repo-relative file notifications by project root with a
+two-second debounce, and runs:
 
 ```bash
 gcode index --files <changed-files> --quiet
 ```
 
 The maintenance loop runs every `code_index.maintenance_interval_seconds`
-seconds and checks indexed projects for stale files. When enabled, a sync worker
-copies indexed data to Qdrant and Neo4j, and a summarizer fills missing symbol
-summaries.
+seconds. It replays `gcode index --project <root> --quiet` for each indexed
+project, purges projects whose root no longer exists, and fills missing symbol
+summaries when a summarizer is configured. A separate sync worker polls pending
+files and copies symbols to Qdrant vectors and Neo4j graph edges when those
+backends are enabled and available.
 
 ## CLI Reference
 
@@ -130,6 +135,10 @@ These commands require the Gobby daemon and graph support:
 | `gcode graph clear` | Clear the current project's graph projection |
 | `gcode graph rebuild` | Rebuild the graph projection from SQLite |
 
+`gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
+blast-radius` supports `--depth`; the HTTP blast-radius route has a `limit`
+query parameter, but the CLI command does not expose `--limit`.
+
 ## Indexed Data
 
 The SQLite store tracks:
@@ -180,6 +189,8 @@ code_index:
     - .mypy_cache
     - .ruff_cache
     - .pytest_cache
+    - .tox
+    - .eggs
     - vendor
     - build
     - dist
@@ -197,9 +208,39 @@ code_index:
     - python
     - javascript
     - typescript
+    - go
+    - rust
+    - java
+    - php
+    - dart
+    - csharp
+    - c
+    - cpp
+    - elixir
+    - ruby
     - markdown
     - yaml
     - json
+  content_extensions:
+    - .html
+    - .css
+    - .scss
+    - .less
+    - .toml
+    - .cfg
+    - .ini
+    - .sh
+    - .bash
+    - .zsh
+    - .fish
+    - .sql
+    - .graphql
+    - .proto
+    - .txt
+    - .rst
+    - .csv
+    - .gitignore
+    - .editorconfig
 ```
 
 ## Daemon Integration
@@ -207,20 +248,24 @@ code_index:
 ### Session Start
 
 On session start, Gobby checks existing index stats. If the project has indexed
-symbols, the session variable `code_index_available` is set to `true`, allowing
-rules to teach or enforce indexed navigation.
+symbols, the session variable `code_index_available` is set to `true`. Rules can
+then teach or enforce indexed navigation for that session.
 
 ### Post-Edit Incremental Indexing
 
-`CodeIndexTrigger` receives file-change notifications, debounces them by root
-path, normalizes file paths under the project root, and runs `gcode index
---files ... --quiet` for the changed files.
+`CodeIndexTrigger` receives file-change notifications from post-tool hook
+handling, debounces them by root path, normalizes paths under the project root,
+and runs `gcode index --files ... --quiet` for the changed files from the root
+as the subprocess working directory. If `gcode` is not installed, the trigger
+logs a warning and skips the incremental update.
 
 ### Background Maintenance
 
-The maintenance loop checks indexed projects for stale files on the configured
-interval. The sync worker can then update Qdrant vectors, Neo4j graph edges, and
-missing summaries in batches.
+The maintenance loop checks indexed projects on the configured interval and
+uses `gcode index --project <root> --quiet` for refresh. The sync worker can
+then update Qdrant vectors and Neo4j graph edges in batches. Summary generation
+runs from maintenance when `code_index.summary_enabled` is true and the daemon
+has an LLM service.
 
 ## HTTP Endpoints
 
@@ -233,18 +278,25 @@ The daemon exposes graph and invalidation routes under `/api/code-index`:
 | `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | Symbol neighbors; query `project_id`, `limit` |
 | `GET` | `/api/code-index/graph/blast-radius` | Impact graph; query `project_id` and exactly one of `symbol_id` or `file_path`, plus `depth`, `limit` |
 | `GET` | `/api/code-index/graph/search` | Symbol search for graph UI; query `project_id`, `q`, `limit` |
-| `POST` | `/api/code-index/graph/clear` | Clear one project's graph projection; query `project_id` |
-| `POST` | `/api/code-index/graph/rebuild` | Rebuild one project's graph projection; query `project_id`, `limit` |
+| `POST` | `/api/code-index/graph/clear` | Clear one project's graph projection and mark files pending graph sync; query `project_id` |
+| `POST` | `/api/code-index/graph/rebuild` | Rebuild one project's graph projection from indexed files; query `project_id`, `limit` |
 | `POST` | `/api/code-index/invalidate` | Clear all index data for a project; JSON body `{"project_id": "..."}` |
 
-Graph routes return `503` when the code indexer or graph backend is unavailable.
-Blast-radius requests return `400` unless exactly one target is provided.
+All graph routes require `project_id`; missing values return `400`. The graph
+overview, file, symbol-neighbors, and blast-radius routes return `503` when the
+code graph is unavailable. Graph search, clear, rebuild, and invalidate return
+`503` when the daemon has no code indexer. Graph clear and rebuild return `400`
+when the indexer exists but the graph operation reports a failure. Blast-radius
+requests return `400` unless exactly one of `symbol_id` or `file_path` is
+provided. Invalidation returns `{"status": "ok", "note": "not indexed"}` when
+the project has no index record.
 
 ## Rules
 
-Gobby includes a `block-and-teach-code-index` rule in the shared code-index
-ruleset. When active, it blocks first-pass source reads and text searches until
-the agent loads the `code-index` skill. The injected guidance points agents to:
+Gobby includes a `require-code-index-skill` rule in the shared code-index
+ruleset. When active, it blocks first-pass code navigation reads and searches
+until the agent loads the `code-index` skill. The loaded guidance points agents
+to:
 
 ```bash
 gcode outline path/to/file
@@ -273,4 +325,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-05-07_
