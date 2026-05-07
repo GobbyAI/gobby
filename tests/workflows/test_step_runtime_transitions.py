@@ -90,14 +90,35 @@ def _developer_workflow() -> dict[str, Any]:
     }
 
 
+def _set_variable_workflow(step_variables: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "name": "set-variable-steps",
+        "version": "1.0",
+        "enabled": True,
+        "variables": step_variables or {},
+        "steps": [
+            {
+                "name": "plan",
+                "allowed_tools": [
+                    "mcp__gobby__set_variable",
+                    "mcp__gobby__get_variable",
+                ],
+                "transitions": [{"to": "execute", "when": "vars.merge_plan"}],
+            },
+            {"name": "execute", "allowed_tools": "all"},
+        ],
+    }
+
+
 def _setup_workflow(
     db: LocalDatabase,
     *,
     current_step: str = "claim",
     variables: dict[str, Any] | None = None,
+    workflow: dict[str, Any] | None = None,
 ) -> WorkflowInstanceManager:
     _create_session(db)
-    workflow = _developer_workflow()
+    workflow = workflow or _developer_workflow()
     definition_manager = LocalWorkflowDefinitionManager(db)
     definition_manager.create(
         name=workflow["name"],
@@ -154,6 +175,29 @@ def _before_set_variable(name: str, value: object) -> HookEvent:
         data={
             "tool_name": "mcp__gobby__set_variable",
             "tool_input": {"name": name, "value": value},
+        },
+        metadata={},
+    )
+
+
+def _after_set_variable(
+    name: str,
+    value: object,
+    *,
+    output_value: object | None = None,
+) -> HookEvent:
+    tool_output: dict[str, Any] = {"success": True, "scope": "session"}
+    if output_value is not None:
+        tool_output["value"] = output_value
+    return HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="test-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__set_variable",
+            "tool_input": {"name": name, "value": value, "session_id": "#1"},
+            "tool_output": tool_output,
         },
         metadata={},
     )
@@ -281,3 +325,54 @@ async def test_non_reserved_set_variable_remains_allowed(db: LocalDatabase) -> N
     )
 
     assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_native_set_variable_advances_session_scoped_transition(
+    db: LocalDatabase,
+) -> None:
+    workflow = _set_variable_workflow()
+    instance_manager = _setup_workflow(db, current_step="plan", workflow=workflow)
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    response = await engine.evaluate(
+        _after_set_variable("merge_plan", {"steps": ["leaf"]}),
+        session_id="test-session",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("test-session", "set-variable-steps")
+    assert instance is not None
+    assert instance.current_step == "execute"
+    assert variables["merge_plan"] == {"steps": ["leaf"]}
+    assert response.context is not None
+    assert "plan" in response.context
+    assert "execute" in response.context
+
+
+@pytest.mark.asyncio
+async def test_native_set_variable_does_not_shadow_workflow_local_variable(
+    db: LocalDatabase,
+) -> None:
+    workflow = _set_variable_workflow({"merge_plan": False})
+    instance_manager = _setup_workflow(
+        db,
+        current_step="plan",
+        variables={"merge_plan": False},
+        workflow=workflow,
+    )
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    await engine.evaluate(
+        _after_set_variable("merge_plan", {"steps": ["leaf"]}),
+        session_id="test-session",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("test-session", "set-variable-steps")
+    assert instance is not None
+    assert instance.current_step == "plan"
+    assert instance.variables["merge_plan"] is False
+    assert "merge_plan" not in variables

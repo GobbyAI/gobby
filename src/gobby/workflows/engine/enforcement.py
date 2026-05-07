@@ -448,6 +448,30 @@ class EnforcementMixin:
         return handler_tool_input
 
     @staticmethod
+    def _is_native_set_variable_tool(tool_name: str) -> bool:
+        """Return whether a top-level set_variable tool name was called."""
+        return tool_name in ("set_variable", "mcp__gobby__set_variable", "mcp_gobby_set_variable")
+
+    @staticmethod
+    def _successful_set_variable_value(
+        handler_tool_input: dict[str, Any],
+        tool_output: Any,
+    ) -> tuple[str | None, Any]:
+        """Return the set_variable name/value pair visible after a successful call."""
+        variable_name = handler_tool_input.get("name") or handler_tool_input.get("variable")
+        if not variable_name:
+            return None, None
+
+        if isinstance(tool_output, dict):
+            if "value" in tool_output:
+                return str(variable_name), tool_output["value"]
+            result = tool_output.get("result")
+            if isinstance(result, dict) and "value" in result:
+                return str(variable_name), result["value"]
+
+        return str(variable_name), handler_tool_input.get("value")
+
+    @staticmethod
     def _is_step_handler_expression(value: str) -> bool:
         """Return whether a step handler value should be evaluated as an expression."""
         expression_indicators = (
@@ -664,18 +688,23 @@ class EnforcementMixin:
             return None
 
         tool_name = event.data.get("tool_name", "")
-        if tool_name not in ("call_tool", "mcp__gobby__call_tool"):
-            return None
-
         tool_input = event.data.get("tool_input") or {}
         if not isinstance(tool_input, dict):
             return None
 
-        mcp_server = tool_input.get("server_name", "")
-        mcp_tool_name = tool_input.get("tool_name", "")
-        if not mcp_server or not mcp_tool_name:
+        is_native_set_variable = self._is_native_set_variable_tool(tool_name)
+        if tool_name in ("call_tool", "mcp__gobby__call_tool"):
+            mcp_server = tool_input.get("server_name", "")
+            mcp_tool_name = tool_input.get("tool_name", "")
+            if not mcp_server or not mcp_tool_name:
+                return None
+            mcp_key = f"{mcp_server}:{mcp_tool_name}"
+        elif is_native_set_variable:
+            mcp_server = "gobby-workflows"
+            mcp_tool_name = "set_variable"
+            mcp_key = f"{mcp_server}:{mcp_tool_name}"
+        else:
             return None
-        mcp_key = f"{mcp_server}:{mcp_tool_name}"
 
         # Check application-level failure in tool output
         tool_output = event.data.get("tool_output")
@@ -717,6 +746,15 @@ class EnforcementMixin:
 
         instance_mgr = self.instance_manager
         vars_changed = False
+
+        if is_native_set_variable and not is_app_failure:
+            var_name, var_value = self._successful_set_variable_value(
+                handler_tool_input,
+                tool_output,
+            )
+            if var_name and var_name not in instance.variables:
+                variables[var_name] = var_value
+                vars_changed = True
 
         # Execute handlers (on_mcp_success or on_mcp_error based on tool output)
         for handler in handlers:
