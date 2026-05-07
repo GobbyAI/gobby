@@ -174,6 +174,7 @@
   --code-active-line-bg: oklch(18% 0.005 125);
 
   --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+  --gobby-logo-image: url("/logo.png");
   /* stylelint-disable value-keyword-case */
   --font-sans:
     "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -183,6 +184,8 @@
 }
 
 [data-theme="light"] {
+  --gobby-logo-image: url("/logo-light.png");
+
   --bg-primary: oklch(99% 0.002 125);
   --bg-secondary: oklch(96% 0.004 125);
   --bg-tertiary: oklch(92% 0.006 125);
@@ -357,6 +360,17 @@ body {
   color: var(--text-primary);
   line-height: 1.6;
   touch-action: manipulation;
+}
+
+.gobby-logo {
+  display: inline-block;
+  width: var(--gobby-logo-size, 20px);
+  height: var(--gobby-logo-size, 20px);
+  flex: 0 0 auto;
+  background-image: var(--gobby-logo-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
 }
 
 .source-icon-codex {

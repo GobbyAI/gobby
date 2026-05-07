@@ -36,6 +36,8 @@ const DEFAULT_SETTINGS: Settings = {
 }
 
 const STORAGE_KEY = 'gobby-settings'
+const DARK_LOGO_PATH = '/logo.png'
+const LIGHT_LOGO_PATH = '/logo-light.png'
 
 /** Keys persisted to the backend (excludes per-conversation chatMode). */
 type PersistableKey =
@@ -116,6 +118,27 @@ async function saveUISettings(settings: Settings): Promise<void> {
   }
 }
 
+function logoPathForTheme(theme: 'dark' | 'light'): string {
+  return theme === 'light' ? LIGHT_LOGO_PATH : DARK_LOGO_PATH
+}
+
+function upsertIconLink(rel: string, href: string, type?: string): void {
+  let link = document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
+  if (!link) {
+    link = document.createElement('link')
+    link.setAttribute('rel', rel)
+    document.head.appendChild(link)
+  }
+  if (type) link.setAttribute('type', type)
+  link.setAttribute('href', href)
+}
+
+function updateDocumentIcons(theme: 'dark' | 'light'): void {
+  const href = logoPathForTheme(theme)
+  upsertIconLink('icon', href, 'image/png')
+  upsertIconLink('apple-touch-icon', href)
+}
+
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(() => {
     // Immediate render from localStorage; API fetch overwrites in useEffect
@@ -152,6 +175,7 @@ export function useSettings() {
   useEffect(() => {
     const applyTheme = (resolved: 'dark' | 'light') => {
       document.documentElement.setAttribute('data-theme', resolved)
+      updateDocumentIcons(resolved)
     }
 
     if (settings.theme === 'system') {

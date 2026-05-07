@@ -1,4 +1,5 @@
 import { useState, useCallback, type FormEvent } from 'react'
+import { GobbyLogo } from '../shared/GobbyLogo'
 
 interface LoginPageProps {
   onLogin: (username: string, password: string, rememberMe: boolean) => Promise<string | null>
@@ -24,7 +25,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     <div style={styles.container}>
       <form onSubmit={handleSubmit} style={styles.card}>
         <div style={styles.logoRow}>
-          <img src="/logo.png" alt="Gobby" style={styles.logo} />
+          <GobbyLogo label="Gobby" size={36} />
           <h1 style={styles.title}>Gobby</h1>
         </div>
         <p style={styles.subtitle}>Sign in to continue</p>
@@ -105,10 +106,6 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '0.75rem',
     justifyContent: 'center',
-  },
-  logo: {
-    width: 36,
-    height: 36,
   },
   title: {
     margin: 0,

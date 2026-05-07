@@ -38,6 +38,7 @@ import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
 import { Button } from "./components/chat/ui/Button";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
+import { GobbyLogo } from "./components/shared/GobbyLogo";
 import {
   ComingSoonPage,
   ConfigurationPage,
@@ -650,7 +651,7 @@ export default function App() {
           >
             <HamburgerIcon />
           </Button>
-          <img src="/logo.png" alt="Gobby logo" className="h-11 w-auto" />
+          <GobbyLogo size={44} />
           <span className="truncate text-3xl font-semibold text-foreground">Gobby</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">

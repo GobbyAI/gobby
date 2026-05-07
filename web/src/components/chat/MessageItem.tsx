@@ -3,6 +3,7 @@ import type { ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { extractImageSrc } from '../../lib/imageSources'
 import { MESSAGE_SPACING } from '../shared/spacing'
+import { GobbyLogo } from '../shared/GobbyLogo'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallCards } from './ToolCallCard'
@@ -117,7 +118,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
       <div className="max-w-3xl mx-auto">
         <div className={MESSAGE_SPACING.headerRow}>
           {message.role === 'assistant' && (
-            <img src="/logo.png" alt="App logo" loading="eager" decoding="async" className="w-5 h-5 rounded" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+            <GobbyLogo label="App logo" className="rounded" />
           )}
           <span className="text-xs font-medium text-muted-foreground">
             {message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Gobby' : 'System'}
