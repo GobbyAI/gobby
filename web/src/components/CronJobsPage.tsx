@@ -3,7 +3,8 @@ import { useCronJobs } from '../hooks/useCronJobs'
 import type { CronJob, CronRun, CreateCronJobRequest, UpdateCronJobRequest } from '../hooks/useCronJobs'
 import { SidebarPanel } from './shared/SidebarPanel'
 import { cn } from '../lib/utils'
-import { cronRunStatusKind, type CronRunStatusKind } from './activity/cronRunStatus'
+import { RunHistoryTable } from './cron/RunHistoryTable'
+import { formatRelativeTime } from './cron/formatters'
 
 type ScheduleType = CronJob['schedule_type']
 type ActionType = CronJob['action_type']
@@ -90,26 +91,7 @@ const CONFIG_PRE_CLS =
 
 const RUNS_SECTION_CLS = 'mb-6'
 const RUNS_HEADING_CLS = 'm-0 mb-3 flex items-center gap-2 text-[length:var(--text-base)] font-semibold'
-const RUNS_TABLE_SCROLL_CLS = 'w-full overflow-x-auto'
-const RUNS_TABLE_CLS =
-  'w-full border-collapse text-[length:var(--text-sm)] max-sm:block [&_thead]:max-sm:hidden [&_tbody]:max-sm:block [&_tr]:max-sm:mb-2 [&_tr]:max-sm:block [&_tr]:max-sm:rounded-md [&_tr]:max-sm:border [&_tr]:max-sm:border-[var(--border)] [&_tr]:max-sm:bg-[var(--bg-secondary)] [&_tr]:max-sm:px-2.5 [&_tr]:max-sm:py-2 [&_td]:max-sm:block [&_td]:max-sm:border-b-0 [&_td]:max-sm:px-0 [&_td]:max-sm:py-1 [&_td]:max-sm:before:mb-0.5 [&_td]:max-sm:before:block [&_td]:max-sm:before:text-[length:var(--text-xs)] [&_td]:max-sm:before:uppercase [&_td]:max-sm:before:tracking-[0.5px] [&_td]:max-sm:before:text-[var(--text-secondary)] [&_td]:max-sm:before:[content:attr(data-label)]'
-const RUNS_TH_CLS =
-  'whitespace-nowrap border-b border-[var(--border)] px-2.5 py-1.5 text-left text-[length:var(--text-xs)] font-semibold uppercase text-[var(--text-secondary)]'
-const RUNS_TD_CLS = 'border-b border-[var(--border)] px-2.5 py-1.5 [tr:last-child_&]:border-b-0'
-const RUNS_OUTPUT_CLS = 'max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap max-sm:max-w-none max-sm:whitespace-normal max-sm:overflow-visible max-sm:break-words'
-
-const RUN_STATUS_CLS =
-  'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[length:var(--text-xs)] font-medium'
-const RUN_STATUS_BG: Record<CronRunStatusKind, string> = {
-  success:
-    'bg-[color-mix(in_srgb,var(--color-success-foreground)_15%,transparent)] text-[var(--color-success-foreground)]',
-  running: 'bg-[color-mix(in_srgb,var(--color-info)_15%,transparent)] text-[var(--color-info)]',
-  failure: 'bg-[color-mix(in_srgb,var(--color-error)_15%,transparent)] text-[var(--color-error)]',
-  pending:
-    'bg-[color-mix(in_srgb,var(--color-warning-foreground)_15%,transparent)] text-[var(--color-warning-foreground)]',
-}
-
-const RUNS_EMPTY_CLS = 'p-4 text-center text-[length:var(--text-md)] text-[var(--text-secondary)]'
+const RUNS_LOADING_EMPTY_CLS = 'p-4 text-center text-[length:var(--text-md)] text-[var(--text-secondary)]'
 
 const FORM_CLS = 'flex h-full flex-col'
 const FORM_BODY_CLS = 'flex-1 overflow-y-auto p-4'
@@ -151,28 +133,6 @@ function formatSchedule(job: CronJob): string {
     return `Once at ${new Date(job.run_at).toLocaleString()}`
   }
   return job.schedule_type
-}
-
-function formatRelativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
-  if (diff < 0) return 'in the future'
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
-}
-
-function formatDuration(startedAt: string | null, completedAt: string | null): string {
-  if (!startedAt || !completedAt) return '-'
-  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime()
-  if (ms < 1000) return `${ms}ms`
-  const secs = Math.floor(ms / 1000)
-  if (secs < 60) return `${secs}s`
-  const mins = Math.floor(secs / 60)
-  return `${mins}m ${secs % 60}s`
 }
 
 function getStatusDotKey(job: CronJob): string {
@@ -413,48 +373,6 @@ function JobForm({ initialValues, submitLabel, isSubmitting, onSubmit, onCancel 
   )
 }
 
-function RunHistoryTable({ runs, isLoading }: { runs: CronRun[]; isLoading: boolean }) {
-  if (isLoading) {
-    return <div className={RUNS_EMPTY_CLS}>Loading runs...</div>
-  }
-  if (runs.length === 0) {
-    return <div className={RUNS_EMPTY_CLS}>No runs yet</div>
-  }
-
-  return (
-    <div className={RUNS_TABLE_SCROLL_CLS}>
-      <table className={RUNS_TABLE_CLS}>
-        <thead>
-          <tr>
-            <th className={RUNS_TH_CLS}>Triggered</th>
-            <th className={RUNS_TH_CLS}>Status</th>
-            <th className={RUNS_TH_CLS}>Duration</th>
-            <th className={RUNS_TH_CLS}>Output</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map(run => (
-            <tr key={run.id}>
-              <td className={RUNS_TD_CLS} data-label="Triggered" title={run.triggered_at}>
-                {formatRelativeTime(run.triggered_at)}
-              </td>
-              <td className={RUNS_TD_CLS} data-label="Status">
-                <span className={cn(RUN_STATUS_CLS, RUN_STATUS_BG[cronRunStatusKind(run.status)])}>
-                  {run.status}
-                </span>
-              </td>
-              <td className={RUNS_TD_CLS} data-label="Duration">{formatDuration(run.started_at, run.completed_at)}</td>
-              <td className={cn(RUNS_TD_CLS, RUNS_OUTPUT_CLS)} data-label="Output">
-                {run.error || run.output || '-'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 interface JobDetailProps {
   job: CronJob
   runs: CronRun[]
@@ -463,9 +381,19 @@ interface JobDetailProps {
   onRunNow: () => void
   onEdit: () => void
   onDelete: () => void
+  onNavigateToPipelineExecution?: (executionId: string) => void
 }
 
-function JobDetail({ job, runs, isRunsLoading, onToggle, onRunNow, onEdit, onDelete }: JobDetailProps) {
+function JobDetail({
+  job,
+  runs,
+  isRunsLoading,
+  onToggle,
+  onRunNow,
+  onEdit,
+  onDelete,
+  onNavigateToPipelineExecution,
+}: JobDetailProps) {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   return (
@@ -541,13 +469,22 @@ function JobDetail({ job, runs, isRunsLoading, onToggle, onRunNow, onEdit, onDel
 
       <div className={RUNS_SECTION_CLS}>
         <h4 className={RUNS_HEADING_CLS}>Recent Runs</h4>
-        <RunHistoryTable runs={runs} isLoading={isRunsLoading} />
+        <RunHistoryTable
+          runs={runs}
+          isLoading={isRunsLoading}
+          onNavigateToPipelineExecution={onNavigateToPipelineExecution}
+        />
       </div>
     </div>
   )
 }
 
-export function CronJobsPage({ projectId }: { projectId?: string | null }) {
+interface CronJobsPageProps {
+  projectId?: string | null
+  onNavigateToPipelineExecution?: (executionId: string) => void
+}
+
+export function CronJobsPage({ projectId, onNavigateToPipelineExecution }: CronJobsPageProps) {
   const {
     jobs, selectedJob, selectJob, runs, filters, setFilters,
     isLoading, isRunsLoading, createJob, updateJob, deleteJob, toggleJob, runNow, refresh,
@@ -734,7 +671,7 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
           </div>
         )}
         {isLoading && jobs.length === 0 && (
-          <div className={RUNS_EMPTY_CLS}>Loading...</div>
+          <div className={RUNS_LOADING_EMPTY_CLS}>Loading...</div>
         )}
 
         {jobs.map(job => {
@@ -781,6 +718,7 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
             onRunNow={handleRunNow}
             onEdit={() => setEditingJob(selectedJob)}
             onDelete={handleDelete}
+            onNavigateToPipelineExecution={onNavigateToPipelineExecution}
           />
         )}
       </SidebarPanel>

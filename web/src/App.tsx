@@ -190,6 +190,9 @@ export default function App() {
     null,
   );
   const [initialTraceId, setInitialTraceId] = useState<string | null>(null);
+  const [initialPipelineExecutionId, setInitialPipelineExecutionId] = useState<
+    string | null
+  >(null);
   const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
@@ -201,6 +204,14 @@ export default function App() {
     setInitialTraceId(traceId);
     setActiveTab("traces");
   }, []);
+
+  const handleNavigateToPipelineExecution = useCallback(
+    (executionId: string) => {
+      setInitialPipelineExecutionId(executionId);
+      setActiveTab("reports");
+    },
+    [],
+  );
 
   useAppKeyboardShortcuts({ activeTab, setQuickCaptureOpen });
 
@@ -837,7 +848,10 @@ export default function App() {
             ) : activeTab === "memory" ? (
               <MemoryPage projectId={effectiveProjectId} />
             ) : activeTab === "cron" ? (
-              <CronJobsPage projectId={effectiveProjectId} />
+              <CronJobsPage
+                projectId={effectiveProjectId}
+                onNavigateToPipelineExecution={handleNavigateToPipelineExecution}
+              />
             ) : activeTab === "traces" ? (
               <TracesPage
                 projectId={effectiveProjectId || undefined}
@@ -855,6 +869,10 @@ export default function App() {
               <ReportsPage
                 projectId={effectiveProjectId}
                 onNavigateToTrace={handleNavigateToTrace}
+                initialPipelineExecutionId={initialPipelineExecutionId}
+                onInitialPipelineExecutionConsumed={() =>
+                  setInitialPipelineExecutionId(null)
+                }
               />
             ) : activeTab === "configuration" ? (
               <ConfigurationPage />
