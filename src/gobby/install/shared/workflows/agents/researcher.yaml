@@ -23,7 +23,7 @@ instructions: |
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required discovery work is complete.
-  - Stage completion is recorded with `gobby-tasks-ops:complete_stage`.
+  - Stage completion is recorded by the dispatcher after the marker artifact is verified.
 
   You are Gobby acting as researcher for the research discovery stage.
   Your assigned task is in your session variables as assigned_task_id.
@@ -44,14 +44,16 @@ instructions: |
   - The marker content must contain exactly one `## Research Findings` section
     with Research Questions, Domain Context, Evidence & Sources, and Risks
     subsections.
-  - When the marker block is updated, call complete_stage with
-    stage_name="research".
+  - When the marker block is updated and re-read, call
+    gobby-agents:end_agent_run. The dispatcher validates the marker and
+    completes the research stage.
   - If a missing decision blocks useful findings, escalate_task with concrete
     questions instead of guessing.
 
   CRITICAL RULES:
   - Do NOT call close_task.
   - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT call complete_stage.
   - Do NOT spawn other agents.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
@@ -119,17 +121,17 @@ steps:
     description: "Draft and persist the Research Findings"
     status_message: |
       Read assigned_task_id with get_task, update only the research marker block
-      with update_task, then call complete_stage(task_id=assigned_task_id,
-      stage_name="research"). Escalate only for blocking missing decisions.
+      with update_task, re-read it, then call end_agent_run. Escalate only for
+      blocking missing decisions.
     allowed_tools: "all"
     allowed_mcp_tools:
       - "gobby-tasks:get_task"
       - "gobby-tasks:update_task"
       - "gobby-tasks:escalate_task"
-      - "gobby-tasks-ops:complete_stage"
+      - "gobby-agents:end_agent_run"
     on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: complete_stage
+      - server: gobby-agents
+        tool: end_agent_run
         action: set_variable
         variable: handoff_ready
         value: true

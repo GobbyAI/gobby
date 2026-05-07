@@ -99,7 +99,8 @@ def test_discovery_prompt_builders_registered(
 
     assert "assigned_task_id" in prompt
     assert "discovery marker blocks" in prompt
-    assert f"stage_name='{stage_name}'" in prompt
+    assert "end_agent_run" in prompt
+    assert f"complete the {stage_name} stage" in prompt
     assert f"## {section_title}" in prompt
     assert "#91" in prompt
 

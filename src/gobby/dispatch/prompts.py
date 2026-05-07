@@ -69,12 +69,13 @@ def _discovery_stage(
     base = _prompt(task, context, role=role, contract=contract)
     return (
         f"{base}\n"
-        "Use assigned_task_id as the task to claim, read, update, and complete.\n"
+        "Use assigned_task_id as the task to claim, read, and update.\n"
         "Treat existing discovery marker blocks in the task description as "
         "authoritative upstream context.\n"
         f"Update only the {marker_name} marker block and include one "
         f"`## {section_title}` section.\n"
-        f"Complete the stage with stage_name='{stage_name}'."
+        "After verifying the persisted marker block, call gobby-agents:end_agent_run; "
+        f"the dispatcher will complete the {stage_name} stage after validating the artifact."
     )
 
 

@@ -21,21 +21,25 @@ DISCOVERY_AGENTS = {
     "analyst": {
         "stage": "ideation",
         "skill": "ideate",
+        "skills": ["ideate"],
         "section": "Discovery Brief",
     },
     "researcher": {
         "stage": "research",
         "skill": "research",
+        "skills": ["research"],
         "section": "Research Findings",
     },
     "architect": {
         "stage": "architecture",
         "skill": "architecture",
+        "skills": ["architecture", "test-architecture"],
         "section": "Architecture Brief",
     },
     "product-manager": {
         "stage": "prd",
         "skill": "prd",
+        "skills": ["prd"],
         "section": "Product Reference Document",
     },
 }
@@ -45,7 +49,7 @@ REQUIRED_STAGE_MCP_TOOLS = {
     "gobby-tasks:get_task",
     "gobby-tasks:update_task",
     "gobby-skills:get_skill",
-    "gobby-tasks-ops:complete_stage",
+    "gobby-agents:end_agent_run",
     "gobby-tasks:escalate_task",
 }
 
@@ -78,7 +82,7 @@ def _allowed_mcp_union(agent: AgentDefinitionBody) -> set[str]:
 
 
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
-def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str, str]) -> None:
+def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str, Any]) -> None:
     raw_text = _agent_path(slug).read_text(encoding="utf-8")
     raw = _raw_agent(slug)
     agent = _agent(slug)
@@ -93,14 +97,14 @@ def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str
     assert agent.reasoning_effort == "high"
     assert agent.isolation == "none"
     assert agent.surfaces == ["spawn"]
-    assert raw["skills"]["methodology"] == [spec["skill"]]
+    assert raw["skills"]["methodology"] == spec["skills"]
     assert f"Gobby acting as {slug.replace('-', ' ')}" in (agent.instructions or "")
 
 
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
 def test_discovery_agent_loads_expected_methodology_skill(
     slug: str,
-    spec: dict[str, str],
+    spec: dict[str, Any],
 ) -> None:
     agent = _agent(slug)
 
@@ -113,12 +117,7 @@ def test_discovery_agent_loads_expected_methodology_skill(
     assert spec["skill"] in (load_step.status_message or "")
 
     mcp_success = getattr(load_step, "on_mcp_success", []) or []
-    assert (
-        "gobby-skills",
-        "get_skill",
-        "skill_loaded",
-        f"tool_input.name == '{spec['skill']}'",
-    ) in {
+    success_entries = {
         (
             _field(entry, "server"),
             _field(entry, "tool"),
@@ -127,10 +126,20 @@ def test_discovery_agent_loads_expected_methodology_skill(
         )
         for entry in mcp_success
     }
+    assert any(
+        (
+            "gobby-skills",
+            "get_skill",
+            variable,
+            f"tool_input.name == '{spec['skill']}'",
+        )
+        in success_entries
+        for variable in ("skill_loaded", f"{spec['skill'].replace('-', '_')}_skill_loaded")
+    )
 
 
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
-def test_discovery_agent_marker_and_stage_contract(slug: str, spec: dict[str, str]) -> None:
+def test_discovery_agent_marker_and_stage_contract(slug: str, spec: dict[str, Any]) -> None:
     agent = _agent(slug)
     instructions = agent.instructions or ""
     stage = spec["stage"]
@@ -139,8 +148,9 @@ def test_discovery_agent_marker_and_stage_contract(slug: str, spec: dict[str, st
     assert f"gobby:discovery-stage:{stage}:end" in instructions
     assert f"## {spec['section']}" in instructions
     assert "update_task" in instructions
-    assert "complete_stage" in instructions
-    assert f'stage_name="{stage}"' in instructions
+    assert "end_agent_run" in instructions
+    assert "Do NOT call complete_stage" in instructions
+    assert f"{stage} stage" in instructions or stage == "prd"
     assert "close_task" in instructions
     assert "spawn other agents" in instructions
 
@@ -150,19 +160,19 @@ def test_discovery_agent_marker_and_stage_contract(slug: str, spec: dict[str, st
         "gobby-tasks:get_task",
         "gobby-tasks:update_task",
         "gobby-tasks:escalate_task",
-        "gobby-tasks-ops:complete_stage",
+        "gobby-agents:end_agent_run",
     ]
 
     success_tools = {
         (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
         for entry in (getattr(draft, "on_mcp_success", None) or [])
     }
-    assert ("gobby-tasks-ops", "complete_stage", "handoff_ready") in success_tools
+    assert ("gobby-agents", "end_agent_run", "handoff_ready") in success_tools
     assert ("gobby-tasks", "escalate_task", "handoff_ready") in success_tools
 
 
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
-def test_discovery_agent_mcp_allowlist_is_stage_scoped(slug: str, spec: dict[str, str]) -> None:
+def test_discovery_agent_mcp_allowlist_is_stage_scoped(slug: str, spec: dict[str, Any]) -> None:
     agent = _agent(slug)
 
     assert _allowed_mcp_union(agent) == REQUIRED_STAGE_MCP_TOOLS
@@ -170,7 +180,7 @@ def test_discovery_agent_mcp_allowlist_is_stage_scoped(slug: str, spec: dict[str
 
 
 @pytest.mark.parametrize(("slug", "spec"), DISCOVERY_AGENTS.items())
-def test_discovery_methodology_skill_exists(slug: str, spec: dict[str, str]) -> None:
+def test_discovery_methodology_skill_exists(slug: str, spec: dict[str, Any]) -> None:
     text = _skill_text(spec["skill"])
 
     assert f"name: {spec['skill']}" in text

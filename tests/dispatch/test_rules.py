@@ -186,6 +186,75 @@ def test_spawn_agent_action_uses_seq_ref_when_loaded_task_has_no_ref() -> None:
     assert "2bc4656b-f91a-4434-8272-8167e6cb924b" not in action.prompt
 
 
+def test_discovery_artifact_complete_rule_advances_persisted_ideation() -> None:
+    from gobby.dispatch.actions import AdvanceStageAction
+
+    action = _evaluate(
+        _task_at(
+            "ideation",
+            "in_progress",
+            description=(
+                "<!-- gobby:discovery-stage:ideation:start -->\n"
+                "## Discovery Brief\n\n"
+                "### Problem\n- Problem framed.\n\n"
+                "### Constraints\n- Constraint captured.\n\n"
+                "### Hypotheses\n- Hypothesis captured.\n\n"
+                "### Open Questions\n- None.\n"
+                "<!-- gobby:discovery-stage:ideation:end -->"
+            ),
+        )
+    )
+
+    assert isinstance(action, AdvanceStageAction)
+    assert (action.stage_name, action.method) == ("ideation", "complete_stage")
+    assert action.by_session_id == "dispatcher"
+
+
+def test_discovery_artifact_complete_rule_requires_marker_headings() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "ideation",
+            "in_progress",
+            description=(
+                "<!-- gobby:discovery-stage:ideation:start -->\n"
+                "## Discovery Brief\n\n"
+                "### Problem\n- Problem framed.\n"
+                "<!-- gobby:discovery-stage:ideation:end -->"
+            ),
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "analyst"
+
+
+def test_discovery_artifact_complete_rule_validates_architecture_test_section() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "architecture",
+            "in_progress",
+            description=(
+                "<!-- gobby:discovery-stage:architecture:start -->\n"
+                "## Architecture Brief\n\n"
+                "### Drivers\n- Driver.\n\n"
+                "### Decisions\n- Decision.\n\n"
+                "### Components\n- Component.\n\n"
+                "### Interfaces\n- Interface.\n\n"
+                "### Trade-offs\n- Trade-off.\n\n"
+                "### Open Questions\n- None.\n"
+                "<!-- gobby:discovery-stage:architecture:end -->"
+            ),
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "architect"
+
+
 def test_expansion_work_rule_fires_and_holds_when_cap_reached() -> None:
     from gobby.dispatch.actions import StartPipelineAction
 
@@ -582,6 +651,7 @@ def test_base_rules_order_excludes_merge_rule() -> None:
         "all_leaves_holistic_rule",
         "epic_development_start_rule",
         "epic_development_complete_rule",
+        "discovery_artifact_complete_rule",
         "ideation_rule",
         "research_rule",
         "architecture_rule",
@@ -609,7 +679,7 @@ def test_final_rules_is_base_rules_plus_merge_rule_at_final_position() -> None:
     from gobby.dispatch.rules import BASE_RULES, RULES, merge_rule
 
     assert RULES == [*BASE_RULES, merge_rule]
-    assert len(RULES) == 26
+    assert len(RULES) == 27
     assert RULES[-1] is merge_rule
 
 

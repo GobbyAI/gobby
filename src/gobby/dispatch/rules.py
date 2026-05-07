@@ -16,6 +16,7 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
 from gobby.dispatch.prompts import PROMPT_BUILDERS
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,21 @@ def epic_development_complete_rule(task: object, context: object) -> Action | No
         stage_name="development",
         method="complete_stage",
         validation_override_reason="children_parked",
+    )
+
+
+def discovery_artifact_complete_rule(task: object, context: object) -> Action | None:
+    stage = _current_stage(task, context)
+    if stage is None or _stage_state(stage) != "in_progress":
+        return None
+    stage_name = _stage_name(stage)
+    if not discovery_artifact_ready(task, stage_name):
+        return None
+    return AdvanceStageAction(
+        task_id=_task_id(task),
+        stage_name=stage_name,
+        method="complete_stage",
+        by_session_id="dispatcher",
     )
 
 
@@ -421,6 +437,7 @@ BASE_RULES: list[Rule] = [
     all_leaves_holistic_rule,
     epic_development_start_rule,
     epic_development_complete_rule,
+    discovery_artifact_complete_rule,
     ideation_rule,
     research_rule,
     architecture_rule,
