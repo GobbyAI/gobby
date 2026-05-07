@@ -128,8 +128,19 @@ class CronScheduler:
             )
             return
 
-        for job in due_jobs[:available_slots]:
+        dispatched = 0
+        for job in due_jobs:
+            if dispatched >= available_slots:
+                break
             try:
+                if self.storage.has_running_run(job.id):
+                    logger.debug(
+                        "Skipping cron job %s (%s): previous run still active",
+                        job.id,
+                        job.name,
+                    )
+                    continue
+
                 # Check backoff for consecutive failures
                 if job.consecutive_failures > 0:
                     backoff = self._get_backoff_seconds(job.consecutive_failures)
@@ -162,6 +173,7 @@ class CronScheduler:
                 )
                 self._active_tasks.add(task)
                 task.add_done_callback(self._active_tasks.discard)
+                dispatched += 1
             except Exception as e:
                 logger.error(f"Failed to dispatch cron job {job.id}: {e}", exc_info=True)
 

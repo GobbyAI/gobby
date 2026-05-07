@@ -618,6 +618,20 @@ class CronJobStorage:
         row = self.db.fetchone("SELECT COUNT(*) as cnt FROM cron_runs WHERE status = 'running'")
         return row["cnt"] if row else 0
 
+    def has_running_run(self, cron_job_id: str) -> bool:
+        """Return whether a cron job already has an active run."""
+        row = self.db.fetchone(
+            """
+            SELECT 1
+              FROM cron_runs
+             WHERE cron_job_id = ?
+               AND status = 'running'
+             LIMIT 1
+            """,
+            (cron_job_id,),
+        )
+        return row is not None
+
     def fail_stale_running_runs(self, timeout_seconds: int) -> int:
         """Mark stale running cron runs failed so they stop consuming scheduler slots."""
         timeout_seconds = max(timeout_seconds, MIN_CRON_INTERVAL_SECONDS)

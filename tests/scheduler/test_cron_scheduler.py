@@ -208,6 +208,47 @@ async def test_respects_max_concurrent(
 
 
 @pytest.mark.asyncio
+async def test_skips_job_with_active_run_but_dispatches_other_due_job(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+) -> None:
+    """A long-running job cannot overlap itself, but other jobs can use free slots."""
+    config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=2)
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    active_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Active",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    active_run = cron_storage.create_run(active_job.id)
+    cron_storage.update_run(active_run.id, status="running")
+    cron_storage.update_job(active_job.id, next_run_at=past)
+    waiting_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Waiting",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    cron_storage.update_job(waiting_job.id, next_run_at=past)
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        description="dispatch non-overlapping cron job",
+    )
+
+    mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
+    assert mock_executor.execute.await_args.args[0].id == waiting_job.id  # type: ignore[attr-defined]
+    assert len(cron_storage.list_runs(active_job.id)) == 1
+
+
+@pytest.mark.asyncio
 async def test_due_jobs_run_heartbeat_then_dispatcher_then_others(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,

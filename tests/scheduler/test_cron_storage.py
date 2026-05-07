@@ -359,6 +359,32 @@ def test_count_running(cron_storage: CronJobStorage) -> None:
     assert cron_storage.count_running() == 1
 
 
+def test_has_running_run_is_scoped_to_job(cron_storage: CronJobStorage) -> None:
+    """has_running_run only reports active runs for the requested job."""
+    active_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Active Job",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    idle_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Idle Job",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+
+    run = cron_storage.create_run(active_job.id)
+    cron_storage.update_run(run.id, status="running")
+
+    assert cron_storage.has_running_run(active_job.id) is True
+    assert cron_storage.has_running_run(idle_job.id) is False
+
+
 def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     """cleanup_old_runs deletes runs older than threshold."""
     job = cron_storage.create_job(
