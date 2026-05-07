@@ -59,3 +59,19 @@ def test_build_skill_forbids_changing_requirements_to_pass_e2e() -> None:
     assert "preserving the requested path" in content
     assert "extreme edge case" in content
     assert "exhausting practical fixes" in content
+
+
+def test_build_skill_documents_provider_neutral_automation_diagnostics() -> None:
+    skill_path = Path("src/gobby/install/shared/skills/build/SKILL.md")
+
+    content = skill_path.read_text()
+
+    assert "Automation Debugging Pattern" in content
+    assert "Compare against the last known successful run" in content
+    assert "SessionStart activation completed" in content
+    assert "first provider-neutral prompt event" in content
+    assert "ensure_session_activation(session_id)" in content
+    assert "Do not replay the raw SessionStart hook wholesale" in content
+    assert "OpenTelemetry" in content
+    assert "agent_run_id" in content
+    assert "session_id" in content

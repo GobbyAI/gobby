@@ -65,6 +65,16 @@ For an unattended build-flow test, do not use the same task as both the tracking
 - Escalating because an assigned agent is incapable of the task is an extreme edge case. Use it only after exhausting practical fixes and documenting why the specified agent path cannot complete the work.
 - Final acceptance must verify that the document epic is closed, the merge stage records the real merge SHA, no agents are running, no tasks remain claimed for the build, no stale build worktrees or clones remain, and any intentionally preserved dirty or conflicted workspace is explained.
 
+## Automation Debugging Pattern
+
+When build automation stalls or agents behave as if required startup context is missing, debug the lifecycle rather than changing requirements.
+
+- Compare against the last known successful run before changing configuration. Check what changed in agent definitions, provider routing, rules, hooks, MCP startup config, and step workflows.
+- Treat provider-specific symptoms as evidence, not proof of provider incapability. Preserve the requested agent/provider path while diagnosing.
+- Check whether SessionStart activation completed and left expected state before the first provider-neutral prompt event: session linkage, `_agent_type`, active rule and skill variables, terminal pickup metadata, baseline dirty-file capture, and any spawned-agent step workflow.
+- A first-prompt reconciliation guard can be useful as a backstop: call an idempotent `ensure_session_activation(session_id)` helper that creates only missing activation effects and preserves existing progress. Do not replay the raw SessionStart hook wholesale.
+- For cross-boundary stalls, use OpenTelemetry or equivalent correlated logs keyed by `agent_run_id` and `session_id` across spawn, tmux, SessionStart, workflow activation, auto-claim, step transitions, MCP calls, and rule blocks.
+
 ## Confirmation
 
 Before running, show the equivalent command:
