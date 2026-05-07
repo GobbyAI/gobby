@@ -52,6 +52,13 @@ stage as the first manifest row whose state is not `done`, then evaluates rules
 against that row. Structural manifest changes go through stage-state helpers so
 position ordering and completed rows remain stable.
 
+Review agents are also manifest snapshots. The stage registry may define a fixed
+`reviewer_agent` or a `reviewer_agent_selector_json` that chooses by task
+category or task type when the manifest row is created. The post-0.4.0 bundled
+default routes docs-category `development` reviews to `doc-reviewer` and all
+other `development` reviews to `qa-reviewer`; existing manifest rows keep their
+stored reviewer.
+
 ## Rule Chain
 
 `src/gobby/dispatch/rules.py` owns the ordered rule list. A rule should be small:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -60,7 +61,11 @@ def test_parses_bundled_yaml() -> None:
     assert by_name["expansion"].dispatch_type == "pipeline"
     assert by_name["expansion"].dispatch_target == "expand-task"
     assert by_name["expansion"].dispatch_inputs_json is not None
-    assert by_name["development"].reviewer_agent == "qa-reviewer"
+    assert by_name["development"].reviewer_agent is None
+    assert json.loads(by_name["development"].reviewer_agent_selector_json or "{}") == {
+        "default": "qa-reviewer",
+        "rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}],
+    }
     assert by_name["pr"].review_policy == "required"
     assert by_name["pr"].reviewer_agent is None
     assert by_name["merge"].review_policy == "none"
@@ -126,7 +131,95 @@ def test_required_review_policy_requires_reviewer_agent_except_pr(tmp_path: Path
         encoding="utf-8",
     )
 
-    with pytest.raises(StageRegistryLoadError, match="reviewer_agent is required"):
+    with pytest.raises(StageRegistryLoadError, match="reviewer_agent or reviewer_agent_selector"):
+        StageRegistryLoader(path=broken).load()
+
+
+def test_required_review_policy_accepts_reviewer_selector_default(tmp_path: Path) -> None:
+    StageRegistryLoader, _ = _loader_types()
+    stages = tmp_path / "stages.yaml"
+    stages.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "stages": [
+                    {
+                        "name": "development",
+                        "display_label": "Development",
+                        "description": "Work",
+                        "category": "implementation",
+                        "review_policy": "required",
+                        "reviewer_agent_selector": {"default": "qa-reviewer"},
+                        "position_hint": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    entry = StageRegistryLoader(path=stages).load()[0]
+
+    assert entry.reviewer_agent is None
+    assert json.loads(entry.reviewer_agent_selector_json or "{}") == {
+        "default": "qa-reviewer",
+        "rules": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("selector", "message"),
+    [
+        (
+            {
+                "rules": [
+                    {
+                        "category": "docs",
+                        "task_type": "task",
+                        "reviewer_agent": "doc-reviewer",
+                    }
+                ],
+            },
+            "exactly one of category or task_type",
+        ),
+        (
+            {"rules": [{"category": "invalid", "reviewer_agent": "doc-reviewer"}]},
+            "invalid category",
+        ),
+        (
+            {"rules": [{"task_type": "invalid", "reviewer_agent": "doc-reviewer"}]},
+            "invalid task_type",
+        ),
+    ],
+)
+def test_reviewer_selector_validation_errors(
+    tmp_path: Path,
+    selector: dict[str, object],
+    message: str,
+) -> None:
+    StageRegistryLoader, StageRegistryLoadError = _loader_types()
+    broken = tmp_path / "stages.yaml"
+    broken.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "stages": [
+                    {
+                        "name": "development",
+                        "display_label": "Development",
+                        "description": "Work",
+                        "category": "implementation",
+                        "review_policy": "required",
+                        "reviewer_agent_selector": selector,
+                        "position_hint": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StageRegistryLoadError, match=message):
         StageRegistryLoader(path=broken).load()
 
 
@@ -165,7 +258,8 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
 
     row = db.fetchone(
         """
-        SELECT display_label, bundled_hash, review_policy, reviewer_agent, dispatch_type
+        SELECT display_label, bundled_hash, review_policy, reviewer_agent,
+               reviewer_agent_selector_json, dispatch_type
         FROM task_stages_registry
         WHERE name = 'planning'
         """

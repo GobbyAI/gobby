@@ -70,7 +70,7 @@ describe("TasksTab", () => {
     expect(screen.getAllByRole("treeitem")).toHaveLength(11);
   });
 
-  it("checks all stage filters by default and narrows by exclusion", async () => {
+  it("leaves stage filters clear by default and narrows by selection", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -80,8 +80,8 @@ describe("TasksTab", () => {
     fireEvent.click(screen.getByTitle("Filter by task state"));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Development")).toBeChecked();
-      expect(screen.getByLabelText("Operator Review")).toBeChecked();
+      expect(screen.getByLabelText("Development")).not.toBeChecked();
+      expect(screen.getByLabelText("Operator Review")).not.toBeChecked();
     });
 
     mockFetch.fn.mockClear();
@@ -90,9 +90,9 @@ describe("TasksTab", () => {
     await waitFor(() => {
       const taskRequest = mockFetch.fn.mock.calls
         .map(([url]) => String(url))
-        .find((url) => url.includes("/api/tasks?") && url.includes("stage=operator_review"));
+        .find((url) => url.includes("/api/tasks?") && url.includes("stage=development"));
       expect(taskRequest).toBeTruthy();
-      expect(taskRequest).not.toContain("stage=development");
+      expect(taskRequest).not.toContain("stage=operator_review");
     });
   });
 

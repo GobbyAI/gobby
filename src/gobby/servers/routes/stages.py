@@ -20,6 +20,7 @@ class StageRegistryEntryView(BaseModel):
     category: Literal["discovery", "design", "verification", "implementation", "delivery"]
     default_agent: str | None
     reviewer_agent: str | None
+    reviewer_agent_selector_json: str | None
     review_policy: Literal["none", "required", "optional"]
     dispatch_type: Literal["agent", "pipeline"] | None
     dispatch_target: str | None

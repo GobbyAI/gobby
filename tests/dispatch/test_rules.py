@@ -74,7 +74,7 @@ def _registry(stage_name: str, **overrides):
 def _agents(**overrides):
     agents = {
         agent_slug: SimpleNamespace(name=agent_slug, enabled=True)
-        for agent_slug in {*_STAGE_AGENTS.values(), *_REVIEW_AGENTS.values()}
+        for agent_slug in {*_STAGE_AGENTS.values(), *_REVIEW_AGENTS.values(), "doc-reviewer"}
     }
     agents.update(overrides)
     return agents
@@ -334,6 +334,38 @@ def test_qa_rule_fires_with_cap() -> None:
     )
     assert isinstance(capped, EscalateAction)
     assert capped.reason == "development_max_review_rounds"
+
+
+def test_development_review_uses_snapshot_reviewer_agent() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "needs_review",
+            category="docs",
+            stage_overrides={"reviewer_agent": "doc-reviewer"},
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "doc-reviewer"
+
+
+def test_development_review_escalates_when_snapshot_reviewer_disabled() -> None:
+    from gobby.dispatch.actions import EscalateAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "needs_review",
+            stage_overrides={"reviewer_agent": "doc-reviewer"},
+        ),
+        _context(agents=_agents(**{"doc-reviewer": SimpleNamespace(enabled=False)})),
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "development_no_reviewer"
 
 
 def test_leaf_park_rule_completes_review_approved_development_stage() -> None:

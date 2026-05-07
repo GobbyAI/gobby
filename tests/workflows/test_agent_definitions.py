@@ -48,6 +48,7 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "backend-developer": ("codex", "gpt-5.5", "xhigh"),
         "tech-writer": ("codex", "gpt-5.5", "high"),
         "qa-reviewer": ("claude", "opus", "xhigh"),
+        "doc-reviewer": ("claude", "opus", "xhigh"),
         "holistic-reviewer": ("codex", "gpt-5.5", "xhigh"),
         "merge-orchestrator": ("claude", "opus", "xhigh"),
         "merge-worker": ("gemini", "gemini-3.1-pro-preview", "high"),

@@ -12,6 +12,10 @@ import yaml
 
 from gobby.paths import get_install_dir
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._stage_reviewer_selector import (
+    ReviewerAgentSelectorError,
+    normalize_reviewer_agent_selector,
+)
 
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
 ReviewPolicy = Literal["none", "required", "optional"]
@@ -33,6 +37,7 @@ class StageRegistryEntry:
     category: StageCategory
     default_agent: str | None
     reviewer_agent: str | None
+    reviewer_agent_selector_json: str | None
     review_policy: ReviewPolicy
     dispatch_type: DispatchType | None
     dispatch_target: str | None
@@ -87,16 +92,17 @@ class StageRegistryLoader:
                     """
                     INSERT INTO task_stages_registry (
                         name, display_label, description, category, default_agent,
-                        reviewer_agent, review_policy, dispatch_type, dispatch_target,
-                        dispatch_inputs_json, position_hint, requires_human, is_terminal,
-                        bundled_hash, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        reviewer_agent, reviewer_agent_selector_json, review_policy,
+                        dispatch_type, dispatch_target, dispatch_inputs_json, position_hint,
+                        requires_human, is_terminal, bundled_hash, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                     ON CONFLICT(name) DO UPDATE SET
                         display_label = excluded.display_label,
                         description = excluded.description,
                         category = excluded.category,
                         default_agent = excluded.default_agent,
                         reviewer_agent = excluded.reviewer_agent,
+                        reviewer_agent_selector_json = excluded.reviewer_agent_selector_json,
                         review_policy = excluded.review_policy,
                         dispatch_type = excluded.dispatch_type,
                         dispatch_target = excluded.dispatch_target,
@@ -114,6 +120,7 @@ class StageRegistryLoader:
                         entry.category,
                         entry.default_agent,
                         entry.reviewer_agent,
+                        entry.reviewer_agent_selector_json,
                         entry.review_policy,
                         entry.dispatch_type,
                         entry.dispatch_target,
@@ -202,13 +209,26 @@ class StageRegistryLoader:
         reviewer_agent = raw_stage.get("reviewer_agent")
         if reviewer_agent is not None and not isinstance(reviewer_agent, str):
             raise StageRegistryLoadError(f"Stage {name} reviewer_agent must be a string")
+        try:
+            reviewer_agent_selector_json = normalize_reviewer_agent_selector(
+                raw_stage.get("reviewer_agent_selector"),
+                stage_name=name,
+            )
+        except ReviewerAgentSelectorError as exc:
+            raise StageRegistryLoadError(str(exc)) from exc
 
         review_policy = self._required_string(raw_stage, "review_policy", index)
         if review_policy not in _REVIEW_POLICIES:
             raise StageRegistryLoadError(f"Stage {name} has invalid review_policy: {review_policy}")
-        if review_policy != "none" and not reviewer_agent and name != "pr":
+        if (
+            review_policy != "none"
+            and not reviewer_agent
+            and not reviewer_agent_selector_json
+            and name != "pr"
+        ):
             raise StageRegistryLoadError(
-                f"Stage {name} reviewer_agent is required for review_policy={review_policy}"
+                f"Stage {name} reviewer_agent or reviewer_agent_selector is required "
+                f"for review_policy={review_policy}"
             )
         dispatch_type = raw_stage.get("dispatch_type")
         if dispatch_type is not None:
@@ -236,6 +256,7 @@ class StageRegistryLoader:
             category=category,  # type: ignore[arg-type]
             default_agent=default_agent,
             reviewer_agent=reviewer_agent,
+            reviewer_agent_selector_json=reviewer_agent_selector_json,
             review_policy=review_policy,  # type: ignore[arg-type]
             dispatch_type=dispatch_type,  # type: ignore[arg-type]
             dispatch_target=dispatch_target,

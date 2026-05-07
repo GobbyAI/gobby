@@ -47,6 +47,7 @@ STAGE_REGISTRY_ENTRY_SCHEMA: dict[str, Any] = {
         "category": {"type": "string"},
         "default_agent": {"type": ["string", "null"]},
         "reviewer_agent": {"type": ["string", "null"]},
+        "reviewer_agent_selector_json": {"type": ["string", "null"]},
         "review_policy": {"type": "string"},
         "dispatch_type": {"type": ["string", "null"]},
         "dispatch_target": {"type": ["string", "null"]},

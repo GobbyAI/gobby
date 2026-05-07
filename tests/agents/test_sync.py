@@ -427,6 +427,7 @@ class TestSyncBundledAgents:
         assert "backend-developer" in names
         assert "frontend-developer" in names
         assert "qa-reviewer" in names
+        assert "doc-reviewer" in names
         assert all(
             n in names
             for n in (

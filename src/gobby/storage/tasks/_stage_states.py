@@ -13,6 +13,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex, RuntimeStageSnapshotState
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
+from gobby.storage.tasks._stage_reviewer_selector import resolve_stage_reviewer
 from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
     IllegalStageTransitionError,
@@ -176,7 +177,7 @@ class StageStatesManager:
                             spec.stage_name,
                             spec.position,
                             registry.review_policy,
-                            registry.reviewer_agent,
+                            resolve_stage_reviewer(self.db, task_id, registry),
                             spec.max_work_attempts,
                             spec.max_review_rounds,
                             now,
@@ -244,7 +245,7 @@ class StageStatesManager:
                         spec.stage_name,
                         spec.position,
                         registry.review_policy,
-                        registry.reviewer_agent,
+                        resolve_stage_reviewer(self.db, task_id, registry),
                         spec.max_work_attempts,
                         spec.max_review_rounds,
                         now,

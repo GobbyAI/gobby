@@ -55,7 +55,11 @@ stages:
     description: Leaf implementation work; drives TDD sandwiches.
     category: implementation
     default_agent: backend-developer
-    reviewer_agent: qa-reviewer
+    reviewer_agent_selector:
+      rules:
+        - category: docs
+          reviewer_agent: doc-reviewer
+      default: qa-reviewer
     review_policy: required
     position_hint: 100
   - name: holistic_qa

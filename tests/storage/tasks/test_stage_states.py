@@ -91,6 +91,132 @@ def test_initialize_manifest_mirrors_registry_policy_and_current_stage(
     assert manager.current_stage(task.id).stage_name == "development"
 
 
+def test_development_manifest_resolves_docs_reviewer_from_selector(
+    temp_db,
+    sample_project,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Docs stage manifest task",
+        category="docs",
+    )
+    manager = LocalTaskManager(temp_db).stage_states
+
+    manager.initialize_manifest(
+        task.id,
+        [spec("development", 0)],
+        by_session_id="session-stage-tests",
+    )
+
+    row = manager.get(task.id, "development")
+    assert row is not None
+    assert row.reviewer_agent == "doc-reviewer"
+
+
+def test_development_manifest_resolves_selector_default_for_non_docs(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0)],
+        task_type="bug",
+    )
+
+    row = manager.get(task.id, "development")
+    assert row is not None
+    assert row.reviewer_agent == "qa-reviewer"
+
+
+def test_fixed_registry_reviewer_overrides_selector(temp_db, sample_project) -> None:
+    temp_db.execute(
+        """
+        UPDATE task_stages_registry
+           SET reviewer_agent = 'fixed-reviewer'
+         WHERE name = 'development'
+        """
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Docs fixed reviewer task",
+        category="docs",
+    )
+    manager = LocalTaskManager(temp_db).stage_states
+
+    manager.initialize_manifest(
+        task.id,
+        [spec("development", 0)],
+        by_session_id="session-stage-tests",
+    )
+
+    row = manager.get(task.id, "development")
+    assert row is not None
+    assert row.reviewer_agent == "fixed-reviewer"
+
+
+def test_selector_category_rules_take_precedence_over_task_type_rules(
+    temp_db,
+    sample_project,
+) -> None:
+    temp_db.execute(
+        """
+        UPDATE task_stages_registry
+           SET reviewer_agent_selector_json = ?
+         WHERE name = 'development'
+        """,
+        (
+            '{"default": "qa-reviewer", "rules": ['
+            '{"task_type": "bug", "reviewer_agent": "bug-reviewer"}, '
+            '{"category": "docs", "reviewer_agent": "doc-reviewer"}'
+            "]}",
+        ),
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Docs bug reviewer task",
+        task_type="bug",
+        category="docs",
+    )
+    manager = LocalTaskManager(temp_db).stage_states
+
+    manager.initialize_manifest(
+        task.id,
+        [spec("development", 0)],
+        by_session_id="session-stage-tests",
+    )
+
+    row = manager.get(task.id, "development")
+    assert row is not None
+    assert row.reviewer_agent == "doc-reviewer"
+
+
+def test_reviewer_selector_snapshot_is_not_retroactive(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Docs reviewer snapshot task",
+        category="docs",
+    )
+    manager = LocalTaskManager(temp_db).stage_states
+    manager.initialize_manifest(
+        task.id,
+        [spec("development", 0)],
+        by_session_id="session-stage-tests",
+    )
+
+    temp_db.execute(
+        """
+        UPDATE task_stages_registry
+           SET reviewer_agent_selector_json = '{"default": "qa-reviewer", "rules": []}'
+         WHERE name = 'development'
+        """
+    )
+
+    row = manager.get(task.id, "development")
+    assert row is not None
+    assert row.reviewer_agent == "doc-reviewer"
+
+
 def test_start_stage_increments_work_attempts_only_and_emits_event(
     temp_db,
     sample_project,

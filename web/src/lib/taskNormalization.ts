@@ -22,6 +22,7 @@ export interface StageRegistryEntry extends StageStateView {
   sequence_order?: number | null
   description?: string | null
   default_agent?: string | null
+  reviewer_agent_selector_json?: string | null
   requires_human?: boolean | null
   is_terminal?: boolean | null
 }
@@ -38,6 +39,7 @@ export type RawStagePayload = Partial<StageStateView> & {
   sequence_order?: number | null
   description?: string | null
   default_agent?: string | null
+  reviewer_agent_selector_json?: string | null
   requires_human?: boolean | null
   is_terminal?: boolean | null
 }
@@ -176,6 +178,7 @@ export function normalizeStageRegistryEntry(row: RawStagePayload): StageRegistry
     sequence_order: row.sequence_order ?? position,
     description: row.description ?? null,
     default_agent: row.default_agent ?? null,
+    reviewer_agent_selector_json: row.reviewer_agent_selector_json ?? null,
     requires_human: row.requires_human ?? null,
     is_terminal: row.is_terminal ?? null,
   }

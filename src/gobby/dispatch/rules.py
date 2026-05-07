@@ -224,9 +224,10 @@ def development_review_rule(task: object, context: object) -> Action | None:
         return None
     if _stage_review_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="development_max_review_rounds")
-    if not _has_agent(context, "qa-reviewer"):
+    reviewer_agent = _field(stage, "reviewer_agent")
+    if not reviewer_agent or not _has_agent(context, str(reviewer_agent)):
         return EscalateAction(task_id=_task_id(task), reason="development_no_reviewer")
-    return _spawn_stage_agent(task, stage, context, "qa-reviewer")
+    return _spawn_stage_agent(task, stage, context, str(reviewer_agent))
 
 
 def development_advance_rule(task: object, context: object) -> Action | None:

@@ -2,10 +2,10 @@ tags: [worker-safety, enforcement, agents, gobby]
 
 rules:
   no-push-for-workers:
-    description: "Block git push for developer and QA agents"
+    description: "Block git push for developer and review agents"
     event: before_tool
     enabled: true
-    agent_scope: [developer, qa-reviewer]
+    agent_scope: [developer, qa-reviewer, doc-reviewer]
     effects:
       - type: block
         tools: [Bash]

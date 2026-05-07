@@ -23,6 +23,7 @@ def test_stage_registry_manager_exposes_listed_methods(temp_db) -> None:
         "category",
         "default_agent",
         "reviewer_agent",
+        "reviewer_agent_selector_json",
         "review_policy",
         "dispatch_type",
         "dispatch_target",
@@ -53,6 +54,7 @@ def test_stage_registry_upsert_round_trips_review_policy_and_caps(temp_db) -> No
         category="verification",
         default_agent=None,
         reviewer_agent="qa-reviewer",
+        reviewer_agent_selector_json=None,
         review_policy="optional",
         dispatch_type="pipeline",
         dispatch_target="operator-review",
@@ -67,6 +69,38 @@ def test_stage_registry_upsert_round_trips_review_policy_and_caps(temp_db) -> No
     manager.upsert(entry, bundled_hash=None)
 
     actual = manager.get("operator_review")
+    assert actual == entry
+
+
+def test_stage_registry_upsert_accepts_reviewer_selector(temp_db) -> None:
+    StageRegistryEntry, StageRegistryManager = require_stage_registry_types()
+    manager = StageRegistryManager(temp_db)
+    selector_json = (
+        '{"default": "qa-reviewer", '
+        '"rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}]}'
+    )
+    entry = StageRegistryEntry(
+        name="development_docs",
+        display_label="Development Docs",
+        description="Development with category-aware docs review.",
+        category="implementation",
+        default_agent="backend-developer",
+        reviewer_agent=None,
+        reviewer_agent_selector_json=selector_json,
+        review_policy="required",
+        dispatch_type=None,
+        dispatch_target=None,
+        dispatch_inputs_json=None,
+        position_hint=1000,
+        requires_human=False,
+        is_terminal=False,
+        default_max_work_attempts=3,
+        default_max_review_rounds=5,
+    )
+
+    manager.upsert(entry)
+
+    actual = manager.get("development_docs")
     assert actual == entry
 
 

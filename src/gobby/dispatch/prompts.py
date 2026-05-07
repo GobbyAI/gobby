@@ -165,6 +165,15 @@ def _qa_reviewer(task: object, context: Mapping[str, object]) -> str:
     )
 
 
+def _doc_reviewer(task: object, context: Mapping[str, object]) -> str:
+    return _prompt(
+        task,
+        context,
+        role="Review the documentation implementation",
+        contract="doc-reviewer.yaml agent",
+    )
+
+
 def _holistic_reviewer(task: object, context: Mapping[str, object]) -> str:
     return _prompt(
         task,
@@ -198,6 +207,7 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "backend-developer": _developer,
     "default": _default,
     "developer": _developer,
+    "doc-reviewer": _doc_reviewer,
     "expansion-qa": _expansion_qa,
     "frontend-developer": _developer,
     "holistic-reviewer": _holistic_reviewer,

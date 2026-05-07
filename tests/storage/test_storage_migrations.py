@@ -40,7 +40,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 253
+    assert latest_known_version() == 254
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -56,13 +56,14 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         251,
         252,
         253,
+        254,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 15
-    assert get_current_version(db) == 253
+    assert applied == 16
+    assert get_current_version(db) == 254
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -80,6 +81,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         251,
         252,
         253,
+        254,
     ]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
@@ -96,7 +98,7 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 253
+    assert get_current_version(db) == 254
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -114,6 +116,7 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
         251,
         252,
         253,
+        254,
     ]
 
 
@@ -588,7 +591,7 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
 
     stage_rows = db.fetchall(
         """
-        SELECT name, review_policy, reviewer_agent, default_agent
+        SELECT name, review_policy, reviewer_agent, reviewer_agent_selector_json, default_agent
           FROM task_stages_registry
          ORDER BY position_hint, name
         """
@@ -612,7 +615,8 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
     assert by_stage["planning"]["review_policy"] == "required"
     assert by_stage["planning"]["reviewer_agent"] == "plan-adversary"
     assert by_stage["development"]["review_policy"] == "required"
-    assert by_stage["development"]["reviewer_agent"] == "qa-reviewer"
+    assert by_stage["development"]["reviewer_agent"] is None
+    assert "doc-reviewer" in by_stage["development"]["reviewer_agent_selector_json"]
     assert by_stage["pr"]["review_policy"] == "required"
     assert by_stage["pr"]["reviewer_agent"] is None
     assert by_stage["pr"]["default_agent"] == "merge-orchestrator"
@@ -635,6 +639,41 @@ def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
     assert by_type["review_anchor"] == [("planning", 0)]
     for rows in by_type.values():
         assert [position for _stage_name, position in rows] == list(range(len(rows)))
+
+
+def test_migration_254_adds_reviewer_selector_to_existing_registry(tmp_path) -> None:
+    db = LocalDatabase(tmp_path / "stage-reviewer-selector.db")
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute("INSERT INTO schema_version (version) VALUES (253)")
+    db.execute(
+        """
+        CREATE TABLE task_stages_registry (
+            name TEXT PRIMARY KEY,
+            reviewer_agent TEXT,
+            updated_at TEXT
+        )
+        """
+    )
+    db.execute(
+        """
+        INSERT INTO task_stages_registry (name, reviewer_agent, updated_at)
+        VALUES ('development', 'qa-reviewer', datetime('now'))
+        """
+    )
+    migration_254 = [item for item in MIGRATIONS if item[0] == 254]
+
+    assert _run_migration_list(db, 253, migration_254) == 1
+
+    row = db.fetchone(
+        """
+        SELECT reviewer_agent, reviewer_agent_selector_json
+          FROM task_stages_registry
+         WHERE name = 'development'
+        """
+    )
+    assert row["reviewer_agent"] is None
+    assert "doc-reviewer" in row["reviewer_agent_selector_json"]
+    assert get_current_version(db) == 254
 
 
 def test_remove_test_arch_stage_migration_cleans_rows_and_renumbers(tmp_path) -> None:

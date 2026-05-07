@@ -29,6 +29,7 @@ def test_dispatch_prompt_builder_keys_present() -> None:
         "architect",
         "backend-developer",
         "developer",
+        "doc-reviewer",
         "expansion-qa",
         "holistic-reviewer",
         "merge-orchestrator",
@@ -48,6 +49,16 @@ def test_qa_reviewer_prompt_builder_registered() -> None:
 
     assert "qa-reviewer.yaml agent" in prompt
     assert "#42" in prompt
+
+
+def test_doc_reviewer_prompt_builder_registered() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    builder = PROMPT_BUILDERS["doc-reviewer"]
+    prompt = builder(SimpleNamespace(ref="#43", title="Review docs"), {"reason": "docs"})
+
+    assert "doc-reviewer.yaml agent" in prompt
+    assert "#43" in prompt
 
 
 def test_holistic_reviewer_prompt_builder_registered() -> None:

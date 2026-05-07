@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._stage_reviewer_selector import (
+    ReviewerAgentSelectorError,
+    validate_reviewer_agent_selector_json,
+)
 
 ReviewPolicy = Literal["none", "required", "optional"]
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
@@ -23,6 +27,7 @@ class StageRegistryEntry:
     category: StageCategory
     default_agent: str | None
     reviewer_agent: str | None
+    reviewer_agent_selector_json: str | None
     review_policy: ReviewPolicy
     dispatch_type: DispatchType | None
     dispatch_target: str | None
@@ -63,17 +68,19 @@ class StageRegistryManager:
                 """
                 INSERT INTO task_stages_registry (
                     name, display_label, description, category, default_agent,
-                    reviewer_agent, review_policy, dispatch_type, dispatch_target,
-                    dispatch_inputs_json, position_hint, requires_human, is_terminal,
-                    default_max_work_attempts, default_max_review_rounds, bundled_hash, updated_at
+                    reviewer_agent, reviewer_agent_selector_json, review_policy,
+                    dispatch_type, dispatch_target, dispatch_inputs_json, position_hint,
+                    requires_human, is_terminal, default_max_work_attempts,
+                    default_max_review_rounds, bundled_hash, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(name) DO UPDATE SET
                     display_label = excluded.display_label,
                     description = excluded.description,
                     category = excluded.category,
                     default_agent = excluded.default_agent,
                     reviewer_agent = excluded.reviewer_agent,
+                    reviewer_agent_selector_json = excluded.reviewer_agent_selector_json,
                     review_policy = excluded.review_policy,
                     dispatch_type = excluded.dispatch_type,
                     dispatch_target = excluded.dispatch_target,
@@ -93,6 +100,7 @@ class StageRegistryManager:
                     entry.category,
                     entry.default_agent,
                     entry.reviewer_agent,
+                    entry.reviewer_agent_selector_json,
                     entry.review_policy,
                     entry.dispatch_type,
                     entry.dispatch_target,
@@ -155,6 +163,7 @@ class StageRegistryManager:
             category=row["category"],
             default_agent=self._row_value(row, "default_agent"),
             reviewer_agent=self._row_value(row, "reviewer_agent"),
+            reviewer_agent_selector_json=self._row_value(row, "reviewer_agent_selector_json"),
             review_policy=review_policy,
             dispatch_type=self._dispatch_type_from_row(row),
             dispatch_target=self._row_value(row, "dispatch_target"),
@@ -170,6 +179,9 @@ class StageRegistryManager:
         columns = self._columns("task_stages_registry")
         additions = {
             "reviewer_agent": "ALTER TABLE task_stages_registry ADD COLUMN reviewer_agent TEXT",
+            "reviewer_agent_selector_json": (
+                "ALTER TABLE task_stages_registry ADD COLUMN reviewer_agent_selector_json TEXT"
+            ),
             "review_policy": (
                 "ALTER TABLE task_stages_registry ADD COLUMN review_policy TEXT "
                 "NOT NULL DEFAULT 'none'"
@@ -225,9 +237,22 @@ class StageRegistryManager:
                 raise ValueError("dispatch_inputs_json must be valid JSON") from exc
             if not isinstance(dispatch_inputs, dict):
                 raise ValueError("dispatch_inputs_json must be a JSON object")
-        if entry.review_policy != "none" and not entry.reviewer_agent and entry.name != "pr":
+        try:
+            validate_reviewer_agent_selector_json(
+                entry.reviewer_agent_selector_json,
+                stage_name=entry.name,
+            )
+        except ReviewerAgentSelectorError as exc:
+            raise ValueError(str(exc)) from exc
+        if (
+            entry.review_policy != "none"
+            and not entry.reviewer_agent
+            and not entry.reviewer_agent_selector_json
+            and entry.name != "pr"
+        ):
             raise ValueError(
-                f"reviewer_agent is required for stage '{entry.name}' with review policy"
+                f"reviewer_agent or reviewer_agent_selector_json is required for "
+                f"stage '{entry.name}' with review policy"
             )
         if entry.default_max_work_attempts < 1:
             raise ValueError("default_max_work_attempts must be >= 1")

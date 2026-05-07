@@ -15,6 +15,7 @@ To add a new migration:
     3. Also add the migration to BASELINE_SCHEMA for future fresh installs.
 """
 
+import json
 import logging
 import sqlite3
 from collections.abc import Callable
@@ -486,6 +487,31 @@ def _apply_remove_test_arch_stage(db: LocalDatabase) -> None:
         db.execute("ALTER TABLE task_artifacts DROP COLUMN test_arch_attempts")
 
 
+_DEVELOPMENT_REVIEWER_SELECTOR_JSON = json.dumps(
+    {
+        "default": "qa-reviewer",
+        "rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}],
+    },
+    sort_keys=True,
+)
+
+
+def _apply_stage_reviewer_selector_schema(db: LocalDatabase) -> None:
+    columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_stages_registry)")}
+    if "reviewer_agent_selector_json" not in columns:
+        db.execute("ALTER TABLE task_stages_registry ADD COLUMN reviewer_agent_selector_json TEXT")
+    db.execute(
+        """
+        UPDATE task_stages_registry
+           SET reviewer_agent = NULL,
+               reviewer_agent_selector_json = ?,
+               updated_at = datetime('now')
+         WHERE name = 'development'
+        """,
+        (_DEVELOPMENT_REVIEWER_SELECTOR_JSON,),
+    )
+
+
 def _renumber_stage_state_positions(db: LocalDatabase) -> None:
     db.execute("DROP TABLE IF EXISTS gobby_stage_state_positions")
     db.execute(
@@ -585,6 +611,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (251, "Add integration workspace metadata", _apply_integration_workspace_metadata_schema),
     (252, "Remove Claude OAuth env forwarding config", _apply_config_store_cleanup),
     (253, "Remove retired test architecture lifecycle stage", _apply_remove_test_arch_stage),
+    (254, "Add category-aware stage reviewer selectors", _apply_stage_reviewer_selector_schema),
 ]
 
 
