@@ -166,7 +166,7 @@ export function BranchIndicator({
         onClick={handleToggle}
         className={
           variant === 'select'
-            ? `inline-flex h-8 min-w-0 shrink-0 items-center gap-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-xs transition-colors ${
+            ? `inline-flex h-9 min-w-0 shrink-0 items-center gap-1 rounded-md border border-border bg-transparent px-2.5 py-2 text-sm transition-colors ${
                 disabled
                   ? 'cursor-not-allowed text-muted-foreground/50'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
