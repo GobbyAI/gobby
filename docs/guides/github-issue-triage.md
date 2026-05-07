@@ -23,8 +23,10 @@ flowchart TD
     Service --> Fetch[github:get_issue when needed]
     Service --> Qdrant[VectorStore/Qdrant collection gobby_github_issues]
     Qdrant --> Dedup[Project-scoped semantic duplicate search]
-    Dedup --> Judge[triage-agent + triage-judgment JSON verdict]
-    Judge --> Outcome[Python outcome gates]
+    Dedup --> Gates[Deterministic gates]
+    Gates --> Judge[triage-agent + triage-judgment JSON verdict]
+    Gates --> Outcome[Python outcome gates]
+    Judge --> Outcome
 
     Outcome --> Tasks[Create or update linked Gobby task]
     Outcome --> Build[build_task / build automation]
@@ -49,14 +51,32 @@ flowchart TD
    `POST /api/github/webhooks/triage/{project_id}`.
 4. Select `issues` actions `opened`, `edited`, and `reopened`.
 
+Use `GET /api/projects/{project_id}/github-triage` to inspect the saved project
+configuration. Inbound webhooks return `202 Accepted` after validation and
+delivery persistence. Disabled triage returns `403`; missing, invalid, or
+unauthorized webhook input returns `401`.
+
 Project config fields:
 
 - `enabled`: enables triage for webhook and reconcile paths.
 - `webhook_enabled`: allows inbound webhook deliveries.
 - `repositories`: `owner/repo` values. If empty, legacy project `github_repo`
   is used as a single-repo fallback.
-- `reconcile_interval_seconds`: recovery scan interval.
+- `reconcile_interval_seconds`: recovery scan interval. The default is `3600`
+  seconds, and values must be greater than zero.
 - `webhook_secret_ref`: secret reference, not the secret value.
+
+Required webhook headers:
+
+- `X-GitHub-Event`
+- `X-GitHub-Delivery`
+- `X-Hub-Signature-256`
+
+Delivery statuses in `gh_triage_deliveries` are `pending`, `processing`,
+`processed`, `ignored`, `duplicate`, and `error`. `ping` deliveries are recorded
+as `processed`, `issues` deliveries for `opened`, `edited`, and `reopened` start
+as `pending`, unsupported events or actions are recorded as `ignored`, and a
+repeated `X-GitHub-Delivery` is recorded as `duplicate`.
 
 ## Labels
 
@@ -76,6 +96,26 @@ Python services, not the judgment agent, write public comments. Implemented
 issues get a task link comment, duplicates reference the duplicate issue key,
 skips and escalations include the public-safe reason, and merge-close comments
 mention the merged Gobby task and merge SHA when available.
+
+The GitHub MCP side-effect calls are `github:add_issue_comment`,
+`github:add_labels_to_issue`, and `github:update_issue`. Required GitHub reads
+use `github:get_issue` for direct issue intake and `github:list_issues` during
+reconciliation.
+
+## Judgment
+
+The judgment layer is side-effect-free and returns one structured verdict:
+`implement`, `skip`, `escalate`, or `dedup`. Python applies the side effects
+after validating the outcome.
+
+The service applies deterministic checks before any injected judge:
+
+1. Project-scoped semantic duplicates become `dedup`.
+2. Issues labeled `gobby:ignore` become `skip`.
+3. If a judge is configured, it returns the structured verdict.
+4. Without a judge, the fallback verdict is `implement`.
+
+Pull requests are skipped before duplicate search or judgment.
 
 ## Audit Tables
 
@@ -98,6 +138,9 @@ that project.
 
 - Delivery returns `202` but nothing happens: inspect `gh_triage_deliveries`
   status and `error`.
+- Delivery is stuck in `processing`: another worker claimed the pending row; use
+  the row timestamps and daemon logs to determine whether it is still active or
+  failed before retrying.
 - Duplicate webhook delivery: same `X-GitHub-Delivery` is accepted as duplicate
   and not processed again.
 - Webhook signature failure: verify the GitHub webhook secret matches the
@@ -114,3 +157,5 @@ Webhook registration is manual in v1. Cron-only mode is supported for private or
 local setups, but webhook-first is the documented default. Triage judgment is
 structured and side-effect-free; Python owns task creation, GitHub comments,
 labels, issue closing, vector writes, and build routing.
+
+_Last verified: 2026-05-07_
