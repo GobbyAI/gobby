@@ -21,6 +21,16 @@
   }
 }
 
+/* At narrow panel widths, the status-bar collapses to glyph-only buttons and
+   drops the "Watching " prefix so the session ID stays visible alongside the
+   action icons. Threshold mirrors the chat-input compact threshold (360px). */
+@container activity-panel (max-width: 360px) {
+  .activity-panel-status-bar__watching-prefix,
+  .activity-panel-action-btn__label {
+    display: none;
+  }
+}
+
 .activity-panel-tabs {
   display: flex;
   align-items: center;

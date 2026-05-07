@@ -794,7 +794,9 @@ export const SessionsTab = memo(function SessionsTab({
           <div className="activity-panel-status-bar activity-panel-status-bar--detail">
             <div className="min-w-0 flex-1">
               <span className="activity-panel-status-bar__title">
-                Watching{" "}
+                <span className="activity-panel-status-bar__watching-prefix">
+                  Watching{" "}
+                </span>
                 {selectedEntry
                   ? selectedEntry.seqNum
                     ? `#${selectedEntry.seqNum}: ${selectedEntry.label}`
@@ -806,22 +808,28 @@ export const SessionsTab = memo(function SessionsTab({
               {showSummaryButton && (
                 <button
                   type="button"
-                  className="btn btn-accent btn-sm"
+                  className="btn btn-accent btn-sm activity-panel-action-btn"
                   onClick={() =>
                     setContentMode((current) =>
                       current === "summary" ? "transcript" : "summary",
                     )
                   }
+                  aria-label={contentMode === "summary" ? "Transcript" : "Summary"}
+                  title={contentMode === "summary" ? "Transcript" : "Summary"}
                 >
                   {contentMode === "summary" ? (
                     <>
                       <TranscriptIcon />
-                      Transcript
+                      <span className="activity-panel-action-btn__label">
+                        Transcript
+                      </span>
                     </>
                   ) : (
                     <>
                       <ClipboardListIcon />
-                      Summary
+                      <span className="activity-panel-action-btn__label">
+                        Summary
+                      </span>
                     </>
                   )}
                 </button>
@@ -829,25 +837,29 @@ export const SessionsTab = memo(function SessionsTab({
               {showResumeButton && (
                 <button
                   type="button"
-                  className="btn btn-accent btn-sm"
+                  className="btn btn-accent btn-sm activity-panel-action-btn"
                   onClick={() => {
                     if (selectedSessionId) {
                       void onResumeSession?.(selectedSessionId);
                     }
                   }}
+                  aria-label="Resume"
+                  title="Resume"
                 >
                   <PlayIcon />
-                  Resume
+                  <span className="activity-panel-action-btn__label">Resume</span>
                 </button>
               )}
               {showSwapButton && selectedEntry && (
                 <button
                   type="button"
-                  className="btn btn-accent btn-sm"
+                  className="btn btn-accent btn-sm activity-panel-action-btn"
                   onClick={handleSwapSelectedSession}
+                  aria-label="Swap"
+                  title="Swap"
                 >
                   <SwapIcon />
-                  Swap
+                  <span className="activity-panel-action-btn__label">Swap</span>
                 </button>
               )}
             </div>
