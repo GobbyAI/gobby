@@ -61,6 +61,20 @@ def test_build_skill_forbids_changing_requirements_to_pass_e2e() -> None:
     assert "exhausting practical fixes" in content
 
 
+def test_build_skill_forbids_manual_dispatcher_ticks_during_unattended_e2e() -> None:
+    skill_path = Path("src/gobby/install/shared/skills/build/SKILL.md")
+
+    content = skill_path.read_text()
+
+    assert "launch `gobby build #epic ...` once" in content
+    assert "daemon-owned automation" in content
+    assert "manual dispatcher ticks" in content
+    assert "anti-pattern" in content
+    assert "can hide a broken dispatcher loop" in content
+    assert "bounded explicit tick" in content
+    assert "only as a diagnostic or recovery step" in content
+
+
 def test_build_skill_documents_provider_neutral_automation_diagnostics() -> None:
     skill_path = Path("src/gobby/install/shared/skills/build/SKILL.md")
 
