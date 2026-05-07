@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -363,6 +364,84 @@ class TestSpawnAgentImplErrorBranches:
 
         assert result["success"] is True
         assert events == ["repair", "index", "spawn"]
+
+    @pytest.mark.asyncio
+    async def test_docs_isolated_spawn_skips_blocking_code_index_preflight(self, tmp_path) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "ok", 0)
+        runner._child_session_manager = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.has_active_run_for_task.return_value = False
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree_storage = MagicMock()
+        worktree_storage.get.return_value = worktree
+        task = SimpleNamespace(
+            title="docs task",
+            seq_num=123,
+            category="docs",
+            additional_skills=None,
+            stages=[],
+        )
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = task
+        task_manager.claim_task.return_value = SimpleNamespace(
+            state={"owner_session_id": "c-1"},
+            stages=[],
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                return_value="task-1",
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                new=AsyncMock(),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                new=AsyncMock(side_effect=RuntimeError("gcode_index_timeout:120s")),
+            ) as index,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            mock_execute.return_value = MagicMock(
+                success=True,
+                child_session_id="c-1",
+                status="ok",
+                pid=1,
+                terminal_type=None,
+                tmux_session_name=None,
+                message="ok",
+                process=None,
+            )
+
+            result = await spawn_agent_impl(
+                prompt="test",
+                runner=runner,
+                parent_session_id="sess-1",
+                provider="gemini",
+                task_id="#123",
+                task_manager=task_manager,
+                worktree_id="wt-1",
+                worktree_storage=worktree_storage,
+            )
+
+        assert result["success"] is True
+        index.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_fails_when_code_index_preflight_fails(self, tmp_path) -> None:

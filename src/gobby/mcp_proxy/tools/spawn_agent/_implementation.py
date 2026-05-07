@@ -388,6 +388,7 @@ async def spawn_agent_impl(
     resolved_task_id: str | None = None
     task_title: str | None = None
     task_seq_num: int | None = None
+    task_category: str | None = None
     task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
     task_owned_by_child = False
@@ -399,6 +400,7 @@ async def spawn_agent_impl(
             if task:
                 task_title = task.title
                 task_seq_num = task.seq_num
+                task_category = getattr(task, "category", None)
                 if task.additional_skills is not None:
                     task_additional_skills = _normalize_string_list(task.additional_skills)
                 claimed_session_id = get_claimed_session_id(task)
@@ -525,10 +527,11 @@ async def spawn_agent_impl(
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             return {"success": False, "error": config_error}
-        try:
-            await ensure_isolation_code_index(isolation_ctx.cwd)
-        except Exception as e:
-            return {"success": False, "error": f"code_index_preflight_failed:{e}"}
+        if task_category != "docs":
+            try:
+                await ensure_isolation_code_index(isolation_ctx.cwd)
+            except Exception as e:
+                return {"success": False, "error": f"code_index_preflight_failed:{e}"}
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
