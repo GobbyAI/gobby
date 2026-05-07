@@ -23,14 +23,18 @@ Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use
 ## Retrieval
 
 - `gcode outline path/to/file.py` — hierarchical symbol map (much cheaper than reading the whole file)
-- `gcode symbol <id>` — retrieve just the source you need (O(1) via byte offsets)
-- `gcode symbols <id1> <id2> ...` — batch-retrieve multiple symbols
+- `gcode symbol <full-uuid>` — retrieve one symbol by exact stored ID (O(1) via byte offsets)
+- `gcode symbols <full-uuid> <full-uuid> ...` — batch-retrieve symbols by exact stored IDs
+
+Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`, or `gcode outline`. Literal placeholders, wildcards, globs, and prefix IDs such as `id1`, `514??`, `abc*`, or `80abc77f` are invalid.
 
 ## Navigation
 
 - `gcode repo-outline` — high-level project summary with module symbol counts
-- `gcode tree` — file tree with symbol counts per file
+- `gcode tree` — whole-project file tree with symbol counts per file; it takes no path argument
 - `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
+
+For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with `--path <glob>`.
 
 ## Impact Analysis
 
@@ -54,7 +58,7 @@ Use these **before making changes** to understand what you'll affect:
 | A symbol you know the exact name of | `gcode search-symbol "name"` |
 | A string literal, config value, comment, CSS rule | `gcode search-content "text"` |
 | Structure of a file without reading it | `gcode outline path/to/file` |
-| Source code of a specific symbol | `gcode symbol <id>` |
+| Source code of a specific symbol | `gcode symbol <full-uuid>` |
 | What breaks if I change X | `gcode blast-radius <name>` |
 | Who calls a function | `gcode callers <name>` |
 | All references to a symbol | `gcode usages <name>` |

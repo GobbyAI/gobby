@@ -2718,7 +2718,8 @@ class TestVerboseOnceBlockReason:
         return (
             "This project is indexed with gcode. Use gcode for code navigation:\n"
             "- gcode outline path/to/file — symbol map (much cheaper than Read)\n"
-            "- gcode search 'query' — find symbols by name"
+            "- gcode search 'query' — find symbols by name\n"
+            "- gcode symbol <full-uuid> — fetch exact source from a search/outline UUID"
         )
 
     @pytest.mark.asyncio

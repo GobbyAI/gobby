@@ -154,6 +154,8 @@ class TestTeachGeminiQwenGcodePlanMode:
         assert effects[0].type == "inject_context"
         assert effects[0].template is not None
         assert "gcode outline" in effects[0].template
+        assert "gcode symbol <full-uuid>" in effects[0].template
+        assert "search or outline results" in effects[0].template
         assert "write/destructive shell commands remain blocked" in effects[0].template
         assert effects[1].type == "set_variable"
         assert effects[1].variable == "gemini_qwen_gcode_plan_hint_shown"

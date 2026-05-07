@@ -24,7 +24,7 @@ rules:
       - type: inject_context
         template: |
           Gemini/Qwen plan mode permits `gcode` through shell command execution for code navigation.
-          Use `gcode outline path/to/file`, `gcode search "query"`, and `gcode symbol <id>` when inspecting code.
+          Use `gcode outline path/to/file`, `gcode search "query"`, and `gcode symbol <full-uuid>` when inspecting code. Get full UUIDs from search or outline results.
           File edits and write/destructive shell commands remain blocked until plan approval.
       - type: set_variable
         variable: gemini_qwen_gcode_plan_hint_shown
