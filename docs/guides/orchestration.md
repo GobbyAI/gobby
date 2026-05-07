@@ -8,26 +8,44 @@ For the rule chain itself, read [Dispatch](./dispatch.md). This guide explains
 how dispatch, tasks, agents, isolation, and review fit together during automated
 task development.
 
-## Current Model
+## Build Lifecycle
 
 ```mermaid
 flowchart LR
-    Build[gobby build] --> State[Task automation state]
-    State --> Manifest[Stage manifest row]
-    Manifest --> Rules[Ordered dispatch rules]
-    Rules --> Action[One selected action]
-    Action --> Agent[Agent run or stage transition]
-    Agent --> Lifecycle[Task lifecycle tools]
-    Lifecycle --> Manifest
+    Input[Plan file / task ref] --> Build[gobby build]
+    Build --> State[Build state]
+    State --> Manifest[Stage manifest]
+    Manifest --> Queue[Dependency-ready queue]
+    Queue --> Tick[Dispatcher heartbeat]
+    Tick --> Action[One selected action]
+    Action --> Work[Agent / pipeline / transition]
+    Work --> Review{Review gate}
+    Review -->|yes| Reviewer[Reviewer agent]
+    Review -->|no| Complete[Complete stage]
+    Reviewer --> Decision{Approved}
+    Decision -->|yes| Complete
+    Decision -->|no| Retry[Retry or escalate]
+    Complete --> Next{More stages}
+    Next -->|yes| Tick
+    Next -->|no| Delivery[PR / merge / close]
 ```
 
 `gobby build` is the opt-in boundary. Backlog tasks are inert until build state
-is written onto a plan, epic, or leaf task. After that, the dispatcher heartbeat
-scans opted-in tasks, reads the first manifest row whose state is not `done`, and
-lets ordered rules choose a single action for that heartbeat.
+is written onto a plan file, epic, or leaf task. Task refs that begin with `#`
+should be quoted in shells, for example `gobby build '#14168'`.
+
+After build state exists, the dispatcher heartbeat scans opted-in tasks, filters
+out claimed, leased, closed, escalated, and dependency-blocked work, reads the
+first manifest row whose state is not `done`, and lets ordered rules choose one
+action for that heartbeat.
 
 The dispatcher does not prompt models or repair artifacts inline. Prompting and
 implementation happen inside the agent selected for the current stage.
+
+During the 0.4.0 docs audit, `#14168` shows the intended shape: the epic is in
+`development.in_progress`, ordinary guide leaves can run independently, and the
+final guide-index task stays `development.ready` but dependency-blocked until
+its sibling guide tasks close.
 
 ## Active Surfaces
 
@@ -56,11 +74,12 @@ fields and manifest rows:
 | Field | Meaning |
 | --- | --- |
 | `allow_automation` | Opt-in gate; tasks without it are invisible to dispatcher scans |
-| `yolo` | Fallback mode for deterministic recovery where a fallback exists |
+| `unattended` | Stored task flag for automation posture; build currently writes `false` |
 | `isolation` | Execution isolation: `none`, `worktree`, or `clone` |
 | Stage manifest rows | Ordered lifecycle stages in `task_stage_states` |
 | `assigned_agent` | Leaf-stage agent chosen by expansion or build input |
 | `additional_skills` | Extra skills loaded into the dispatched worker |
+| `target_branch` | Artifact used as the base for isolated work and workspace merges |
 
 The current stage is the first manifest row whose state is not `done`. Blocked
 and escalated are projections around that row: they change queue visibility and
@@ -151,4 +170,4 @@ heartbeat scans the same task state and tries again.
   tools
 - [MCP Tools](./mcp-tools.md) for current server and tool signatures
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-05-07_
