@@ -43,7 +43,7 @@ def mock_executor(cron_storage: CronJobStorage) -> CronExecutor:
 
 @pytest.fixture
 def config() -> CronConfig:
-    return CronConfig(check_interval_seconds=10, max_concurrent_jobs=5)
+    return CronConfig(check_interval_seconds=60, max_concurrent_jobs=5)
 
 
 @pytest.fixture
@@ -171,7 +171,7 @@ async def test_respects_max_concurrent(
     mock_executor: CronExecutor,
 ) -> None:
     """Scheduler respects max_concurrent_jobs limit."""
-    config = CronConfig(check_interval_seconds=10, max_concurrent_jobs=1)
+    config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
     scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
 
     # Create a running run to fill the slot
@@ -205,6 +205,83 @@ async def test_respects_max_concurrent(
     mock_executor.execute.assert_not_called()  # type: ignore[attr-defined]
     assert mock_executor.execute.call_count == 0
     assert not mock_executor.execute.called
+
+
+@pytest.mark.asyncio
+async def test_due_jobs_run_heartbeat_then_dispatcher_then_others(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """Lifecycle cron jobs get deterministic priority when due together."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    names = ["other-job", "gobby:dispatcher", "gobby:pipeline-heartbeat"]
+    for name in names:
+        job = cron_storage.create_job(
+            project_id=PROJECT_ID,
+            name=name,
+            schedule_type="interval",
+            action_type="shell",
+            action_config={"command": "echo"},
+            interval_seconds=60,
+        )
+        cron_storage.update_job(job.id, next_run_at=past)
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 3,  # type: ignore[attr-defined]
+        description="priority cron dispatch",
+    )
+
+    dispatched = [call.args[0].name for call in mock_executor.execute.await_args_list]  # type: ignore[attr-defined]
+    assert dispatched == ["gobby:pipeline-heartbeat", "gobby:dispatcher", "other-job"]
+
+
+@pytest.mark.asyncio
+async def test_stale_running_runs_do_not_block_due_jobs(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+) -> None:
+    """Expired running rows are failed before concurrency slots are counted."""
+    config = CronConfig(
+        check_interval_seconds=60,
+        max_concurrent_jobs=1,
+        running_timeout_seconds=60,
+    )
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    stale_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="stale",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    stale_run = cron_storage.create_run(stale_job.id)
+    old = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    cron_storage.update_run(stale_run.id, status="running", started_at=old)
+    due_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="waiting",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    cron_storage.update_job(due_job.id, next_run_at=old)
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        description="dispatch after stale cron cleanup",
+    )
+
+    refreshed_stale_run = cron_storage.get_run(stale_run.id)
+    assert refreshed_stale_run is not None
+    assert refreshed_stale_run.status == "failed"
+    mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
+    assert mock_executor.execute.await_args.args[0].id == due_job.id  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

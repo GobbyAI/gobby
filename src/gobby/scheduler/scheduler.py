@@ -113,6 +113,10 @@ class CronScheduler:
         if not due_jobs:
             return
 
+        expired_runs = self.storage.fail_stale_running_runs(self.config.running_timeout_seconds)
+        if expired_runs:
+            logger.warning("Marked %s stale cron run(s) failed before dispatch", expired_runs)
+
         # Respect max concurrent limit
         running_count = self.storage.count_running()
         available_slots = self.config.max_concurrent_jobs - running_count

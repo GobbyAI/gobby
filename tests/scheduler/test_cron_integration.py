@@ -41,7 +41,7 @@ def cron_config() -> CronConfig:
 
     return CronConfig(
         enabled=True,
-        check_interval_seconds=10,
+        check_interval_seconds=60,
         max_concurrent_jobs=5,
         cleanup_after_days=7,
     )
@@ -103,7 +103,7 @@ def test_interval_job_due_after_time(cron_storage: CronJobStorage) -> None:
         project_id=PROJECT_ID,
         name="interval-test",
         schedule_type="interval",
-        interval_seconds=30,
+        interval_seconds=60,
         action_type="shell",
         action_config={"command": "echo"},
     )
@@ -174,7 +174,7 @@ async def test_consecutive_failure_backoff(
         project_id=PROJECT_ID,
         name="fail-test",
         schedule_type="interval",
-        interval_seconds=30,
+        interval_seconds=60,
         action_type="shell",
         action_config={"command": "false"},  # always exits 1
     )

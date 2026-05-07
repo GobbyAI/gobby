@@ -85,6 +85,40 @@ def test_create_job(cron_storage: CronJobStorage) -> None:
     assert job.enabled is True
 
 
+def test_create_interval_job_clamps_to_minimum_interval(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Interval cron jobs cannot run more often than once per minute."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Too Fast",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=10,
+    )
+
+    assert job.interval_seconds == 60
+
+
+def test_update_interval_job_clamps_to_minimum_interval(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Updating an interval cron job also enforces the one-minute floor."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Update Too Fast",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=300,
+    )
+    updated = cron_storage.update_job(job.id, interval_seconds=10)
+
+    assert updated is not None
+    assert updated.interval_seconds == 60
+
+
 def test_get_job(cron_storage: CronJobStorage) -> None:
     """get_job retrieves by ID."""
     job = cron_storage.create_job(

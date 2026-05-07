@@ -20,6 +20,13 @@ from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
 
+MIN_CRON_INTERVAL_SECONDS = 60
+CRON_JOB_NAME_PRIORITIES = {
+    "gobby:pipeline-heartbeat": 0,
+    "gobby:dispatcher": 1,
+}
+DEFAULT_CRON_JOB_PRIORITY = 2
+
 
 SYSTEM_ROW_UPDATE_ALLOWED_FIELDS = frozenset(
     {
@@ -47,6 +54,16 @@ UNSET = _Unset()
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _normalize_interval_seconds(schedule_type: str, interval_seconds: int | None) -> int | None:
+    if schedule_type != "interval" or interval_seconds is None:
+        return interval_seconds
+    return max(interval_seconds, MIN_CRON_INTERVAL_SECONDS)
+
+
+def _cron_job_priority(job: CronJob) -> int:
+    return CRON_JOB_NAME_PRIORITIES.get(job.name, DEFAULT_CRON_JOB_PRIORITY)
 
 
 def compute_next_run(job: CronJob) -> datetime | None:
@@ -82,9 +99,10 @@ def compute_next_run(job: CronJob) -> datetime | None:
     elif job.schedule_type == "interval":
         if not job.interval_seconds:
             return None
+        interval_seconds = max(job.interval_seconds, MIN_CRON_INTERVAL_SECONDS)
         # Always compute from now to prevent double-fire when last_run_at
         # is stale (close to current time after execution).
-        next_interval: datetime = now + timedelta(seconds=job.interval_seconds)
+        next_interval: datetime = now + timedelta(seconds=interval_seconds)
         return next_interval.astimezone(ZoneInfo("UTC"))
 
     elif job.schedule_type == "once":
@@ -135,6 +153,8 @@ class CronJobStorage:
         """Create a new cron job."""
         job_id = generate_prefixed_id("cj", length=12)
         now = datetime.now(UTC).isoformat()
+
+        interval_seconds = _normalize_interval_seconds(schedule_type, interval_seconds)
 
         job = CronJob(
             id=job_id,
@@ -296,6 +316,25 @@ class CronJobStorage:
 
         return self.get_job(job_id)
 
+    def _normalize_update_fields(self, job: CronJob, fields: dict[str, Any]) -> None:
+        schedule_type = str(fields.get("schedule_type", job.schedule_type))
+        should_normalize = schedule_type == "interval" and (
+            "schedule_type" in fields
+            or "interval_seconds" in fields
+            or (
+                job.schedule_type == "interval"
+                and job.interval_seconds is not None
+                and job.interval_seconds < MIN_CRON_INTERVAL_SECONDS
+            )
+        )
+        if not should_normalize:
+            return
+        interval_seconds = fields.get("interval_seconds", job.interval_seconds)
+        fields["interval_seconds"] = _normalize_interval_seconds(
+            schedule_type,
+            interval_seconds,
+        )
+
     def update_job(self, job_id: str, **fields: Any) -> CronJob | None:
         """Update cron job fields."""
         if not fields:
@@ -320,6 +359,7 @@ class CronJobStorage:
                     "action repair."
                 )
 
+        self._normalize_update_fields(job, fields)
         fields["updated_at"] = _utc_now_iso()
 
         return self._update_job_fields(job_id, **fields)
@@ -399,6 +439,7 @@ class CronJobStorage:
             "timezone": timezone,
         }
         desired.update({key: value for key, value in optional.items() if value is not UNSET})
+        self._normalize_update_fields(job, desired)
         for key, value in desired.items():
             if getattr(job, key) != value:
                 fields[key] = value
@@ -468,11 +509,20 @@ class CronJobStorage:
             """
             SELECT * FROM cron_jobs
             WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
-            ORDER BY next_run_at ASC
+            ORDER BY next_run_at ASC, created_at ASC
             """,
             (now,),
         )
-        return [CronJob.from_row(row) for row in rows]
+        jobs = [CronJob.from_row(row) for row in rows]
+        return sorted(
+            jobs,
+            key=lambda job: (
+                _cron_job_priority(job),
+                job.next_run_at or "",
+                job.created_at,
+                job.id,
+            ),
+        )
 
     # --- CronRun methods ---
 
@@ -567,6 +617,28 @@ class CronJobStorage:
         """Count currently running cron runs."""
         row = self.db.fetchone("SELECT COUNT(*) as cnt FROM cron_runs WHERE status = 'running'")
         return row["cnt"] if row else 0
+
+    def fail_stale_running_runs(self, timeout_seconds: int) -> int:
+        """Mark stale running cron runs failed so they stop consuming scheduler slots."""
+        timeout_seconds = max(timeout_seconds, MIN_CRON_INTERVAL_SECONDS)
+        now = datetime.now(UTC)
+        cutoff = (now - timedelta(seconds=timeout_seconds)).isoformat()
+        cursor = self.db.execute(
+            """
+            UPDATE cron_runs
+               SET status = 'failed',
+                   completed_at = ?,
+                   error = ?
+             WHERE status = 'running'
+               AND COALESCE(started_at, triggered_at, created_at) < ?
+            """,
+            (
+                now.isoformat(),
+                f"Cron run exceeded running timeout ({timeout_seconds}s)",
+                cutoff,
+            ),
+        )
+        return cursor.rowcount
 
     def cleanup_old_runs(self, days: int) -> int:
         """Delete runs older than the given number of days."""
