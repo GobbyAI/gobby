@@ -186,7 +186,27 @@ export function useSessionCatalog(
 
   useWebSocketEvent(
     "session_event",
-    useCallback(() => {
+    useCallback((data: Record<string, unknown>) => {
+      // Patch the local catalog optimistically for status-changing events.
+      // refreshPageOne fetches with the active filter (e.g. Live = active+paused),
+      // so an expired/deleted session isn't returned and the merge preserves
+      // its stale prev row — Live view keeps showing the row with status:active
+      // until the user reloads. Patch in place so client-side filters drop it.
+      const event = typeof data.event === "string" ? data.event : null;
+      const sessionId = typeof data.session_id === "string" ? data.session_id : null;
+      if (sessionId) {
+        if (event === "session_expired") {
+          setSessions((prev) =>
+            prev.map((session) =>
+              session.id === sessionId
+                ? { ...session, status: "expired" }
+                : session,
+            ),
+          );
+        } else if (event === "session_deleted") {
+          setSessions((prev) => prev.filter((session) => session.id !== sessionId));
+        }
+      }
       if (debouncedRefetchRef.current) {
         window.clearTimeout(debouncedRefetchRef.current);
       }
