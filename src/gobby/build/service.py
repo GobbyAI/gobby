@@ -17,7 +17,10 @@ from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
 from gobby.build.options import BuildOptions, retry_attempt_cap
-from gobby.build.workspaces import ensure_epic_integration_workspaces
+from gobby.build.workspaces import (
+    ensure_epic_integration_workspaces,
+    ensure_task_parent_integration_workspace,
+)
 from gobby.config.build import Isolation
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.cron import CronJobStorage, compute_next_run
@@ -517,6 +520,15 @@ async def _resume_existing_lifecycle(
             unattended=False,
             allow_automation=True,
             include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
+        )
+    elif opts.isolation in {"worktree", "clone"}:
+        ensure_task_parent_integration_workspace(
+            task_manager=task_manager,
+            task=task,
+            backend=opts.workspace_backend,
+            project_id=project_id,
+            services=services,
+            base_branch_override=target_branch,
         )
     specs = _stage_state_specs(task_manager, task.id)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)

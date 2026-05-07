@@ -14,7 +14,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
-from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git import WorktreeGitManager, WorktreeInfo
 
 WorkspaceBackend = Literal["worktree", "clone"]
 
@@ -82,6 +82,69 @@ def ensure_epic_integration_workspaces(
         parent_by_id=parent_by_id,
         integration_by_epic=integration_by_epic,
     )
+
+
+def ensure_task_parent_integration_workspace(
+    *,
+    task_manager: LocalTaskManager,
+    task: Task,
+    backend: WorkspaceBackend,
+    project_id: str,
+    services: object | None,
+    base_branch_override: str | None = None,
+) -> Worktree | Clone | None:
+    """Ensure the nearest parent epic integration workspace for a child task."""
+    if not task.parent_task_id:
+        return None
+
+    task_artifacts = task_manager.artifacts.get_artifacts(task.id)
+    branch_name = task_artifacts.target_branch
+    if not branch_name:
+        return None
+
+    match = _nearest_parent_epic_for_integration_branch(
+        task_manager,
+        task,
+        branch_name,
+    )
+    if match is None:
+        return None
+
+    epic, artifacts = match
+    base_branch = (
+        artifacts.target_branch
+        or base_branch_override
+        or _nearest_ancestor_integration_branch(task_manager, epic.parent_task_id)
+    )
+    if base_branch is None:
+        raise BuildWorkspaceError("target_branch is required for parent integration workspace")
+
+    repo_path = _project_repo_path(task_manager.db, project_id)
+    workspace_services = _WorkspaceServices.resolve(
+        db=task_manager.db,
+        project_id=project_id,
+        repo_path=repo_path,
+        services=services,
+    )
+    integration = workspace_services.ensure_integration(
+        task=epic,
+        backend=backend,
+        branch_name=branch_name,
+        base_branch=base_branch,
+        artifacts=artifacts,
+    )
+    artifact_fields: dict[str, str | int | None] = {
+        "integration_branch": branch_name,
+        "target_branch": base_branch,
+    }
+    if backend == "worktree":
+        artifact_fields["integration_workspace_id"] = integration.id
+        artifact_fields["integration_clone_id"] = None
+    else:
+        artifact_fields["integration_clone_id"] = integration.id
+        artifact_fields["integration_workspace_id"] = None
+    task_manager.artifacts.set_artifacts_atomic(epic.id, **artifact_fields)
+    return integration
 
 
 class _WorkspaceServices:
@@ -167,6 +230,23 @@ class _WorkspaceServices:
             _ensure_clean_git_dir(existing.worktree_path)
             return existing
 
+        unmanaged = self._find_unmanaged_worktree(branch_name)
+        if unmanaged is not None:
+            stored = self.worktree_storage.get_by_path(unmanaged.path)
+            if stored is not None:
+                self._validate_record(stored, branch_name=branch_name, backend="worktree")
+                _ensure_clean_git_dir(stored.worktree_path)
+                return stored
+            _ensure_clean_git_dir(unmanaged.path)
+            return self.worktree_storage.create(
+                project_id=self.project_id,
+                branch_name=branch_name,
+                worktree_path=unmanaged.path,
+                base_branch=base_branch,
+                task_id=task.id,
+                workspace_role="integration",
+            )
+
         branch_exists = _branch_exists(self.repo_path, branch_name)
         path = _workspace_path("worktrees", self.repo_path.name, branch_name)
         result = self.git_manager.create_worktree(
@@ -227,6 +307,12 @@ class _WorkspaceServices:
             task_id=task.id,
             workspace_role="integration",
         )
+
+    def _find_unmanaged_worktree(self, branch_name: str) -> WorktreeInfo | None:
+        for worktree in self.git_manager.list_worktrees():
+            if worktree.branch == branch_name and Path(worktree.path).is_dir():
+                return worktree
+        return None
 
     @staticmethod
     def _validate_record(
@@ -322,6 +408,47 @@ def _nearest_ancestor_integration(
             return branch
         current = parent_by_id.get(current)
     return None
+
+
+def _nearest_parent_epic_for_integration_branch(
+    task_manager: LocalTaskManager,
+    task: Task,
+    branch_name: str,
+) -> tuple[Task, TaskArtifacts] | None:
+    current_id = task.parent_task_id
+    while current_id:
+        current = _task_by_id(task_manager.db, current_id)
+        if current is None:
+            return None
+        if current.task_type == "epic":
+            artifacts = task_manager.artifacts.get_artifacts(current.id)
+            if artifacts.integration_branch == branch_name:
+                return current, artifacts
+            if artifacts.integration_branch is None and _integration_branch(current) == branch_name:
+                return current, artifacts
+        current_id = current.parent_task_id
+    return None
+
+
+def _nearest_ancestor_integration_branch(
+    task_manager: LocalTaskManager,
+    task_id: str | None,
+) -> str | None:
+    current_id = task_id
+    while current_id:
+        task = _task_by_id(task_manager.db, current_id)
+        if task is None:
+            return None
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        if artifacts.integration_branch:
+            return artifacts.integration_branch
+        current_id = task.parent_task_id
+    return None
+
+
+def _task_by_id(db: DatabaseProtocol, task_id: str) -> Task | None:
+    row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    return Task.from_row(row) if row is not None else None
 
 
 def _integration_branch(task: Task) -> str:

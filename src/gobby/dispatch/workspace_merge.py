@@ -12,10 +12,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
 
+from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -129,6 +131,15 @@ def _resolve_paths(
             raise RuntimeError("source worktree artifact is missing")
         worktree_source = storage.get(source_id)
         worktree_target = storage.get_by_branch(project_id, action.target_branch)
+        if worktree_target is None:
+            _repair_parent_integration_workspace(
+                db,
+                action.task_id,
+                backend="worktree",
+                project_id=project_id,
+                services=services,
+            )
+            worktree_target = storage.get_by_branch(project_id, action.target_branch)
         if worktree_source is None or worktree_target is None:
             raise RuntimeError("source or target worktree metadata is missing")
         _require_integration_target(worktree_target.workspace_role)
@@ -151,6 +162,15 @@ def _resolve_paths(
         raise RuntimeError("source clone artifact is missing")
     clone_source = clone_storage.get(source_id)
     clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
+    if clone_target is None:
+        _repair_parent_integration_workspace(
+            db,
+            action.task_id,
+            backend="clone",
+            project_id=project_id,
+            services=services,
+        )
+        clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
     if clone_source is None or clone_target is None:
         raise RuntimeError("source or target clone metadata is missing")
     _require_integration_target(clone_target.workspace_role)
@@ -168,6 +188,25 @@ def _project_id_for_task(db: DatabaseProtocol, task_id: str) -> str:
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
     return str(row["project_id"])
+
+
+def _repair_parent_integration_workspace(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    backend: WorkspaceBackend,
+    project_id: str,
+    services: object | None,
+) -> None:
+    task_manager = LocalTaskManager(db)
+    task = task_manager.get_task(task_id)
+    ensure_task_parent_integration_workspace(
+        task_manager=task_manager,
+        task=task,
+        backend=backend,
+        project_id=project_id,
+        services=services,
+    )
 
 
 def _require_integration_target(role: str) -> None:
