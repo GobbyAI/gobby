@@ -185,11 +185,14 @@ export function ChatInput({
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
   const metaRef = useRef<HTMLDivElement>(null)
-  // Track our own container width so [Branch] can move from the model row
-  // into the mode row at <=360px (where four pills won't fit on one line).
+  // Track the chat-column ancestor so the compact-layout threshold matches the
+  // container query that hides the "+ New Chat" label. Observing chat-input-meta
+  // would fire ~a few pixels narrower than the column due to internal padding,
+  // producing a band where the label still shows but the input has already
+  // collapsed to the 4-row layout.
   const [isCompact, setIsCompact] = useState(false)
   useEffect(() => {
-    const el = metaRef.current
+    const el = metaRef.current?.closest('.chat-column')
     if (!el || typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(([entry]) => {
       setIsCompact(entry.contentRect.width <= 360)
@@ -686,6 +689,14 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
+              {!isCompact && !isAttached && onModeChange && (
+                <ModeSelector
+                  mode={mode}
+                  onModeChange={onModeChange}
+                  disabled={disabled || modeDisabled}
+                  modes={modeOptions}
+                />
+              )}
               {!isAttached && (
                 <Button
                   size="icon"
@@ -873,7 +884,7 @@ export function ChatInput({
             </div>
           </div>
 
-          {!isAttached && onModeChange && (
+          {isCompact && !isAttached && onModeChange && (
             <div className="chat-input-mode-row">
               <ModeSelector
                 mode={mode}
@@ -881,7 +892,7 @@ export function ChatInput({
                 disabled={disabled || modeDisabled}
                 modes={modeOptions}
               />
-              {isCompact && canSelectModel && onWorktreeChange && (
+              {canSelectModel && onWorktreeChange && (
                 <BranchIndicator
                   currentBranch={currentBranch ?? null}
                   worktreePath={worktreePath ?? null}

@@ -322,10 +322,11 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('mode-selector')).toBeTruthy()
     expect(screen.getByText('accept_edits')).toBeTruthy()
 
-    // ModeSelector lives in chat-input-mode-row (between textarea and model
-    // controls), not in the toolbar above the textarea.
-    const modeRow = container.querySelector('.chat-input-mode-row')
-    expect(modeRow?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
+    // At default (non-compact) widths, ModeSelector lives in toolbar__left as
+    // the first child. The chat-input-mode-row only renders at <=360px.
+    const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
+    expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
+    expect(container.querySelector('.chat-input-mode-row')).toBeNull()
   })
 
   it('disables proxy-owned footer controls while leaving text entry enabled', () => {
