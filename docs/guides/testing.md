@@ -2,7 +2,8 @@
 
 Gobby's test workflow is optimized for targeted verification. The repository has
 thousands of tests, so contributors and agents should run the narrowest backend
-or frontend command that proves the change.
+or frontend command that proves the change. Backend pytest runs started by
+agents must be isolated from the user's running daemon and local daemon state.
 
 ## Backend Pytest
 
@@ -13,19 +14,19 @@ Pytest is run through `uv` so it uses the project environment:
 uv run pytest tests/tasks/test_validation.py -v
 ```
 
-Agents must also enable Gobby's test protection switch on every pytest run:
+Agents must enable Gobby's test protection switch on every pytest run:
 
 ```bash
 GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v
 ```
 
 Run a package or marker slice when the affected surface spans more than one
-file:
+file. Agents keep the same `GOBBY_TEST_PROTECT=1` prefix:
 
 ```bash
-uv run pytest tests/tasks/ -v
-uv run pytest tests/workflows/ -m "not slow" -v
-uv run pytest tests/servers/ --cov=gobby --cov-report=term-missing --cov-fail-under=80
+GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/ -v
+GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/ -m "not slow" -v
+GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/ --cov=gobby --cov-report=term-missing --cov-fail-under=80
 ```
 
 Avoid the repository-wide pytest command during normal agent work. The full
@@ -44,12 +45,18 @@ The canonical pytest settings are in `pyproject.toml`:
 - `python_functions = ["test_*"]`.
 - `addopts` enables verbose output and disables `faulthandler`.
 
-Coverage is not enabled by default in local pytest runs. CI and pre-push gates
-enforce the 80% project threshold; local coverage runs should add:
+Coverage is not enabled by default in local pytest runs. CI's backend test job
+enforces the 80% project threshold with `--cov=gobby`; local coverage runs
+should add:
 
 ```bash
-uv run pytest tests/path/ --cov=gobby --cov-report=term-missing --cov-fail-under=80
+GOBBY_TEST_PROTECT=1 uv run pytest tests/path/ --cov=gobby --cov-report=term-missing --cov-fail-under=80
 ```
+
+The project pre-push verification in `.gobby/project.json` runs backend lint,
+format, and type checks plus frontend lint, type checks, and Vitest. It does not
+run backend pytest by default, so run focused backend pytest yourself when a
+change touches Python behavior.
 
 ## Markers
 
@@ -85,12 +92,14 @@ The root `tests/conftest.py` provides common isolation and test helpers:
 - `mock_config`, `mock_config_with_websocket`, `default_config`,
   `mock_daemon_config`, `mock_machine_id`, and `mock_llm_service` cover common
   daemon dependencies.
-- `protect_production_resources` is applied automatically. It sets safe
-  `GOBBY_*` paths and patches config loading/saving so tests do not touch the
-  user's real daemon database, home directory, logs, or hooks.
+- `protect_production_resources` is applied automatically. It sets
+  `GOBBY_TEST_PROTECT=1`, safe `GOBBY_*` paths, and patches config
+  loading/saving so tests do not touch the user's real daemon database, home
+  directory, logs, or hooks.
 - `GOBBY_TEST_PROTECT=1` is the explicit subprocess safety switch used by
-  daemon and CLI tests to keep process-discovery helpers away from the user's
-  running daemon.
+  daemon and CLI tests. It fences process-discovery helpers such as
+  `get_daemon_pid()` and daemon stop paths so they ignore the user's running
+  daemon.
 
 Domain test packages may add narrower fixtures in their own `conftest.py`
 files. For example, `tests/tasks/conftest.py` provides a validation prompt
@@ -98,8 +107,12 @@ loader mock, and `tests/servers/conftest.py` provides HTTP server and
 `TestClient` fixtures.
 
 E2E daemon tests under `tests/e2e/` spawn isolated daemon processes. Use their
-fixtures rather than connecting to a real local daemon; the e2e environment sets
-temporary `HOME`, database, config, log paths, and free high-numbered ports.
+fixtures rather than connecting to a real local daemon. The e2e environment sets
+`GOBBY_TEST_PROTECT=1`, clears parent `GOBBY_DATABASE_PATH` and
+`GOBBY_CONFIG_FILE` overrides before spawning the daemon, replaces `HOME` with a
+temporary directory, clears provider API keys, and uses high-numbered ports in
+the 30000-40000 range while excluding production ports `60887`, `60888`, and
+`60889`.
 
 ## Frontend Tests
 
@@ -114,8 +127,10 @@ npm run lint
 
 `npm run test` maps to `vitest run`; `npm run test:watch` starts watch mode.
 Playwright is configured at `web/playwright.config.ts`, and browser tests live
-under `web/tests/`. Run a specific Playwright file instead of the whole browser
-suite:
+under `web/tests/`. Without `PLAYWRIGHT_BASE_URL`, Playwright starts
+`npm run dev` and targets `http://localhost:60889`; with
+`PLAYWRIGHT_BASE_URL`, it uses the supplied app URL. Run a specific Playwright
+file instead of the whole browser suite:
 
 ```bash
 cd web
@@ -128,16 +143,17 @@ Choose validation based on the changed surface:
 
 | Change | Recommended command |
 |--------|---------------------|
-| One backend module | `uv run pytest tests/<matching-file>.py -v` |
-| Task, workflow, or server behavior | `uv run pytest tests/<domain>/ -v` |
-| Coverage-sensitive backend work | `uv run pytest tests/<domain>/ --cov=gobby --cov-report=term-missing --cov-fail-under=80` |
-| CLI behavior | `uv run pytest tests/cli/ -m cli -v` |
+| One backend module | `GOBBY_TEST_PROTECT=1 uv run pytest tests/<matching-file>.py -v` |
+| Task, workflow, or server behavior | `GOBBY_TEST_PROTECT=1 uv run pytest tests/<domain>/ -v` |
+| Coverage-sensitive backend work | `GOBBY_TEST_PROTECT=1 uv run pytest tests/<domain>/ --cov=gobby --cov-report=term-missing --cov-fail-under=80` |
+| CLI behavior | `GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/ -m cli -v` |
 | Frontend component | `cd web && npm run test -- src/__tests__/<file>.test.tsx` |
 | Frontend type or lint change | `cd web && npm run type-check` or `cd web && npm run lint` |
 | Browser flow | `cd web && npx playwright test tests/<file>.spec.ts` |
 
-For agent-run backend validation, prefix the pytest examples above with
-`GOBBY_TEST_PROTECT=1`.
+For non-agent local backend validation, the `GOBBY_TEST_PROTECT=1` prefix is
+still safe to keep. It makes daemon-discovery and stop helpers use the same
+production-resource fence that agent runs require.
 
 When a test fails, keep the rerun focused on the failing file or marker until
 the failure is understood. Broaden only when the change touches shared behavior.
