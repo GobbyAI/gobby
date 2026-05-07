@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
+_ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 
 
 async def _sleep_until_next_bin_freshness_cycle(
@@ -437,10 +438,66 @@ async def cleanup_expired_isolation_loop(
                         exc_info=True,
                     )
 
+            _cleanup_missing_isolation_records(worktree_storage, clone_storage)
+
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Error in expired isolation cleanup loop: {e}")
+
+
+def _cleanup_missing_isolation_records(
+    worktree_storage: Any,
+    clone_storage: Any,
+    *,
+    limit: int = _ISOLATION_CLEANUP_SCAN_LIMIT,
+) -> dict[str, int]:
+    """Remove isolation DB records whose workspace directories no longer exist."""
+    counts = {
+        "worktrees": _delete_missing_worktree_records(worktree_storage, limit=limit),
+        "clones": _delete_missing_clone_records(clone_storage, limit=limit),
+    }
+    if counts["worktrees"] or counts["clones"]:
+        logger.info(
+            "Missing isolation cleanup: removed %s worktree records and %s clone records",
+            counts["worktrees"],
+            counts["clones"],
+        )
+    return counts
+
+
+def _delete_missing_worktree_records(worktree_storage: Any, *, limit: int) -> int:
+    removed = 0
+    for worktree in worktree_storage.list_worktrees(limit=limit):
+        path = worktree.worktree_path
+        if path and os.path.isdir(path):
+            continue
+        if worktree_storage.delete(worktree.id):
+            removed += 1
+            logger.info(
+                "Removed missing worktree record %s (branch=%s, path=%s)",
+                worktree.id,
+                worktree.branch_name,
+                path,
+            )
+    return removed
+
+
+def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
+    removed = 0
+    for clone in clone_storage.list_clones(limit=limit):
+        path = clone.clone_path
+        if path and os.path.isdir(path):
+            continue
+        if clone_storage.delete(clone.id):
+            removed += 1
+            logger.info(
+                "Removed missing clone record %s (branch=%s, path=%s)",
+                clone.id,
+                clone.branch_name,
+                path,
+            )
+    return removed
 
 
 def _run_git_command(args: list[str]) -> int:

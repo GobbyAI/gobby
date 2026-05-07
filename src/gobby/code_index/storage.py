@@ -605,6 +605,35 @@ class CodeIndexStorage:
         rows = self.db.fetchall("SELECT * FROM code_indexed_projects ORDER BY last_indexed_at DESC")
         return [IndexedProject.from_row(r) for r in rows]
 
+    def delete_project_index(self, project_id: str) -> dict[str, int]:
+        """Delete all persisted index data for a project, including project stats."""
+        with self.db.transaction() as conn:
+            counts = {
+                "symbols": conn.execute(
+                    "DELETE FROM code_symbols WHERE project_id = ?",
+                    (project_id,),
+                ).rowcount,
+                "files": conn.execute(
+                    "DELETE FROM code_indexed_files WHERE project_id = ?",
+                    (project_id,),
+                ).rowcount,
+                "imports": conn.execute(
+                    "DELETE FROM code_imports WHERE project_id = ?",
+                    (project_id,),
+                ).rowcount,
+                "calls": conn.execute(
+                    "DELETE FROM code_calls WHERE project_id = ?",
+                    (project_id,),
+                ).rowcount,
+                "content_chunks": conn.execute(
+                    "DELETE FROM code_content_chunks WHERE project_id = ?",
+                    (project_id,),
+                ).rowcount,
+            }
+            cursor = conn.execute("DELETE FROM code_indexed_projects WHERE id = ?", (project_id,))
+            counts["projects"] = cursor.rowcount
+            return counts
+
     # ── Summaries ────────────────────────────────────────────────────
 
     def get_unsummarized_symbols(

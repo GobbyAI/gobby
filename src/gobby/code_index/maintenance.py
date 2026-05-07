@@ -77,6 +77,11 @@ async def _run_maintenance(
         if not project.root_path:
             continue
 
+        root = Path(project.root_path).expanduser()
+        if not root.is_dir():
+            await _purge_missing_project(context, project)
+            continue
+
         if gcode_bin is not None:
             proc: asyncio.subprocess.Process | None = None
             try:
@@ -84,7 +89,7 @@ async def _run_maintenance(
                     gcode_bin,
                     "index",
                     "--project",
-                    str(project.root_path),
+                    str(root),
                     "--quiet",
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.PIPE,
@@ -118,6 +123,31 @@ async def _run_maintenance(
         # Generate summaries for unsummarized symbols
         if summarizer:
             await _summarize_unsummarized(context, project, summarizer, summary_batch_size)
+
+
+async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
+    """Remove index data for a project whose root directory is gone."""
+    counts = context.storage.delete_project_index(project.id)
+
+    if context.graph is not None:
+        try:
+            await context.graph.clear_project(project.id)
+        except Exception as e:
+            logger.warning(f"Graph cleanup failed for missing code index project {project.id}: {e}")
+
+    if context.vector_store is not None:
+        collection = f"{context.config.qdrant_collection_prefix}{project.id}"
+        try:
+            await context.vector_store.delete_collection(collection)
+        except Exception as e:
+            logger.warning(
+                f"Vector cleanup failed for missing code index project {project.id}: {e}"
+            )
+
+    logger.info(
+        f"Purged stale code index project {project.id} at {project.root_path}: "
+        f"{counts.get('files', 0)} files, {counts.get('symbols', 0)} symbols"
+    )
 
 
 async def _summarize_unsummarized(
