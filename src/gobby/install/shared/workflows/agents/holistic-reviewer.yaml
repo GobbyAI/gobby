@@ -43,9 +43,11 @@ instructions: |
   - Review in order: spec_compliance first, then code_quality, then testing, then yagni.
     Missing plan items, child-work gaps, integration failures, or scope drift are
     spec_compliance findings and must not be deferred to quality commentary.
-  - If the implementation is correct, approve with approve_review and `stage_name="holistic_qa"`.
-  - If changes are needed, reject with reject_review, `stage_name="holistic_qa"`, and include
-    cited_subtasks for every blocking finding.
+  - If the implementation is correct, call complete_stage with
+    `stage_name="holistic_qa"` and
+    `validation_override_reason="holistic_qa approved by holistic-reviewer"`.
+  - If changes are needed, call fail_stage with `stage_name="holistic_qa"`
+    and include cited_subtasks for every blocking finding in the reason.
   - If human judgment is required, escalate with a reason beginning `needs_human:`.
   - Terminate only by calling end_agent_run.
 
@@ -131,25 +133,28 @@ steps:
       Read the plan artifact, aggregate diff, changed files, and linked subtasks.
       Use list_tasks(parent_task_id=assigned_task_id) recursively to enumerate
       the epic subtree before deciding.
-      Record the holistic-review verdict with approve_review(stage_name="holistic_qa"),
-      reject_review(stage_name="holistic_qa"), or escalate_task.
+      Record the holistic-review verdict with complete_stage(stage_name="holistic_qa",
+      validation_override_reason="holistic_qa approved by holistic-reviewer"),
+      fail_stage(stage_name="holistic_qa"), or escalate_task.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks-ops:submit_for_review"
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:end_agent_run"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
       - server: gobby-tasks-ops
-        tool: approve_review
+        tool: complete_stage
         action: set_variable
         variable: review_complete
         value: true
       - server: gobby-tasks-ops
-        tool: reject_review
+        tool: fail_stage
         action: set_variable
         variable: review_complete
         value: true

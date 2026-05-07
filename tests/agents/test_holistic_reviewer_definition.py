@@ -24,10 +24,30 @@ def test_three_outcomes() -> None:
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
 
     assert {
-        "approve_review",
-        "reject_review",
+        "complete_stage",
+        "fail_stage",
         "escalate_task",
     } <= success_tools
+
+
+def test_success_path_uses_complete_stage_for_in_progress_holistic_qa() -> None:
+    agent = _agent()
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    blocked = set(review_step["blocked_mcp_tools"])
+    instructions = agent["instructions"]
+    status = review_step["status_message"]
+
+    assert "complete_stage" in instructions
+    assert 'stage_name="holistic_qa"' in instructions
+    assert "validation_override_reason" in instructions
+    assert 'complete_stage(stage_name="holistic_qa"' in status
+    assert "gobby-tasks-ops:approve_review" in blocked
+    assert "gobby-tasks-ops:reject_review" in blocked
+    assert "gobby-agents:end_agent_run" in blocked
+    assert (
+        "gobby-agents:end_agent_run"
+        in next(step for step in agent["steps"] if step["name"] == "terminate")["allowed_mcp_tools"]
+    )
 
 
 def test_reads_subtree() -> None:

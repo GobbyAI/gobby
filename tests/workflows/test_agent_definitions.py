@@ -99,6 +99,8 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
         "gobby-tasks:close_task",
         "gobby-tasks:de_escalate_task",
         "gobby-tasks-ops:submit_for_review",
+        "gobby-tasks-ops:approve_review",
+        "gobby-tasks-ops:reject_review",
         "gobby-tasks:reopen_task",
     }.issubset(_blocked_mcp_tools(review))
     assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)

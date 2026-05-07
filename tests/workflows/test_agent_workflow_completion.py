@@ -183,6 +183,44 @@ class TestAgentWorkflowCompletion:
         assert completion_registry.notify.await_args is not None
 
     @pytest.mark.asyncio
+    async def test_holistic_review_complete_stage_success_transitions_to_terminate(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_agent_workflow(
+            db,
+            workflow_name="holistic-reviewer",
+            review_tool="complete_stage",
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        response = await engine.evaluate(
+            _after_tool_event(
+                mcp_tool="complete_stage",
+                tool_arguments={
+                    "stage_name": "holistic_qa",
+                    "validation_override_reason": "holistic_qa approved by holistic-reviewer",
+                },
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "holistic-reviewer")
+        assert instance is None
+        assert variables["review_complete"] is True
+        assert variables["step_workflow_complete"] is True
+        assert response.context is not None
+        completion_registry.notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_exit_condition_noops_for_non_agent_session(self, db: LocalDatabase) -> None:
         _register_agent_workflow(db)
         runner = MagicMock()
@@ -271,9 +309,8 @@ class TestAgentWorkflowCompletion:
         )
 
         instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
-        assert instance is not None
-        assert instance.current_step == "terminate"
-        assert instance.variables["review_complete"] is True
+        assert instance is None
+        assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
         assert response.context is not None
         completion_registry.notify.assert_awaited_once()
@@ -324,9 +361,8 @@ class TestAgentWorkflowCompletion:
         response = await engine.evaluate(event, session_id="agent-session", variables=variables)
 
         instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
-        assert instance is not None
-        assert instance.current_step == "terminate"
-        assert instance.variables["review_complete"] is True
+        assert instance is None
+        assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
         assert response.context is not None
         completion_registry.notify.assert_awaited_once()
@@ -410,7 +446,5 @@ class TestAgentWorkflowCompletion:
         )
 
         instance = instance_manager.get_instance("agent-session", "merge-orchestrator-test")
-        assert instance is not None
-        assert instance.current_step == "terminate"
-        assert instance.variables["review_complete"] is True
+        assert instance is None
         assert variables["review_complete"] is True
