@@ -3,7 +3,8 @@
 Rules are Gobby's reactive enforcement layer. They evaluate normalized hook
 events and decide whether to block, rewrite, annotate, or trigger follow-up
 actions. The model is **CLI agnostic**: Claude, Codex, and Gemini sessions all
-feed the same rule engine once their events are normalized.
+feed the same rule engine once their events are normalized. The same model also
+covers other supported sources as their adapters emit normalized events.
 
 For the larger system model, see [Workflows Overview](./workflows-overview.md).
 
@@ -35,15 +36,17 @@ rules:
     event: before_tool
     priority: 50
     when: "variables.get('_agent_type') is not None"
-    effect:
-      type: block
-      tools: [Bash]
-      command_pattern: "git\\s+push"
-      reason: "Do not push from worker sessions."
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "git\\s+push"
+        reason: "Do not push from worker sessions."
 ```
 
 At sync time, each named entry under `rules:` becomes an individual rule
-definition in `workflow_definitions`.
+definition in `workflow_definitions`. Bundled YAML may still use a single
+`effect` shorthand; sync wraps it into the stored `effects` array. The MCP and
+HTTP authoring APIs validate the stored `effects` shape directly.
 
 ## Rule Shape
 
@@ -53,6 +56,8 @@ definition in `workflow_definitions`.
 | --- | --- |
 | `group` | Logical grouping for related rules |
 | `tags` | Discovery and selector tags applied to rules in the file |
+| `sources` | Optional source metadata for installed rule rows |
+| `audience` | Optional default audience for rules in the file |
 
 ### Rule-Level Fields
 
@@ -63,13 +68,50 @@ definition in `workflow_definitions`.
 | `enabled` | Default enabled state |
 | `priority` | Lower runs earlier |
 | `when` | Rule-level condition |
-| `match` | Optional exact-match filter on normalized event data |
+| `match` | Accepted metadata field; current runtime filtering uses `tools`, `when`, and effect selectors |
+| `tools` | Optional pre-filter on native tool name |
+| `audience` | Limit the rule to `all`, `interactive`, `autonomous`, or a concrete audience |
 | `agent_scope` | Limit the rule to specific agent types |
-| `effect` | Single effect definition |
-| `effects` | Multi-effect form; use this instead of `effect` |
+| `effects` | One or more effect definitions |
 
-Current rules are validated as `RuleDefinitionBody`. In multi-effect rules,
-each effect can also have its own `when`.
+Current rules are validated as `RuleDefinitionBody`. `effects` is required in
+stored definitions and must contain at least one effect. Each effect can also
+have its own `when`. A rule can contain at most one `block` effect.
+
+## Condition Expressions
+
+Rule-level and per-effect `when` expressions are evaluated by
+`SafeExpressionEvaluator`, an AST-based evaluator. Session variables are
+available through `variables` and are also flattened into the top-level
+context. Tool input is available as `tool_input`; for MCP `call_tool` events,
+the inner `arguments` object is unwrapped while `server_name` and `tool_name`
+remain available.
+
+Supported expression features include:
+
+- boolean logic: `and`, `or`, `not`
+- comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`, `in`, `not in`
+- arithmetic: `+`, `-`, `*`, `//`, `%`
+- literals: strings, numbers, booleans, `None`, lists, tuples, and dicts
+- attribute and subscript access
+- ternary expressions: `a if condition else b`
+- list and generator comprehensions
+- safe method calls on dict, str, and list values
+
+Allowed helper functions include `len`, `bool`, `str`, `int`, `list`, `dict`,
+`any`, `all`, `normalize_path`, `skill_loaded`, MCP-result helpers such as
+`mcp_called` and `mcp_failed`, task helpers such as `task_state_in`, and
+tool-policy helpers such as `is_discovery_tool`, `is_operator_tool`, and
+`requires_task_for_any_touched_file`.
+
+Use defensive variable access in block rules:
+
+```yaml
+when: "variables.get('task_claimed', False) and not variables.get('errors_resolved')"
+```
+
+If a condition raises, block effects fail closed and fire. Other effect types
+fail open and are skipped.
 
 ## Events
 
@@ -82,11 +124,20 @@ timing.
 | Event | When it fires |
 | --- | --- |
 | `session_start` | Session bootstrap, resume, clear, or compaction re-entry |
-| `turn_start` | Semantic start-of-turn boundary across Claude, Codex, and Gemini |
-| `turn_end` | Semantic end-of-turn boundary across Claude, Codex, and Gemini |
+| `turn_start` | Semantic start-of-turn boundary across supported CLIs |
+| `turn_end` | Semantic end-of-turn boundary across supported CLIs |
 | `before_tool` | Before a native tool or MCP tool runs |
 | `after_tool` | After a tool call finishes |
 | `session_end` | Session teardown |
+| `task_created` | A task row has been created |
+| `task_completed` | A task row has completed |
+| `teammate_idle` | A teammate/agent idle signal was emitted |
+| `instructions_loaded` | Runtime instructions were loaded |
+| `config_change` | Configuration changed |
+| `cwd_changed` | Session working directory changed |
+| `file_changed` | A watched file changed |
+| `worktree_create` | A worktree was created |
+| `worktree_remove` | A worktree was removed |
 
 ### Raw Escape-Hatch Events
 
@@ -95,14 +146,19 @@ timing.
 | `before_agent` | Raw pre-turn hook |
 | `after_agent` | Raw post-turn hook |
 | `stop` | Raw stop hook |
+| `stop_failure` | A turn ended with an API/runtime failure |
 | `pre_compact` | Before context compaction |
+| `post_compact` | After context compaction, where supported |
 | `before_tool_selection` | Before a model chooses tools |
 | `before_model` | Before a model call |
 | `after_model` | After a model call |
 | `subagent_start` | Child agent starts |
 | `subagent_stop` | Child agent stops |
 | `permission_request` | A permission/approval request is being evaluated |
+| `permission_denied` | A permission request was denied |
 | `notification` | A notification-style event is emitted |
+| `elicitation` | An elicitation request is being evaluated |
+| `elicitation_result` | An elicitation result was received |
 
 ### About `turn_start`
 
@@ -117,6 +173,10 @@ turn-final checks. The engine emits it alongside the raw hook when a session
 finishes a turn, so one rule can cover CLIs that surface the boundary as
 `after_agent`, `stop`, or both.
 
+`turn_end` is only the rule-authoring boundary for the current turn. Spawned
+agent-run termination is a separate lifecycle action and is signaled through
+`gobby-agents:end_agent_run`.
+
 ## Effects
 
 Gobby currently supports these effect types:
@@ -129,6 +189,11 @@ Gobby currently supports these effect types:
 | `mcp_call` | Queue an MCP call as part of rule evaluation |
 | `observe` | Append structured observations to session state |
 | `rewrite_input` | Modify tool input before execution |
+| `set_permission_response` | Set permission decision metadata on the hook response |
+| `set_retry` | Mark an auto-denied tool call as retryable |
+| `set_watch_paths` | Update dynamic file watchers |
+| `set_worktree_path` | Override a generated worktree path |
+| `set_elicitation` | Programmatically answer or override elicitation results |
 | `load_skill` | Resolve a skill and inject its contents into context |
 
 ## Effect Notes
@@ -173,6 +238,15 @@ effect options include:
 rules use this for behaviors such as forcing `uv run` or stripping disallowed
 flags.
 
+For MCP `call_tool` events, rewrite updates are merged into the inner
+`arguments` object so routing fields stay intact.
+
+### Response-Metadata Effects
+
+`set_permission_response`, `set_retry`, `set_watch_paths`, `set_worktree_path`,
+and `set_elicitation` write response metadata consumed by hook adapters or
+runtime handlers. Use these only when the hook surface expects that metadata.
+
 ### `load_skill`
 
 `load_skill` resolves a Gobby-managed skill and injects it into the session
@@ -207,18 +281,23 @@ The engine evaluates rules like this:
 1. Resolve raw and semantic events for the incoming hook.
 2. Load enabled rules for those events.
 3. Apply session overrides and agent-scope filtering.
-4. Filter by the session's active rule selectors.
-5. Sort by priority.
-6. Evaluate each rule's `when` and `match`.
-7. Apply effects in order until evaluation completes or a block returns.
+4. Filter by audience and the session's active rule selectors.
+5. Run hard-coded agent and step tool enforcement for `before_tool`.
+6. Evaluate each rule's `tools`, `when`, and effect selectors.
+7. Apply matching non-block effects in order, then apply a deferred block if present.
+8. Stop rule evaluation at the first matching block.
 
 Important runtime semantics:
 
 - `set_variable` effects are visible to later rules in the same pass.
 - `inject_context` effects accumulate.
 - `mcp_call` effects are collected and dispatched after evaluation.
+- Inline `mcp_call` effects with `inject_result` can inject formatted results and stop sibling effects on failure.
+- In a multi-effect rule, non-block effects run before the rule's block effect.
 - Rule conditions skip rules; they do not stop evaluation.
 - Some universal safety behavior is hard-coded in the engine, not expressed in YAML.
+- On `turn_start`, the engine resets transient stop/tool-block state and may seed progressive MCP discovery.
+- On `turn_end`, the engine increments `stop_attempts` before configurable rules run.
 
 ## Activation Model
 
@@ -226,15 +305,17 @@ A rule only affects a session when all of the following are true:
 
 1. The definition exists in `workflow_definitions`.
 2. The rule is enabled.
-3. The current session's agent/persona selectors include it.
+3. Session overrides have not disabled it.
 4. Its `agent_scope`, if present, matches the session's agent type.
+5. Its `audience`, if present, matches the current runtime audience.
+6. The current session's active rule selectors include it.
 
 That means bundled YAML is only the template source. The database plus active
 selectors determine what actually runs.
 
 ## Public Tooling
 
-Use `gobby-workflows` to manage standalone rules:
+Use the `gobby-workflows` MCP server to manage standalone rules:
 
 - `list_rules`
 - `get_rule`
@@ -243,5 +324,10 @@ Use `gobby-workflows` to manage standalone rules:
 - `toggle_rule`
 - `delete_rule`
 
+The CLI also exposes operator commands under `gobby rules`, including `list`,
+`show`, `enable`, `disable`, `import`, `export`, and `audit`.
+
 For authoring caveats and engine behavior that matters when designing rules,
 see [Rule Authoring Guide](./workflow-rules.md).
+
+_Last verified: 2026-05-07_
