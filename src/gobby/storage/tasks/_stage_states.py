@@ -399,6 +399,7 @@ class StageStatesManager:
         reason: str,
         needs_human: bool = False,
         by_session_id: str | None,
+        cited_subtasks: Sequence[str] | None = None,
     ) -> StageState:
         return self._transition(
             task_id,
@@ -407,6 +408,7 @@ class StageStatesManager:
             by_session_id=by_session_id,
             reason=reason,
             needs_human=needs_human,
+            cited_subtasks=cited_subtasks,
         )
 
     def _transition(
@@ -422,6 +424,7 @@ class StageStatesManager:
         commit_sha: str | None = None,
         artifact_updates: Mapping[str, str] | None = None,
         validation_override_reason: str | None = None,
+        cited_subtasks: Sequence[str] | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
         snapshot = self.current_stage(task_id)
@@ -501,6 +504,14 @@ class StageStatesManager:
                     event_reason,
                     by_actor=holder,
                 )
+                if verb == "fail_stage" and stage_name == "holistic_qa" and cited_subtasks:
+                    self._reset_holistic_failure_targets(
+                        conn,
+                        task_id,
+                        tuple(cited_subtasks),
+                        now=now,
+                        holder=holder,
+                    )
                 if to_state == "done" and self._terminal_after_done(conn, task_id, stage_name):
                     _close_task_in_txn(
                         conn,
@@ -529,6 +540,115 @@ class StageStatesManager:
                     f"{stage_name}_failed:{reason or 'needs_human'}",
                 )
             return updated
+
+    def _reset_holistic_failure_targets(
+        self,
+        conn: sqlite3.Connection,
+        task_id: str,
+        cited_subtasks: Sequence[str],
+        *,
+        now: str,
+        holder: str,
+    ) -> None:
+        cited_ids = tuple(dict.fromkeys(cited_subtasks))
+        if not cited_ids:
+            return
+        placeholders = ",".join("?" for _ in cited_ids)
+        rows = conn.execute(
+            f"""
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id FROM tasks WHERE parent_task_id = ?
+                UNION ALL
+                SELECT tasks.id
+                  FROM tasks
+                  JOIN subtree ON tasks.parent_task_id = subtree.id
+            )
+            SELECT id FROM subtree WHERE id IN ({placeholders})
+            """,  # nosec B608 - placeholder count is derived from cited_ids length.
+            (task_id, *cited_ids),
+        ).fetchall()
+        descendant_ids = {str(row["id"]) for row in rows}
+        missing = [cited_id for cited_id in cited_ids if cited_id not in descendant_ids]
+        if missing:
+            raise ValueError(
+                "holistic_qa cited_subtasks must be descendants of the reviewed epic: "
+                + ", ".join(missing)
+            )
+
+        self._reset_task_from_stage(conn, task_id, "development", now=now, holder=holder)
+        for cited_id in cited_ids:
+            self._reset_task_from_stage(conn, cited_id, "development", now=now, holder=holder)
+
+    def _reset_task_from_stage(
+        self,
+        conn: sqlite3.Connection,
+        task_id: str,
+        stage_name: str,
+        *,
+        now: str,
+        holder: str,
+    ) -> None:
+        stages = conn.execute(
+            """
+            SELECT stage_name, position, state
+              FROM task_stage_states
+             WHERE task_id = ?
+             ORDER BY position, stage_name
+            """,
+            (task_id,),
+        ).fetchall()
+        if not stages:
+            return
+        reset_row = next((row for row in stages if row["stage_name"] == stage_name), None)
+        if reset_row is None:
+            reset_row = stages[0]
+        reset_position = int(reset_row["position"])
+
+        conn.execute(
+            """
+            UPDATE tasks
+               SET closed_at = NULL,
+                   closed_reason = NULL,
+                   closed_in_session_id = NULL,
+                   closed_commit_sha = NULL,
+                   escalated_at = NULL,
+                   escalation_reason = NULL,
+                   is_escalated = 0,
+                   assignee = NULL,
+                   claimed_by_session_id = NULL,
+                   validation_fail_count = 0,
+                   dispatch_failure_count = 0,
+                   updated_at = ?
+             WHERE id = ?
+            """,
+            (now, task_id),
+        )
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'ready',
+                   entered_at = NULL,
+                   entered_by_session_id = NULL,
+                   completed_at = NULL,
+                   completed_by_session_id = NULL,
+                   completed_commit_sha = NULL,
+                   artifact_refs = NULL,
+                   notes = NULL,
+                   updated_at = ?
+             WHERE task_id = ? AND position >= ?
+            """,
+            (now, task_id, reset_position),
+        )
+        for row in stages:
+            if int(row["position"]) < reset_position or row["state"] == "ready":
+                continue
+            self.events.record_lifecycle_event(
+                task_id,
+                f"{row['stage_name']}:{row['state']}",
+                f"{row['stage_name']}:ready",
+                "holistic_qa_failed:cited_subtask",
+                by_actor=holder,
+            )
 
     def _transition_target(
         self,

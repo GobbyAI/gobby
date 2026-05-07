@@ -9,12 +9,14 @@ import pytest
 from gobby.storage.tasks import LocalTaskManager
 from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
+    initialize_manifest,
     lifecycle_events,
     make_task_with_manifest,
     require_stage_state_types,
     set_stage_state,
     spec,
     stage_row,
+    task_row,
 )
 
 pytestmark = pytest.mark.unit
@@ -260,6 +262,144 @@ def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) 
     assert err.current_state == "in_progress"
     assert err.attempted_transition == "complete_stage"
     assert err.review_policy == "required"
+
+
+def _closed_leaf_for_holistic_failure(temp_db, sample_project, parent_id: str, title: str):
+    manager = LocalTaskManager(temp_db)
+    leaf = manager.create_task(
+        project_id=sample_project["id"],
+        title=title,
+        parent_task_id=parent_id,
+        task_type="task",
+        category="docs",
+    )
+    initialize_manifest(temp_db, leaf.id, [spec("development", 0), spec("merge", 1)])
+    set_stage_state(temp_db, leaf.id, "development", "done", work_attempt_count=1)
+    set_stage_state(temp_db, leaf.id, "merge", "done", work_attempt_count=1)
+    temp_db.execute(
+        """
+        UPDATE tasks
+           SET closed_at = '2026-05-07T00:00:00+00:00',
+               closed_reason = 'manifest_exhausted',
+               closed_commit_sha = 'abc123',
+               claimed_by_session_id = NULL,
+               assignee = NULL
+         WHERE id = ?
+        """,
+        (leaf.id,),
+    )
+    return leaf
+
+
+def test_holistic_failure_reopens_single_cited_child_to_development(
+    temp_db,
+    sample_project,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs epic",
+        task_type="epic",
+        category="docs",
+    )
+    manager.stage_states.initialize_manifest(
+        parent.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        by_session_id="test",
+    )
+    set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
+    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
+    leaf = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Leaf")
+
+    manager.stage_states.fail_stage(
+        parent.id,
+        "holistic_qa",
+        reason="needs changes",
+        by_session_id="holistic-reviewer",
+        cited_subtasks=[leaf.id],
+    )
+
+    assert stage_row(temp_db, parent.id, "development")["state"] == "ready"
+    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "ready"
+    assert stage_row(temp_db, leaf.id, "development")["state"] == "ready"
+    assert stage_row(temp_db, leaf.id, "merge")["state"] == "ready"
+    reopened = task_row(temp_db, leaf.id)
+    assert reopened["closed_at"] is None
+    assert reopened["closed_commit_sha"] is None
+    assert reopened["claimed_by_session_id"] is None
+
+
+def test_holistic_failure_reopens_multiple_cited_children_only(
+    temp_db,
+    sample_project,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs epic",
+        task_type="epic",
+        category="docs",
+    )
+    manager.stage_states.initialize_manifest(
+        parent.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        by_session_id="test",
+    )
+    set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
+    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
+    first = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "First")
+    second = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Second")
+    untouched = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Untouched")
+
+    manager.stage_states.fail_stage(
+        parent.id,
+        "holistic_qa",
+        reason="needs changes",
+        by_session_id="holistic-reviewer",
+        cited_subtasks=[first.id, second.id],
+    )
+
+    assert task_row(temp_db, first.id)["closed_at"] is None
+    assert task_row(temp_db, second.id)["closed_at"] is None
+    assert task_row(temp_db, untouched.id)["closed_at"] is not None
+    assert stage_row(temp_db, untouched.id, "development")["state"] == "done"
+
+
+def test_holistic_failure_rejects_cited_non_descendant(temp_db, sample_project) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs epic",
+        task_type="epic",
+        category="docs",
+    )
+    outsider = manager.create_task(
+        project_id=sample_project["id"],
+        title="Outsider",
+        task_type="task",
+        category="docs",
+    )
+    manager.stage_states.initialize_manifest(
+        parent.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        by_session_id="test",
+    )
+    manager.stage_states.initialize_manifest(
+        outsider.id,
+        [spec("development", 0)],
+        by_session_id="test",
+    )
+    set_stage_state(temp_db, parent.id, "development", "done")
+    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
+
+    with pytest.raises(ValueError, match="cited_subtasks must be descendants"):
+        manager.stage_states.fail_stage(
+            parent.id,
+            "holistic_qa",
+            reason="needs changes",
+            by_session_id="holistic-reviewer",
+            cited_subtasks=[outsider.id],
+        )
 
 
 register_contract_tests(

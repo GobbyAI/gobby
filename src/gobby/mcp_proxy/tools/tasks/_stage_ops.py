@@ -204,15 +204,22 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         stage_name: str,
         reason: str,
         needs_human: bool = False,
+        cited_subtasks: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return a failed in-progress stage to ready or escalate after caps."""
         resolved_id = _resolve_task(ctx, task_id)
+        cited_ids = (
+            [_resolve_task(ctx, cited_subtask) for cited_subtask in cited_subtasks]
+            if cited_subtasks
+            else None
+        )
         stage = ctx.task_manager.stage_states.fail_stage(
             resolved_id,
             stage_name,
             reason=reason,
             needs_human=needs_human,
             by_session_id=_session_id(ctx),
+            cited_subtasks=cited_ids,
         )
         return _operation_response(resolved_id, stage)
 
@@ -225,6 +232,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "stage_name": {"type": "string"},
             "reason": {"type": "string"},
             "needs_human": {"type": "boolean"},
+            "cited_subtasks": {"type": ["array", "null"], "items": {"type": "string"}},
         },
         required=["task_id", "stage_name", "reason"],
         func=fail_stage,

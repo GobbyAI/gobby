@@ -86,3 +86,36 @@ def test_record_merge_result_records_success_and_failure(
 
     ctx.task_manager.stage_states.complete_stage.assert_called_once()
     ctx.task_manager.stage_states.fail_stage.assert_called_once()
+
+
+def test_fail_stage_resolves_and_forwards_cited_subtasks(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    monkeypatch.setattr(
+        stage_ops,
+        "stage_state_operation_view",
+        lambda stage: {"stage_name": stage.stage_name, "state": stage.state},
+    )
+    ctx = _context(temp_db, sample_project)
+    cited = create_task(temp_db, sample_project, title="Cited child")
+    tool = stage_ops.create_stage_ops_registry(ctx).get_tool("fail_stage")
+    assert tool is not None
+
+    result = tool(
+        task_id=ctx.task_id,
+        stage_name="holistic_qa",
+        reason="needs changes",
+        cited_subtasks=[cited.id],
+    )
+
+    assert result["stage"]["state"] == "ready"
+    ctx.task_manager.stage_states.fail_stage.assert_called_with(
+        ctx.task_id,
+        "holistic_qa",
+        reason="needs changes",
+        needs_human=False,
+        by_session_id=None,
+        cited_subtasks=[cited.id],
+    )
