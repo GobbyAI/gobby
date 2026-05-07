@@ -44,3 +44,18 @@ def test_build_skill_documents_interactive_e2e_validation_pattern() -> None:
     assert "no stale build worktrees or clones" in content
     assert "root `README.md`" in content
     assert "shared build service is the source of truth" in content.lower()
+
+
+def test_build_skill_forbids_changing_requirements_to_pass_e2e() -> None:
+    skill_path = Path("src/gobby/install/shared/skills/build/SKILL.md")
+
+    content = skill_path.read_text()
+
+    assert "Do not make the test pass by changing the required agent" in content
+    assert "provider" in content
+    assert "lifecycle route" in content
+    assert "task scope" in content
+    assert "acceptance criteria" in content
+    assert "preserving the requested path" in content
+    assert "extreme edge case" in content
+    assert "exhausting practical fixes" in content

@@ -61,6 +61,8 @@ For an unattended build-flow test, do not use the same task as both the tracking
 - Create a separate build or document epic as the `gobby build #epic` target. Fix and merge blockers before starting the final automation epic.
 - Use `--quick` only for smoke checks of one lifecycle step. For real end-to-end validation, run without `--quick`, usually with bounded concurrency such as `--max-active-agents <n>`.
 - Be explicit about docs scope. For `docs/guides` refreshes, leave root `README.md` out unless it is named in scope; run `docs/guides/README.md` last when it indexes the other guides.
+- Do not make the test pass by changing the required agent, provider, lifecycle route, task scope, or acceptance criteria. Diagnose and fix the blocker while preserving the requested path.
+- Escalating because an assigned agent is incapable of the task is an extreme edge case. Use it only after exhausting practical fixes and documenting why the specified agent path cannot complete the work.
 - Final acceptance must verify that the document epic is closed, the merge stage records the real merge SHA, no agents are running, no tasks remain claimed for the build, no stale build worktrees or clones remain, and any intentionally preserved dirty or conflicted workspace is explained.
 
 ## Confirmation
