@@ -185,17 +185,17 @@ export function ChatInput({
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
   const metaRef = useRef<HTMLDivElement>(null)
-  // Track the chat-column ancestor so the compact-layout threshold matches the
-  // container query that hides the "+ New Chat" label. Observing chat-input-meta
-  // would fire ~a few pixels narrower than the column due to internal padding,
-  // producing a band where the label still shows but the input has already
-  // collapsed to the 4-row layout.
+  // Track the chat-column ancestor. Threshold is 480px because below that the
+  // 3-row layout (Mode + 4 toolbar icons / textarea+send / provider+model+
+  // reasoning+branch) physically can't fit — the size="md" SegmentedControl
+  // renders Plan|Act|YOLO at ~310px on its own, so the 4 toolbar icons get
+  // pushed to a wrap row.
   const [isCompact, setIsCompact] = useState(false)
   useEffect(() => {
     const el = metaRef.current?.closest('.chat-column')
     if (!el || typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(([entry]) => {
-      setIsCompact(entry.contentRect.width <= 360)
+      setIsCompact(entry.contentRect.width <= 480)
     })
     ro.observe(el)
     return () => ro.disconnect()

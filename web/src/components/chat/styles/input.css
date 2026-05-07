@@ -850,7 +850,7 @@
    Placed last in the file so its rules win over earlier base declarations
    that share the same specificity. !important is needed to beat Tailwind
    utility classes (px-2.5) on SelectTrigger / BranchIndicator buttons. */
-@container chat-column (max-width: 360px) {
+@container chat-column (max-width: 480px) {
   .chat-new-chat-btn__label {
     display: none;
   }
