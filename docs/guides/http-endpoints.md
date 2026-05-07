@@ -1,7 +1,7 @@
 # Gobby HTTP Endpoints
 
-This guide is the HTTP reference for the Gobby daemon. The daemon exposes three
-HTTP-facing surfaces:
+This guide is the HTTP reference for the Gobby 0.4.0 daemon. The daemon exposes
+three HTTP-facing surfaces:
 
 - JSON REST endpoints under `/api/*`
 - FastMCP HTTP transport mounted at `/mcp`
@@ -9,6 +9,11 @@ HTTP-facing surfaces:
 
 The route source of truth is `src/gobby/servers/app_factory.py` plus the router
 modules under `src/gobby/servers/routes/`.
+
+Admin route helpers define paths relative to `/api/admin`; session and task
+helper modules attach their routes to the parent `/api/sessions` and
+`/api/tasks` routers. The communications router is conditional and is mounted
+only when communications are enabled in daemon config.
 
 ## Base URL
 
@@ -48,7 +53,10 @@ require a valid UI session cookie except the public surfaces below:
 - `/api/admin/status`
 - `/api/admin/metrics`
 - `/api/admin/config`
+- `/api/health*` legacy health-check paths if present
 - `/assets/*`
+- `/favicon.ico`
+- `/logo.png`
 - `/ws` and `/ws/*`
 
 Unauthenticated protected API requests return `401` with:
@@ -280,6 +288,10 @@ fetch the schema for the selected tool, then call the tool.
   }
 }
 ```
+
+Send the caller context in `X-Gobby-Session-Id` or `X-Gobby-Project-Id`
+headers. Keep any `session_id` field inside `arguments` for the target MCP tool
+itself.
 
 The legacy `POST /api/mcp/{server_name}/tools/{tool_name}` route still exists,
 but new automation should prefer the schema/call endpoints so discovery and
