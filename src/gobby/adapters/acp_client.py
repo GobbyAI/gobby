@@ -151,6 +151,7 @@ class ACPClient:
     prompt_timeout_env: ClassVar[str] = ""
     protocol_version: ClassVar[int] = 1
     default_prompt_timeout_seconds: ClassVar[float] = DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS
+    required_env: ClassVar[dict[str, str]] = {}
 
     def __init__(
         self,
@@ -236,6 +237,8 @@ class ACPClient:
         env = os.environ.copy()
         if self._env_overrides:
             env.update(self._env_overrides)
+        if self.required_env:
+            env.update(self.required_env)
         # Primary guard: ghook short-circuits when this is set, so the ACP
         # child's inherited SessionStart hook never reaches the daemon.
         env["GOBBY_HOOKS_DISABLED"] = "1"

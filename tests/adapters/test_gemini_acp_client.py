@@ -239,6 +239,7 @@ class TestStart:
                     "gemini-3.1-pro-preview",
                 )
                 assert call_args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
+                assert call_args.kwargs["env"]["GEMINI_CLI_NO_RELAUNCH"] == "true"
 
         # Verify initialize and session/new requests were sent
         assert proc.stdin.write.call_count == 2
@@ -255,7 +256,7 @@ class TestStart:
         assert session_req["params"]["mcpServers"] == []
 
     @pytest.mark.asyncio
-    async def test_start_keeps_hooks_disabled_even_with_env_overrides(self) -> None:
+    async def test_start_keeps_required_env_even_with_env_overrides(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -263,10 +264,18 @@ class TestStart:
                 new_callable=AsyncMock,
                 return_value=proc,
             ) as mock_exec:
-                client = GeminiACPClient(env_overrides={"GOBBY_HOOKS_DISABLED": "0"})
+                client = GeminiACPClient(
+                    env_overrides={
+                        "GOBBY_HOOKS_DISABLED": "0",
+                        "GEMINI_CLI_NO_RELAUNCH": "false",
+                    }
+                )
                 await client.start()
 
-                assert mock_exec.call_args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
+                env = mock_exec.call_args.kwargs["env"]
+                assert env["GOBBY_HOOKS_DISABLED"] == "1"
+                assert env["GOBBY_ACP_CHILD"] == "1"
+                assert env["GEMINI_CLI_NO_RELAUNCH"] == "true"
 
     @pytest.mark.asyncio
     async def test_start_with_resume_uses_load_session(self) -> None:

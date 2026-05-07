@@ -27,6 +27,7 @@ class GeminiACPClient(ACPClient):
     cli_name: ClassVar[str] = "gemini"
     display_name: ClassVar[str] = "Gemini"
     prompt_timeout_env: ClassVar[str] = ACP_PROMPT_TIMEOUT_ENV_GEMINI
+    required_env: ClassVar[dict[str, str]] = {"GEMINI_CLI_NO_RELAUNCH": "true"}
 
 
 __all__ = [
