@@ -208,7 +208,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           <input
             className={WORKFLOWS_SEARCH_CLS}
             type="text"
-            placeholder={`Search ${activeTab}...`}
+            placeholder="Search"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
           />

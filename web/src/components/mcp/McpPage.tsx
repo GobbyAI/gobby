@@ -214,7 +214,7 @@ export function McpPage() {
           <input
             className={SEARCH_CLS}
             type="text"
-            placeholder="Search servers & tools..."
+            placeholder="Search"
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
           />

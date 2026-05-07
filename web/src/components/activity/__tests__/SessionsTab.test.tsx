@@ -249,7 +249,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
     expect(screen.queryByText("#204: Pipeline Session")).toBeNull();
 
-    fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "paused-ext-1" },
     });
     await waitFor(() => {
@@ -257,7 +257,7 @@ describe("SessionsTab", () => {
       expect(screen.queryByText("#201: Live Terminal")).toBeNull();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));

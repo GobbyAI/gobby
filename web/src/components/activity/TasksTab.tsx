@@ -699,7 +699,7 @@ export const TasksTab = memo(function TasksTab({
         <ActivityPanelSearch
           value={search}
           onChange={setSearch}
-          placeholder="Search tasks"
+          placeholder="Search"
         />
         <button
           type="button"

@@ -618,7 +618,7 @@ export function CronJobsPage({ projectId, onNavigateToPipelineExecution }: CronJ
         <input
           className={TOOLBAR_SEARCH_CLS}
           type="text"
-          placeholder="Search jobs..."
+          placeholder="Search"
           value={filters.search}
           onChange={e => setFilters({ ...filters, search: e.target.value })}
           aria-label="Search jobs"

@@ -298,7 +298,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
           <input
             className="box-border min-w-0 max-w-[180px] flex-[1_1_140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-[length:var(--text-base)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11"
             type="text"
-            placeholder="Search..."
+            placeholder="Search"
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
           />

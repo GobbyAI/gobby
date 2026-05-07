@@ -142,7 +142,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
           <div className="p-3 border-b border-border shrink-0">
             <Input
               type="text"
-              placeholder="Search tools..."
+              placeholder="Search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="bg-muted/50"

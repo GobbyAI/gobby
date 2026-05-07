@@ -100,7 +100,7 @@ export function SessionsPage({
               <input
                 className="sessions-filter-input"
                 type="text"
-                placeholder="Search sessions..."
+                placeholder="Search"
                 value={filters.search}
                 onChange={(e) =>
                   onFiltersChange({ ...filters, search: e.target.value })

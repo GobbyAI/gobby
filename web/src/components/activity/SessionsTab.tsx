@@ -652,7 +652,7 @@ export const SessionsTab = memo(function SessionsTab({
         <ActivityPanelSearch
           value={searchInput}
           onChange={setSearchInput}
-          placeholder="Search sessions"
+          placeholder="Search"
         />
         <SegmentedControl<"live" | "expired">
           value={statusMode}

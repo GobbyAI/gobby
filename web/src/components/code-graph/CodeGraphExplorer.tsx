@@ -599,7 +599,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       <div className={SEARCH_WRAP_CLS}>
         <input
           type="text"
-          placeholder="Search symbols..."
+          placeholder="Search"
           value={searchQuery}
           onChange={e => handleSearch(e.target.value)}
           className={SEARCH_INPUT_CLS}

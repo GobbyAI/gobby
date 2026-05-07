@@ -174,7 +174,7 @@ export function CommandPalette({
           <input
             ref={inputRef}
             className="command-palette-input"
-            placeholder="Search sessions, actions, pages..."
+            placeholder="Search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}

@@ -445,7 +445,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           <input
             type="text"
             className={SEARCH_CLS}
-            placeholder="Search tasks..."
+            placeholder="Search"
             value={filters.search}
             onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
           />

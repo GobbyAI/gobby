@@ -98,7 +98,7 @@ export function SkillHubBrowser({ hubs, hubResults, hubErrors, onFetchHubs, onSe
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search skills in hubs..."
+            placeholder="Search"
           />
           <button className={SEARCH_BTN_CLS} onClick={handleSearch}>Search</button>
         </div>

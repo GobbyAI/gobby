@@ -306,7 +306,7 @@ export function RawTraceView({ sessionId }: RawTraceViewProps) {
         <input
           type="text"
           className={SEARCH_CLS}
-          placeholder="Search trace..."
+          placeholder="Search"
           value={searchTerm}
           onChange={e => setSearchTerm(e.target.value)}
         />

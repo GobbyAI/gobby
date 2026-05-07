@@ -316,7 +316,7 @@ export function SkillsPage() {
             type="text"
             value={searchText}
             onChange={handleSearch}
-            placeholder="Search..."
+            placeholder="Search"
           />
         )}
         {activeTab === 'installed' && (

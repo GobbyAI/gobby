@@ -138,7 +138,7 @@ export function ProjectSelector({
           >
             <input
               className="w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground focus:outline-none"
-              placeholder="Search projects..."
+              placeholder="Search"
               value={projectSearch}
               onChange={(e) => setProjectSearch(e.target.value)}
               onKeyDown={(e) => {

@@ -137,7 +137,7 @@ export function IntegrationsPage() {
           <input
             className={SEARCH_CLS}
             type="text"
-            placeholder="Search channels..."
+            placeholder="Search"
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
           />

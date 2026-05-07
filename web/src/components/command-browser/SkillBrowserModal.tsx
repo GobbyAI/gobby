@@ -93,7 +93,7 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
           <div className="p-3 border-b border-border shrink-0">
             <Input
               type="text"
-              placeholder="Search skills..."
+              placeholder="Search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="bg-muted/50"

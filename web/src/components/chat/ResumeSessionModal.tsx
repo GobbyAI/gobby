@@ -97,7 +97,7 @@ export function ResumeSessionModal({
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <input
               type="text"
-              placeholder="Search sessions..."
+              placeholder="Search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               autoFocus
