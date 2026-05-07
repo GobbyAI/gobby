@@ -50,14 +50,20 @@ export function SegmentedControl<T extends string>({
   }
 
   const sizeText = size === 'md' ? 'text-sm' : 'text-xs'
-  const sizePad = size === 'md' ? 'px-2.5 py-1.5' : 'px-2 py-1'
+  const sizeHeight = size === 'md' ? 'h-9' : 'h-8'
+  const sizePad = size === 'md' ? 'px-3' : 'px-2'
 
   return (
     <div
       role="radiogroup"
       aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
-      className={cn('inline-flex rounded-md border border-border', sizeText, className)}
+      className={cn(
+        'inline-flex items-stretch rounded-md border border-border',
+        sizeHeight,
+        sizeText,
+        className,
+      )}
     >
       {options.map((option, index) => {
         const isActive = option.value === value
@@ -80,6 +86,7 @@ export function SegmentedControl<T extends string>({
             }}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
+              'inline-flex items-center justify-center',
               sizePad,
               'pointer-coarse:min-h-11 pointer-coarse:min-w-11',
               'transition-colors motion-reduce:transition-none',

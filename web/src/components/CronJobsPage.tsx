@@ -72,7 +72,7 @@ const DETAIL_ACTIONS_CLS = 'flex flex-wrap gap-2'
 const BTN_CLS =
   'inline-flex min-h-8 cursor-pointer items-center gap-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--bg-secondary)] pointer-coarse:min-h-11'
 const BTN_PRIMARY_CLS =
-  'border-[var(--accent)] bg-[var(--accent)] text-white hover:bg-[var(--accent)] hover:opacity-90 disabled:hover:bg-[var(--accent)]'
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:opacity-90 disabled:hover:bg-[var(--accent)]'
 const BTN_DANGER_CLS =
   'border-[var(--color-error)] text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]'
 

@@ -90,7 +90,7 @@ const STATUS_FIELD_CLS =
   'rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11'
 const STATUS_REASON_CLS = 'min-h-[4.5rem] resize-y'
 const STATUS_SUBMIT_CLS =
-  'self-end cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-4 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'self-end cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-4 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] font-medium text-[var(--bg-primary)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 
 const DEP_LIST_CLS = 'flex flex-wrap gap-[0.3rem]'
 const DEP_ITEM_CLS =

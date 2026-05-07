@@ -25,6 +25,7 @@ export function ModeSelector({
         title: m.description,
       }))}
       ariaLabel="Chat mode"
+      size="md"
       disabled={disabled}
     />
   )

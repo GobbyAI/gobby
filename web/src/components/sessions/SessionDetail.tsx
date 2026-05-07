@@ -42,7 +42,7 @@ const METADATA_CHEVRON_CLS =
 const METADATA_CONTENT_CLS = 'py-2'
 
 const GENERATE_BTN_CLS =
-  'ml-auto flex cursor-pointer items-center gap-1.5 rounded border-0 bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-sm)] text-white transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+  'ml-auto flex cursor-pointer items-center gap-1.5 rounded border-0 bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-sm)] text-[var(--bg-primary)] transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
 const REGENERATE_BTN_CLS =
   'ml-auto flex cursor-pointer items-center rounded border border-[var(--border)] bg-transparent p-1 text-[var(--text-muted)] transition-[color,border-color] duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 
@@ -52,7 +52,7 @@ const NO_SUMMARY_CLS = 'italic text-[length:var(--text-base)] text-[var(--text-m
 
 const ACTIONS_CLS = 'relative'
 const ASK_BTN_CLS =
-  'flex cursor-pointer items-center gap-1 rounded-md border-0 bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-sm)] font-medium text-white transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+  'flex cursor-pointer items-center gap-1 rounded-md border-0 bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-sm)] font-medium text-[var(--bg-primary)] transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
 const DROPDOWN_CLS =
   'absolute right-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]'
 const DROPDOWN_ITEM_CLS =

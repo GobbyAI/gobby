@@ -119,6 +119,7 @@ export function ProjectSelector({
           { value: "project", label: selectedName ?? "Project" },
         ]}
         ariaLabel="Project scope"
+        size="md"
         disabled={disabled}
       />
       {showProjectSearch &&

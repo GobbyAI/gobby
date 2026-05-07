@@ -47,7 +47,7 @@ const EDIT_TEXTAREA_CLS =
   'w-full resize-y rounded border border-[var(--accent)] bg-[var(--bg-primary)] px-2 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-primary)] focus:border-[var(--accent-hover)] focus:outline-none'
 const EDIT_BUTTONS_CLS = 'flex items-center gap-1.5'
 const EDIT_SAVE_CLS =
-  'cursor-pointer rounded border-0 bg-[var(--accent)] px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.65)] text-white hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+  'cursor-pointer rounded border-0 bg-[var(--accent)] px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--bg-primary)] hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
 const EDIT_CANCEL_CLS =
   'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-secondary)] pointer-coarse:min-h-11'
 const EDIT_HINT_CLS = 'ml-auto text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
