@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -506,6 +506,14 @@ class TestDispatchBatchIsolationParity:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
             ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.repair_isolation_environment",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                new_callable=AsyncMock,
+            ),
         ):
             project_ctx = {
                 "id": "proj-123",

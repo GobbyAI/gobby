@@ -207,6 +207,58 @@ class TestBuildPersonaChanges:
         assert instance.workflow_name == "stepper-steps"
         assert instance.current_step == "plan"
 
+    def test_spawned_session_preserves_existing_step_workflow(self, db: LocalDatabase) -> None:
+        from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
+        from gobby.workflows.definitions import WorkflowInstance, WorkflowStep
+        from gobby.workflows.state_manager import WorkflowInstanceManager
+
+        db.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            ("proj-preserve", "test-project-preserve", "/tmp/test"),
+        )
+        session_id = "sess-spawned-preserve-test"
+        db.execute(
+            "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, "ext-preserve", "proj-preserve", "machine-1", "codex", "active"),
+        )
+
+        instance_mgr = WorkflowInstanceManager(db)
+        instance_mgr.save_instance(
+            WorkflowInstance(
+                id="existing-instance",
+                session_id=session_id,
+                workflow_name="stepper-steps",
+                enabled=True,
+                priority=10,
+                current_step="execute",
+                variables={"task_claimed": True, "loaded_skills": ["tech-writer"]},
+            )
+        )
+
+        agent = AgentDefinitionBody(
+            name="stepper",
+            step_variables={"task_claimed": False, "loaded_skills": []},
+            steps=[
+                WorkflowStep(name="claim", instructions="Claim the task"),
+                WorkflowStep(name="execute", instructions="Do the work"),
+            ],
+        )
+
+        changes, _, _ = build_persona_changes(
+            agent_body=agent,
+            session_id=session_id,
+            db=db,
+            is_spawned=True,
+        )
+
+        assert changes["_step_workflow_name"] == "stepper-steps"
+        instance = instance_mgr.get_instance(session_id, "stepper-steps")
+        assert instance is not None
+        assert instance.id == "existing-instance"
+        assert instance.current_step == "execute"
+        assert instance.variables == {"task_claimed": True, "loaded_skills": ["tech-writer"]}
+
     def test_uses_preloaded_rules_and_skills(self, db: LocalDatabase) -> None:
         """When enabled_rules and all_skills are passed, DB is not queried."""
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
