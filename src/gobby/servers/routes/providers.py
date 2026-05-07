@@ -97,6 +97,7 @@ _PROVIDER_DEFS = [
     ("codex", "codex"),
     ("droid", "droid"),
 ]
+_LAZY_ACP_PROVIDERS = frozenset({"gemini", "qwen"})
 
 
 def _friendly_label(provider: str, model: str) -> str:
@@ -209,6 +210,8 @@ def _provider_health(
     health = runtime_manager.health(provider)
     if provider == "claude":
         return path is not None and health.available, health.startup_error
+    if provider in _LAZY_ACP_PROVIDERS:
+        return path is not None, health.startup_error
     return health.available, health.startup_error
 
 
