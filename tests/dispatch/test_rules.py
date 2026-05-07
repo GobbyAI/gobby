@@ -299,6 +299,27 @@ def test_root_merge_still_routes_to_merge_orchestrator() -> None:
     assert action.agent_slug == "merge-orchestrator"
 
 
+def test_root_epic_integration_workspace_uses_workspace_merge_action() -> None:
+    from gobby.dispatch.actions import MergeWorkspaceAction
+
+    action = _evaluate(
+        _task_at("merge", "in_progress", task_type="epic"),
+        _context(
+            artifacts=_artifacts(
+                integration_branch="gobby/integration/root",
+                integration_workspace_id="wt-root",
+                target_branch="main",
+            )
+        ),
+    )
+
+    assert isinstance(action, MergeWorkspaceAction)
+    assert action.backend == "worktree"
+    assert action.source_workspace_id == "wt-root"
+    assert action.source_branch == "gobby/integration/root"
+    assert action.target_branch == "main"
+
+
 def test_docs_dev_rule_routes_to_tech_writer_when_available() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 

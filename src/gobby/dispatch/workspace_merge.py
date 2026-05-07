@@ -40,7 +40,8 @@ class _WorkspacePaths:
     target_path: str
     source_branch: str
     source_id: str
-    target_id: str
+    target_id: str | None
+    target_is_local: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,7 @@ def execute_merge_workspace(
                 commit_result = _git(Path(paths.target_path), ["commit", "--no-edit"])
                 if commit_result.returncode == 0:
                     merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
-                    if action.backend == "clone":
+                    if action.backend == "clone" and not paths.target_is_local:
                         _sync_source_repo_branch(
                             db,
                             action.task_id,
@@ -102,7 +103,7 @@ def execute_merge_workspace(
             return None
 
         merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
-        if action.backend == "clone":
+        if action.backend == "clone" and not paths.target_is_local:
             _sync_source_repo_branch(db, action.task_id, paths.target_path, action.target_branch)
         _mark_source_merged(action, db=db, source_id=paths.source_id)
         _complete_merge_stage(db, action.task_id, merge_sha)
@@ -130,6 +131,21 @@ def _resolve_paths(
         if source_id is None:
             raise RuntimeError("source worktree artifact is missing")
         worktree_source = storage.get(source_id)
+        if (
+            _is_root_task(db, action.task_id)
+            and artifacts.integration_workspace_id is not None
+            and source_id == artifacts.integration_workspace_id
+        ):
+            if worktree_source is None:
+                raise RuntimeError("source worktree metadata is missing")
+            return _WorkspacePaths(
+                worktree_source.worktree_path,
+                str(_repo_path_for_task(db, action.task_id)),
+                worktree_source.branch_name,
+                worktree_source.id,
+                None,
+                target_is_local=True,
+            )
         worktree_target = storage.get_by_branch(project_id, action.target_branch)
         if worktree_target is None:
             _repair_parent_integration_workspace(
@@ -161,6 +177,21 @@ def _resolve_paths(
     if source_id is None:
         raise RuntimeError("source clone artifact is missing")
     clone_source = clone_storage.get(source_id)
+    if (
+        _is_root_task(db, action.task_id)
+        and artifacts.integration_clone_id is not None
+        and source_id == artifacts.integration_clone_id
+    ):
+        if clone_source is None:
+            raise RuntimeError("source clone metadata is missing")
+        return _WorkspacePaths(
+            clone_source.clone_path,
+            str(_repo_path_for_task(db, action.task_id)),
+            clone_source.branch_name,
+            clone_source.id,
+            None,
+            target_is_local=True,
+        )
     clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
     if clone_target is None:
         _repair_parent_integration_workspace(
@@ -188,6 +219,13 @@ def _project_id_for_task(db: DatabaseProtocol, task_id: str) -> str:
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
     return str(row["project_id"])
+
+
+def _is_root_task(db: DatabaseProtocol, task_id: str) -> bool:
+    row = db.fetchone("SELECT parent_task_id FROM tasks WHERE id = ?", (task_id,))
+    if row is None:
+        raise RuntimeError(f"task not found: {task_id}")
+    return row["parent_task_id"] is None
 
 
 def _repair_parent_integration_workspace(

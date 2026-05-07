@@ -103,6 +103,67 @@ def test_execute_merge_workspace_merges_worktree_and_completes_stage(temp_db, tm
     assert worktrees.get(source.id).status == "merged"
 
 
+def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
+    temp_db,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    repo.mkdir()
+    _init_repo(repo)
+    _git(repo, "worktree", "add", "-b", "gobby/integration/root", str(integration_path), "main")
+    _git(integration_path, "config", "user.email", "test@example.com")
+    _git(integration_path, "config", "user.name", "Test User")
+    (integration_path / "feature.txt").write_text("feature\n")
+    _git(integration_path, "add", "feature.txt")
+    _git(integration_path, "commit", "-m", "feature")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(project_id=project.id, title="Root", task_type="epic")
+    task_manager.initialize_task_manifest(root.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(root.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    integration = worktrees.create(
+        project_id=project.id,
+        branch_name="gobby/integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=root.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        root.id,
+        target_branch="main",
+        integration_branch="gobby/integration/root",
+        integration_workspace_id=integration.id,
+    )
+
+    merge_sha = execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=root.id,
+            task_ref=f"#{root.seq_num}",
+            backend="worktree",
+            target_branch="main",
+            source_branch="gobby/integration/root",
+            source_workspace_id=integration.id,
+        ),
+        db=temp_db,
+    )
+
+    stage = task_manager.stage_states.get(root.id, "merge")
+
+    assert merge_sha == _git(repo, "rev-parse", "HEAD")
+    assert merge_sha == _git(repo, "rev-parse", "main")
+    assert (repo / "feature.txt").read_text() == "feature\n"
+    assert stage is not None
+    assert stage.state == "done"
+    assert stage.completed_commit_sha == merge_sha
+    assert stage.artifact_refs == {"integration_merge_sha": merge_sha}
+    assert worktrees.get(integration.id).status == "merged"
+
+
 def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
     temp_db,
     tmp_path: Path,

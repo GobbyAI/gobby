@@ -51,7 +51,7 @@ class CreateIsolationAction:
 
 @dataclass(frozen=True)
 class MergeWorkspaceAction:
-    """Merge a task or child-epic workspace into its parent integration branch."""
+    """Merge a task workspace into an integration branch or root target branch."""
 
     task_id: str
     task_ref: str

@@ -349,21 +349,22 @@ def _workspace_merge_action(task: object, context: object) -> MergeWorkspaceActi
 
 
 def _has_workspace_merge_source(task: object, context: object) -> bool:
-    if not _field(task, "parent_task_id"):
-        return False
     artifacts = _artifacts(task, context)
     target_branch = _field(artifacts, "target_branch")
     if not isinstance(target_branch, str) or not target_branch:
         return False
-    return any(
-        isinstance(_field(artifacts, field_name), str)
-        for field_name in (
+    has_parent = bool(_field(task, "parent_task_id"))
+    source_fields = (
+        (
             "integration_workspace_id",
             "integration_clone_id",
             "worktree_id",
             "clone_id",
         )
+        if has_parent
+        else ("integration_workspace_id", "integration_clone_id")
     )
+    return any(isinstance(_field(artifacts, field_name), str) for field_name in source_fields)
 
 
 def task_has_stage(task: object, stage_name: str) -> bool:
