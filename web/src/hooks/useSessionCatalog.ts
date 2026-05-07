@@ -258,12 +258,19 @@ export function useSessionCatalog(
     }, []),
   );
 
+  // Sort by seq_num DESC for stability across token-usage updates. The
+  // backend's processor.py touches updated_at every ~2s during agent runs,
+  // which made the previous updated_at sort visibly leapfrog rows. seq_num
+  // is monotonic at session creation and never changes. Falls back to
+  // created_at when seq_num is null (older daemons that don't emit it).
   const sortedSessions = useMemo(
     () =>
-      [...sessions].sort(
-        (a, b) =>
-          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-      ),
+      [...sessions].sort((a, b) => {
+        const aSeq = a.seq_num ?? -Infinity;
+        const bSeq = b.seq_num ?? -Infinity;
+        if (aSeq !== bSeq) return bSeq - aSeq;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }),
     [sessions],
   );
 

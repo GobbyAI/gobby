@@ -114,6 +114,7 @@ describe("useSessionCatalog", () => {
           ...SAMPLE_SESSIONS[0],
           id: "sess-handoff",
           status: "handoff_ready",
+          seq_num: 102,
           updated_at: "2026-03-03T12:00:00Z",
         },
         { ...SAMPLE_SESSIONS[0], id: "sess-deleted", status: "deleted" },
