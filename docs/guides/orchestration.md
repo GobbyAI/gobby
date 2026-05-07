@@ -54,6 +54,7 @@ its sibling guide tasks close.
 | `gobby build [INPUT|ACTION] [REF]` | CLI entry point for starting or controlling build automation |
 | `gobby-tasks-ops:build_task` | MCP entry point for starting lifecycle automation; requires `input_ref` |
 | `POST /api/build` | HTTP entry point for the same shared build service |
+| `POST /api/build/{stop,resume,clean,restart}` | HTTP control actions for project-wide ticks or task-scoped automation |
 | `src/gobby/dispatch/dispatcher.py` | Heartbeat scanner, mutex handling, and action executor |
 | `src/gobby/dispatch/rules.py` | Ordered deterministic rules that map task state to actions |
 | `gobby-tasks` | Task lifecycle, dependencies, claims, close, review state, and escalation |
@@ -110,6 +111,8 @@ edits. A typical leaf agent:
 1. Claims the assigned task through `gobby-tasks`.
 2. Loads any task-required skills.
 3. Edits and verifies the work in the task's isolation context when one exists.
+   Docs leaf tasks may run inside the parent epic's isolation context; the
+   current worktree or clone is still the authority for file edits.
 4. Commits changes before lifecycle handoff.
 5. Calls `close_task` when no review gate exists, or `submit_for_review` when
    the current stage requires review.
