@@ -24,7 +24,8 @@ The shared state across all four layers is:
 - Session variables, which rules and step workflows read and mutate.
 - Workflow definitions, which live in the database and are synced from bundled
   or project YAML.
-- Completion events, which let agents and pipelines wake a waiting parent flow.
+- Completion IDs and notifications, which let agents, pipelines, and dispatch
+  reconnect long-running work after a daemon restart or parent-session wait.
 
 ## How The Pieces Fit
 
@@ -100,6 +101,11 @@ Dispatch composes:
 - Isolation from `gobby-worktrees` or `gobby-clones`
 - Landing and conflict handling from existing merge tools
 
+Docs leaf tasks can run inside the parent epic's isolation context. A docs leaf
+may have its own task worktree while its `target_branch` points at the nearest
+parent integration branch; merge-stage dispatch uses the stored workspace or
+clone metadata to land that work.
+
 ## Current Public Surface
 
 These are the servers readers should think in terms of when authoring workflow
@@ -110,7 +116,7 @@ behavior today:
 | `gobby-workflows` | Workflow, rule, variable, agent-definition, and pipeline definitions; pipeline execution and pipeline `wait` steps |
 | `gobby-agents` | Agent spawning, runtime inspection, persona application, inter-agent messaging, and commands |
 | `gobby-tasks` | Task lifecycle, dependencies, readiness, review states, close, and escalation |
-| `gobby-tasks-ops` | Build, artifact, audit-marker, expansion-run, and affected-file helpers |
+| `gobby-tasks-ops` | Build, artifact, stage-transition, review, expansion-run, and affected-file helpers |
 | `gobby-worktrees` | Worktree creation, sync, merge, and cleanup |
 | `gobby-clones` | Clone-based isolation lifecycle |
 | `gobby-merge` | AI-assisted conflict resolution for merge flows |
@@ -133,8 +139,8 @@ At runtime, the control flow looks like this:
 
 1. A CLI session starts or a child session is spawned.
 2. Gobby resolves the session's persona, active rules, variables, and skills.
-3. Hook events fire as the session works: tool calls, model requests, stop
-   attempts, compaction, notifications, and more.
+3. Provider/runtime hooks arrive as the session works: tool calls, model
+   requests, stop attempts, compaction, notifications, and more.
 4. The rule engine evaluates matching rules in priority order and returns a
    merged response: allow/block, context injections, rewritten input, variable
    updates, and deferred MCP calls.
@@ -150,6 +156,9 @@ Two important abstractions here are `turn_start` and `turn_end`:
   turn, whether that arrives as `after_agent` or `stop`.
 - That keeps stop gates and end-of-turn policies consistent across supported
   CLIs.
+- Agent termination is separate from that semantic turn boundary. A spawned
+  agent that has completed its workflow still calls `gobby-agents:end_agent_run`
+  to release the run and notify waiters.
 
 ## Definitions vs Runtime State
 
@@ -173,4 +182,4 @@ waiting for approval", that is runtime state.
 - [Orchestration](./orchestration.md) for the current task/agent coordination model
 - [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-05-07_
