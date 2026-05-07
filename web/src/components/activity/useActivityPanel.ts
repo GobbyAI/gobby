@@ -48,7 +48,7 @@ export function useActivityPanel() {
     } catch {
       /* ignore */
     }
-    return window.innerWidth >= 1100
+    return window.innerWidth >= 768
   })
 
   const [panelWidth, setPanelWidth] = useState(() => {
@@ -56,7 +56,7 @@ export function useActivityPanel() {
       const stored = localStorage.getItem(STORAGE_KEY_WIDTH)
       if (stored) {
         const w = parseInt(stored, 10)
-        if (w >= 280 && w <= 1200) return w
+        if (w >= 320 && w <= 4000) return w
       }
     } catch {
       /* ignore */

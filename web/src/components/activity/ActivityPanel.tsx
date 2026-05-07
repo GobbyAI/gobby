@@ -159,10 +159,12 @@ const noopFetchDiff = async (): Promise<string> => "";
 // `useActivityPanel` localStorage validator. CHAT_MIN_WIDTH mirrors the
 // `min-w-[320px]` on the chat column in ChatPage.tsx so the maxWidth calc
 // always leaves enough room for the chat to keep its floor.
-const PANEL_MIN_WIDTH = 280;
-const PANEL_MAX_WIDTH = 1200;
+const PANEL_MIN_WIDTH = 320;
 const CHAT_MIN_WIDTH = 320;
-const LAYOUT_BUFFER = 24;
+// LAYOUT_BUFFER used to be 24 (cushion before chat hit its hard min-width).
+// Dropped to 0 so dragging the activity panel can compress chat to exactly
+// CHAT_MIN_WIDTH, matching the explicit 320 ask.
+const LAYOUT_BUFFER = 0;
 
 type ActivityTabConfig = (typeof TABS)[number];
 
@@ -318,15 +320,26 @@ export function ActivityPanel({
 }: ActivityPanelProps) {
   // Use overlay mode when viewport is too narrow for side-by-side layout
   const [narrowViewport, setNarrowViewport] = useState(
-    () => window.innerWidth < 1100,
+    () => window.innerWidth < 768,
   );
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [showMobileTabMenu, setShowMobileTabMenu] = useState(false);
   const mobileTabMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
+    const handleResize = () => {
+      setNarrowViewport(window.innerWidth < 768);
+      setViewportWidth(window.innerWidth);
+    };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+  // Activity panel max width derives from viewport minus chat floor — without
+  // this the resize handle's static PANEL_MAX_WIDTH (1200) prevented chat from
+  // reaching 320 on wide viewports (e.g. maximized 1920 → chat floor was 720).
+  const effectivePanelMaxWidth = Math.max(
+    PANEL_MIN_WIDTH,
+    viewportWidth - CHAT_MIN_WIDTH - LAYOUT_BUFFER,
+  );
   useEffect(() => {
     if (!showMobileTabMenu) {
       return;
@@ -481,7 +494,7 @@ export function ActivityPanel({
         onResize={onWidthChange}
         panelWidth={panelWidth}
         minWidth={PANEL_MIN_WIDTH}
-        maxWidth={PANEL_MAX_WIDTH}
+        maxWidth={effectivePanelMaxWidth}
       />
       <aside
         className="activity-panel"
