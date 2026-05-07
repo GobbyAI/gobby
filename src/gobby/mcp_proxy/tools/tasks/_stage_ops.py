@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from typing import Any, Literal
 
+from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -18,6 +20,8 @@ from gobby.storage.tasks._stage_types import (
 )
 from gobby.storage.tasks._stage_views import stage_state_operation_view, stage_state_view
 from gobby.utils.session_context import get_current_session_id
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_task(ctx: RegistryContext, task_id: str) -> str:
@@ -464,6 +468,14 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             by_session_id=_session_id(ctx),
             commit_sha=merge_sha,
         )
+        try:
+            cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
+        except Exception:
+            logger.warning(
+                "successful_recorded_merge_cleanup_failed",
+                extra={"task_id": resolved_id, "merge_sha": merge_sha},
+                exc_info=True,
+            )
         return _operation_response(resolved_id, stage)
 
     _register_stage_tool(

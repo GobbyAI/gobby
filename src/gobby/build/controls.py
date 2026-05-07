@@ -229,6 +229,44 @@ async def build_clean_target(
     )
 
 
+def cleanup_successful_merge_artifacts(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    project_id: str | None = None,
+) -> list[BuildArtifactSummary]:
+    """Best-effort cleanup for build artifacts after a merge stage succeeds."""
+    task_manager = LocalTaskManager(db)
+    root = task_manager.get_task(task_id, project_id=project_id)
+    cleanup_project_id = project_id or root.project_id
+    tasks = _affected_tasks(task_manager, root)
+    artifacts = _collect_clean_artifacts(db, cleanup_project_id, tasks)
+    if not artifacts:
+        return []
+
+    _delete_artifacts(db, cleanup_project_id, artifacts, force=False)
+    errors = [artifact.error for artifact in artifacts if artifact.error]
+    if errors:
+        logger.warning(
+            "successful_build_cleanup_incomplete",
+            extra={
+                "task_id": task_id,
+                "project_id": cleanup_project_id,
+                "errors": errors,
+            },
+        )
+    else:
+        logger.info(
+            "successful_build_cleanup_completed",
+            extra={
+                "task_id": task_id,
+                "project_id": cleanup_project_id,
+                "artifacts_deleted": len([artifact for artifact in artifacts if artifact.deleted]),
+            },
+        )
+    return artifacts
+
+
 async def build_restart_target(
     input_ref: str,
     *,

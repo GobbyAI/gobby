@@ -137,6 +137,12 @@ def test_success_writes_artifacts_and_completes_merge(
 ) -> None:
     _patch_stage_view(monkeypatch)
     ctx = _context()
+    cleanup_calls: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        stage_ops,
+        "cleanup_successful_merge_artifacts",
+        lambda db, task_id: cleanup_calls.append((db, task_id)),
+    )
 
     result = _record_merge_result(ctx)(
         task_id="task-1",
@@ -156,6 +162,7 @@ def test_success_writes_artifacts_and_completes_merge(
     assert kwargs["by_session_id"] is None
     assert kwargs["commit_sha"] == "abc123"
     ctx.task_manager.close_task.assert_not_called()
+    assert cleanup_calls == [(ctx.task_manager.db, "task-1")]
 
 
 def test_success_closes_task_via_terminal_close(temp_db, sample_project) -> None:
@@ -236,6 +243,8 @@ def test_success_does_not_invoke_public_close_task(monkeypatch: pytest.MonkeyPat
 def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_stage_view(monkeypatch)
     ctx = _context()
+    cleanup = Mock(side_effect=AssertionError("failure result must not cleanup worktrees"))
+    monkeypatch.setattr(stage_ops, "cleanup_successful_merge_artifacts", cleanup)
 
     result = _record_merge_result(ctx)(
         task_id="task-1",
@@ -255,6 +264,7 @@ def test_failure_writes_report_and_fails_merge(monkeypatch: pytest.MonkeyPatch) 
     assert kwargs["reason"] == "merge conflict"
     assert kwargs["by_session_id"] is None
     assert kwargs.get("needs_human", False) is False
+    cleanup.assert_not_called()
 
 
 @pytest.mark.asyncio

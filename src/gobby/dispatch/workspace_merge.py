@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess  # nosec B404 # fixed git commands.
@@ -12,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
 
+from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.storage.clones import LocalCloneManager
@@ -32,6 +34,7 @@ DOCS_GUIDES_README = "docs/guides/README.md"
 GUIDE_ROW_RE = re.compile(
     r"^\| (?P<link>\[[^\]]+\]\((?P<target>[^)]+\.md)\)) \| (?P<description>.*?) \|$"
 )
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -410,6 +413,14 @@ def _complete_merge_stage(db: DatabaseProtocol, task_id: str, commit_sha: str) -
         commit_sha=commit_sha,
         artifact_updates={"integration_merge_sha": commit_sha},
     )
+    try:
+        cleanup_successful_merge_artifacts(db, task_id)
+    except Exception:
+        logger.warning(
+            "successful_workspace_merge_cleanup_failed",
+            extra={"task_id": task_id, "commit_sha": commit_sha},
+            exc_info=True,
+        )
 
 
 def _fail_merge_stage(db: DatabaseProtocol, task_id: str, reason: str) -> None:
