@@ -16,6 +16,10 @@ missing variable directly, the expression can raise `NameError`.
 That matters most for `block` rules because a condition failure there can fail
 closed and block the session unexpectedly.
 
+Non-block effects fail open on condition errors and do not fire. `block`
+effects fail closed because the engine prefers a conservative safety block over
+silently allowing an action when the guard cannot be evaluated.
+
 ### Risky Pattern
 
 ```yaml
@@ -39,6 +43,16 @@ Example path in the current bundled layout:
 ```text
 src/gobby/install/shared/workflows/rules/...
 ```
+
+## Installed Rules Are The Source Of Truth
+
+Bundled YAML files are templates. They become active only after they are synced
+into the rules database and selected for the current session.
+
+Before telling a user that a rule is enabled, disabled, or absent, inspect the
+installed rule state through `gobby-workflows` or the backing database. A YAML
+file can exist while the installed definition is disabled, filtered out by the
+session's active selectors, or shadowed by a session override.
 
 ## Author Against Semantic Turn Events
 
@@ -107,6 +121,10 @@ If the same tool is blocked repeatedly without recovery:
 This is meant to break bad retry loops and push the agent toward a different
 recovery action.
 
+For MCP calls routed through `call_tool`, the tracked identity is
+`server:tool`. A repeated block on `gobby-tasks:close_task` does not make every
+other MCP tool look like the same failed retry.
+
 ### Tool-Block Stop Gate
 
 If a tool fails and the session immediately tries to end the turn, the engine
@@ -126,7 +144,8 @@ task-close rules in control.
 ### Stop Attempt Counting
 
 `stop_attempts` is incremented automatically on `turn_end`, before configurable
-stop-gate rules run.
+stop-gate rules run. Bundled stop-gate rules pair it with `max_stop_attempts`
+to prevent permanent stop blocking.
 
 ### Turn-Start Reset
 
@@ -141,6 +160,9 @@ On `turn_start`, the engine resets transient stop-cycle state such as:
 On the first turn where `servers_listed` is false, the engine also queues the
 hard-coded auto-discovery MCP call that seeds available Gobby MCP servers.
 
+The reset is per turn, not per process. It does not close a task, release an
+agent run, or clear long-lived workflow state.
+
 ### Multi-Effect Ordering
 
 For a matching rule, the engine applies non-block effects before the block
@@ -154,6 +176,8 @@ evaluated separately from the rule-level `when`.
 - Keep rule conditions cheap and explicit.
 - Prefer multi-effect rules when a block, rewrite, and context injection are
   all part of one policy.
+- Verify installed rule state, not just bundled YAML templates, when debugging
+  whether a rule is active.
 - Use `turn_start` for portable prompt-entry and reset behavior.
 - Use `turn_end` for cross-CLI end-of-turn behavior.
 - Treat raw lifecycle events as escape hatches for provider/runtime-specific
