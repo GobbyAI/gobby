@@ -17,11 +17,15 @@ For the full contract, read [Plan-Coverage Contract](../contracts/plan-coverage.
 A plan is one Markdown file. The current authoring shape is narrative first:
 
 - `# {Epic Title}` at the top.
+- Optional `**Plan ID:** <stable-id>` near the top when the file name cannot
+  supply the intended plan ID.
 - `## Overview` and `## Constraints` as `kind: framing` sections.
 - One `## P<N>: {Phase Name}` section per phase, also `kind: framing`.
 - One `### N.M {Task Title} [category: X]` deliverable per atomic unit of work.
 - Optional `kind: verification` sections for end-to-end checks.
 - Optional `kind: deferred` sections for work deliberately moved out of scope.
+- `## Plan Changelog` as `kind: framing` for adversarial revision rounds when
+  the planner updates an existing draft after review findings.
 
 Every section heading from `##` through `######` needs a first non-blank
 front-matter line:
@@ -135,6 +139,11 @@ artifact kinds are `file`, `symbol`, `test`, and `behavior`.
 
 Free-form acceptance without an artifact reference fails parsing.
 
+If an acceptance item names multiple artifacts, the parser uses the first one
+as the canonical coverage artifact. Additional `file`, `symbol`, `test`, or
+`behavior` references are useful reader context, but they do not replace the
+first reference for coverage.
+
 ## Dependencies
 
 Use section IDs in dependency annotations:
@@ -177,6 +186,11 @@ covers:<plan-id>:<section-id>:<item-id>
 
 Free-form `plan-ref:` labels are ignored by the coverage contract.
 
+Every new epic plan also needs a `.coverage-ledger.yaml` companion in
+`.gobby/plans/` before expansion. The ledger records the expected coverage
+mapping during the bootstrap period and is rechecked against the managed
+coverage manifest at task-stage transitions and close-time validation.
+
 ## Task Manifest
 
 Plan authors stop after the narrative sections. The approved plan eventually
@@ -205,6 +219,23 @@ one `kind: deliverable` section to one synthesized leaf task and includes:
 Malformed manifests fail parsing. In `draft` mode the manifest may be absent;
 in `expansion` and `strict` modes it is required.
 
+## Build And Lifecycle Notes
+
+`gobby build` turns an approved plan into a task stage manifest. Review is
+metadata on a stage row: `review_policy`, `reviewer_agent`, attempt counters,
+and caps decide whether work is handed to a reviewer. Do not model review as a
+separate deliverable or a separate manifest row.
+
+When a plan asks for rule or workflow changes, write against semantic lifecycle
+events such as `turn_start` and `turn_end`. Raw `before_agent`, `after_agent`,
+and `stop` events are provider/runtime details, not the main authoring API.
+Agent termination is separate from those events and still requires
+`end_agent_run`.
+
+Docs-category leaf tasks route to `tech-writer`, may run inside the parent
+epic's isolation context, and use the development stage's review policy to
+decide whether to close directly or submit to doc review.
+
 ## Validation
 
 Before presenting or expanding a plan:
@@ -215,7 +246,9 @@ Before presenting or expanding a plan:
 4. Confirm every acceptance item has a valid artifact reference.
 5. Confirm dependencies name existing section IDs.
 6. Remove filler test tasks duplicated by TDD wrappers.
-7. Run `uv run gobby plans validate <plan-file>`.
+7. Confirm the bootstrap `.coverage-ledger.yaml` companion exists for new epic
+   plans before expansion.
+8. Run `uv run gobby plans validate <plan-file>`.
 
 Use `uv run gobby tasks expand validate-plan <plan-file>` only when validating
 the task-expansion CLI path itself.
@@ -226,4 +259,4 @@ the task-expansion CLI path itself.
 - [MCP Tools Reference](./mcp-tools.md) - MCP tool API documentation
 - [Plan-Coverage Contract](../contracts/plan-coverage.md) - Canonical parser and coverage contract
 
-_Last verified: 2026-05-04_
+_Last verified: 2026-05-07_
