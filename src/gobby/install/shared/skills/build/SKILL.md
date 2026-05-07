@@ -59,6 +59,7 @@ For an unattended build-flow test, do not use the same task as both the tracking
 
 - Keep a separate claimed coordinator/tracking epic for the active session; use it for blocker fixes and to prevent stopping mid-run.
 - Create a separate build or document epic as the `gobby build #epic` target. Fix and merge blockers before starting the final automation epic.
+- Before the final launch, verify the project-wide `gobby:dispatcher` cron row is enabled. If it is paused from prior `gobby build stop` or restart work, run `gobby build resume` once to restore daemon-owned dispatch before judging the E2E.
 - Use `--quick` only for smoke checks of one lifecycle step. For real end-to-end validation, run without `--quick`, usually with bounded concurrency such as `--max-active-agents <n>`.
 - For final unattended E2E, launch `gobby build #epic ...` once and then observe daemon-owned automation through task state, agent runs, logs, and final acceptance checks.
 - Do not repeatedly rerun `gobby build` as manual dispatcher ticks to keep work moving. That is an anti-pattern because it changes the test shape and can hide a broken dispatcher loop.
@@ -73,7 +74,7 @@ When build automation stalls or agents behave as if required startup context is 
 
 - Compare against the last known successful run before changing configuration. Check what changed in agent definitions, provider routing, rules, hooks, MCP startup config, and step workflows.
 - Treat provider-specific symptoms as evidence, not proof of provider incapability. Preserve the requested agent/provider path while diagnosing.
-- If progress appears stuck after the initial launch, first prove daemon-owned dispatch is idle or wedged by checking task stages, active agent runs, dispatcher cron/loop health, and correlated logs. A bounded explicit tick may be used only as a diagnostic or recovery step after recording that evidence, not as normal E2E execution.
+- If progress appears stuck after the initial launch, first prove daemon-owned dispatch is idle or wedged by checking task stages, active agent runs, dispatcher cron/loop health, and correlated logs. If the project dispatcher cron is disabled, use `gobby build resume`; a bounded explicit tick may be used only as a diagnostic or recovery step after recording evidence, not as normal E2E execution.
 - Check whether SessionStart activation completed and left expected state before the first provider-neutral prompt event: session linkage, `_agent_type`, active rule and skill variables, terminal pickup metadata, baseline dirty-file capture, and any spawned-agent step workflow.
 - A first-prompt reconciliation guard can be useful as a backstop: call an idempotent `ensure_session_activation(session_id)` helper that creates only missing activation effects and preserves existing progress. Do not replay the raw SessionStart hook wholesale.
 - For cross-boundary stalls, use OpenTelemetry or equivalent correlated logs keyed by `agent_run_id` and `session_id` across spawn, tmux, SessionStart, workflow activation, auto-claim, step transitions, MCP calls, and rule blocks.
