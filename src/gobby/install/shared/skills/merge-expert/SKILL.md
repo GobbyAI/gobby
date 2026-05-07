@@ -150,7 +150,7 @@ Iterate the plan in order. For each step:
    group of independent `clean: true` steps) with `agent=merge-worker` and
    pass the `worktree_id`, `target_branch`, and source-branch info as
    spawn-time variables. The worker handles the actual merge + AI resolution.
-3. **Wait for the worker.** Workers terminate themselves via `kill_agent`;
+3. **Wait for the worker.** Workers terminate themselves via `end_agent_run`;
    poll their session/run state via `gobby-agents` tools rather than spinning.
 4. **Verify.** Run the step's `verify_command` via
    `gobby-merge:verify_in_worktree`. Treat exit code 0 as the gate. Capture
