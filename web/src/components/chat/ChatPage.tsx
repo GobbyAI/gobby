@@ -332,16 +332,17 @@ export function ChatPage({
     : chat.isContinuingSession
       ? "Message input — resuming session"
       : undefined;
-  // Watching a terminal explicitly in observe mode keeps the activity-panel
-  // chat anchored to the main web session so the user doesn't lose access to
-  // their primary conversation while reading along. Other terminal swaps (no
-  // interaction mode set, or proxy mode) clear the chat session like any
-  // other session swap.
+  // Anchor the activity-panel session list to whichever session is currently
+  // showing in the main area. Observe-terminal mode is the exception: it
+  // keeps the anchor on the user's primary web chat so the terminal stays
+  // visible in the panel while they read along. For every other swap mode,
+  // the swapped session IS the main view and must be filtered out of the
+  // panel to avoid the "S appears in main and in the panel" duplication.
   const activityPanelChatSessionId =
     chat.viewingSessionId || chat.attachedSessionId
       ? isSwappedTerminal && chat.sessionInteractionMode === "observe"
         ? chat.dbSessionId
-        : null
+        : chat.viewingSessionId ?? chat.attachedSessionId ?? chat.dbSessionId
       : chat.dbSessionId;
 
   const handleResumeViewedSession = useCallback(() => {
@@ -899,7 +900,7 @@ export function ChatPage({
         chatSessionId={activityPanelChatSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
-        onSwapSession={chat.dbSessionId ? handleSwapSession : undefined}
+        onSwapSession={handleSwapSession}
         onResumeSession={handleResumeSessionFromActivity}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}

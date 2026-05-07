@@ -355,7 +355,9 @@ describe("ChatPage – activity panel", () => {
       );
     });
 
-    expect(screen.getByTestId("activity-panel-chat-session-id")).toHaveTextContent("");
+    expect(screen.getByTestId("activity-panel-chat-session-id")).toHaveTextContent(
+      "terminal-2",
+    );
     expect(screen.getByTestId("activity-panel-focus-session-id")).toHaveTextContent(
       "db-session-1",
     );
