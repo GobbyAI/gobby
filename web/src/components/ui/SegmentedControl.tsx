@@ -49,7 +49,7 @@ export function SegmentedControl<T extends string>({
     selectIndex(nextIndex)
   }
 
-  const sizeText = size === 'md' ? 'text-sm' : 'text-xs'
+  const sizeText = size === 'md' ? 'text-base' : 'text-xs'
   const sizeHeight = size === 'md' ? 'h-9' : 'h-8'
   const sizePad = size === 'md' ? 'px-3' : 'px-2'
 
@@ -59,7 +59,7 @@ export function SegmentedControl<T extends string>({
       aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
       className={cn(
-        'inline-flex items-stretch rounded-md border border-border',
+        'inline-flex items-stretch rounded-md border border-border bg-[var(--bg-primary)]',
         sizeHeight,
         sizeText,
         className,

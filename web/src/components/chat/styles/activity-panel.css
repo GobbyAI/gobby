@@ -381,7 +381,6 @@
 .activity-panel-toolbar-segmented > button {
   min-height: calc(var(--activity-panel-control-height) - 2px);
   padding-block: 0;
-  font-size: var(--text-base);
 }
 
 .activity-panel-status-bar {
