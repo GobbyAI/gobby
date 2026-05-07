@@ -17,6 +17,7 @@ import {
 } from './ui/Select'
 
 interface ChatInputModelControlsProps {
+  compact?: boolean
   currentBranch?: string | null
   disabled?: boolean
   effectiveProvider: string
@@ -39,6 +40,7 @@ interface ChatInputModelControlsProps {
 }
 
 export function ChatInputModelControls({
+  compact = false,
   currentBranch,
   disabled = false,
   effectiveProvider,
@@ -61,6 +63,10 @@ export function ChatInputModelControls({
 }: ChatInputModelControlsProps) {
   const reasoningOnlyDisabled =
     reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled)
+  const formattedModelLabel = formatModelDisplayLabel(resolvedModelLabel)
+  const displayedModelLabel = compact && formattedModelLabel.length > 15
+    ? `${formattedModelLabel.slice(0, 15)}...`
+    : formattedModelLabel
   return (
     <div className="chat-input-controls">
       <div className="chat-input-model-controls">
@@ -104,7 +110,7 @@ export function ChatInputModelControls({
             title={providerPickerDisabledReason ?? 'Select model'}
           >
             <div className="chat-input-select__value">
-              <span className="chat-input-select__text">{formatModelDisplayLabel(resolvedModelLabel)}</span>
+              <span className="chat-input-select__text">{displayedModelLabel}</span>
             </div>
           </SelectTrigger>
           <SelectContent side="top" className="chat-input-select__content">
@@ -163,6 +169,7 @@ export function ChatInputModelControls({
             onWorktreeChange={onWorktreeChange}
             disabled={disabled || worktreePickerDisabled}
             variant="select"
+            compact={compact}
           />
         )}
       </div>

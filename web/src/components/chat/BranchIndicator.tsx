@@ -15,6 +15,11 @@ interface BranchIndicatorProps {
   onWorktreeChange: (worktreePath: string, worktreeId?: string) => void
   disabled?: boolean
   variant?: 'toolbar' | 'select'
+  compact?: boolean
+}
+
+function truncateLabel(value: string, maxChars: number): string {
+  return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value
 }
 
 async function readCheckoutError(response: Response, branchName: string): Promise<string> {
@@ -37,6 +42,7 @@ export function BranchIndicator({
   onWorktreeChange,
   variant = 'toolbar',
   disabled = false,
+  compact = false,
 }: BranchIndicatorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([])
@@ -150,7 +156,8 @@ export function BranchIndicator({
   if (!effectiveBranch) return null
 
   const isDetached = effectiveBranch.startsWith('detached:')
-  const displayBranch = isDetached ? effectiveBranch.replace('detached:', '') : effectiveBranch
+  const rawDisplayBranch = isDetached ? effectiveBranch.replace('detached:', '') : effectiveBranch
+  const displayBranch = compact ? truncateLabel(rawDisplayBranch, 10) : rawDisplayBranch
 
   // Branch names that have worktrees (avoid duplicates)
   const worktreeBranches = new Set(worktrees.map(wt => wt.branch_name))

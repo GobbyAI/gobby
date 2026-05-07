@@ -900,12 +900,14 @@ export function ChatInput({
                   onWorktreeChange={onWorktreeChange}
                   disabled={disabled || worktreePickerDisabled}
                   variant="select"
+                  compact={isCompact}
                 />
               )}
             </div>
           )}
           {!isAttached && canSelectModel && (
             <ChatInputModelControls
+                compact={isCompact}
                 currentBranch={currentBranch}
                 disabled={disabled}
                 effectiveProvider={effectiveProvider}
