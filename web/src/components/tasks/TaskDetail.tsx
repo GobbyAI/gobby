@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react'
-import './task-execution.css'
 import type {
   DependencyTree,
   GobbyTask,

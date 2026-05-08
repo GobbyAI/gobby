@@ -1,6 +1,8 @@
 // Shared badge components for the task system.
 // Reusable across TasksPage, TaskDetail, Kanban cards, etc.
 
+import './task-execution.css'
+
 import type { TaskStateLike } from '../../lib/taskState'
 import {
   getTaskDisplayState,

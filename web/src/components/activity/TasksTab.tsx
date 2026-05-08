@@ -10,7 +10,6 @@ import {
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
-import "../tasks/task-execution.css";
 import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
 import { PriorityBadge, StatusDot, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
