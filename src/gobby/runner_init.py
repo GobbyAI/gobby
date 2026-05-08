@@ -180,6 +180,9 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     _ensure_headless_settings()
 
     runner._shutdown_requested = False
+    from gobby.shutdown_intent import ShutdownIntent
+
+    runner._shutdown_intent = ShutdownIntent.STOP
     runner._metrics_cleanup_task = None
     runner._vector_rebuild_task = None
     runner._zombie_messages_task = None
@@ -918,6 +921,7 @@ def init_servers(runner: GobbyRunner) -> None:
         test_mode=runner.config.test_mode,
         codex_client=codex_client,
     )
+    runner.http_server._runner = runner
 
     # Ensure message_processor property is set (redundant but explicit):
     runner.http_server.message_processor = runner.message_processor

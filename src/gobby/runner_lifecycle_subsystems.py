@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.runner_lifecycle_agents import (
-    _recover_agent_runs_after_restart,
-    _replay_daemon_restart_agent_cancellations,
+    _reconcile_agent_runs_after_restart,
 )
 from gobby.runner_lifecycle_startup import (
     StartupTracker,
@@ -223,26 +222,19 @@ async def _check_tmux_health(tracker: StartupTracker | None) -> None:
 async def _start_agent_lifecycle_monitor(
     runner: GobbyRunner,
     tracker: StartupTracker | None,
-    recover_agent_runs_after_restart: AgentLifecycleOperation,
-    replay_daemon_restart_agent_cancellations: AgentLifecycleOperation,
+    reconcile_agent_runs_after_restart: AgentLifecycleOperation,
 ) -> None:
     if not runner.agent_lifecycle_monitor:
         return
 
+    reconciled_runs = await reconcile_agent_runs_after_restart(runner)
+    if reconciled_runs > 0:
+        logger.info(
+            "Reconciled %d active agent run(s) after daemon restart",
+            reconciled_runs,
+        )
     await runner.agent_lifecycle_monitor.cleanup_stale_pending_runs()
-    rehydrated_runs = await recover_agent_runs_after_restart(runner)
-    if rehydrated_runs > 0:
-        logger.info(
-            "Rehydrated completion events for %d active agent run(s)",
-            rehydrated_runs,
-        )
     await runner.agent_lifecycle_monitor.start()
-    replayed_cancellations = await replay_daemon_restart_agent_cancellations(runner)
-    if replayed_cancellations > 0:
-        logger.info(
-            "Replayed daemon-restart cancellation wakes for %d agent run(s)",
-            replayed_cancellations,
-        )
     if tracker:
         tracker.complete("Agent lifecycle monitor")
 
@@ -425,9 +417,8 @@ async def init_subsystems(
     record_provider_model_refresh_result: ProviderCatalogRefreshRecorder = (
         _record_provider_model_refresh_result
     ),
-    recover_agent_runs_after_restart: AgentLifecycleOperation = _recover_agent_runs_after_restart,
-    replay_daemon_restart_agent_cancellations: AgentLifecycleOperation = (
-        _replay_daemon_restart_agent_cancellations
+    reconcile_agent_runs_after_restart: AgentLifecycleOperation = (
+        _reconcile_agent_runs_after_restart
     ),
 ) -> None:
     """Heavy initialization that runs after HTTP is already serving."""
@@ -447,8 +438,7 @@ async def init_subsystems(
     await _start_agent_lifecycle_monitor(
         runner,
         tracker,
-        recover_agent_runs_after_restart,
-        replay_daemon_restart_agent_cancellations,
+        reconcile_agent_runs_after_restart,
     )
     await _start_cron_scheduler(runner, tracker)
     _start_code_index_tasks(runner, tracker)

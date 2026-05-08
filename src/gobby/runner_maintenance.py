@@ -7,11 +7,9 @@ signal handling, and PID file management. Extracted from runner.py.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import signal
-import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from random import SystemRandom
@@ -508,15 +506,22 @@ def _run_git_command(args: list[str]) -> int:
     return result.returncode
 
 
-def write_shutdown_source(source: str, sender_pid: int | None = None) -> None:
+def write_shutdown_source(
+    source: str,
+    sender_pid: int | None = None,
+    *,
+    intent: str | None = None,
+) -> None:
     """Write a marker file identifying why/who is sending SIGTERM."""
     try:
-        data = {
-            "source": source,
-            "sender_pid": sender_pid or os.getpid(),
-            "timestamp": time.time(),
-        }
-        (get_gobby_home() / "shutdown_source.json").write_text(json.dumps(data))
+        from gobby.shutdown_intent import infer_shutdown_intent, write_shutdown_intent
+
+        write_shutdown_intent(
+            source,
+            intent or infer_shutdown_intent(source),
+            sender_pid=sender_pid,
+            home=get_gobby_home(),
+        )
     except Exception as e:
         logger.debug(
             f"Failed to write shutdown source={source} pid={sender_pid or os.getpid()}: {e}",
@@ -526,21 +531,15 @@ def write_shutdown_source(source: str, sender_pid: int | None = None) -> None:
 
 def read_shutdown_source() -> str:
     """Read and remove the shutdown source marker. Returns description string."""
-    source_file = get_gobby_home() / "shutdown_source.json"
-    try:
-        if source_file.exists():
-            data = json.loads(source_file.read_text())
-            source_file.unlink(missing_ok=True)
-            age = time.time() - data.get("timestamp", 0)
-            if age < 10:  # Only trust if written within last 10 seconds
-                return f"source={data['source']}, sender_pid={data.get('sender_pid')}"
-            return f"stale shutdown_source.json (age={age:.1f}s): {data}"
-        return "unknown (no shutdown_source.json — external SIGTERM)"
-    except Exception as e:
-        return f"unknown (error reading shutdown_source.json: {e})"
+    from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
+
+    return format_shutdown_source(read_shutdown_intent(home=get_gobby_home()))
 
 
-def setup_signal_handlers(shutdown_callback: Callable[[], None]) -> None:
+def setup_signal_handlers(
+    shutdown_callback: Callable[[], None],
+    shutdown_intent_callback: Callable[[Any], None] | None = None,
+) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()
 
@@ -548,12 +547,17 @@ def setup_signal_handlers(shutdown_callback: Callable[[], None]) -> None:
         def handle_shutdown() -> None:
             import traceback
 
+            from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
+
             logger.info(
                 f"Received {sig.name} (signal {sig.value}), initiating graceful shutdown... (pid={os.getpid()}, ppid={os.getppid()})",
             )
             # Log stack trace to help identify what triggered the signal
             logger.debug(f"Stack at signal receipt:\n{''.join(traceback.format_stack())}")
-            logger.info(f"Shutdown source: {read_shutdown_source()}")
+            shutdown_record = read_shutdown_intent(home=get_gobby_home())
+            logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
+            if shutdown_intent_callback is not None:
+                shutdown_intent_callback(shutdown_record.intent)
             shutdown_callback()
 
         return handle_shutdown

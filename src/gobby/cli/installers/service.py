@@ -911,6 +911,9 @@ def get_service_status() -> dict[str, Any]:
 
 def service_restart() -> dict[str, Any]:
     """Restart the daemon through the OS service manager."""
+    from gobby.runner_maintenance import write_shutdown_source
+
+    write_shutdown_source("service_restart", intent="restart")
     if sys.platform == "darwin":
         return _macos_restart()
     elif sys.platform == "linux":
@@ -937,8 +940,15 @@ def service_start() -> dict[str, Any]:
         return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
 
 
-def service_stop() -> dict[str, Any]:
+def service_stop(
+    *,
+    shutdown_intent: str = "stop",
+    shutdown_source: str = "service_stop",
+) -> dict[str, Any]:
     """Stop the daemon through the OS service manager."""
+    from gobby.runner_maintenance import write_shutdown_source
+
+    write_shutdown_source(shutdown_source, intent=shutdown_intent)
     if sys.platform == "darwin":
         return _macos_stop()
     elif sys.platform == "linux":

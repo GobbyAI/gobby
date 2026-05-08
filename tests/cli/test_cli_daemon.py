@@ -688,7 +688,10 @@ class TestStopCommand:
         assert "Waiting for service-managed daemon (PID: 4321) to exit" in result.output
         assert "Daemon stopped via macos service (1.5s)" in result.output
         mock_stop_daemon.assert_not_called()
-        mock_service_stop.assert_called_once()
+        mock_service_stop.assert_called_once_with(
+            shutdown_intent="stop",
+            shutdown_source="cli_stop",
+        )
         mock_wait_for_service_stop.assert_called_once_with(4321)
 
 
@@ -754,7 +757,10 @@ class TestRestartCommand:
         assert "Daemon started via macos service" in result.output
         assert "Health check passed (4.0s)" in result.output
         mock_stop_daemon.assert_not_called()
-        mock_service_stop.assert_called_once()
+        mock_service_stop.assert_called_once_with(
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
+        )
         mock_service_start.assert_called_once()
         mock_wait_for_service_stop.assert_called_once_with(4321)
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
@@ -842,7 +848,10 @@ class TestRestartCommand:
         assert "Daemon stopped via macos service (0.8s)" in result.output
         assert "Daemon did not become healthy after service start" in result.output
         mock_stop_daemon.assert_not_called()
-        mock_service_stop.assert_called_once()
+        mock_service_stop.assert_called_once_with(
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
+        )
         mock_service_start.assert_called_once()
         mock_wait_for_service_stop.assert_called_once_with(4321)
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
@@ -886,7 +895,10 @@ class TestRestartCommand:
         assert result.exit_code == 1
         assert "Service stop returned, but daemon is still running" in result.output
         mock_stop_daemon.assert_not_called()
-        mock_service_stop.assert_called_once()
+        mock_service_stop.assert_called_once_with(
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
+        )
         mock_wait_for_service_stop.assert_called_once_with(4321)
         mock_service_start.assert_not_called()
         mock_wait_for_health.assert_not_called()
@@ -965,7 +977,11 @@ class TestRestartCommand:
         result = runner.invoke(cli, ["restart"])
 
         assert result.exit_code == 1
-        mock_stop_daemon.assert_called_once_with(quiet=False)
+        mock_stop_daemon.assert_called_once_with(
+            quiet=False,
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
+        )
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")

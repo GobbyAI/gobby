@@ -304,12 +304,24 @@ class TestStopDaemonProcess:
             with patch(
                 "gobby.mcp_proxy.daemon_control.os.kill", side_effect=kill_side_effect
             ) as mock_kill:
-                with patch("gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock):
+                with (
+                    patch(
+                        "gobby.runner_maintenance.write_shutdown_source",
+                    ) as mock_write_shutdown_source,
+                    patch(
+                        "gobby.mcp_proxy.daemon_control.asyncio.sleep",
+                        new_callable=AsyncMock,
+                    ),
+                ):
                     result = await stop_daemon_process()
 
                     assert result["success"] is True
                     assert result["output"] == "Daemon stopped"
                     mock_kill.assert_any_call(12345, signal.SIGTERM)
+                    mock_write_shutdown_source.assert_called_once_with(
+                        "mcp_stop",
+                        intent="stop",
+                    )
 
     @pytest.mark.asyncio
     async def test_handles_stop_failure_permission(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -371,7 +383,11 @@ class TestRestartDaemonProcess:
 
                         assert result["success"] is True
                         assert result["pid"] == 54321
-                        mock_stop.assert_called_once_with(12345)
+                        mock_stop.assert_called_once_with(
+                            12345,
+                            shutdown_intent="restart",
+                            shutdown_source="mcp_restart",
+                        )
                         mock_start.assert_called_once_with(60887, 60888)
 
 

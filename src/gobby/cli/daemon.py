@@ -555,15 +555,19 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     help="Also stop Docker service containers (Qdrant, Neo4j)",
 )
 @click.pass_context
-def stop(ctx: click.Context, docker_flag: bool) -> None:
+def stop(ctx: click.Context, docker_flag: bool, shutdown_intent: str = "stop") -> None:
     """Stop the Gobby daemon."""
+    shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
     svc = get_service_status()
     if svc.get("installed") and svc.get("running"):
         previous_pid = _get_running_daemon_pid(svc)
+        from gobby.runner_maintenance import write_shutdown_source
+
+        write_shutdown_source(shutdown_source, intent=shutdown_intent)
         click.echo("Stopping via OS service manager...")
-        result = service_stop()
+        result = service_stop(shutdown_intent=shutdown_intent, shutdown_source=shutdown_source)
         if result.get("success"):
             if previous_pid is not None:
                 _step(f"Waiting for service-managed daemon (PID: {previous_pid}) to exit...")
@@ -587,7 +591,14 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
         if result.get("success"):
             sys.exit(0)
 
-    success = stop_daemon_util(quiet=False)
+    if shutdown_intent == "restart":
+        success = stop_daemon_util(
+            quiet=False,
+            shutdown_intent="restart",
+            shutdown_source=shutdown_source,
+        )
+    else:
+        success = stop_daemon_util(quiet=False)
 
     # Stop Docker containers if requested (only if not already stopped above)
     if docker_flag and not docker_stopped:
@@ -621,7 +632,7 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
     setup_logging(verbose)
 
     try:
-        ctx.invoke(stop, docker_flag=docker_flag)
+        ctx.invoke(stop, docker_flag=docker_flag, shutdown_intent="restart")
     except SystemExit as exc:
         code = exc.code
         if code not in (None, 0):

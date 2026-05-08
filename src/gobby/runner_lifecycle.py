@@ -13,6 +13,7 @@ import uvicorn
 from gobby.runner_lifecycle_agents import (
     _cancel_active_agent_runs_for_shutdown,
     _cleanup_persisted_completion_subscribers,
+    _reconcile_agent_runs_after_restart,
     _recover_agent_runs_after_restart,
     _register_persisted_completion_subscribers,
     _replay_daemon_restart_agent_cancellations,
@@ -47,6 +48,7 @@ __all__ = [
     "_log_subsystem_init_result",
     "_reap_remaining_child_processes",
     "_recover_agent_runs_after_restart",
+    "_reconcile_agent_runs_after_restart",
     "_record_provider_model_refresh_result",
     "_refresh_provider_model_catalog",
     "_register_persisted_completion_subscribers",
@@ -76,8 +78,7 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
         _startup_tracker,
         refresh_provider_model_catalog=_refresh_provider_model_catalog,
         record_provider_model_refresh_result=_record_provider_model_refresh_result,
-        recover_agent_runs_after_restart=_recover_agent_runs_after_restart,
-        replay_daemon_restart_agent_cancellations=_replay_daemon_restart_agent_cancellations,
+        reconcile_agent_runs_after_restart=_reconcile_agent_runs_after_restart,
     )
 
 
@@ -109,7 +110,10 @@ async def run_daemon(runner: GobbyRunner) -> None:
         global _startup_tracker
         _startup_tracker = StartupTracker()
 
-        setup_signal_handlers(lambda: setattr(runner, "_shutdown_requested", True))
+        setup_signal_handlers(
+            lambda: setattr(runner, "_shutdown_requested", True),
+            shutdown_intent_callback=lambda intent: setattr(runner, "_shutdown_intent", intent),
+        )
 
         from gobby.cli.utils import get_gobby_home
 
@@ -119,18 +123,6 @@ async def run_daemon(runner: GobbyRunner) -> None:
             logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
         except OSError as e:
             logger.warning(f"Could not write PID file {pid_file}: {e}")
-
-        try:
-            if runner.agent_lifecycle_monitor:
-                await runner.agent_lifecycle_monitor.cleanup_stale_pending_runs()
-            rehydrated_runs = await _recover_agent_runs_after_restart(runner)
-            if rehydrated_runs > 0:
-                logger.info(
-                    "Rehydrated completion events for %d active agent run(s)",
-                    rehydrated_runs,
-                )
-        except Exception as e:
-            logger.warning(f"Agent completion rehydration after restart failed: {e}")
 
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(

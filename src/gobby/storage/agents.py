@@ -15,7 +15,7 @@ from gobby.storage.database import DatabaseProtocol
 logger = logging.getLogger(__name__)
 
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
-AgentRunTerminalReason = Literal["user_cancelled", "daemon_restart"]
+AgentRunTerminalReason = Literal["user_cancelled", "daemon_restart", "daemon_stop"]
 ACTIVE_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = ("pending", "running")
 ACTIVE_AGENT_RUN_STATUS_SQL = ", ".join(f"'{status}'" for status in ACTIVE_AGENT_RUN_STATUSES)
 TERMINAL_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = (
@@ -977,6 +977,7 @@ class LocalAgentRunManager:
                 completed_at = ?,
                 updated_at = ?
             WHERE status = 'pending'
+            AND tmux_session_name IS NULL
             AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
             """,
             (now, now, f"-{timeout_minutes}"),

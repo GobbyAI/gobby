@@ -1,4 +1,4 @@
-"""Focused tests for agent restart cancellation replay."""
+"""Focused tests for agent restart reconciliation."""
 
 from __future__ import annotations
 
@@ -12,154 +12,123 @@ import gobby.runner_lifecycle as runner_lifecycle
 pytestmark = pytest.mark.unit
 
 
-class TestDaemonRestartAgentCancellationReplay:
-    """Replay terminal daemon-restart cancellations after startup."""
+class TestAgentRestartReconciliation:
+    """Recover preserved tmux-backed agents after daemon startup."""
 
     @pytest.mark.asyncio
-    async def test_replay_notifies_subscribers_and_cleans_up(self) -> None:
+    async def test_reconcile_live_tmux_run_refreshes_pid_and_reader(self) -> None:
         run = SimpleNamespace(
             id="run-1",
-            terminal_reason="daemon_restart",
-            continuation_prompt="Inspect the interrupted agent result",
+            tmux_session_name="gobby-run-1",
+            pid=111,
+            continuation_prompt="continue later",
         )
-        runner = SimpleNamespace(
-            agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_by_status=MagicMock(return_value=[run]))
-            ),
-            pipeline_execution_manager=SimpleNamespace(
-                get_completion_subscribers=MagicMock(return_value=["parent-1"]),
-                remove_completion_subscribers=MagicMock(),
-            ),
-            completion_registry=SimpleNamespace(
-                is_registered=MagicMock(return_value=False),
-                register=MagicMock(),
-                notify=AsyncMock(),
-                cleanup=MagicMock(),
-            ),
+        run_storage = SimpleNamespace(
+            list_active=MagicMock(return_value=[run]),
+            update_runtime=MagicMock(),
         )
+        runner = self._runner(run_storage)
+        tmux_manager = SimpleNamespace(
+            list_sessions=AsyncMock(
+                return_value=[
+                    SimpleNamespace(name="gobby-run-1", pane_pid=222, pane_dead=False),
+                ]
+            )
+        )
+        output_reader = SimpleNamespace(start_reader=AsyncMock(return_value=True))
 
-        replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
+        with (
+            patch(
+                "gobby.agents.tmux.session_manager.TmuxSessionManager",
+                return_value=tmux_manager,
+            ),
+            patch("gobby.agents.tmux.get_tmux_output_reader", return_value=output_reader),
+        ):
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
 
-        assert replayed == 1
-        assert runner.completion_registry.notify.await_count == 1
-        runner.agent_runner.run_storage.list_by_status.assert_called_once_with(
-            "cancelled",
-            limit=500,
-        )
+        assert reconciled == 3
         runner.completion_registry.register.assert_called_once_with(
             "run-1",
             subscribers=["parent-1"],
-            continuation_prompt="Inspect the interrupted agent result",
+            continuation_prompt="continue later",
         )
-        runner.completion_registry.notify.assert_awaited_once_with(
+        run_storage.update_runtime.assert_called_once_with(
             "run-1",
-            result={
-                "status": "cancelled",
-                "terminal_reason": "daemon_restart",
-                "run_id": "run-1",
-                "completion_id": "run-1",
-            },
-            message=(
-                "Agent run-1 was interrupted by a daemon restart.\n"
-                "Status: cancelled (daemon restarted)"
-            ),
+            pid=222,
+            tmux_session_name="gobby-run-1",
         )
-        runner.pipeline_execution_manager.remove_completion_subscribers.assert_called_once_with(
-            "run-1"
-        )
-        runner.completion_registry.cleanup.assert_called_once_with("run-1")
+        output_reader.start_reader.assert_awaited_once_with("run-1", "gobby-run-1")
+        runner.agent_lifecycle_monitor._cleanup_agent.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_replay_keeps_subscribers_when_notify_fails(self) -> None:
-        run = SimpleNamespace(id="run-1", terminal_reason="daemon_restart")
-        runner = SimpleNamespace(
-            agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_by_status=MagicMock(return_value=[run]))
-            ),
-            pipeline_execution_manager=SimpleNamespace(
-                get_completion_subscribers=MagicMock(return_value=["parent-1"]),
-                remove_completion_subscribers=MagicMock(),
-            ),
-            completion_registry=SimpleNamespace(
-                is_registered=MagicMock(return_value=False),
-                register=MagicMock(),
-                notify=AsyncMock(side_effect=RuntimeError("wake failed")),
-                cleanup=MagicMock(),
-            ),
-        )
-
-        replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
-
-        assert replayed == 0
-        assert runner.completion_registry.notify.await_count == 1
-        runner.pipeline_execution_manager.remove_completion_subscribers.assert_not_called()
-        runner.completion_registry.cleanup.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_replay_ignores_other_cancelled_runs(self) -> None:
-        run = SimpleNamespace(id="run-1", terminal_reason="user_cancelled")
-        runner = SimpleNamespace(
-            agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_by_status=MagicMock(return_value=[run]))
-            ),
-            pipeline_execution_manager=SimpleNamespace(
-                get_completion_subscribers=MagicMock(),
-                remove_completion_subscribers=MagicMock(),
-            ),
-            completion_registry=SimpleNamespace(
-                is_registered=MagicMock(),
-                register=MagicMock(),
-                notify=AsyncMock(),
-                cleanup=MagicMock(),
-            ),
-        )
-
-        replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
-
-        assert replayed == 0
-        assert runner.completion_registry.notify.await_count == 0
-        runner.pipeline_execution_manager.get_completion_subscribers.assert_not_called()
-        runner.completion_registry.notify.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_replay_cleans_lingering_daemon_restart_tmux_session(self) -> None:
-        run = SimpleNamespace(
-            id="run-1",
-            terminal_reason="daemon_restart",
-            tmux_session_name="gobby-stale-agent",
-        )
-        tmux_manager = SimpleNamespace(kill_session=AsyncMock(return_value=True))
+    async def test_reconcile_missing_tmux_session_cleans_run(self) -> None:
+        run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
         run_storage = SimpleNamespace(
-            list_by_status=MagicMock(return_value=[run]),
-            clear_tmux_session_name=MagicMock(return_value=True),
+            list_active=MagicMock(return_value=[run]),
+            update_runtime=MagicMock(),
         )
-        runner = SimpleNamespace(
-            agent_runner=SimpleNamespace(run_storage=run_storage),
-            pipeline_execution_manager=SimpleNamespace(
-                get_completion_subscribers=MagicMock(return_value=[]),
-                remove_completion_subscribers=MagicMock(),
-            ),
-            completion_registry=SimpleNamespace(
-                is_registered=MagicMock(),
-                register=MagicMock(),
-                notify=AsyncMock(),
-                cleanup=MagicMock(),
-            ),
+        runner = self._runner(run_storage)
+        tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
+
+        with patch(
+            "gobby.agents.tmux.session_manager.TmuxSessionManager",
+            return_value=tmux_manager,
+        ):
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+
+        assert reconciled == 2
+        runner.agent_lifecycle_monitor._cleanup_agent.assert_awaited_once()
+        cleanup_call = runner.agent_lifecycle_monitor._cleanup_agent.await_args
+        assert cleanup_call.args[0] is run
+        assert "tmux session 'gobby-run-1' was missing" in cleanup_call.kwargs["terminal_payload"]
+        run_storage.update_runtime.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_dead_tmux_pane_cleans_run(self) -> None:
+        run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
+        run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
+        runner = self._runner(run_storage)
+        tmux_manager = SimpleNamespace(
+            list_sessions=AsyncMock(
+                return_value=[
+                    SimpleNamespace(name="gobby-run-1", pane_pid=222, pane_dead=True),
+                ]
+            )
         )
 
         with patch(
             "gobby.agents.tmux.session_manager.TmuxSessionManager",
             return_value=tmux_manager,
         ):
-            replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
 
-        assert replayed == 0
-        tmux_manager.kill_session.assert_awaited_once_with(
-            "gobby-stale-agent",
-            missing_ok=True,
-        )
-        run_storage.clear_tmux_session_name.assert_called_once_with(
+        assert reconciled == 2
+        runner.agent_lifecycle_monitor._cleanup_agent.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
+        run = SimpleNamespace(id="run-1", tmux_session_name=None, continuation_prompt=None)
+        run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
+        runner = self._runner(run_storage)
+
+        reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+
+        assert reconciled == 1
+        runner.completion_registry.register.assert_called_once_with(
             "run-1",
-            "gobby-stale-agent",
+            subscribers=["parent-1"],
+            continuation_prompt=None,
         )
-        runner.completion_registry.notify.assert_not_awaited()
+
+    def _runner(self, run_storage: SimpleNamespace) -> SimpleNamespace:
+        return SimpleNamespace(
+            agent_runner=SimpleNamespace(run_storage=run_storage),
+            agent_lifecycle_monitor=SimpleNamespace(_cleanup_agent=AsyncMock()),
+            pipeline_execution_manager=SimpleNamespace(
+                get_completion_subscribers=MagicMock(return_value=["parent-1"]),
+            ),
+            completion_registry=SimpleNamespace(
+                is_registered=MagicMock(return_value=False),
+                register=MagicMock(),
+            ),
+        )

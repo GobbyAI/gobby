@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
 
+from gobby.shutdown_intent import ShutdownIntent
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -169,6 +170,15 @@ def _spawn_restart_helper(*, current_pid: int, port: int, service_managed: bool)
     )
 
 
+def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> None:
+    """Set the in-process runner shutdown state when this server owns one."""
+    runner = getattr(server, "__dict__", {}).get("_runner")
+    if runner is None:
+        return
+    runner._shutdown_intent = intent
+    runner._shutdown_requested = True
+
+
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.post("/shutdown")
     async def shutdown() -> dict[str, Any]:
@@ -183,6 +193,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         try:
             logger.debug("Shutdown requested via HTTP endpoint")
+            from gobby.runner_maintenance import write_shutdown_source
+
+            write_shutdown_source("http_shutdown", intent="stop")
+            _request_runner_shutdown(server, ShutdownIntent.STOP)
 
             # Create background task for shutdown
             task = asyncio.create_task(server._process_shutdown())
@@ -232,7 +246,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             # Write shutdown source in the parent before spawning restarter
             from gobby.runner_maintenance import write_shutdown_source
 
-            write_shutdown_source("http_restart")
+            write_shutdown_source("http_restart", intent="restart")
+            _request_runner_shutdown(server, ShutdownIntent.RESTART)
 
             _spawn_restart_helper(
                 current_pid=current_pid,

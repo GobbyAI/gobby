@@ -144,6 +144,7 @@ class GobbyRunner:
     verbose: bool
     machine_id: str | None
     _shutdown_requested: bool
+    _shutdown_intent: Any
     _metrics_cleanup_task: asyncio.Task[None] | None
     _vector_rebuild_task: asyncio.Task[None] | None
     _zombie_messages_task: asyncio.Task[None] | None

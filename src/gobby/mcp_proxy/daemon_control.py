@@ -142,7 +142,12 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
         return {"success": False, "error": str(e), "message": f"Failed to start: {e}"}
 
 
-async def stop_daemon_process(pid: int | None = None) -> dict[str, Any]:
+async def stop_daemon_process(
+    pid: int | None = None,
+    *,
+    shutdown_intent: str = "stop",
+    shutdown_source: str = "mcp_stop",
+) -> dict[str, Any]:
     """Stop running daemon."""
     # SAFETY: never SIGTERM the production daemon during tests. Mirrors the
     # guard in gobby.cli.utils.stop_daemon. Without it, this code path can
@@ -165,7 +170,7 @@ async def stop_daemon_process(pid: int | None = None) -> dict[str, Any]:
         from gobby.runner_maintenance import write_shutdown_source
 
         try:
-            write_shutdown_source("mcp_stop")
+            write_shutdown_source(shutdown_source, intent=shutdown_intent)
         except Exception as e:
             logger.warning(f"Failed to write shutdown source: {e}")
         os.kill(pid, signal.SIGTERM)
@@ -197,7 +202,11 @@ async def restart_daemon_process(
     current_pid: int | None, port: int, websocket_port: int
 ) -> dict[str, Any]:
     """Restart daemon."""
-    stop_result = await stop_daemon_process(current_pid)
+    stop_result = await stop_daemon_process(
+        current_pid,
+        shutdown_intent="restart",
+        shutdown_source="mcp_restart",
+    )
     if not stop_result.get("success") and not stop_result.get("not_running"):
         return stop_result
 

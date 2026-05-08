@@ -8,6 +8,8 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
+
 if TYPE_CHECKING:
     import uvicorn
 
@@ -62,8 +64,15 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
         runner._websocket_task = None
 
 
-async def _reap_remaining_child_processes(timeout: float = 1.0) -> None:
+async def _reap_remaining_child_processes(
+    timeout: float = 1.0,
+    *,
+    preserve_agents: bool = False,
+) -> None:
     """Terminate then force-kill child processes that survived graceful shutdown."""
+    if preserve_agents:
+        logger.info("Skipping child process reap for restart-preserved terminal agents")
+        return
     try:
         import psutil
 
@@ -156,15 +165,20 @@ async def _cleanup_pipeline_background_tasks() -> None:
 async def _stop_started_services(
     runner: GobbyRunner,
     cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
+    *,
+    shutdown_intent: ShutdownIntent,
 ) -> None:
     if runner.agent_lifecycle_monitor:
         try:
-            cancelled_runs = await cancel_active_agent_runs_for_shutdown(runner)
-            if cancelled_runs > 0:
-                logger.info(
-                    "Cancelled %d active agent run(s) during graceful shutdown",
-                    cancelled_runs,
-                )
+            if shutdown_intent.cancel_agents:
+                cancelled_runs = await cancel_active_agent_runs_for_shutdown(runner)
+                if cancelled_runs > 0:
+                    logger.info(
+                        "Cancelled %d active agent run(s) during graceful shutdown",
+                        cancelled_runs,
+                    )
+            else:
+                logger.info("Preserving active agent runs during daemon restart")
             await asyncio.wait_for(runner.agent_lifecycle_monitor.stop(), timeout=2.0)
         except TimeoutError:
             logger.warning("Agent lifecycle monitor shutdown timed out")
@@ -229,11 +243,16 @@ async def shutdown_daemon_services(
     await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
     shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
     cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
-    reap_remaining_child_processes: Callable[[], Awaitable[None]],
+    reap_remaining_child_processes: Callable[..., Awaitable[None]],
     shutdown_telemetry: Callable[[], None],
     cleanup_pid_file: Callable[[], None],
 ) -> None:
     """Run the ordered graceful shutdown sequence."""
+    shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
+    try:
+        get_shutdown_marker_path().unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Failed to remove shutdown marker during shutdown", exc_info=True)
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.startup_ready = False
@@ -263,7 +282,11 @@ async def shutdown_daemon_services(
     except TimeoutError:
         logger.warning("HTTP server shutdown timed out")
 
-    await _stop_started_services(runner, cancel_active_agent_runs_for_shutdown)
+    await _stop_started_services(
+        runner,
+        cancel_active_agent_runs_for_shutdown,
+        shutdown_intent=shutdown_intent,
+    )
     await _cleanup_pipeline_background_tasks()
     await _cancel_periodic_tasks(runner)
     _stop_ui_dev_server_if_needed(runner)
@@ -274,7 +297,7 @@ async def shutdown_daemon_services(
     except TimeoutError:
         logger.warning("MCP disconnect timed out")
 
-    await reap_remaining_child_processes()
+    await reap_remaining_child_processes(preserve_agents=shutdown_intent.preserve_agents)
 
     try:
         shutdown_telemetry()

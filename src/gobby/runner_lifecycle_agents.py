@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -84,6 +84,112 @@ async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
             break
 
     return rehydrated
+
+
+async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
+    """Reconnect active tmux-backed agent runs after daemon restart."""
+    if runner.agent_runner is None:
+        return 0
+
+    reconciled = await _recover_agent_runs_after_restart(runner)
+    active_runs = _list_active_agent_runs_once(runner)
+    tmux_runs = [run for run in active_runs if getattr(run, "tmux_session_name", None)]
+    if not tmux_runs:
+        return reconciled
+
+    try:
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
+
+        live_sessions = await TmuxSessionManager().list_sessions()
+    except Exception as e:
+        logger.warning("Failed to list tmux sessions during agent restart reconciliation: %s", e)
+        return reconciled
+
+    live_by_name = {session.name: session for session in live_sessions}
+    output_reader: Any | None = None
+    for run in tmux_runs:
+        run_id = str(run.id)
+        session_name = str(run.tmux_session_name)
+        live_info = live_by_name.get(session_name)
+        if live_info is None or getattr(live_info, "pane_dead", False):
+            if await _cleanup_missing_tmux_agent_run(runner, run, session_name):
+                reconciled += 1
+            continue
+
+        run_storage = runner.agent_runner.run_storage
+        pane_pid = getattr(live_info, "pane_pid", None)
+        update_runtime = getattr(run_storage, "update_runtime", None)
+        if pane_pid is not None and pane_pid != getattr(run, "pid", None):
+            if callable(update_runtime):
+                update_runtime(run_id, pid=pane_pid, tmux_session_name=session_name)
+            reconciled += 1
+
+        if output_reader is None:
+            from gobby.agents.tmux import get_tmux_output_reader
+
+            output_reader = get_tmux_output_reader()
+        try:
+            if await output_reader.start_reader(run_id, session_name):
+                reconciled += 1
+        except Exception as e:
+            logger.warning(
+                "Failed to restart tmux output reader for recovered agent %s: %s",
+                run_id,
+                e,
+            )
+
+    return reconciled
+
+
+def _list_active_agent_runs_once(runner: GobbyRunner) -> list[Any]:
+    """List one de-duplicated view of active agent runs."""
+    assert runner.agent_runner is not None
+    run_storage = runner.agent_runner.run_storage
+    active_runs: list[Any] = []
+    seen_ids: set[str] = set()
+    while True:
+        batch = run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE)
+        if not batch:
+            break
+        new_in_batch = 0
+        for run in batch:
+            run_id = str(getattr(run, "id", ""))
+            if not run_id or run_id in seen_ids:
+                continue
+            seen_ids.add(run_id)
+            active_runs.append(run)
+            new_in_batch += 1
+        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+            break
+    return active_runs
+
+
+async def _cleanup_missing_tmux_agent_run(
+    runner: GobbyRunner,
+    run: Any,
+    session_name: str,
+) -> bool:
+    """Fail an active run whose persisted tmux session did not survive restart."""
+    monitor = runner.agent_lifecycle_monitor
+    if monitor is None:
+        return False
+
+    cleanup_agent = getattr(monitor, "_cleanup_agent", None)
+    if not callable(cleanup_agent):
+        cleanup_handler = getattr(monitor, "_cleanup_handler", None)
+        cleanup_agent = getattr(cleanup_handler, "cleanup_agent", None)
+    if not callable(cleanup_agent):
+        logger.warning(
+            "Cannot clean missing tmux-backed agent %s: cleanup handler unavailable",
+            getattr(run, "id", "unknown"),
+        )
+        return False
+
+    await cleanup_agent(
+        run,
+        terminal_payload=(f"tmux session {session_name!r} was missing after daemon restart"),
+    )
+    return True
 
 
 async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int:
@@ -221,7 +327,7 @@ async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
 
         transitioned = await runner.agent_lifecycle_monitor.terminalize_cancelled_run(
             run.id,
-            terminal_reason="daemon_restart",
+            terminal_reason="daemon_stop",
         )
         if transitioned:
             cancelled += 1

@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
+import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 from gobby.runner import GobbyRunner, main, run_gobby
+from gobby.shutdown_intent import ShutdownIntent
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -834,9 +836,10 @@ class TestAgentEventBroadcastingCallback:
 
             mock_ws_server.broadcast_agent_event.assert_called_once()
             assert broadcast_seen.is_set()
-            assert mock_ws_server.broadcast_agent_event.await_args.kwargs[
-                "parent_session_id"
-            ] == "sess-456"
+            assert (
+                mock_ws_server.broadcast_agent_event.await_args.kwargs["parent_session_id"]
+                == "sess-456"
+            )
         finally:
             rb._agent_event_callback = old_callback
 
@@ -1186,7 +1189,45 @@ class TestAgentRestartRecoveryHelpers:
         )
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
             "run-1",
-            terminal_reason="daemon_restart",
+            terminal_reason="daemon_stop",
         )
         runner.pipeline_execution_manager.remove_completion_subscribers.assert_not_called()
         runner.completion_registry.cleanup.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stop_shutdown_policy_cancels_active_agents(self) -> None:
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock()),
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+        )
+        cancel_active = AsyncMock(return_value=2)
+
+        await runner_lifecycle_shutdown._stop_started_services(
+            runner,
+            cancel_active,
+            shutdown_intent=ShutdownIntent.STOP,
+        )
+
+        cancel_active.assert_awaited_once_with(runner)
+        runner.agent_lifecycle_monitor.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_restart_shutdown_policy_preserves_active_agents(self) -> None:
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock()),
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+        )
+        cancel_active = AsyncMock(return_value=2)
+
+        await runner_lifecycle_shutdown._stop_started_services(
+            runner,
+            cancel_active,
+            shutdown_intent=ShutdownIntent.RESTART,
+        )
+
+        cancel_active.assert_not_awaited()
+        runner.agent_lifecycle_monitor.stop.assert_awaited_once()
