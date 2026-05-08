@@ -35,7 +35,6 @@ import { ProjectSelector } from "./components/ProjectSelector";
 import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
-import { Badge } from "./components/chat/ui/Badge";
 import { Button } from "./components/chat/ui/Button";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
@@ -674,9 +673,11 @@ export default function App() {
               dropDirection="down"
             />
           )}
-          <Badge
-            variant={isConnected ? "success" : "error"}
-            className="gap-2 px-3 py-1 uppercase tracking-[0.05em]"
+          <div
+            className={cn(
+              "inline-flex h-9 items-center gap-2 rounded-md border border-border bg-[var(--bg-primary)] px-3 text-xs font-medium uppercase tracking-[0.05em]",
+              isConnected ? "text-success-foreground" : "text-destructive-foreground",
+            )}
           >
             <span
               aria-hidden="true"
@@ -689,7 +690,7 @@ export default function App() {
               {isConnected ? "Connected" : "Disconnected"}
             </span>
             <span className="sm:hidden">{isConnected ? "Up" : "Down"}</span>
-          </Badge>
+          </div>
           {authRequired && authenticated && (
             <Button
               variant="outline"
