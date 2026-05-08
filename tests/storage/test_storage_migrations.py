@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from unittest.mock import patch
 
@@ -657,7 +658,7 @@ def test_migration_254_adds_reviewer_selector_to_existing_registry(tmp_path) -> 
     db.execute(
         """
         INSERT INTO task_stages_registry (name, reviewer_agent, updated_at)
-        VALUES ('development', 'qa-reviewer', datetime('now'))
+        VALUES ('development', 'custom-reviewer', datetime('now'))
         """
     )
     migration_254 = [item for item in MIGRATIONS if item[0] == 254]
@@ -672,7 +673,9 @@ def test_migration_254_adds_reviewer_selector_to_existing_registry(tmp_path) -> 
         """
     )
     assert row["reviewer_agent"] is None
-    assert "doc-reviewer" in row["reviewer_agent_selector_json"]
+    selector = json.loads(row["reviewer_agent_selector_json"])
+    assert selector["default"] == "custom-reviewer"
+    assert selector["rules"] == [{"category": "docs", "reviewer_agent": "doc-reviewer"}]
     assert get_current_version(db) == 254
 
 

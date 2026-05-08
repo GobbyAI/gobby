@@ -489,7 +489,14 @@ class TestSpawnAgentImplErrorBranches:
             )
 
         assert result["success"] is False
-        assert result["error"] == "code_index_preflight_failed:gcode_index_timeout:120s"
+        assert result["error"] == "code_index_preflight_failed"
+        assert result["error_code"] == "code_index_preflight_failed"
+        assert result["message"] == "gcode_index_timeout:120s"
+        assert result["details"] == {
+            "preflight": "code_index",
+            "cwd": str(worktree_path),
+            "reason": "gcode_index_timeout:120s",
+        }
         mock_execute.assert_not_called()
 
     @pytest.mark.asyncio

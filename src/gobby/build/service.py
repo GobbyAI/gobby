@@ -308,7 +308,8 @@ async def _build_epic(
     if opts.isolation in {"worktree", "clone"}:
         if target_branch is None:
             raise ValueError("target_branch is required for epic integration workspaces")
-        ensure_epic_integration_workspaces(
+        await asyncio.to_thread(
+            ensure_epic_integration_workspaces,
             task_manager=task_manager,
             root_task=task,
             backend=opts.workspace_backend,
@@ -506,7 +507,8 @@ async def _resume_existing_lifecycle(
         if opts.isolation in {"worktree", "clone"}:
             if integration_target is None:
                 raise ValueError("target_branch is required for epic integration workspaces")
-            ensure_epic_integration_workspaces(
+            await asyncio.to_thread(
+                ensure_epic_integration_workspaces,
                 task_manager=task_manager,
                 root_task=task,
                 backend=opts.workspace_backend,
@@ -522,7 +524,8 @@ async def _resume_existing_lifecycle(
             include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
         )
     elif opts.isolation in {"worktree", "clone"}:
-        ensure_task_parent_integration_workspace(
+        await asyncio.to_thread(
+            ensure_task_parent_integration_workspace,
             task_manager=task_manager,
             task=task,
             backend=opts.workspace_backend,

@@ -102,10 +102,6 @@ export const TasksTab = memo(function TasksTab({
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const selectedStageSet = useMemo(
-    () => new Set(selectedStageFilters),
-    [selectedStageFilters],
-  );
   const stageQueryKey = useMemo(
     () =>
       selectedStageFilters.size > 0
@@ -729,7 +725,7 @@ export const TasksTab = memo(function TasksTab({
           <TasksTabFilters
             filters={statusFilters}
             stages={stagesRegistry}
-            selectedStages={selectedStageSet}
+            selectedStages={selectedStageFilters}
             onToggle={toggleFilter}
             onToggleStage={toggleStageFilter}
             onClose={() => setShowFilterDropdown(false)}

@@ -44,6 +44,7 @@ async def spawn_agent(
 
     readiness_reason = spawn_readiness_blocker(services)
     if readiness_reason is not None:
+        logger.info("Dispatcher spawn skipped: %s", readiness_reason)
         raise DispatchSpawnUnavailable(readiness_reason)
     required = {
         "database": getattr(services, "database", None),

@@ -61,7 +61,6 @@ instructions: |
   - Do NOT call git push - the merge agent handles pushing.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
-  - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
   - While in LOAD_SKILLS, do not call claim_task, get_task, get_workflow_status,
     or get_agent_definition. Only load skills from gobby-skills until the

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { AGENT_DEFS_TAB_CLS } from '../agents/agents-styles'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { YamlEditorModal } from './WorkflowsPage'
 import { AgentEditForm } from '../agents/AgentEditForm'
 import type { AgentFormData } from '../agents/AgentEditForm'
@@ -45,6 +46,17 @@ import {
   defaultSidebarYaml,
   extractAgentEditWorkflowState,
 } from './AgentsTab.payloads'
+import {
+  WORKFLOWS_MODAL_ACTIONS_CLS,
+  WORKFLOWS_MODAL_CANCEL_CLS,
+  WORKFLOWS_MODAL_CLS,
+  WORKFLOWS_MODAL_FIELD_CLS,
+  WORKFLOWS_MODAL_FIELD_INPUT_CLS,
+  WORKFLOWS_MODAL_FIELD_LABEL_CLS,
+  WORKFLOWS_MODAL_HEADING_CLS,
+  WORKFLOWS_MODAL_OVERLAY_CLS,
+  WORKFLOWS_MODAL_SUBMIT_CLS,
+} from './workflows-styles'
 
 export function AgentsTab({
   searchText,
@@ -71,7 +83,8 @@ export function AgentsTab({
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
   const [yamlAgent, setYamlAgent] = useState<AgentDefInfo | null>(null)
   const [yamlContent, setYamlContent] = useState('')
-  const [yamlLoading] = useState(false)
+  const [duplicateAgent, setDuplicateAgent] = useState<AgentDefInfo | null>(null)
+  const [duplicateName, setDuplicateName] = useState('')
   const [createForm, setCreateForm] = useState<AgentFormData>({ ...DEFAULT_FORM })
   const [branches, setBranches] = useState<string[]>([])
   const [isGitProject, setIsGitProject] = useState(true)
@@ -301,8 +314,11 @@ export function AgentsTab({
   }, [editingId])
 
   const handleDuplicate = useCallback(
-    (item: AgentDefInfo) => duplicateAgentDefinition(item, fetchDefinitions, showToast),
-    [fetchDefinitions, showToast],
+    (item: AgentDefInfo) => {
+      setDuplicateAgent(item)
+      setDuplicateName(`${item.definition.name}-copy`)
+    },
+    [],
   )
 
   const handleDelete = useCallback(
@@ -321,9 +337,9 @@ export function AgentsTab({
   )
 
   const handleYamlSave = useCallback(async () => {
-    await saveYamlAgentDefinition({ yamlAgent, yamlContent, fetchDefinitions })
-    setYamlAgent(null)
-  }, [yamlAgent, yamlContent, fetchDefinitions])
+    const saved = await saveYamlAgentDefinition({ yamlAgent, yamlContent, fetchDefinitions, showToast })
+    if (saved) setYamlAgent(null)
+  }, [yamlAgent, yamlContent, fetchDefinitions, showToast])
 
   const handleSidebarYamlSave = useCallback(
     () => saveSidebarYamlAgentDefinition({
@@ -352,18 +368,18 @@ export function AgentsTab({
   )
 
   const handleMoveToProject = useCallback(
-    (item: AgentDefInfo) => moveAgentToProject(item, projectId, confirm, fetchDefinitions),
-    [confirm, projectId, fetchDefinitions],
+    (item: AgentDefInfo) => moveAgentToProject(item, projectId, confirm, fetchDefinitions, showToast),
+    [confirm, projectId, fetchDefinitions, showToast],
   )
 
   const handleMoveToGlobal = useCallback(
-    (item: AgentDefInfo) => moveAgentToGlobal(item, confirm, fetchDefinitions),
-    [confirm, fetchDefinitions],
+    (item: AgentDefInfo) => moveAgentToGlobal(item, confirm, fetchDefinitions, showToast),
+    [confirm, fetchDefinitions, showToast],
   )
 
   const handleRestoreFromTemplate = useCallback(
-    (item: AgentDefInfo) => restoreAgentFromTemplate(item, confirm, fetchDefinitions),
-    [confirm, fetchDefinitions],
+    (item: AgentDefInfo) => restoreAgentFromTemplate(item, confirm, fetchDefinitions, showToast),
+    [confirm, fetchDefinitions, showToast],
   )
 
   const handleImport = useCallback(async (name: string) => {
@@ -386,6 +402,20 @@ export function AgentsTab({
       setSidebarYamlContent(agentDefToYaml(item.definition))
     }
   }, [handleEdit])
+
+  const handleDuplicateSave = useCallback(async () => {
+    if (!duplicateAgent) return
+    const name = duplicateName.trim()
+    if (!name) return
+    await duplicateAgentDefinition(duplicateAgent, name, fetchDefinitions, showToast)
+    setDuplicateAgent(null)
+    setDuplicateName('')
+  }, [duplicateAgent, duplicateName, fetchDefinitions, showToast])
+
+  const handleDuplicateClose = useCallback(() => {
+    setDuplicateAgent(null)
+    setDuplicateName('')
+  }, [])
 
   return (
     <div className={AGENT_DEFS_TAB_CLS}>
@@ -423,10 +453,20 @@ export function AgentsTab({
         <YamlEditorModal
           workflowName={yamlAgent.definition.name}
           yamlContent={yamlContent}
-          loading={yamlLoading}
+          loading={false}
           onChange={setYamlContent}
           onSave={handleYamlSave}
           onClose={() => setYamlAgent(null)}
+        />
+      )}
+
+      {duplicateAgent && (
+        <DuplicateAgentDialog
+          sourceName={duplicateAgent.definition.name}
+          value={duplicateName}
+          onChange={setDuplicateName}
+          onSave={handleDuplicateSave}
+          onClose={handleDuplicateClose}
         />
       )}
 
@@ -467,6 +507,67 @@ export function AgentsTab({
         onBlockedMcpToolsChange={setEditBlockedMcpTools}
         agentNames={agentNames}
       />
+    </div>
+  )
+}
+
+function DuplicateAgentDialog({
+  sourceName,
+  value,
+  onChange,
+  onSave,
+  onClose,
+}: {
+  sourceName: string
+  value: string
+  onChange: (value: string) => void
+  onSave: () => void
+  onClose: () => void
+}) {
+  const dialogRef = useRef<HTMLFormElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose })
+  const trimmed = value.trim()
+
+  return (
+    <div className={WORKFLOWS_MODAL_OVERLAY_CLS} onClick={onClose}>
+      <form
+        ref={dialogRef}
+        className={WORKFLOWS_MODAL_CLS}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="duplicate-agent-title"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (trimmed) onSave()
+        }}
+      >
+        <h2 id="duplicate-agent-title" className={WORKFLOWS_MODAL_HEADING_CLS}>
+          Duplicate Agent
+        </h2>
+        <div className={WORKFLOWS_MODAL_FIELD_CLS}>
+          <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS} htmlFor="duplicate-agent-name">
+            New name
+          </label>
+          <input
+            id="duplicate-agent-name"
+            className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={`${sourceName}-copy`}
+            autoFocus
+          />
+        </div>
+        <div className={WORKFLOWS_MODAL_ACTIONS_CLS}>
+          <button type="button" className={WORKFLOWS_MODAL_CANCEL_CLS} onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className={WORKFLOWS_MODAL_SUBMIT_CLS} disabled={!trimmed}>
+            Duplicate
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

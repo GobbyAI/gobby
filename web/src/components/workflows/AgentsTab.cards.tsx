@@ -93,6 +93,17 @@ const deleteIcon = (
   </svg>
 )
 
+function workflowDefinitionCount(workflows: AgentDefInfo['definition']['workflows']): number {
+  if (!workflows) return 0
+  const metadataKeys = new Set(['rules', 'variables', 'pipeline'])
+  return Object.entries(workflows).filter(([key, value]) =>
+    !metadataKeys.has(key) &&
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value),
+  ).length
+}
+
 export function AgentDefinitionsGrid({
   loading,
   definitions,
@@ -167,15 +178,7 @@ export function AgentDefinitionCard({
 }: AgentDefinitionCardProps) {
   const d = item.definition
   const isTemplate = item.source === 'template'
-  const wfMeta = ['rules', 'variables', 'pipeline']
-  const workflowCount = d.workflows
-    ? Object.entries(d.workflows).filter(([key]) => (
-      !wfMeta.includes(key) &&
-      typeof d.workflows![key] === 'object' &&
-      d.workflows![key] !== null &&
-      !Array.isArray(d.workflows![key])
-    )).length
-    : 0
+  const workflowCount = workflowDefinitionCount(d.workflows)
 
   return (
     <div
@@ -183,6 +186,7 @@ export function AgentDefinitionCard({
       className={`${AGENT_DEF_CARD_CLS}${item.deleted_at ? ' ' + AGENT_DEF_CARD_DELETED_CLS : ''}${isTemplate ? ' ' + WORKFLOWS_CARD_TEMPLATE_CLS : ''}`}
     >
       <button
+        type="button"
         className={AGENT_DEF_HEADER_CLS}
         onClick={() => {
           if (item.deleted_at) return

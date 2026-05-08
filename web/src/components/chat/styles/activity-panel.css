@@ -394,7 +394,7 @@
   min-height: var(--activity-panel-control-height);
 }
 
-.activity-panel-toolbar-segmented > button {
+.activity-panel-toolbar-segmented > [role="radio"] {
   min-height: calc(var(--activity-panel-control-height) - 2px);
   padding-block: 0;
 }

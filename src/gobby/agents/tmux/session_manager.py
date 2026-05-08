@@ -385,7 +385,8 @@ class TmuxSessionManager:
         if rc != 0:
             message = stderr.strip()
             if any(error in message.lower() for error in _MISSING_SESSION_ERRORS):
-                logger.debug(
+                log = logger.debug if missing_ok else logger.warning
+                log(
                     "Tmux session '%s' was already missing during kill (missing_ok=%s): %s",
                     name,
                     missing_ok,

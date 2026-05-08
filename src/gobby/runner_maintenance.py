@@ -382,7 +382,7 @@ async def cleanup_expired_isolation_loop(
             await asyncio.sleep(interval_seconds)
 
             # Reap expired worktrees
-            expired_worktrees = worktree_storage.find_expired()
+            expired_worktrees = await asyncio.to_thread(worktree_storage.find_expired)
             for wt in expired_worktrees:
                 try:
                     path = wt.worktree_path
@@ -396,7 +396,7 @@ async def cleanup_expired_isolation_loop(
                         removed = result == 0
                     except Exception as e:
                         logger.debug("git worktree remove failed for %s: %s", path, e)
-                    if not removed and os.path.exists(path):
+                    if not removed and await asyncio.to_thread(os.path.exists, path):
                         await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
                     # Prune stale worktree references
                     await asyncio.to_thread(_run_git_command, ["git", "worktree", "prune"])
@@ -407,7 +407,7 @@ async def cleanup_expired_isolation_loop(
                             ["git", "branch", "-D", wt.branch_name],
                         )
                     # Remove DB record
-                    worktree_storage.delete(wt.id)
+                    await asyncio.to_thread(worktree_storage.delete, wt.id)
                     logger.info(
                         f"Expired worktree cleanup: deleted {wt.id} "
                         f"(branch={wt.branch_name}, path={path})"
@@ -419,13 +419,13 @@ async def cleanup_expired_isolation_loop(
                     )
 
             # Reap expired clones
-            expired_clones = clone_storage.find_expired()
+            expired_clones = await asyncio.to_thread(clone_storage.find_expired)
             for clone in expired_clones:
                 try:
                     path = clone.clone_path
-                    if os.path.exists(path):
+                    if await asyncio.to_thread(os.path.exists, path):
                         await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
-                    clone_storage.delete(clone.id)
+                    await asyncio.to_thread(clone_storage.delete, clone.id)
                     logger.info(
                         f"Expired clone cleanup: deleted {clone.id} "
                         f"(branch={clone.branch_name}, path={path})"
@@ -436,7 +436,11 @@ async def cleanup_expired_isolation_loop(
                         exc_info=True,
                     )
 
-            _cleanup_missing_isolation_records(worktree_storage, clone_storage)
+            await asyncio.to_thread(
+                _cleanup_missing_isolation_records,
+                worktree_storage,
+                clone_storage,
+            )
 
         except asyncio.CancelledError:
             break

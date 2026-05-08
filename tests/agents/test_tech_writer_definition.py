@@ -50,7 +50,7 @@ def test_excludes_late_task_skill_injection() -> None:
     agent = _agent()
     excludes = set(agent["workflows"]["rule_selectors"]["exclude"])
 
-    assert "tag:task-skill-injection" in excludes
+    assert "tag:task-skill-gates" in excludes
 
 
 def test_handoff_transitions_to_end_agent_run_termination() -> None:

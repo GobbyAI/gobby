@@ -6,6 +6,8 @@ Gemini-specific class attributes. All protocol mechanics live in the base.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import ClassVar
 
 from gobby.adapters.acp_client import (
@@ -27,7 +29,7 @@ class GeminiACPClient(ACPClient):
     cli_name: ClassVar[str] = "gemini"
     display_name: ClassVar[str] = "Gemini"
     prompt_timeout_env: ClassVar[str] = ACP_PROMPT_TIMEOUT_ENV_GEMINI
-    required_env: ClassVar[dict[str, str]] = {"GEMINI_CLI_NO_RELAUNCH": "true"}
+    required_env: ClassVar[Mapping[str, str]] = MappingProxyType({"GEMINI_CLI_NO_RELAUNCH": "true"})
 
 
 __all__ = [

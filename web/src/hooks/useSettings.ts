@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS: Settings = {
 const STORAGE_KEY = 'gobby-settings'
 const DARK_LOGO_PATH = '/logo.png'
 const LIGHT_LOGO_PATH = '/logo-light.png'
+const ICON_CACHE_PARAM = 'v=2'
 
 /** Keys persisted to the backend (excludes per-conversation chatMode). */
 type PersistableKey =
@@ -122,21 +123,28 @@ function logoPathForTheme(theme: 'dark' | 'light'): string {
   return theme === 'light' ? LIGHT_LOGO_PATH : DARK_LOGO_PATH
 }
 
-function upsertIconLink(rel: string, href: string, type?: string): void {
-  let link = document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
-  if (!link) {
-    link = document.createElement('link')
+function cacheBustedIconHref(path: string): string {
+  return `${path}?${ICON_CACHE_PARAM}`
+}
+
+function upsertIconLinks(rel: string, href: string, type?: string): void {
+  const links = Array.from(document.head.querySelectorAll<HTMLLinkElement>(`link[rel="${rel}"]`))
+  if (links.length === 0) {
+    const link = document.createElement('link')
     link.setAttribute('rel', rel)
     document.head.appendChild(link)
+    links.push(link)
   }
-  if (type) link.setAttribute('type', type)
-  link.setAttribute('href', href)
+  for (const link of links) {
+    if (type) link.setAttribute('type', type)
+    link.setAttribute('href', href)
+  }
 }
 
 function updateDocumentIcons(theme: 'dark' | 'light'): void {
-  const href = logoPathForTheme(theme)
-  upsertIconLink('icon', href, 'image/png')
-  upsertIconLink('apple-touch-icon', href)
+  const href = cacheBustedIconHref(logoPathForTheme(theme))
+  upsertIconLinks('icon', href, 'image/png')
+  upsertIconLinks('apple-touch-icon', href)
 }
 
 export function useSettings() {

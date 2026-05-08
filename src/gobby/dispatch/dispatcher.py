@@ -126,6 +126,7 @@ async def run_heartbeat(
 
     readiness_reason = spawn_readiness_blocker(services)
     if readiness_reason is not None:
+        logger.info("Dispatcher heartbeat skipped: %s", readiness_reason)
         return _unavailable(HeartbeatResult(), readiness_reason)
 
     resolved_db = db or LocalDatabase()
@@ -490,7 +491,7 @@ async def _execute_spawn_action(
     return None
 
 
-def execute_action(
+async def execute_action(
     action: Action,
     *,
     mutex: RuntimeDispatchMutex,
@@ -500,7 +501,7 @@ def execute_action(
 ) -> object | None:
     """Execute one dispatcher action under an acquired lease."""
     if isinstance(action, SpawnAgentAction):
-        return _execute_spawn_action(
+        return await _execute_spawn_action(
             action,
             mutex=mutex,
             db=db,
@@ -509,7 +510,7 @@ def execute_action(
         )
 
     if isinstance(action, StartPipelineAction):
-        return _start_pipeline_action(
+        return await _start_pipeline_action(
             action, mutex=mutex, db=db, context=context, services=services
         )
 
@@ -541,7 +542,7 @@ def execute_action(
         if isinstance(action, EscalateAction):
             return escalate_task(db=db, task_id=action.task_id, reason=action.reason)
         if isinstance(action, MergeWorkspaceAction):
-            return execute_merge_workspace(action, db=db, services=services)
+            return await execute_merge_workspace(action, db=db, services=services)
         if isinstance(action, CreateIsolationAction):
             return create_isolation(action, db=db, context=context)
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")

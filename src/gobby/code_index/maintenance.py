@@ -67,8 +67,8 @@ async def _run_maintenance(
     summary_batch_size: int = 20,
 ) -> None:
     """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
-    projects = context.storage.list_indexed_projects()
-    gcode_bin = resolve_native_bin("gcode")
+    projects = await asyncio.to_thread(context.storage.list_indexed_projects)
+    gcode_bin = await asyncio.to_thread(resolve_native_bin, "gcode")
 
     if gcode_bin is None:
         logger.warning("gcode not installed — skipping maintenance index. Run `gobby install`.")
@@ -78,7 +78,7 @@ async def _run_maintenance(
             continue
 
         root = Path(project.root_path).expanduser()
-        if not root.is_dir():
+        if not await asyncio.to_thread(root.is_dir):
             await _purge_missing_project(context, project)
             continue
 
@@ -127,7 +127,7 @@ async def _run_maintenance(
 
 async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
     """Remove index data for a project whose root directory is gone."""
-    counts = context.storage.delete_project_index(project.id)
+    counts = await asyncio.to_thread(context.storage.delete_project_index, project.id)
 
     if context.graph is not None:
         try:
@@ -157,33 +157,46 @@ async def _summarize_unsummarized(
     batch_size: int,
 ) -> None:
     """Generate summaries for symbols that don't have one yet."""
-    symbols = context.storage.get_unsummarized_symbols(project.id, limit=batch_size)
+    symbols = await asyncio.to_thread(
+        context.storage.get_unsummarized_symbols,
+        project.id,
+        limit=batch_size,
+    )
     if not symbols:
         return
 
     root = Path(project.root_path)
+    source_by_symbol_id = await asyncio.to_thread(_read_symbol_sources, root, symbols)
 
     def read_source(symbol: Any) -> str | None:
-        """Read symbol source from disk."""
-        full_path = root / symbol.file_path
-        if not full_path.exists():
-            return None
-        try:
-            lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            # line_start/line_end are 1-indexed
-            start = max(0, symbol.line_start - 1)
-            end = symbol.line_end
-            return "\n".join(lines[start:end])
-        except Exception:
-            return None
+        return source_by_symbol_id.get(symbol.id)
 
     results = await summarizer.summarize_batch(symbols, read_source)
 
     for symbol_id, summary in results.items():
-        context.storage.update_symbol_summary(symbol_id, summary)
+        await asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
 
     if results:
         logger.info(
             f"Generated {len(results)} summaries for {project.id} "
             f"({len(symbols) - len(results)} skipped/failed)"
         )
+
+
+def _read_symbol_sources(root: Path, symbols: list[Any]) -> dict[str, str | None]:
+    return {symbol.id: _read_symbol_source(root, symbol) for symbol in symbols}
+
+
+def _read_symbol_source(root: Path, symbol: Any) -> str | None:
+    """Read symbol source from disk."""
+    full_path = root / symbol.file_path
+    if not full_path.exists():
+        return None
+    try:
+        lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        # line_start/line_end are 1-indexed
+        start = max(0, symbol.line_start - 1)
+        end = symbol.line_end
+        return "\n".join(lines[start:end])
+    except Exception:
+        return None

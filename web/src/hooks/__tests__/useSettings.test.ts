@@ -14,8 +14,8 @@ describe('useSettings', () => {
   beforeEach(() => {
     localStorage.clear()
     document.head.innerHTML = `
-      <link rel="icon" type="image/png" href="/logo.png">
-      <link rel="apple-touch-icon" href="/logo.png">
+      <link rel="icon" type="image/png" href="/logo.png?v=2">
+      <link rel="apple-touch-icon" href="/logo.png?v=2">
     `
     document.documentElement.removeAttribute('data-theme')
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
@@ -36,9 +36,9 @@ describe('useSettings', () => {
     await waitFor(() => {
       expect(document.documentElement).toHaveAttribute('data-theme', 'light')
     })
-    expect(iconLink()).toHaveAttribute('href', '/logo-light.png')
+    expect(iconLink()).toHaveAttribute('href', '/logo-light.png?v=2')
     expect(iconLink()).toHaveAttribute('type', 'image/png')
-    expect(appleTouchIconLink()).toHaveAttribute('href', '/logo-light.png')
+    expect(appleTouchIconLink()).toHaveAttribute('href', '/logo-light.png?v=2')
   })
 
   it('updates document theme and icon links when theme changes', async () => {
@@ -47,8 +47,8 @@ describe('useSettings', () => {
     await waitFor(() => {
       expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
     })
-    expect(iconLink()).toHaveAttribute('href', '/logo.png')
-    expect(appleTouchIconLink()).toHaveAttribute('href', '/logo.png')
+    expect(iconLink()).toHaveAttribute('href', '/logo.png?v=2')
+    expect(appleTouchIconLink()).toHaveAttribute('href', '/logo.png?v=2')
 
     act(() => {
       result.current.updateTheme('light')
@@ -57,7 +57,7 @@ describe('useSettings', () => {
     await waitFor(() => {
       expect(document.documentElement).toHaveAttribute('data-theme', 'light')
     })
-    expect(iconLink()).toHaveAttribute('href', '/logo-light.png')
-    expect(appleTouchIconLink()).toHaveAttribute('href', '/logo-light.png')
+    expect(iconLink()).toHaveAttribute('href', '/logo-light.png?v=2')
+    expect(appleTouchIconLink()).toHaveAttribute('href', '/logo-light.png?v=2')
   })
 })

@@ -101,7 +101,7 @@ class HookManager:
         database: "DatabaseProtocol | None" = None,
         session_manager: "SessionManager | None" = None,
         code_index_trigger: Any | None = None,
-    ):
+    ) -> None:
         """
         Initialize HookManager with subsystems.
 

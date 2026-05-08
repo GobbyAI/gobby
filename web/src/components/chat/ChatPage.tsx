@@ -175,10 +175,15 @@ export function ChatPage({
   }, []);
   const prevIsMobileRef = useRef(isMobile);
   const isPinnedRef = useRef(isPinned);
+  const onSendRef = useRef(onSend);
 
   useEffect(() => {
     isPinnedRef.current = isPinned;
   }, [isPinned]);
+
+  useEffect(() => {
+    onSendRef.current = onSend;
+  }, [onSend]);
 
   useEffect(() => {
     if (!prevIsMobileRef.current && isMobile && isPinnedRef.current) {
@@ -636,9 +641,9 @@ export function ChatPage({
   // Add file to chat from Files tab (right-click "Add to chat")
   const handleAddFileToChat = useCallback(
     (filePath: string) => {
-      onSend?.(`Read and reference this file: ${filePath}`);
+      onSendRef.current?.(`Read and reference this file: ${filePath}`);
     },
-    [onSend],
+    [],
   );
 
   const handleApprovePlan = useCallback(() => {

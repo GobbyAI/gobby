@@ -487,19 +487,35 @@ def _apply_remove_test_arch_stage(db: LocalDatabase) -> None:
         db.execute("ALTER TABLE task_artifacts DROP COLUMN test_arch_attempts")
 
 
-_DEVELOPMENT_REVIEWER_SELECTOR_JSON = json.dumps(
-    {
-        "default": "qa-reviewer",
-        "rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}],
-    },
-    sort_keys=True,
-)
+def _development_reviewer_selector_json(default_reviewer: str) -> str:
+    return json.dumps(
+        {
+            "default": default_reviewer,
+            "rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}],
+        },
+        sort_keys=True,
+    )
+
+
+def _development_reviewer_selector_default(db: LocalDatabase) -> str:
+    row = db.fetchone(
+        """
+        SELECT reviewer_agent
+          FROM task_stages_registry
+         WHERE name = 'development'
+        """
+    )
+    reviewer_agent = row["reviewer_agent"] if row is not None else None
+    if isinstance(reviewer_agent, str) and reviewer_agent.strip():
+        return reviewer_agent.strip()
+    return "qa-reviewer"
 
 
 def _apply_stage_reviewer_selector_schema(db: LocalDatabase) -> None:
     columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_stages_registry)")}
     if "reviewer_agent_selector_json" not in columns:
         db.execute("ALTER TABLE task_stages_registry ADD COLUMN reviewer_agent_selector_json TEXT")
+    selector_json = _development_reviewer_selector_json(_development_reviewer_selector_default(db))
     db.execute(
         """
         UPDATE task_stages_registry
@@ -508,7 +524,7 @@ def _apply_stage_reviewer_selector_schema(db: LocalDatabase) -> None:
                updated_at = datetime('now')
          WHERE name = 'development'
         """,
-        (_DEVELOPMENT_REVIEWER_SELECTOR_JSON,),
+        (selector_json,),
     )
 
 

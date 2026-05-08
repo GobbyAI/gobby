@@ -3,6 +3,7 @@ import {
   normalizeStageRow,
   normalizeStagesRegistryResponse,
   normalizeTaskPayload,
+  parseReviewerAgentSelector,
 } from '../taskNormalization'
 
 describe('normalizeStageRow display_name fallback', () => {
@@ -71,5 +72,28 @@ describe('normalizeStageRow display_name fallback', () => {
 
     expect(task.current_stage?.name).toBe('development')
     expect(task.stages.map(stage => stage.name)).toEqual(['development'])
+  })
+
+  it('parses reviewer agent selector JSON for future stage registry callers', () => {
+    expect(
+      parseReviewerAgentSelector(
+        JSON.stringify({
+          default: 'qa-reviewer',
+          rules: [
+            { category: 'docs', reviewer_agent: 'doc-reviewer' },
+            { category: '', reviewer_agent: 'fallback-reviewer' },
+            { category: 'bad' },
+          ],
+        }),
+      ),
+    ).toEqual({
+      default: 'qa-reviewer',
+      rules: [
+        { category: 'docs', reviewer_agent: 'doc-reviewer' },
+        { reviewer_agent: 'fallback-reviewer' },
+      ],
+    })
+    expect(parseReviewerAgentSelector('{bad')).toBeNull()
+    expect(parseReviewerAgentSelector(JSON.stringify({ rules: [] }))).toBeNull()
   })
 })

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -55,7 +56,22 @@ class _GuideRow:
     line: str
 
 
-def execute_merge_workspace(
+async def execute_merge_workspace(
+    action: MergeWorkspaceAction,
+    *,
+    db: DatabaseProtocol,
+    services: object | None = None,
+) -> str | None:
+    """Merge source workspace into the target integration workspace."""
+    return await asyncio.to_thread(
+        _execute_merge_workspace_sync,
+        action,
+        db=db,
+        services=services,
+    )
+
+
+def _execute_merge_workspace_sync(
     action: MergeWorkspaceAction,
     *,
     db: DatabaseProtocol,

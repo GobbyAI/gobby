@@ -12,7 +12,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -44,7 +44,10 @@ def _assert_worktree_removed(
     assert not worktree_path.exists()
 
 
-def test_execute_merge_workspace_merges_worktree_and_completes_stage(temp_db, tmp_path: Path):
+async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
+    temp_db,
+    tmp_path: Path,
+):
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -95,7 +98,7 @@ def test_execute_merge_workspace_merges_worktree_and_completes_stage(temp_db, tm
         target_branch="integration/root",
     )
 
-    merge_sha = execute_merge_workspace(
+    merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
             task_id=leaf.id,
             task_ref=f"#{leaf.seq_num}",
@@ -113,7 +116,7 @@ def test_execute_merge_workspace_merges_worktree_and_completes_stage(temp_db, tm
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
 
 
-def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
+async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
     temp_db,
     tmp_path: Path,
 ):
@@ -197,7 +200,7 @@ def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch
         target_branch="gobby/integration/root",
     )
 
-    merge_sha = execute_merge_workspace(
+    merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
             task_id=root.id,
             task_ref=f"#{root.seq_num}",
@@ -227,7 +230,7 @@ def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch
     assert task_manager.artifacts.get_artifacts(dirty_leaf.id).worktree_id == dirty_source.id
 
 
-def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
+async def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
     temp_db,
     tmp_path: Path,
 ):
@@ -277,7 +280,7 @@ def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
         target_branch=integration_branch,
     )
 
-    merge_sha = execute_merge_workspace(
+    merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
             task_id=leaf.id,
             task_ref=f"#{leaf.seq_num}",
@@ -302,7 +305,7 @@ def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
 
 
-def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
+async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
     temp_db,
     tmp_path: Path,
 ):
@@ -351,7 +354,7 @@ def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
     )
 
     with pytest.raises(BuildWorkspaceError, match="integration workspace is dirty"):
-        execute_merge_workspace(
+        await execute_merge_workspace(
             MergeWorkspaceAction(
                 task_id=leaf.id,
                 task_ref=f"#{leaf.seq_num}",
@@ -366,7 +369,7 @@ def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
     assert task_path.exists()
 
 
-def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
+async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
     temp_db,
     tmp_path: Path,
 ):
@@ -428,7 +431,7 @@ def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
         target_branch="integration/root",
     )
 
-    merge_sha = execute_merge_workspace(
+    merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
             task_id=leaf.id,
             task_ref=f"#{leaf.seq_num}",
@@ -448,7 +451,7 @@ def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id == source.id
 
 
-def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
+async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     temp_db,
     tmp_path: Path,
 ):
@@ -521,7 +524,7 @@ def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
         target_branch="integration/root",
     )
 
-    merge_sha = execute_merge_workspace(
+    merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
             task_id=leaf.id,
             task_ref=f"#{leaf.seq_num}",
@@ -540,7 +543,7 @@ def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
 
 
-def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
+async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
     temp_db,
     tmp_path: Path,
 ):
@@ -634,7 +637,7 @@ def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
         target_branch="integration/root",
     )
 
-    merge_sha = execute_merge_workspace(
+    merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
             task_id=leaf.id,
             task_ref=f"#{leaf.seq_num}",
@@ -657,7 +660,7 @@ def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
 
 
-def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_link(
+async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_link(
     temp_db,
     tmp_path: Path,
 ):
@@ -742,7 +745,7 @@ def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_l
         target_branch="integration/root",
     )
 
-    merge_sha = execute_merge_workspace(
+    merge_sha = await execute_merge_workspace(
         MergeWorkspaceAction(
             task_id=leaf.id,
             task_ref=f"#{leaf.seq_num}",

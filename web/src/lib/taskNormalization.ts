@@ -27,6 +27,52 @@ export interface StageRegistryEntry extends StageStateView {
   is_terminal?: boolean | null
 }
 
+export interface ReviewerAgentSelectorRule {
+  category?: string
+  reviewer_agent: string
+}
+
+export interface ReviewerAgentSelector {
+  default: string
+  rules: ReviewerAgentSelectorRule[]
+}
+
+/**
+ * Parse a stage registry reviewer selector payload.
+ *
+ * Backends send this as JSON text so older clients can ignore it. New callers
+ * should use this helper instead of parsing `reviewer_agent_selector_json`
+ * inline, because malformed rows should degrade to the legacy reviewer field.
+ */
+export function parseReviewerAgentSelector(
+  value: string | null | undefined,
+): ReviewerAgentSelector | null {
+  if (!value) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const record = parsed as { default?: unknown; rules?: unknown }
+  if (typeof record.default !== 'string' || !record.default.trim()) return null
+  const rules = Array.isArray(record.rules)
+    ? record.rules.flatMap((rule): ReviewerAgentSelectorRule[] => {
+      if (!rule || typeof rule !== 'object') return []
+      const item = rule as { category?: unknown; reviewer_agent?: unknown }
+      if (typeof item.reviewer_agent !== 'string' || !item.reviewer_agent.trim()) return []
+      return [{
+        ...(typeof item.category === 'string' && item.category.trim()
+          ? { category: item.category }
+          : {}),
+        reviewer_agent: item.reviewer_agent,
+      }]
+    })
+    : []
+  return { default: record.default, rules }
+}
+
 export interface StagesRegistryWireResponse {
   registry?: RawStagePayload[]
   stages?: RawStagePayload[]

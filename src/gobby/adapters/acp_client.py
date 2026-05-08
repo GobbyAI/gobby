@@ -23,8 +23,9 @@ import json
 import logging
 import os
 import shutil
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
@@ -151,7 +152,7 @@ class ACPClient:
     prompt_timeout_env: ClassVar[str] = ""
     protocol_version: ClassVar[int] = 1
     default_prompt_timeout_seconds: ClassVar[float] = DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS
-    required_env: ClassVar[dict[str, str]] = {}
+    required_env: ClassVar[Mapping[str, str]] = MappingProxyType({})
 
     def __init__(
         self,

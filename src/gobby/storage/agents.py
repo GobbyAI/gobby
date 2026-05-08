@@ -26,6 +26,11 @@ TERMINAL_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = (
 )
 
 
+def _positive_rowcount(cursor: Any) -> int:
+    rowcount = getattr(cursor, "rowcount", 0)
+    return rowcount if isinstance(rowcount, int) and rowcount > 0 else 0
+
+
 @dataclass
 class AgentRun:
     """Agent run data model."""
@@ -458,7 +463,7 @@ class LocalAgentRunManager:
             """,
             (now, *filtered_run_ids, *filtered_run_ids),
         )
-        return cursor.rowcount or 0
+        return _positive_rowcount(cursor)
 
     def expire_sessions_for_terminal_runs(self) -> int:
         """Expire active/paused child sessions whose agent run is already terminal."""
@@ -486,7 +491,7 @@ class LocalAgentRunManager:
             """,
             (now, *TERMINAL_AGENT_RUN_STATUSES, *TERMINAL_AGENT_RUN_STATUSES),
         )
-        return cursor.rowcount or 0
+        return _positive_rowcount(cursor)
 
     def complete(
         self,
@@ -523,7 +528,7 @@ class LocalAgentRunManager:
             """,
             (result, tool_calls_count, turns_used, now, now, run_id),
         )
-        if not (cursor.rowcount or 0):
+        if not _positive_rowcount(cursor):
             return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
@@ -563,7 +568,7 @@ class LocalAgentRunManager:
             """,
             (error, tool_calls_count, turns_used, now, now, run_id),
         )
-        if not (cursor.rowcount or 0):
+        if not _positive_rowcount(cursor):
             return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
@@ -592,7 +597,7 @@ class LocalAgentRunManager:
             """,
             (error, tool_calls_count, turns_used, now, now, run_id),
         )
-        if not (cursor.rowcount or 0):
+        if not _positive_rowcount(cursor):
             return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
@@ -617,7 +622,7 @@ class LocalAgentRunManager:
             """,
             (terminal_reason, now, now, run_id),
         )
-        if not (cursor.rowcount or 0):
+        if not _positive_rowcount(cursor):
             return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
@@ -713,7 +718,7 @@ class LocalAgentRunManager:
             """,
             (now, run_id, tmux_session_name),
         )
-        return cursor.rowcount > 0
+        return _positive_rowcount(cursor) > 0
 
     def list_pending_with_pid(self, limit: int = 100) -> list[AgentRun]:
         """List pending agent runs that have a PID (spawned but not yet marked running)."""
@@ -876,7 +881,7 @@ class LocalAgentRunManager:
     def delete(self, run_id: str) -> bool:
         """Delete an agent run."""
         cursor = self.db.execute("DELETE FROM agent_runs WHERE id = ?", (run_id,))
-        return bool(cursor.rowcount and cursor.rowcount > 0)
+        return _positive_rowcount(cursor) > 0
 
     def cleanup_stale_runs(self, default_timeout_minutes: int = 30) -> int:
         """Mark stale running agent runs as timed out and expire their sessions.
@@ -982,7 +987,7 @@ class LocalAgentRunManager:
             """,
             (now, now, f"-{timeout_minutes}"),
         )
-        count = cursor.rowcount or 0
+        count = _positive_rowcount(cursor)
         if count > 0:
             logger.info(f"Failed {count} stale pending agent runs (>{timeout_minutes}m)")
         return count

@@ -45,6 +45,7 @@ interface YamlSaveContext {
   yamlAgent: AgentDefInfo | null
   yamlContent: string
   fetchDefinitions: (includeDeleted?: boolean) => void | Promise<void>
+  showToast: (text: string, type: ToastType) => void
 }
 
 interface SidebarYamlSaveContext {
@@ -69,6 +70,14 @@ function toPayloadState(context: AgentMutationContext) {
     blockedTools: context.blockedTools,
     blockedMcpTools: context.blockedMcpTools,
   }
+}
+
+function yamlErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isDatabaseBackedAgentSource(source: string): boolean {
+  return source === 'installed' || source === 'project'
 }
 
 export async function createAgentDefinition(context: CreateContext): Promise<void> {
@@ -118,11 +127,10 @@ export async function updateAgentDefinition(context: UpdateContext): Promise<voi
 
 export async function duplicateAgentDefinition(
   item: AgentDefInfo,
+  newName: string,
   fetchDefinitions: (includeDeleted?: boolean) => void | Promise<void>,
   showToast: (text: string, type: ToastType) => void,
 ): Promise<void> {
-  const newName = window.prompt('New agent name:', `${item.definition.name}-copy`)
-  if (!newName) return
   const body = buildDuplicateAgentBody(item, newName)
   try {
     const res = await fetch(`${getBaseUrl()}/api/agents/definitions`, {
@@ -208,15 +216,16 @@ export async function downloadAgentDefinition(name: string): Promise<void> {
   }
 }
 
-export async function saveYamlAgentDefinition(context: YamlSaveContext): Promise<void> {
-  if (!context.yamlAgent) return
+export async function saveYamlAgentDefinition(context: YamlSaveContext): Promise<boolean> {
+  if (!context.yamlAgent) return false
   let parsed: Record<string, unknown>
   try {
     parsed = parseYamlObject(context.yamlContent)
   } catch (e) {
-    throw new Error(`Invalid YAML: ${e instanceof Error ? e.message : String(e)}`)
+    context.showToast(`Invalid YAML: ${yamlErrorMessage(e)}`, 'error')
+    return false
   }
-  const isDb = context.yamlAgent.source.endsWith('-db')
+  const isDb = isDatabaseBackedAgentSource(context.yamlAgent.source)
   if (isDb && context.yamlAgent.db_id) {
     const body = buildYamlDefinitionBody(parsed, {
       name: context.yamlAgent.definition.name,
@@ -232,15 +241,23 @@ export async function saveYamlAgentDefinition(context: YamlSaveContext): Promise
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error('Failed to save agent definition')
+    if (!res.ok) {
+      context.showToast('Failed to save agent definition', 'error')
+      return false
+    }
   } else {
     const res = await fetch(
       `${getBaseUrl()}/api/agents/definitions/import/${context.yamlAgent.definition.name}`,
       { method: 'POST' },
     )
-    if (!res.ok) throw new Error('Failed to import agent definition to DB')
+    if (!res.ok) {
+      context.showToast('Failed to import agent definition to DB', 'error')
+      return false
+    }
   }
-  context.fetchDefinitions(true)
+  await context.fetchDefinitions(true)
+  context.showToast('Agent definition saved', 'success')
+  return true
 }
 
 export async function saveSidebarYamlAgentDefinition(
@@ -251,7 +268,7 @@ export async function saveSidebarYamlAgentDefinition(
   try {
     parsed = parseYamlObject(context.sidebarYamlContent)
   } catch (e) {
-    window.alert(`Invalid YAML: ${e instanceof Error ? e.message : String(e)}`)
+    context.showToast(`Invalid YAML: ${yamlErrorMessage(e)}`, 'error')
     return
   }
 
@@ -275,6 +292,7 @@ export async function saveSidebarYamlAgentDefinition(
       context.setEditingId(null)
       context.setCreateForm({ ...DEFAULT_FORM })
       context.fetchDefinitions(true)
+      context.showToast('Agent definition saved', 'success')
     } else {
       context.showToast('Failed to save agent from YAML', 'error')
     }
@@ -310,6 +328,7 @@ export async function moveAgentToProject(
   projectId: string | undefined,
   confirm: (options: ConfirmOptions) => Promise<boolean>,
   fetchDefinitions: (includeDeleted?: boolean) => void | Promise<void>,
+  showToast: (text: string, type: ToastType) => void,
 ): Promise<void> {
   if (!projectId || !item.db_id) return
   if (!await confirm({
@@ -323,9 +342,15 @@ export async function moveAgentToProject(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_id: projectId }),
     })
-    if (res.ok) fetchDefinitions(true)
+    if (res.ok) {
+      fetchDefinitions(true)
+      showToast(`Agent "${item.definition.name}" moved to project`, 'success')
+    } else {
+      showToast('Failed to move agent to project', 'error')
+    }
   } catch (e) {
     console.error('Failed to move agent to project:', e)
+    showToast('Failed to move agent to project', 'error')
   }
 }
 
@@ -333,6 +358,7 @@ export async function moveAgentToGlobal(
   item: AgentDefInfo,
   confirm: (options: ConfirmOptions) => Promise<boolean>,
   fetchDefinitions: (includeDeleted?: boolean) => void | Promise<void>,
+  showToast: (text: string, type: ToastType) => void,
 ): Promise<void> {
   if (!item.db_id) return
   if (!await confirm({
@@ -344,9 +370,15 @@ export async function moveAgentToGlobal(
     const res = await fetch(`${getBaseUrl()}/api/workflows/${item.db_id}/move-to-global`, {
       method: 'POST',
     })
-    if (res.ok) fetchDefinitions(true)
+    if (res.ok) {
+      fetchDefinitions(true)
+      showToast(`Agent "${item.definition.name}" moved to global`, 'success')
+    } else {
+      showToast('Failed to move agent to global', 'error')
+    }
   } catch (e) {
     console.error('Failed to move agent to global:', e)
+    showToast('Failed to move agent to global', 'error')
   }
 }
 
@@ -354,6 +386,7 @@ export async function restoreAgentFromTemplate(
   item: AgentDefInfo,
   confirm: (options: ConfirmOptions) => Promise<boolean>,
   fetchDefinitions: (includeDeleted?: boolean) => void | Promise<void>,
+  showToast: (text: string, type: ToastType) => void,
 ): Promise<void> {
   if (!item.db_id) return
   if (!await confirm({
@@ -365,9 +398,15 @@ export async function restoreAgentFromTemplate(
     const res = await fetch(`${getBaseUrl()}/api/workflows/${item.db_id}/restore-from-template`, {
       method: 'POST',
     })
-    if (res.ok) fetchDefinitions(true)
+    if (res.ok) {
+      fetchDefinitions(true)
+      showToast(`Agent "${item.definition.name}" restored from template`, 'success')
+    } else {
+      showToast('Failed to restore agent from template', 'error')
+    }
   } catch (e) {
     console.error('Failed to restore agent from template:', e)
+    showToast('Failed to restore agent from template', 'error')
   }
 }
 

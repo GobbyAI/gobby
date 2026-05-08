@@ -1,4 +1,4 @@
-tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-injection]
+tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-gates]
 
 rules:
   require-task-creation-skill-loaded:

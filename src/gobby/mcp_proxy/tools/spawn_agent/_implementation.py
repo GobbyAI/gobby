@@ -531,7 +531,18 @@ async def spawn_agent_impl(
             try:
                 await ensure_isolation_code_index(isolation_ctx.cwd)
             except Exception as e:
-                return {"success": False, "error": f"code_index_preflight_failed:{e}"}
+                reason = str(e)
+                return {
+                    "success": False,
+                    "error": "code_index_preflight_failed",
+                    "error_code": "code_index_preflight_failed",
+                    "message": reason,
+                    "details": {
+                        "preflight": "code_index",
+                        "cwd": isolation_ctx.cwd,
+                        "reason": reason,
+                    },
+                }
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
