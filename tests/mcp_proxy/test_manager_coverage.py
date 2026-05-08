@@ -1179,12 +1179,8 @@ class TestMCPClientManagerGetToolInputSchema:
 
         with patch.object(
             manager,
-            "list_tools",
-            return_value={
-                "test-server": [
-                    {"name": "test-tool", "inputSchema": expected_schema},
-                ]
-            },
+            "_list_tools_for_server",
+            new=AsyncMock(return_value=[{"name": "test-tool", "inputSchema": expected_schema}]),
         ):
             result = await manager.get_tool_input_schema("test-server", "test-tool")
 
@@ -1204,8 +1200,8 @@ class TestMCPClientManagerGetToolInputSchema:
 
         with patch.object(
             manager,
-            "list_tools",
-            return_value={"test-server": []},
+            "_list_tools_for_server",
+            new=AsyncMock(return_value=[]),
         ):
             with pytest.raises(MCPError, match="Tool nonexistent not found"):
                 await manager.get_tool_input_schema("test-server", "nonexistent")
@@ -1545,6 +1541,71 @@ class TestMCPClientManagerMonitorHealth:
             except asyncio.CancelledError:
                 pass
             assert mock_connection.health_check.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_monitor_health_keeps_transient_failure_below_warning(self, caplog):
+        """Transient health failures are tracked without warning-level log noise."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        mock_connection = AsyncMock()
+        mock_connection.is_connected = True
+        mock_connection.health_check.return_value = False
+        manager._connections["test-server"] = mock_connection
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+        )
+        manager._running = True
+        caplog.set_level("WARNING", logger="gobby.mcp_proxy.manager")
+
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
+
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
+
+        assert manager.health["test-server"].consecutive_failures == 1
+        assert "Health check failed for test-server" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_monitor_health_warns_on_unhealthy_transition(self, caplog):
+        """A server emits one warning when it crosses into unhealthy state."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        mock_connection = AsyncMock()
+        mock_connection.is_connected = True
+        mock_connection.health_check.return_value = False
+        manager._connections["test-server"] = mock_connection
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+            health=HealthState.DEGRADED,
+            consecutive_failures=4,
+        )
+        manager._running = True
+        caplog.set_level("WARNING", logger="gobby.mcp_proxy.manager")
+
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
+
+        with (
+            patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval),
+            patch.object(manager, "_reconnect", new_callable=AsyncMock),
+        ):
+            await manager._monitor_health()
+
+        assert manager.health["test-server"].health == HealthState.UNHEALTHY
+        assert "Health check failed for test-server" in caplog.text
 
     @pytest.mark.asyncio
     async def test_monitor_health_continues_when_no_connections(self):

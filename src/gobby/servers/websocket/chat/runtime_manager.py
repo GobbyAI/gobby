@@ -103,8 +103,6 @@ class WebChatRuntimeManager:
         """Start daemon-owned provider backends."""
         if background:
             await self._codex_backend.start(background=True)
-            await self._gemini_backend.start(background=True)
-            await self._qwen_backend.start(background=True)
             await self._droid_backend.start(background=True)
             return
 

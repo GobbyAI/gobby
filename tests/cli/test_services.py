@@ -1,5 +1,6 @@
 """Tests for service lifecycle utilities."""
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -13,6 +14,7 @@ from gobby.cli.services import (
     get_neo4j_status,
     is_neo4j_healthy,
     is_neo4j_installed,
+    is_qdrant_healthy,
     try_autoload_embedding_model,
 )
 
@@ -82,6 +84,34 @@ class TestIsNeo4jHealthy:
     @pytest.mark.asyncio
     async def test_unhealthy_when_no_url(self) -> None:
         assert await is_neo4j_healthy(None) is False
+
+    @pytest.mark.asyncio
+    async def test_unreachable_probe_does_not_log_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        caplog.set_level(logging.WARNING, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_neo4j_healthy("http://localhost:8474") is False
+
+        assert "Neo4j health check failed" not in caplog.text
+
+
+class TestIsQdrantHealthy:
+    """Tests for is_qdrant_healthy()."""
+
+    @pytest.mark.asyncio
+    async def test_unreachable_probe_does_not_log_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        caplog.set_level(logging.WARNING, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_qdrant_healthy("http://localhost:6333") is False
+
+        assert "Qdrant health check failed" not in caplog.text
 
 
 class TestGetNeo4jStatus:

@@ -114,7 +114,10 @@ class TmuxSessionManager:
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            proc.kill()
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
             await proc.wait()
             raise
         return (
@@ -385,8 +388,7 @@ class TmuxSessionManager:
         if rc != 0:
             message = stderr.strip()
             if any(error in message.lower() for error in _MISSING_SESSION_ERRORS):
-                log = logger.debug if missing_ok else logger.warning
-                log(
+                logger.debug(
                     "Tmux session '%s' was already missing during kill (missing_ok=%s): %s",
                     name,
                     missing_ok,

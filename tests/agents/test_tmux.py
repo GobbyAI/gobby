@@ -7,7 +7,7 @@ All tmux subprocess calls are mocked — no real tmux binary required.
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -210,6 +210,30 @@ class TestTmuxSessionManager:
             mock_run.return_value = (1, "", "no server running")
             result = await mgr.list_sessions()
             assert result == []
+
+    @pytest.mark.asyncio
+    async def test_run_timeout_handles_already_exited_process(self) -> None:
+        mgr = TmuxSessionManager()
+        proc = MagicMock()
+        proc.communicate = AsyncMock()
+        proc.kill.side_effect = ProcessLookupError()
+        proc.wait = AsyncMock()
+
+        with (
+            patch(
+                "gobby.agents.tmux.session_manager.asyncio.create_subprocess_exec",
+                return_value=proc,
+            ),
+            patch(
+                "gobby.agents.tmux.session_manager.asyncio.wait_for",
+                side_effect=TimeoutError,
+            ),
+        ):
+            with pytest.raises(TimeoutError):
+                await mgr._run("list-sessions", timeout=0.01)
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_list_sessions_with_entries(self) -> None:

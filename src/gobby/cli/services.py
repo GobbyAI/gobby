@@ -56,12 +56,12 @@ async def is_qdrant_healthy(url: str | None) -> bool:
             resp = await client.get(healthz_url, timeout=5)
             if resp.status_code == 200:
                 return True
-            logger.warning(
+            logger.debug(
                 "Qdrant health check failed: %s returned %s", healthz_url, resp.status_code
             )
             return False
     except httpx.HTTPError as e:
-        logger.warning("Qdrant health check failed: %s unreachable: %s", healthz_url, e)
+        logger.debug("Qdrant health check failed: %s unreachable: %s", healthz_url, e)
         return False
 
 
@@ -113,11 +113,11 @@ async def is_neo4j_healthy(url: str | None) -> bool:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=5)
             if resp.status_code >= 500:
-                logger.warning(f"Neo4j health check failed: {url} returned {resp.status_code}")
+                logger.debug("Neo4j health check failed: %s returned %s", url, resp.status_code)
                 return False
             return True
     except httpx.HTTPError as e:
-        logger.warning(f"Neo4j health check failed: {url} unreachable: {e}")
+        logger.debug("Neo4j health check failed: %s unreachable: %s", url, e)
         return False
 
 

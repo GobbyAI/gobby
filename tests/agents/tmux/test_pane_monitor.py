@@ -86,6 +86,23 @@ async def test_no_tmux_agents_noop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tmux_list_timeout_is_quiet(caplog: pytest.LogCaptureFixture) -> None:
+    """A transient tmux list timeout should not emit a warning traceback."""
+    callback = MagicMock()
+    monitor = _make_monitor_with_db(callback)
+    caplog.set_level("WARNING", logger="gobby.agents.tmux.pane_monitor")
+
+    with patch(
+        "gobby.agents.tmux.pane_monitor.TmuxSessionManager.list_sessions",
+        side_effect=TimeoutError,
+    ):
+        await monitor._check_panes()
+
+    callback.assert_not_called()
+    assert "failed to list tmux sessions" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_all_alive_noop() -> None:
     """When all agent tmux sessions are still alive, callback is never called."""
     callback = MagicMock()

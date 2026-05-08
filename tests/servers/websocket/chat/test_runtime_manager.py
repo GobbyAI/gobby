@@ -119,6 +119,21 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         assert manager.sandbox_policy_hash
 
+    @pytest.mark.asyncio
+    async def test_background_start_skips_acp_backends(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+        manager._codex_backend.start = AsyncMock()
+        manager._gemini_backend.start = AsyncMock()
+        manager._qwen_backend.start = AsyncMock()
+        manager._droid_backend.start = AsyncMock()
+
+        await manager.start(background=True)
+
+        manager._codex_backend.start.assert_awaited_once_with(background=True)
+        manager._droid_backend.start.assert_awaited_once_with(background=True)
+        manager._gemini_backend.start.assert_not_awaited()
+        manager._qwen_backend.start.assert_not_awaited()
+
 
 class TestGeminiBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
