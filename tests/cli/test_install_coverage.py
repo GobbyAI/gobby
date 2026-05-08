@@ -221,45 +221,111 @@ class TestInstallCommand:
         assert result.exit_code == 0
         assert "pre-commit" in result.output
 
-    @patch("gobby.cli.install.run_daemon_setup")
-    @patch(
-        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
-    )
-    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
-    @patch("gobby.cli.install._run_embedding_install", return_value="lmstudio")
-    @patch("gobby.cli.install.install_embedding")
-    @patch("gobby.cli.install.install_neo4j")
-    @patch("gobby.cli.install.install_qdrant")
-    @patch("gobby.cli.install.install_claude")
-    def test_install_neo4j_default(
+    def test_install_claude_targeted_skips_embedding_and_services(
         self,
-        mock_claude: MagicMock,
-        mock_qdrant: MagicMock,
-        mock_neo4j: MagicMock,
-        _embed: MagicMock,
-        _embed_wizard: MagicMock,
-        _install_dir: MagicMock,
-        _config: MagicMock,
-        _setup: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Neo4j installs by default (no --neo4j flag needed)."""
-        mock_claude.return_value = {
+        """Targeted CLI installs do not configure embeddings or Docker services."""
+        claude_result = {
             "success": True,
             "hooks_installed": ["PreToolUse"],
             "mcp_configured": True,
         }
-        mock_qdrant.return_value = {"success": True, "qdrant_url": "http://localhost:6333"}
-        mock_neo4j.return_value = {
-            "success": True,
-            "neo4j_url": "http://localhost:7474",
-            "bolt_url": "bolt://localhost:7687",
-            "compose_file": "/path/to/compose.yml",
-        }
-        result = runner.invoke(install, ["--claude"], catch_exceptions=False)
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch("gobby.cli.install._run_embedding_install") as mock_embedding,
+            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
+            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+        ):
+            result = runner.invoke(install, ["--claude"], catch_exceptions=False)
+
         assert result.exit_code == 0
-        assert "Neo4j" in result.output
+        assert "Embedding Provider" not in result.output
+        mock_embedding.assert_not_called()
+        mock_qdrant.assert_not_called()
+        mock_neo4j.assert_not_called()
+
+    def test_install_default_runs_embedding_and_services(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        """Default install still configures embeddings and external services."""
+        claude_result = {
+            "success": True,
+            "hooks_installed": ["PreToolUse"],
+            "mcp_configured": True,
+        }
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch("gobby.cli.install._is_claude_code_installed", return_value=True),
+            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
+            patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch(
+                "gobby.cli.install._run_embedding_install", return_value="lmstudio"
+            ) as mock_embedding,
+            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
+            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+        ):
+            result = runner.invoke(install, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        mock_embedding.assert_called_once()
+        mock_qdrant.assert_called_once()
         mock_neo4j.assert_called_once()
+
+    def test_install_all_no_ext_services_runs_embedding_only(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        """--all --no-ext-services still runs embedding setup and skips Docker services."""
+        claude_result = {
+            "success": True,
+            "hooks_installed": ["PreToolUse"],
+            "mcp_configured": True,
+        }
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch("gobby.cli.install._is_claude_code_installed", return_value=True),
+            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
+            patch("gobby.cli.install.install_claude", return_value=claude_result),
+            patch(
+                "gobby.cli.install._run_embedding_install", return_value="lmstudio"
+            ) as mock_embedding,
+            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
+            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+        ):
+            result = runner.invoke(
+                install,
+                ["--all", "--no-ext-services"],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        mock_embedding.assert_called_once()
+        mock_qdrant.assert_not_called()
+        mock_neo4j.assert_not_called()
 
     @patch("gobby.cli.install.run_daemon_setup")
     @patch(

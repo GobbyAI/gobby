@@ -198,6 +198,7 @@ def install(
         and not all_flag
     ):
         all_flag = True
+    is_full_install = all_flag
 
     # Build list of CLIs to install
     clis_to_install: list[str] = []
@@ -310,10 +311,13 @@ def install(
         if install_hooks:
             _run_git_hooks_install(install_git_hooks, project_path, results)
 
-        # Embedding provider setup (runs before Docker services so "none" can skip them)
-        embedding_provider = _run_embedding_install(
-            install_embedding, results, no_interactive=no_interactive_flag
-        )
+        # Embedding provider setup runs only for full installs. Targeted hook installs
+        # should not depend on local embedding or Docker service health.
+        embedding_provider = "none"
+        if is_full_install:
+            embedding_provider = _run_embedding_install(
+                install_embedding, results, no_interactive=no_interactive_flag
+            )
 
         # Voice chat (optional — installs ~500MB of deps including PyTorch)
         _run_voice_install(
@@ -326,12 +330,13 @@ def install(
 
         # Docker services (Qdrant + Neo4j, installed by default if Docker available)
         # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
-        if not no_ext_services_flag and embedding_provider != "none":
-            _run_qdrant_install(install_qdrant, results)
-            _run_neo4j_install(install_neo4j, neo4j_password, results)
-        elif embedding_provider == "none":
-            click.echo("Skipping Qdrant/Neo4j install (embeddings disabled)")
-            click.echo("")
+        if is_full_install:
+            if not no_ext_services_flag and embedding_provider != "none":
+                _run_qdrant_install(install_qdrant, results)
+                _run_neo4j_install(install_neo4j, neo4j_password, results)
+            elif embedding_provider == "none":
+                click.echo("Skipping Qdrant/Neo4j install (embeddings disabled)")
+                click.echo("")
 
         # Migration detection
         if mode == "global":

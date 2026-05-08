@@ -465,6 +465,46 @@ class TestInstallCommand:
         assert "Codex" in result.output
         mock_install_codex.assert_called_once()
 
+    def test_codex_install_skips_embedding(
+        self,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Targeted Codex install does not run embedding or Docker setup."""
+        codex_result = {
+            "success": True,
+            "hooks_installed": [],
+            "files_installed": ["/home/user/.gobby/hooks/codex/hook_dispatcher.py"],
+            "workflows_installed": [],
+            "commands_installed": [],
+            "plugins_installed": [],
+            "config_updated": True,
+            "mcp_configured": True,
+        }
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/test/config.yaml"},
+            ),
+            patch("gobby.cli.install.load_full_config_from_db", side_effect=FileNotFoundError),
+            patch("gobby.cli.install.install_codex", return_value=codex_result) as mock_codex,
+            patch("gobby.cli.install._run_embedding_install") as mock_embedding,
+            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
+            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+        ):
+            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+                result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
+
+        assert result.exit_code == 0
+        assert "Codex" in result.output
+        assert "Embedding Provider" not in result.output
+        mock_codex.assert_called_once()
+        mock_embedding.assert_not_called()
+        mock_qdrant.assert_not_called()
+        mock_neo4j.assert_not_called()
+
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_git_hooks")
     @patch("gobby.cli.install._is_claude_code_installed")
