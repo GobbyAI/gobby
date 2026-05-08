@@ -236,35 +236,43 @@ function compareTasks(a: GobbyTask, b: GobbyTask, col: SortColumn, dir: SortDire
   return dir === 'asc' ? cmp : -cmp
 }
 
+function groupKeyPart(value: string): string {
+  return `${value.length}:${value}`
+}
+
 function groupKeyAndLabel(t: GobbyTask): { key: string; label: string; sortPriority: number } {
   const ownerId = getCanonicalTaskState(t).owner_session_id ?? null
   const shortId = ownerId ? ownerId.slice(0, 8) : null
   if (t.agent_name && shortId) {
-    return { key: `${t.agent_name}#${shortId}`, label: `${t.agent_name} #${shortId}`, sortPriority: 0 }
+    return {
+      key: `agent-session:${groupKeyPart(t.agent_name)}:${groupKeyPart(shortId)}`,
+      label: `${t.agent_name} #${shortId}`,
+      sortPriority: 0,
+    }
   }
   if (t.agent_name) {
-    return { key: t.agent_name, label: t.agent_name, sortPriority: 0 }
+    return { key: `agent:${groupKeyPart(t.agent_name)}`, label: t.agent_name, sortPriority: 0 }
   }
   if (shortId) {
-    return { key: `#${shortId}`, label: `#${shortId}`, sortPriority: 1 }
+    return { key: `session:${groupKeyPart(shortId)}`, label: `#${shortId}`, sortPriority: 1 }
   }
-  return { key: '__unassigned__', label: 'Unassigned', sortPriority: 2 }
+  return { key: 'unassigned:all', label: 'Unassigned', sortPriority: 2 }
 }
 
-function groupTasksByAgent(tasks: GobbyTask[]): Array<{ label: string; tasks: GobbyTask[] }> {
-  const groups = new Map<string, { label: string; sortPriority: number; tasks: GobbyTask[] }>()
+function groupTasksByAgent(tasks: GobbyTask[]): Array<{ key: string; label: string; tasks: GobbyTask[] }> {
+  const groups = new Map<string, { key: string; label: string; sortPriority: number; tasks: GobbyTask[] }>()
   for (const t of tasks) {
     const { key, label, sortPriority } = groupKeyAndLabel(t)
     const existing = groups.get(key)
     if (existing) {
       existing.tasks.push(t)
     } else {
-      groups.set(key, { label, sortPriority, tasks: [t] })
+      groups.set(key, { key, label, sortPriority, tasks: [t] })
     }
   }
   return Array.from(groups.values())
     .sort((a, b) => a.sortPriority - b.sortPriority || a.label.localeCompare(b.label))
-    .map(({ label, tasks: groupTasks }) => ({ label, tasks: groupTasks }))
+    .map(({ key, label, tasks: groupTasks }) => ({ key, label, tasks: groupTasks }))
 }
 
 function SortArrow({ column, sortColumn, sortDirection }: { column: SortColumn; sortColumn: SortColumn; sortDirection: SortDirection }) {
@@ -620,8 +628,8 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         <div className={TABLE_CONTAINER_CLS}>
           {groupBy === 'agent' ? (
             <>
-              {groupTasksByAgent(displayTasks).map(({ label, tasks: agentTasks }) => (
-                <div key={label} className={GROUP_SECTION_CLS}>
+              {groupTasksByAgent(displayTasks).map(({ key, label, tasks: agentTasks }) => (
+                <div key={key} className={GROUP_SECTION_CLS}>
                   <div className={GROUP_HEADER_CLS}>{label} <span className={GROUP_COUNT_CLS}>({agentTasks.length})</span></div>
                   <table className={TABLE_CLS}>
                     <thead>

@@ -141,7 +141,8 @@ class TestServiceDispatchHelpers:
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service._macos_restart")
     @patch("gobby.cli.installers.service._linux_restart")
-    def test_service_restart(self, mock_lr, mock_mr, mock_sys) -> None:
+    @patch("gobby.runner_maintenance.write_shutdown_source")
+    def test_service_restart(self, mock_write_shutdown, mock_lr, mock_mr, mock_sys) -> None:
         mock_mr.return_value = {"success": True, "p": "mac"}
         mock_lr.return_value = {"success": True, "p": "linux"}
 
@@ -149,7 +150,11 @@ class TestServiceDispatchHelpers:
         assert service_restart()["p"] == "mac"
 
         mock_sys.platform = "linux"
-        assert service_restart()["p"] == "linux"
+        assert service_restart(shutdown_source="http_restart")["p"] == "linux"
 
         mock_sys.platform = "win32"
         assert service_restart()["success"] is False
+        assert mock_write_shutdown.call_args_list[0].args == ("service_restart",)
+        assert mock_write_shutdown.call_args_list[0].kwargs == {"intent": "restart"}
+        assert mock_write_shutdown.call_args_list[1].args == ("http_restart",)
+        assert mock_write_shutdown.call_args_list[1].kwargs == {"intent": "restart"}

@@ -71,10 +71,12 @@ class TestSpawnAgentIsolation:
     async def test_spawn_agent_worktree_creates_worktree(self, mock_runner, agent_body) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
+        worktree_storage = MagicMock()
+        git_manager = MagicMock()
         registry = create_spawn_agent_registry(
             mock_runner,
-            worktree_storage=MagicMock(),
-            git_manager=MagicMock(),
+            worktree_storage=worktree_storage,
+            git_manager=git_manager,
             db=MagicMock(),
         )
 
@@ -95,11 +97,11 @@ class TestSpawnAgentIsolation:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
                 return_value=None,
-            ),
+            ) as mock_config_error,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
                 new=AsyncMock(),
-            ),
+            ) as mock_code_index,
         ):
             mock_ctx.return_value = {
                 "id": "proj-123",
@@ -138,15 +140,40 @@ class TestSpawnAgentIsolation:
             assert call_args[0][0] == "worktree"
             assert result["success"] is True
             assert result["worktree_id"] == "wt-123"
+            mock_get_handler.assert_called_once_with(
+                "worktree",
+                git_manager=git_manager,
+                worktree_storage=worktree_storage,
+                clone_manager=None,
+                clone_storage=None,
+            )
+            mock_handler.prepare_environment.assert_awaited_once()
+            spawn_config = mock_handler.prepare_environment.await_args.args[0]
+            assert spawn_config.prompt == "Test prompt"
+            assert spawn_config.project_id == "proj-123"
+            assert spawn_config.project_path == "/path/to/project"
+            assert spawn_config.provider == "claude"
+            assert spawn_config.parent_session_id == "parent-789"
+            mock_handler.build_context_prompt.assert_called_once_with(
+                "Test prompt",
+                mock_handler.prepare_environment.return_value,
+            )
+            # Real provider config and gcode preflight behavior is covered in
+            # tests/agents/test_isolation.py; this boundary test verifies wiring.
+            mock_config_error.assert_called_once_with("/tmp/worktrees/branch", "claude")
+            mock_code_index.assert_awaited_once_with("/tmp/worktrees/branch")
+            mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_spawn_agent_clone_creates_clone(self, mock_runner, agent_body) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
+        clone_storage = MagicMock()
+        clone_manager = MagicMock()
         registry = create_spawn_agent_registry(
             mock_runner,
-            clone_storage=MagicMock(),
-            clone_manager=MagicMock(),
+            clone_storage=clone_storage,
+            clone_manager=clone_manager,
             db=MagicMock(),
         )
 
@@ -167,11 +194,11 @@ class TestSpawnAgentIsolation:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
                 return_value=None,
-            ),
+            ) as mock_config_error,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
                 new=AsyncMock(),
-            ),
+            ) as mock_code_index,
         ):
             mock_ctx.return_value = {
                 "id": "proj-123",
@@ -210,6 +237,29 @@ class TestSpawnAgentIsolation:
             assert call_args[0][0] == "clone"
             assert result["success"] is True
             assert result["clone_id"] == "clone-123"
+            mock_get_handler.assert_called_once_with(
+                "clone",
+                git_manager=None,
+                worktree_storage=None,
+                clone_manager=clone_manager,
+                clone_storage=clone_storage,
+            )
+            mock_handler.prepare_environment.assert_awaited_once()
+            spawn_config = mock_handler.prepare_environment.await_args.args[0]
+            assert spawn_config.prompt == "Test prompt"
+            assert spawn_config.project_id == "proj-123"
+            assert spawn_config.project_path == "/path/to/project"
+            assert spawn_config.provider == "claude"
+            assert spawn_config.parent_session_id == "parent-789"
+            mock_handler.build_context_prompt.assert_called_once_with(
+                "Test prompt",
+                mock_handler.prepare_environment.return_value,
+            )
+            # Real provider config and gcode preflight behavior is covered in
+            # tests/agents/test_isolation.py; this boundary test verifies wiring.
+            mock_config_error.assert_called_once_with("/tmp/clones/branch", "claude")
+            mock_code_index.assert_awaited_once_with("/tmp/clones/branch")
+            mock_execute.assert_awaited_once()
 
 
 class TestSpawnAgentPreRegistration:

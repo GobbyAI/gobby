@@ -1,5 +1,6 @@
 """Pytest configuration and shared fixtures for Gobby tests."""
 
+import os
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -209,8 +210,11 @@ def mock_daemon_config() -> "MagicMock":
     config = MagicMock()
     config.daemon_port = 60887
     config.websocket.port = 60888
-    config.telemetry.log_file = "~/.gobby/logs/client.log"
-    config.telemetry.log_file_error = "~/.gobby/logs/client_error.log"
+    config.telemetry.log_file = os.environ.get("GOBBY_LOGGING_CLIENT", "~/.gobby/logs/client.log")
+    config.telemetry.log_file_error = os.environ.get(
+        "GOBBY_LOGGING_CLIENT_ERROR",
+        "~/.gobby/logs/client_error.log",
+    )
     config.ui.enabled = False
     config.databases.neo4j.url = None
     config.databases.neo4j.auth = None

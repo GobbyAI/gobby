@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.shutdown_intent import ShutdownIntent
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -542,7 +543,7 @@ def read_shutdown_source() -> str:
 
 def setup_signal_handlers(
     shutdown_callback: Callable[[], None],
-    shutdown_intent_callback: Callable[[Any], None] | None = None,
+    shutdown_intent_callback: Callable[[ShutdownIntent], None] | None = None,
 ) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()

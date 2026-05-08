@@ -58,7 +58,8 @@ class TestAgentRestartReconciliation:
             tmux_session_name="gobby-run-1",
         )
         output_reader.start_reader.assert_awaited_once_with("run-1", "gobby-run-1")
-        runner.agent_lifecycle_monitor._cleanup_agent.assert_not_awaited()
+        runner.agent_lifecycle_monitor.cleanup_agent.assert_not_awaited()
+        runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reconcile_missing_tmux_session_cleans_run(self) -> None:
@@ -77,8 +78,9 @@ class TestAgentRestartReconciliation:
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
 
         assert reconciled == 2
-        runner.agent_lifecycle_monitor._cleanup_agent.assert_awaited_once()
-        cleanup_call = runner.agent_lifecycle_monitor._cleanup_agent.await_args
+        runner.agent_lifecycle_monitor.get_cleanup_agent.assert_called_once_with()
+        runner.agent_lifecycle_monitor.cleanup_agent.assert_awaited_once()
+        cleanup_call = runner.agent_lifecycle_monitor.cleanup_agent.await_args
         assert cleanup_call.args[0] is run
         assert "tmux session 'gobby-run-1' was missing" in cleanup_call.kwargs["terminal_payload"]
         run_storage.update_runtime.assert_not_called()
@@ -103,7 +105,8 @@ class TestAgentRestartReconciliation:
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
 
         assert reconciled == 2
-        runner.agent_lifecycle_monitor._cleanup_agent.assert_awaited_once()
+        runner.agent_lifecycle_monitor.get_cleanup_agent.assert_called_once_with()
+        runner.agent_lifecycle_monitor.cleanup_agent.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
@@ -121,9 +124,13 @@ class TestAgentRestartReconciliation:
         )
 
     def _runner(self, run_storage: SimpleNamespace) -> SimpleNamespace:
+        cleanup_agent = AsyncMock()
         return SimpleNamespace(
             agent_runner=SimpleNamespace(run_storage=run_storage),
-            agent_lifecycle_monitor=SimpleNamespace(_cleanup_agent=AsyncMock()),
+            agent_lifecycle_monitor=SimpleNamespace(
+                get_cleanup_agent=MagicMock(return_value=cleanup_agent),
+                cleanup_agent=cleanup_agent,
+            ),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=["parent-1"]),
             ),

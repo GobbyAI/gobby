@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _restart_lock: asyncio.Lock | None = None
 _SERVICE_RESTART_HELPER = (
     "from gobby.servers.routes.admin._lifecycle import _run_service_restart_helper; "
-    "import sys; _run_service_restart_helper(int(sys.argv[1]), int(sys.argv[2]))"
+    "import sys; _run_service_restart_helper(int(sys.argv[1]), int(sys.argv[2]), sys.argv[3])"
 )
 _DIRECT_RESTART_HELPER = (
     "from gobby.servers.routes.admin._lifecycle import _run_direct_restart_helper; "
@@ -80,7 +80,7 @@ def _force_stop_process(pid: int) -> None:
     _wait_for_process_exit(pid, timeout=0.5)
 
 
-def _run_service_restart_helper(current_pid: int, port: int) -> None:
+def _run_service_restart_helper(current_pid: int, port: int, shutdown_source: str) -> None:
     """Finish a service-managed restart after the current daemon exits."""
     try:
         from gobby.cli.daemon import _wait_for_daemon_health
@@ -92,7 +92,7 @@ def _run_service_restart_helper(current_pid: int, port: int) -> None:
         if exited and _wait_for_daemon_health(port, timeout=3.0, interval=0.25) is not None:
             return
 
-        result = service_restart()
+        result = service_restart(shutdown_source=shutdown_source)
         if not result.get("success"):
             _append_restart_helper_log(
                 f"Admin restart service handoff failed: {result.get('error', 'unknown error')}"
@@ -156,10 +156,18 @@ def _should_restart_via_service_manager() -> bool:
     return bool(status.get("installed") and status.get("enabled"))
 
 
-def _spawn_restart_helper(*, current_pid: int, port: int, service_managed: bool) -> None:
+def _spawn_restart_helper(
+    *,
+    current_pid: int,
+    port: int,
+    service_managed: bool,
+    shutdown_source: str,
+) -> None:
     """Launch a detached helper that completes restart after this process exits."""
     helper = _SERVICE_RESTART_HELPER if service_managed else _DIRECT_RESTART_HELPER
-    helper_args = [str(current_pid), str(port)] if service_managed else [str(current_pid)]
+    helper_args = (
+        [str(current_pid), str(port), shutdown_source] if service_managed else [str(current_pid)]
+    )
     subprocess.Popen(  # nosec B603
         [sys.executable, "-c", helper, *helper_args],
         stdout=subprocess.DEVNULL,
@@ -253,6 +261,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 current_pid=current_pid,
                 port=server.port,
                 service_managed=service_managed,
+                shutdown_source="http_restart",
             )
 
             # Schedule shutdown of the current daemon

@@ -258,6 +258,7 @@ class TestAdminRoutes:
             lifecycle._SERVICE_RESTART_HELPER,
             "4321",
             str(mock_server.port),
+            "http_restart",
         ]
         mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
         assert mock_server._runner._shutdown_requested is True
@@ -306,9 +307,9 @@ class TestAdminRestartHelpers:
         mock_wait_for_health.side_effect = [None, 0.5]
         mock_service_restart.return_value = {"success": True, "method": "launchctl"}
 
-        lifecycle._run_service_restart_helper(4321, 60887)
+        lifecycle._run_service_restart_helper(4321, 60887, "http_restart")
 
-        mock_service_restart.assert_called_once_with()
+        mock_service_restart.assert_called_once_with(shutdown_source="http_restart")
         assert mock_service_restart.call_count == 1
         assert mock_service_restart.call_args is not None
         assert mock_wait_for_health.call_count == 2

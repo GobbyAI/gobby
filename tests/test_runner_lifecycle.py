@@ -394,6 +394,29 @@ class TestInitSubsystems:
         with suppress(asyncio.CancelledError):
             await task
 
+    @pytest.mark.asyncio
+    async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(self, caplog) -> None:
+        from gobby.runner_lifecycle_subsystems import _start_agent_lifecycle_monitor
+
+        tracker = runner_lifecycle.StartupTracker()
+        monitor = SimpleNamespace(
+            cleanup_stale_pending_runs=AsyncMock(side_effect=RuntimeError("cleanup failed")),
+            start=AsyncMock(side_effect=RuntimeError("start failed")),
+        )
+        runner = SimpleNamespace(agent_lifecycle_monitor=monitor)
+        reconcile = AsyncMock(side_effect=RuntimeError("reconcile failed"))
+
+        with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+            await _start_agent_lifecycle_monitor(runner, tracker, reconcile)
+
+        reconcile.assert_awaited_once_with(runner)
+        monitor.cleanup_stale_pending_runs.assert_awaited_once()
+        monitor.start.assert_awaited_once()
+        assert tracker.steps_completed == ["Agent lifecycle monitor"]
+        assert "Agent restart reconciliation failed during startup" in caplog.text
+        assert "Agent stale pending cleanup failed during startup" in caplog.text
+        assert "Agent lifecycle monitor start failed during startup" in caplog.text
+
 
 class TestRunGobbyFunction:
     """Tests for run_gobby async function."""

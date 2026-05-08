@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -148,6 +149,11 @@ class AgentLifecycleMonitor:
     def register_master_fd(self, run_id: str, fd: int) -> None:
         """Register a PTY master file descriptor for an agent."""
         self._master_fds[run_id] = fd
+
+    def get_cleanup_agent(self) -> Callable[..., Awaitable[None]] | None:
+        """Return the cleanup callable used for restart reconciliation."""
+        cleanup_agent = getattr(self._cleanup_handler, "cleanup_agent", None)
+        return cleanup_agent if callable(cleanup_agent) else None
 
     async def terminalize_cancelled_run(
         self,

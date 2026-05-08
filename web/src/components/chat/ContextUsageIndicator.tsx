@@ -96,7 +96,7 @@ export function ContextUsageIndicator({
           strokeLinecap="round"
         />
       </svg>
-      <span className="chat-session-status__state tabular-nums">{indicatorLabel}</span>
+      <span className="tabular-nums">{indicatorLabel}</span>
     </div>
   )
 }

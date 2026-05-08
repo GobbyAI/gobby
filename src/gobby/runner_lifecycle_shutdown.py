@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
 
@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.runner_lifecycle")
 
 _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
+
+
+class ReapChildProcesses(Protocol):
+    async def __call__(self, *, preserve_agents: bool = False) -> None: ...
 
 
 async def _await_critical_stop_hook_grace_window() -> None:
@@ -243,7 +247,7 @@ async def shutdown_daemon_services(
     await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
     shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
     cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
-    reap_remaining_child_processes: Callable[..., Awaitable[None]],
+    reap_remaining_child_processes: ReapChildProcesses,
     shutdown_telemetry: Callable[[], None],
     cleanup_pid_file: Callable[[], None],
 ) -> None:

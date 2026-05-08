@@ -122,6 +122,8 @@ def read_shutdown_intent(
             )
 
         data = json.loads(marker.read_text())
+        if not isinstance(data, dict):
+            raise TypeError("shutdown marker must be a JSON object")
         if consume:
             marker.unlink(missing_ok=True)
 
@@ -152,7 +154,7 @@ def read_shutdown_intent(
             timestamp=timestamp,
             raw=data,
         )
-    except Exception as exc:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         return ShutdownIntentRecord(
             intent=ShutdownIntent.STOP,
             source="unknown",

@@ -563,9 +563,6 @@ def stop(ctx: click.Context, docker_flag: bool, shutdown_intent: str = "stop") -
     svc = get_service_status()
     if svc.get("installed") and svc.get("running"):
         previous_pid = _get_running_daemon_pid(svc)
-        from gobby.runner_maintenance import write_shutdown_source
-
-        write_shutdown_source(shutdown_source, intent=shutdown_intent)
         click.echo("Stopping via OS service manager...")
         result = service_stop(shutdown_intent=shutdown_intent, shutdown_source=shutdown_source)
         if result.get("success"):

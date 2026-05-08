@@ -174,10 +174,8 @@ async def _cleanup_missing_tmux_agent_run(
     if monitor is None:
         return False
 
-    cleanup_agent = getattr(monitor, "_cleanup_agent", None)
-    if not callable(cleanup_agent):
-        cleanup_handler = getattr(monitor, "_cleanup_handler", None)
-        cleanup_agent = getattr(cleanup_handler, "cleanup_agent", None)
+    get_cleanup_agent = getattr(monitor, "get_cleanup_agent", None)
+    cleanup_agent = get_cleanup_agent() if callable(get_cleanup_agent) else None
     if not callable(cleanup_agent):
         logger.warning(
             "Cannot clean missing tmux-backed agent %s: cleanup handler unavailable",
