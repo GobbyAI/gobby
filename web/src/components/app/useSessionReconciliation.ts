@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject } from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import type { GobbySession } from "../../types/sessions";
 import {
   loadPersistedConversationId,
@@ -31,6 +31,11 @@ export function useSessionReconciliation({
   switchConversation,
   startNewChat,
 }: UseSessionReconciliationArgs) {
+  const initialPersistedDbSessionIdRef = useRef<string | null | undefined>(undefined);
+  if (initialPersistedDbSessionIdRef.current === undefined) {
+    initialPersistedDbSessionIdRef.current = loadPersistedDbSessionId();
+  }
+
   useEffect(() => {
     if (!projectReady) return;
     if (initialReconciliationDoneRef.current) return;
@@ -43,6 +48,11 @@ export function useSessionReconciliation({
 
     const persistedConversationId = loadPersistedConversationId();
     const persistedDbSessionId = loadPersistedDbSessionId();
+    const rejectedInitialPersistedSession =
+      initialPersistedDbSessionIdRef.current !== null &&
+      persistedDbSessionId === null &&
+      persistedConversationId === null &&
+      dbSessionId === null;
 
     const activeMainChatId = dbSessionId || persistedDbSessionId;
     const match = activeMainChatId
@@ -62,6 +72,9 @@ export function useSessionReconciliation({
     } else if (persistedDbSessionId && webChatSessions.length === 0) {
       return;
     } else if (persistedConversationId && !persistedDbSessionId) {
+      initialReconciliationDoneRef.current = true;
+      return;
+    } else if (rejectedInitialPersistedSession) {
       initialReconciliationDoneRef.current = true;
       return;
     } else if (webChatSessions.length > 0) {

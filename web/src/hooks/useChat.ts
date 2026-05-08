@@ -230,6 +230,9 @@ export function useChat() {
   );
   const setOnPlanReady = useCallback((fn: (content: string | null) => void) => {
     onPlanReadyRef.current = fn;
+    if (planContentRef.current) {
+      fn(planContentRef.current);
+    }
   }, []);
 
   // Callback when artifact event arrives from backend (show_file)
