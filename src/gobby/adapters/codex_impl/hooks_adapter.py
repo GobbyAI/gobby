@@ -27,15 +27,9 @@ logger = logging.getLogger(__name__)
 class CodexHooksAdapter(BaseAdapter):
     """Adapter for Codex CLI hooks.json lifecycle events.
 
-    Translates Codex hooks.json payloads (SessionStart, UserPromptSubmit,
-    PreToolUse, PostToolUse, Stop) to unified HookEvent format and converts
-    HookResponse back to the JSON schema Codex expects on hook stdout.
-
-    Codex hooks.json uses the same input format as Claude Code (same event
-    names, same stdin JSON structure) but expects a different output schema:
-    - No ``continue`` field
-    - ``decision``: ``"approve"`` or ``"block"``
-    - ``hookSpecificOutput.additionalContext`` for context injection
+    Translates Codex hooks.json payloads to unified HookEvent format and
+    converts HookResponse back to the event-specific JSON schema Codex expects
+    on hook stdout.
     """
 
     source = SessionSource.CODEX
@@ -45,13 +39,23 @@ class CodexHooksAdapter(BaseAdapter):
         "SessionStart": HookEventType.SESSION_START,
         "UserPromptSubmit": HookEventType.BEFORE_AGENT,
         "PreToolUse": HookEventType.BEFORE_TOOL,
+        "PermissionRequest": HookEventType.PERMISSION_REQUEST,
         "PostToolUse": HookEventType.AFTER_TOOL,
+        "PreCompact": HookEventType.PRE_COMPACT,
+        "PostCompact": HookEventType.POST_COMPACT,
         "Stop": HookEventType.STOP,
     }
 
-    # Hook events that only accept systemMessage (not additionalContext).
-    # Codex rejects/ignores additionalContext for these event types.
-    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {"PreToolUse", "Stop"}
+    # Hook events where context must be routed through top-level systemMessage.
+    # These schemas do not support hookSpecificOutput.additionalContext.
+    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {
+        "PreToolUse",
+        "PermissionRequest",
+        "PreCompact",
+        "PostCompact",
+        "Stop",
+    }
+    COMPACT_EVENTS: set[str] = {"PreCompact", "PostCompact"}
 
     def __init__(self, hook_manager: HookManager | None = None):
         self._hook_manager = hook_manager
@@ -129,6 +133,24 @@ class CodexHooksAdapter(BaseAdapter):
             )
 
         if response.decision in ("deny", "block"):
+            if hook_event_name == "PermissionRequest":
+                decision: dict[str, Any] = {"behavior": "deny"}
+                if normalized_reason:
+                    decision["message"] = normalized_reason
+                return {
+                    "continue": True,
+                    "hookSpecificOutput": {
+                        "hookEventName": "PermissionRequest",
+                        "decision": decision,
+                    },
+                }
+
+            if hook_event_name in self.COMPACT_EVENTS:
+                return {
+                    "continue": False,
+                    "stopReason": normalized_reason or "Blocked by Gobby hook",
+                }
+
             if hook_event_name == "PreToolUse":
                 deny_result: dict[str, Any] = {
                     "decision": "block",
@@ -165,6 +187,11 @@ class CodexHooksAdapter(BaseAdapter):
             return block_result
 
         result: dict[str, Any] = {"continue": True}
+        if hook_event_name == "PermissionRequest":
+            result["hookSpecificOutput"] = {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "allow"},
+            }
 
         # Build additionalContext from all context sources
         context_parts: list[tuple[str, str]] = []
@@ -176,7 +203,7 @@ class CodexHooksAdapter(BaseAdapter):
         session_start_hook = hook_event_name == "SessionStart"
 
         # Route system_message by event type:
-        # - systemMessage-only events (PreToolUse, Stop): visible systemMessage
+        # - systemMessage-only events: visible systemMessage
         # - SessionStart: startup context only via additionalContext
         # - UserPromptSubmit, PostToolUse: additionalContext only (hidden from user)
         if response.system_message:
@@ -203,7 +230,6 @@ class CodexHooksAdapter(BaseAdapter):
                     context_parts.append(("metadata", "\n".join(context_lines)))
 
         # Build hookSpecificOutput or systemMessage based on event type.
-        # PreToolUse/Stop only accept systemMessage — additionalContext is rejected.
         if context_parts:
             combined_context = truncate_additional_context(
                 "\n\n".join(part for _, part in context_parts),

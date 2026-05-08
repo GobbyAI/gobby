@@ -1939,27 +1939,47 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
         assert hook_event is None
 
-    def test_translate_pre_compact_unsupported_returns_none(self) -> None:
-        """Codex terminal compact hooks remain unsupported and no-op."""
+    @pytest.mark.parametrize(
+        ("hook_type", "expected_event_type"),
+        [
+            ("PermissionRequest", HookEventType.PERMISSION_REQUEST),
+            ("PreCompact", HookEventType.PRE_COMPACT),
+            ("PostCompact", HookEventType.POST_COMPACT),
+        ],
+    )
+    def test_translate_new_codex_hook_events(
+        self, hook_type: str, expected_event_type: HookEventType
+    ) -> None:
+        """Translate new Codex 0.129 hook events to unified events."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
         hook_event = adapter.translate_to_hook_event(
             {
-                "hook_type": "PreCompact",
+                "hook_type": hook_type,
                 "input_data": {"session_id": "thread-123"},
                 "source": "codex",
             }
         )
 
-        assert hook_event is None
+        assert hook_event is not None
+        assert hook_event.event_type == expected_event_type
 
     def test_all_event_types_mapped(self) -> None:
-        """All 5 Codex hook types are in EVENT_MAP."""
+        """All 8 Codex hook types are in EVENT_MAP."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
-        expected = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
+        expected = {
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact",
+            "SessionStart",
+            "UserPromptSubmit",
+            "Stop",
+        }
         assert set(CodexHooksAdapter.EVENT_MAP.keys()) == expected
 
 
@@ -2001,6 +2021,56 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["continue"] is False
         assert result["decision"] == "block"
         assert result["reason"] == "Not allowed"
+
+    def test_permission_request_allow_uses_decision_behavior(self) -> None:
+        """PermissionRequest allow must use Codex decision.behavior."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow")
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        assert result["continue"] is True
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PermissionRequest"
+        assert hso["decision"] == {"behavior": "allow"}
+        rendered = repr(result)
+        assert "updatedInput" not in rendered
+        assert "updatedPermissions" not in rendered
+        assert "interrupt" not in rendered
+
+    def test_permission_request_deny_uses_decision_behavior(self) -> None:
+        """PermissionRequest deny must not use top-level block fields."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="deny", reason="Not allowed")
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "reason" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PermissionRequest"
+        assert hso["decision"] == {"behavior": "deny", "message": "Not allowed"}
+        rendered = repr(result)
+        assert "updatedInput" not in rendered
+        assert "updatedPermissions" not in rendered
+        assert "interrupt" not in rendered
+
+    @pytest.mark.parametrize("hook_type", ["PreCompact", "PostCompact"])
+    def test_compact_block_uses_continue_false_stop_reason(self, hook_type: str) -> None:
+        """Compact blocks use only universal output fields."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="block", reason="Compaction blocked")
+        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+
+        assert result == {"continue": False, "stopReason": "Compaction blocked"}
+        assert "decision" not in result
+        assert "reason" not in result
+        assert "hookSpecificOutput" not in result
 
     def test_pre_tool_use_block_uses_permission_decision(self) -> None:
         """PreToolUse blocks must use Codex permissionDecision, not continue=false."""
@@ -2156,6 +2226,36 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         hso = result["hookSpecificOutput"]
         assert hso["hookEventName"] == "UserPromptSubmit"
         assert "Session info" in hso["additionalContext"]
+
+    def test_system_message_routes_to_additional_context_for_post_tool_use(self) -> None:
+        """PostToolUse routes system_message to additionalContext, not systemMessage."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", system_message="Tool note")
+        result = adapter.translate_from_hook_response(response, hook_type="PostToolUse")
+
+        assert "systemMessage" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PostToolUse"
+        assert "Tool note" in hso["additionalContext"]
+
+    @pytest.mark.parametrize("hook_type", ["PermissionRequest", "PreCompact", "PostCompact"])
+    def test_context_without_additional_context_schema_routes_to_system_message(
+        self, hook_type: str
+    ) -> None:
+        """Events without additionalContext schemas route context to systemMessage."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", context="Rule context")
+        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+
+        if hook_type == "PermissionRequest":
+            assert result["hookSpecificOutput"]["decision"] == {"behavior": "allow"}
+        else:
+            assert "hookSpecificOutput" not in result
+        assert "Rule context" in result["systemMessage"]
 
     def test_system_message_routes_only_to_additional_context_for_session_start(self) -> None:
         """SessionStart keeps the banner in startup context only once."""

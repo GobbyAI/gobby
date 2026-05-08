@@ -2,13 +2,15 @@
 Codex CLI installation for Gobby hooks.
 
 This module handles installing and uninstalling Gobby hook integration
-for OpenAI Codex CLI via hooks.json (codex_hooks feature).
+for OpenAI Codex CLI via hooks.json (hooks feature).
 """
 
+import hashlib
 import json
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +39,26 @@ from .shared import (
 logger = logging.getLogger(__name__)
 
 type TomlValue = str | int | float | bool | datetime | list["TomlValue"] | dict[str, "TomlValue"]
+
+CODEX_HOOK_EVENT_KEY_LABELS: dict[str, str] = {
+    "PreToolUse": "pre_tool_use",
+    "PermissionRequest": "permission_request",
+    "PostToolUse": "post_tool_use",
+    "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
+    "SessionStart": "session_start",
+    "UserPromptSubmit": "user_prompt_submit",
+    "Stop": "stop",
+}
+
+CODEX_MATCHER_HASH_EVENTS = {
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "PreCompact",
+    "PostCompact",
+    "SessionStart",
+}
 
 
 def _get_hooks_dir() -> Path:
@@ -151,6 +173,193 @@ def _migrate_from_notify(config: TOMLDocument, hooks_dir: Path) -> None:
                 pass
 
 
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    """Atomically write JSON to a file in its parent directory."""
+    fd, temp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=f"{path.stem}_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
+
+
+def _clean_gobby_handlers_from_groups(groups: list[Any]) -> tuple[list[Any], bool]:
+    """Remove Gobby-owned command handlers while preserving unrelated handlers."""
+    cleaned_groups: list[Any] = []
+    removed = False
+
+    for group in groups:
+        if not isinstance(group, dict):
+            if _is_gobby_hook(group):
+                removed = True
+            else:
+                cleaned_groups.append(group)
+            continue
+
+        handlers = group.get("hooks")
+        if not isinstance(handlers, list):
+            if _is_gobby_hook(group):
+                removed = True
+            else:
+                cleaned_groups.append(group)
+            continue
+
+        cleaned_handlers = [handler for handler in handlers if not _is_gobby_hook(handler)]
+        if len(cleaned_handlers) != len(handlers):
+            removed = True
+
+        if cleaned_handlers:
+            cleaned_group = deepcopy(group)
+            cleaned_group["hooks"] = cleaned_handlers
+            cleaned_groups.append(cleaned_group)
+
+    return cleaned_groups, removed
+
+
+def _codex_hook_state_key(
+    hooks_file: Path, event_name: str, group_index: int, handler_index: int
+) -> str:
+    event_label = CODEX_HOOK_EVENT_KEY_LABELS[event_name]
+    return f"{hooks_file.resolve()}:{event_label}:{group_index}:{handler_index}"
+
+
+def _normalized_codex_command_hook_hash(
+    event_name: str,
+    group: dict[str, Any],
+    hook: dict[str, Any],
+) -> str | None:
+    """Return Codex's normalized trust hash for one command hook."""
+    command = hook.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+
+    try:
+        timeout = int(hook.get("timeout", 600))
+    except (TypeError, ValueError):
+        timeout = 600
+    timeout = max(1, timeout)
+
+    normalized_hook: dict[str, Any] = {
+        "async": hook.get("async") if isinstance(hook.get("async"), bool) else False,
+        "command": command,
+        "timeout": timeout,
+        "type": "command",
+    }
+    status_message = hook.get("statusMessage")
+    if isinstance(status_message, str):
+        normalized_hook["statusMessage"] = status_message
+
+    identity: dict[str, Any] = {
+        "event_name": CODEX_HOOK_EVENT_KEY_LABELS[event_name],
+        "hooks": [normalized_hook],
+    }
+    matcher = group.get("matcher")
+    if event_name in CODEX_MATCHER_HASH_EVENTS and matcher is not None:
+        identity["matcher"] = matcher
+
+    serialized = json.dumps(
+        identity,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(serialized).hexdigest()}"
+
+
+def _iter_gobby_hook_trust_entries(
+    hooks_file: Path,
+    hooks_config: dict[str, Any],
+) -> Iterator[tuple[str, str]]:
+    """Yield Codex hooks.state key/hash pairs for Gobby-owned command hooks."""
+    hooks = hooks_config.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+
+    for event_name in CODEX_HOOK_EVENT_KEY_LABELS:
+        groups = hooks.get(event_name)
+        if not isinstance(groups, list):
+            continue
+        for group_index, group in enumerate(groups):
+            if not isinstance(group, dict):
+                continue
+            handlers = group.get("hooks")
+            if not isinstance(handlers, list):
+                continue
+            for handler_index, handler in enumerate(handlers):
+                if not isinstance(handler, dict) or not _is_gobby_hook(handler):
+                    continue
+                current_hash = _normalized_codex_command_hook_hash(event_name, group, handler)
+                if current_hash:
+                    yield (
+                        _codex_hook_state_key(
+                            hooks_file,
+                            event_name,
+                            group_index,
+                            handler_index,
+                        ),
+                        current_hash,
+                    )
+
+
+def _ensure_table(parent: TOMLDocument | Table | dict[str, Any], key: str) -> Table:
+    existing = parent.get(key)
+    if isinstance(existing, Table):
+        return existing
+    new_table = tomlkit.table()
+    parent[key] = new_table
+    return new_table
+
+
+def _ensure_codex_hook_trust_state(config: TOMLDocument, hooks_file: Path) -> set[str]:
+    """Mark installed Gobby hooks as trusted in Codex config.toml."""
+    hooks_config = json.loads(hooks_file.read_text(encoding="utf-8"))
+    entries = list(_iter_gobby_hook_trust_entries(hooks_file, hooks_config))
+    if not entries:
+        return set()
+
+    hooks_table = _ensure_table(config, "hooks")
+    state_table = _ensure_table(hooks_table, "state")
+    trusted_keys: set[str] = set()
+
+    for key, trusted_hash in entries:
+        existing = state_table.get(key)
+        entry = existing if isinstance(existing, Table) else tomlkit.table()
+        entry["trusted_hash"] = trusted_hash
+        state_table[key] = entry
+        trusted_keys.add(key)
+
+    return trusted_keys
+
+
+def _remove_codex_hook_trust_state(config: TOMLDocument, state_keys: set[str]) -> None:
+    """Remove only trust-state entries that correspond to Gobby-owned hooks."""
+    if not state_keys:
+        return
+
+    hooks_table = config.get("hooks")
+    if not isinstance(hooks_table, (dict, Table)):
+        return
+
+    state_table = hooks_table.get("state")
+    if not isinstance(state_table, (dict, Table)):
+        return
+
+    for key in state_keys:
+        if key in state_table:
+            del state_table[key]
+
+    if not state_table:
+        del hooks_table["state"]
+    if not hooks_table:
+        del config["hooks"]
+
+
 def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
     """Load hooks-template.json, substitute $HOOKS_DIR, merge into ~/.codex/hooks.json.
 
@@ -175,27 +384,19 @@ def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Could not read existing hooks.json, overwriting: {e}")
 
-    if "hooks" not in existing:
+    if not isinstance(existing.get("hooks"), dict):
         existing["hooks"] = {}
 
     hooks_installed = []
     for hook_type, hook_config in gobby_hooks_config.get("hooks", {}).items():
-        existing["hooks"][hook_type] = hook_config
+        existing_groups = existing["hooks"].get(hook_type, [])
+        if not isinstance(existing_groups, list):
+            existing_groups = []
+        cleaned_groups, _ = _clean_gobby_handlers_from_groups(existing_groups)
+        existing["hooks"][hook_type] = cleaned_groups + hook_config
         hooks_installed.append(hook_type)
 
-    # Atomic write
-    fd, temp_path = tempfile.mkstemp(dir=str(codex_home), suffix=".tmp", prefix="hooks_")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(existing, f, indent=2)
-            f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, hooks_file)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-        raise
+    _atomic_write_json(hooks_file, existing)
 
     return hooks_installed
 
@@ -275,7 +476,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
     result["commands_installed"] = cli.get("commands", [])
     result["plugins_installed"] = shared.get("plugins", [])
 
-    # 4. Update ~/.codex/config.toml: enable feature flag, migrate from notify
+    # 4. Update ~/.codex/config.toml: enable stable hooks and trust Gobby handlers
     codex_config_path = codex_home / "config.toml"
     try:
         existing_config = ""
@@ -288,8 +489,10 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         # Migrate from legacy notify mechanism
         _migrate_from_notify(updated_config, hooks_dir)
 
-        # Enable codex_hooks feature flag
-        _set_toml_value(updated_config, "features.codex_hooks", True)
+        # Enable stable hooks and remove the deprecated codex_hooks flag.
+        _remove_toml_key(updated_config, "features.codex_hooks")
+        _set_toml_value(updated_config, "features.hooks", True)
+        _ensure_codex_hook_trust_state(updated_config, codex_home / "hooks.json")
 
         if updated_config != parsed_config:
             if codex_config_path.exists():
@@ -347,14 +550,30 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
 
     # 1. Remove gobby hooks from ~/.codex/hooks.json
     hooks_file = codex_home / "hooks.json"
+    gobby_hook_state_keys: set[str] = set()
     if hooks_file.exists():
         try:
             hooks_config = json.loads(hooks_file.read_text(encoding="utf-8"))
-            if "hooks" in hooks_config:
+            if isinstance(hooks_config, dict) and isinstance(hooks_config.get("hooks"), dict):
+                gobby_hook_state_keys = {
+                    key for key, _ in _iter_gobby_hook_trust_entries(hooks_file, hooks_config)
+                }
                 for hook_type in list(hooks_config["hooks"].keys()):
-                    if _is_gobby_hook(hooks_config["hooks"][hook_type]):
+                    hook_groups = hooks_config["hooks"][hook_type]
+                    if not isinstance(hook_groups, list):
+                        if _is_gobby_hook(hook_groups):
+                            del hooks_config["hooks"][hook_type]
+                            result["hooks_removed"].append(hook_type)
+                        continue
+
+                    cleaned_groups, removed = _clean_gobby_handlers_from_groups(hook_groups)
+                    if not removed:
+                        continue
+                    if cleaned_groups:
+                        hooks_config["hooks"][hook_type] = cleaned_groups
+                    else:
                         del hooks_config["hooks"][hook_type]
-                        result["hooks_removed"].append(hook_type)
+                    result["hooks_removed"].append(hook_type)
 
                 if not hooks_config["hooks"]:
                     del hooks_config["hooks"]
@@ -381,7 +600,7 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
         except OSError:
             pass
 
-    # 3. Update config.toml: remove feature flag and legacy notify
+    # 3. Update config.toml: remove hook feature flags, Gobby trust state, and legacy notify
     codex_config_path = codex_home / "config.toml"
     try:
         if codex_config_path.exists():
@@ -389,8 +608,10 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
             existing = _load_toml_config(existing_text)
             updated = deepcopy(existing)
 
-            # Remove feature flag
+            # Remove feature flags
+            _remove_toml_key(updated, "features.hooks")
             _remove_toml_key(updated, "features.codex_hooks")
+            _remove_codex_hook_trust_state(updated, gobby_hook_state_keys)
 
             # Remove legacy notify if still present
             _remove_toml_key(updated, "notify")

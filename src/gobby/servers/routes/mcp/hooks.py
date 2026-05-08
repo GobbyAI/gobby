@@ -78,6 +78,16 @@ def _graceful_error_response(
         if isinstance(result, dict):
             return result
 
+    if source == "codex":
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        codex_response = CodexHooksAdapter().translate_from_hook_response(
+            build_graceful_error_hook_response(error_msg),
+            hook_type=hook_type,
+        )
+        if isinstance(codex_response, dict):
+            return codex_response
+
     from gobby.adapters.claude_code import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()

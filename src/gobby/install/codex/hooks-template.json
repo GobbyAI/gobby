@@ -31,6 +31,17 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=PermissionRequest"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": ".*",
@@ -38,6 +49,26 @@
           {
             "type": "command",
             "command": "ghook --gobby-owned --cli=codex --type=PostToolUse"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=PreCompact"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=PostCompact"
           }
         ]
       }

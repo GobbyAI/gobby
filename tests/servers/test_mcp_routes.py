@@ -2529,6 +2529,39 @@ class TestHooksEndpoints:
         warning.assert_not_called()
         debug.assert_called()
 
+    def test_execute_hook_codex_pre_compact_error_is_graceful(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Codex compact hook errors should return Codex-valid non-fatal output."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.handle.side_effect = RuntimeError("compact failed")
+        server.app.state.hook_manager = mock_hook_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "PreCompact",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-compact", "cwd": "/tmp"},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["continue"] is True
+        assert "compact failed" in data["systemMessage"]
+        assert "hookSpecificOutput" not in data
+        assert "decision" not in data
+        assert "reason" not in data
+        assert "stopReason" not in data
+        mock_hook_manager.handle.assert_called_once()
+
     def test_execute_hook_codex_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Codex requests should normalize before adapter dispatch."""
         server = create_http_server(
