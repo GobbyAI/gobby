@@ -343,7 +343,7 @@ class TestQwenBackend:
         )
         assert mock_warmup.await_count == 1
         assert mock_warmup.await_args is not None
-        resolved_project_path = str(Path("/tmp/project").resolve())
+        resolved_project_path = str(Path(session.project_path).resolve())
         client.create_session.assert_awaited_once_with(
             model="qwen3.6-35b-a3b-q8-local(openai)",
             cwd=resolved_project_path,

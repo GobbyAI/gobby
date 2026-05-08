@@ -5,6 +5,8 @@ Provides a FastAPI-based HTTP server for REST endpoints, MCP tool proxying,
 and session management. Local-first version: no platform auth, no remote sync.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+    from gobby.runner import GobbyRunner
     from gobby.servers.websocket.server import WebSocketServer
     from gobby.utils.tool_metrics import ToolMetricsManager
 
@@ -46,7 +49,7 @@ class HTTPServer:
 
     def __init__(
         self,
-        services: "ServiceContainer",
+        services: ServiceContainer,
         port: int = 8000,
         test_mode: bool = False,
         codex_client: Any | None = None,
@@ -100,9 +103,9 @@ class HTTPServer:
         self._running = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._daemon: Any = None  # Set externally by daemon
-        self._runner: Any | None = None
+        self._runner: GobbyRunner | None = None
 
-    def _init_mcp_subsystems(self, services: "ServiceContainer", port: int) -> None:
+    def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""
         assert services.mcp_manager is not None, "caller must check services.mcp_manager"
         # Determine WebSocket port
@@ -262,7 +265,7 @@ class HTTPServer:
 
     # Property accessors for services (delegate to container)
     @property
-    def config(self) -> "DaemonConfig | None":
+    def config(self) -> DaemonConfig | None:
         return self.services.config
 
     @property
@@ -282,19 +285,19 @@ class HTTPServer:
         self.services.task_manager = value
 
     @property
-    def mcp_manager(self) -> "MCPClientManager | None":
+    def mcp_manager(self) -> MCPClientManager | None:
         return self.services.mcp_manager
 
     @mcp_manager.setter
-    def mcp_manager(self, value: "MCPClientManager | None") -> None:
+    def mcp_manager(self, value: MCPClientManager | None) -> None:
         self.services.mcp_manager = value
 
     @property
-    def llm_service(self) -> "LLMService | None":
+    def llm_service(self) -> LLMService | None:
         return self.services.llm_service
 
     @llm_service.setter
-    def llm_service(self, value: "LLMService | None") -> None:
+    def llm_service(self, value: LLMService | None) -> None:
         self.services.llm_service = value
 
     @property
@@ -314,11 +317,11 @@ class HTTPServer:
         self.services.message_processor = value
 
     @property
-    def metrics_manager(self) -> "ToolMetricsManager | None":
+    def metrics_manager(self) -> ToolMetricsManager | None:
         return self.services.metrics_manager
 
     @metrics_manager.setter
-    def metrics_manager(self, value: "ToolMetricsManager | None") -> None:
+    def metrics_manager(self, value: ToolMetricsManager | None) -> None:
         self.services.metrics_manager = value
 
     @property
@@ -545,7 +548,7 @@ class HTTPServer:
 
 
 async def create_server(
-    services: "ServiceContainer",
+    services: ServiceContainer,
     port: int = 60887,
     test_mode: bool = False,
 ) -> HTTPServer:

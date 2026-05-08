@@ -228,6 +228,7 @@ async def _start_agent_lifecycle_monitor(
     if not monitor:
         return
 
+    startup_errors: list[str] = []
     try:
         try:
             reconciled_runs = await reconcile_agent_runs_after_restart(runner)
@@ -236,21 +237,27 @@ async def _start_agent_lifecycle_monitor(
                     "Reconciled %d active agent run(s) after daemon restart",
                     reconciled_runs,
                 )
-        except Exception:
+        except Exception as e:
+            startup_errors.append(f"reconcile failed: {e}")
             logger.exception("Agent restart reconciliation failed during startup")
 
         try:
             await monitor.cleanup_stale_pending_runs()
-        except Exception:
+        except Exception as e:
+            startup_errors.append(f"cleanup failed: {e}")
             logger.exception("Agent stale pending cleanup failed during startup")
 
         try:
             await monitor.start()
-        except Exception:
+        except Exception as e:
+            startup_errors.append(f"start failed: {e}")
             logger.exception("Agent lifecycle monitor start failed during startup")
     finally:
         if tracker:
-            tracker.complete("Agent lifecycle monitor")
+            if startup_errors:
+                tracker.error("Agent lifecycle monitor", "; ".join(startup_errors))
+            else:
+                tracker.complete("Agent lifecycle monitor")
 
 
 async def _start_cron_scheduler(runner: GobbyRunner, tracker: StartupTracker | None) -> None:

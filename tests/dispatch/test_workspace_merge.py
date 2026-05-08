@@ -8,6 +8,7 @@ import pytest
 from gobby.build.workspaces import BuildWorkspaceError, _integration_branch
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.workspace_merge import execute_merge_workspace
+from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -45,9 +46,9 @@ def _assert_worktree_removed(
 
 
 async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -117,9 +118,9 @@ async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
 
 
 async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -231,9 +232,9 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
 
 
 async def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -306,9 +307,9 @@ async def test_execute_merge_workspace_adopts_missing_integration_worktree_metad
 
 
 async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -370,9 +371,9 @@ async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_workt
 
 
 async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -452,9 +453,9 @@ async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
 
 
 async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -544,9 +545,9 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
 
 
 async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -661,9 +662,9 @@ async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
 
 
 async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_link(
-    temp_db,
+    temp_db: LocalDatabase,
     tmp_path: Path,
-):
+) -> None:
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"

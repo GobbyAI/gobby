@@ -100,6 +100,11 @@ export function SessionsFilterDropdown({
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowCustomDate(filters.datePreset === "custom");
+  }, [filters.datePreset]);
+
   function update(patch: Partial<SessionsFilters>): void {
     onChange({ ...filters, ...patch });
   }
@@ -123,7 +128,18 @@ export function SessionsFilterDropdown({
   }
 
   function handleDatePresetChange(preset: DatePreset): void {
+    setShowCustomDate(preset === "custom");
     update({ datePreset: preset });
+  }
+
+  function handleCustomDateToggle(): void {
+    const nextShowCustomDate = !showCustomDate;
+    setShowCustomDate(nextShowCustomDate);
+    if (!nextShowCustomDate) {
+      update({ datePreset: "all" });
+    } else if (filters.dateCustomFrom || filters.dateCustomTo) {
+      update({ datePreset: "custom" });
+    }
   }
 
   function handleReset(): void {
@@ -239,7 +255,7 @@ export function SessionsFilterDropdown({
               <button
                 type="button"
                 className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground hover:text-foreground text-left"
-                onClick={() => setShowCustomDate((prev) => !prev)}
+                onClick={handleCustomDateToggle}
                 aria-expanded={showCustomDate}
               >
                 {showCustomDate ? "▾" : "▸"} Custom range

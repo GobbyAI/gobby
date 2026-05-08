@@ -48,6 +48,9 @@ export function useSessionReconciliation({
 
     const persistedConversationId = loadPersistedConversationId();
     const persistedDbSessionId = loadPersistedDbSessionId();
+    // rejectedInitialPersistedSession means initialPersistedDbSessionIdRef saw a
+    // persisted session at mount, but persistedDbSessionId, persistedConversationId,
+    // and dbSessionId are now all cleared.
     const rejectedInitialPersistedSession =
       initialPersistedDbSessionIdRef.current !== null &&
       persistedDbSessionId === null &&

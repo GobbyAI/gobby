@@ -102,7 +102,10 @@ class CronExecutor:
 
         readiness_reason = spawn_readiness_blocker(self.services)
         if readiness_reason is not None:
-            logger.info("Cron agent spawn skipped: %s", readiness_reason)
+            logger.info(
+                "Cron agent spawn skipped",
+                extra={"readiness_reason": readiness_reason},
+            )
             return f"Agent spawn skipped: {readiness_reason}"
         if not self.agent_runner:
             raise RuntimeError("agent_runner not configured for cron executor")

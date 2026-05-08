@@ -532,15 +532,15 @@ async def spawn_agent_impl(
                 await ensure_isolation_code_index(isolation_ctx.cwd)
             except Exception as e:
                 reason = str(e)
+                # Keep code_index preflight failures structured so callers can distinguish
+                # isolation failures from normal spawn failures without parsing text.
                 return {
                     "success": False,
                     "error": "code_index_preflight_failed",
-                    "error_code": "code_index_preflight_failed",
                     "message": reason,
                     "details": {
                         "preflight": "code_index",
                         "cwd": isolation_ctx.cwd,
-                        "reason": reason,
                     },
                 }
 

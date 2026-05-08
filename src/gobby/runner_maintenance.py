@@ -562,7 +562,10 @@ def setup_signal_handlers(
             shutdown_record = read_shutdown_intent(home=get_gobby_home())
             logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
             if shutdown_intent_callback is not None:
-                shutdown_intent_callback(shutdown_record.intent)
+                try:
+                    shutdown_intent_callback(shutdown_record.intent)
+                except Exception:
+                    logger.exception("Shutdown intent callback failed")
             shutdown_callback()
 
         return handle_shutdown

@@ -180,7 +180,7 @@ def _spawn_restart_helper(
 
 def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> None:
     """Set the in-process runner shutdown state when this server owns one."""
-    runner = getattr(server, "__dict__", {}).get("_runner")
+    runner = getattr(server, "_runner", None)
     if runner is None:
         return
     runner._shutdown_intent = intent

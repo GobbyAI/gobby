@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.shutdown_intent import ShutdownIntent
+
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
@@ -144,7 +146,7 @@ class GobbyRunner:
     verbose: bool
     machine_id: str | None
     _shutdown_requested: bool
-    _shutdown_intent: Any
+    _shutdown_intent: ShutdownIntent
     _metrics_cleanup_task: asyncio.Task[None] | None
     _vector_rebuild_task: asyncio.Task[None] | None
     _zombie_messages_task: asyncio.Task[None] | None

@@ -124,7 +124,11 @@ function logoPathForTheme(theme: 'dark' | 'light'): string {
 }
 
 function cacheBustedIconHref(path: string): string {
-  return `${path}?${ICON_CACHE_PARAM}`
+  const fragmentIndex = path.indexOf('#')
+  const pathWithoutFragment = fragmentIndex >= 0 ? path.slice(0, fragmentIndex) : path
+  const fragment = fragmentIndex >= 0 ? path.slice(fragmentIndex) : ''
+  const separator = pathWithoutFragment.includes('?') ? '&' : '?'
+  return `${pathWithoutFragment}${separator}${ICON_CACHE_PARAM}${fragment}`
 }
 
 function upsertIconLinks(rel: string, href: string, type?: string): void {

@@ -718,7 +718,7 @@ class LocalAgentRunManager:
             """,
             (now, run_id, tmux_session_name),
         )
-        return _positive_rowcount(cursor) > 0
+        return bool(_positive_rowcount(cursor))
 
     def list_pending_with_pid(self, limit: int = 100) -> list[AgentRun]:
         """List pending agent runs that have a PID (spawned but not yet marked running)."""
@@ -881,7 +881,7 @@ class LocalAgentRunManager:
     def delete(self, run_id: str) -> bool:
         """Delete an agent run."""
         cursor = self.db.execute("DELETE FROM agent_runs WHERE id = ?", (run_id,))
-        return _positive_rowcount(cursor) > 0
+        return bool(_positive_rowcount(cursor))
 
     def cleanup_stale_runs(self, default_timeout_minutes: int = 30) -> int:
         """Mark stale running agent runs as timed out and expire their sessions.

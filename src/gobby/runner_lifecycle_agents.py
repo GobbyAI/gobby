@@ -119,10 +119,11 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
         run_storage = runner.agent_runner.run_storage
         pane_pid = getattr(live_info, "pane_pid", None)
         update_runtime = getattr(run_storage, "update_runtime", None)
+        did_reconcile = False
         if pane_pid is not None and pane_pid != getattr(run, "pid", None):
             if callable(update_runtime):
                 update_runtime(run_id, pid=pane_pid, tmux_session_name=session_name)
-            reconciled += 1
+                did_reconcile = True
 
         if output_reader is None:
             from gobby.agents.tmux import get_tmux_output_reader
@@ -130,13 +131,15 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
             output_reader = get_tmux_output_reader()
         try:
             if await output_reader.start_reader(run_id, session_name):
-                reconciled += 1
+                did_reconcile = True
         except Exception as e:
             logger.warning(
                 "Failed to restart tmux output reader for recovered agent %s: %s",
                 run_id,
                 e,
             )
+        if did_reconcile:
+            reconciled += 1
 
     return reconciled
 

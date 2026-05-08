@@ -17,6 +17,7 @@ describe('ContextUsageIndicator', () => {
     )
 
     const indicator = screen.getByText('25%').closest('div')
+    expect(indicator).toHaveClass('text-xs', 'text-muted-foreground')
     expect(indicator).toHaveAttribute(
       'title',
       [

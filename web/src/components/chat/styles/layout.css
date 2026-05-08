@@ -251,9 +251,9 @@
   align-items: center;
   justify-content: center;
   gap: 0.25rem;
-  min-height: 2.25rem;
-  min-width: 2.25rem;
-  padding: 0.5rem;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  padding: 0;
   background: var(--accent-tint);
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);

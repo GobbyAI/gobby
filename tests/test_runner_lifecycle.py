@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from _pytest.logging import LogCaptureFixture
 
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
@@ -395,7 +396,10 @@ class TestInitSubsystems:
             await task
 
     @pytest.mark.asyncio
-    async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(self, caplog) -> None:
+    async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(
+        self,
+        caplog: LogCaptureFixture,
+    ) -> None:
         from gobby.runner_lifecycle_subsystems import _start_agent_lifecycle_monitor
 
         tracker = runner_lifecycle.StartupTracker()
@@ -412,7 +416,16 @@ class TestInitSubsystems:
         reconcile.assert_awaited_once_with(runner)
         monitor.cleanup_stale_pending_runs.assert_awaited_once()
         monitor.start.assert_awaited_once()
-        assert tracker.steps_completed == ["Agent lifecycle monitor"]
+        assert tracker.steps_completed == []
+        assert tracker.errors == [
+            {
+                "subsystem": "Agent lifecycle monitor",
+                "error": (
+                    "reconcile failed: reconcile failed; cleanup failed: cleanup failed; "
+                    "start failed: start failed"
+                ),
+            }
+        ]
         assert "Agent restart reconciliation failed during startup" in caplog.text
         assert "Agent stale pending cleanup failed during startup" in caplog.text
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
@@ -708,6 +721,42 @@ class TestSignalHandlerBehavior:
         assert shutdown_called is False
         captured_handler()
         assert shutdown_called is True
+
+    def test_signal_handler_still_shuts_down_when_intent_callback_fails(
+        self,
+        tmp_path: Path,
+        caplog: LogCaptureFixture,
+    ) -> None:
+        from gobby.runner_maintenance import setup_signal_handlers
+
+        mock_loop = MagicMock()
+        captured_handler = None
+
+        def capture_handler(sig, handler):
+            nonlocal captured_handler
+            if sig == signal.SIGTERM:
+                captured_handler = handler
+
+        mock_loop.add_signal_handler = capture_handler
+        shutdown_callback = MagicMock()
+        shutdown_intent_callback = MagicMock(side_effect=RuntimeError("intent failed"))
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+        ):
+            setup_signal_handlers(
+                shutdown_callback,
+                shutdown_intent_callback=shutdown_intent_callback,
+            )
+
+        assert captured_handler is not None
+        with caplog.at_level(logging.ERROR, logger="gobby.runner_maintenance"):
+            captured_handler()
+
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.STOP)
+        shutdown_callback.assert_called_once_with()
+        assert "Shutdown intent callback failed" in caplog.text
 
 
 class TestAgentEventBroadcastingCallback:

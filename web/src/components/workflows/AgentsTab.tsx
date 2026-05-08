@@ -407,10 +407,14 @@ export function AgentsTab({
     if (!duplicateAgent) return
     const name = duplicateName.trim()
     if (!name) return
+    if (definitions.some(definition => definition.definition.name === name)) {
+      showToast(`Agent "${name}" already exists`, 'error')
+      return
+    }
     await duplicateAgentDefinition(duplicateAgent, name, fetchDefinitions, showToast)
     setDuplicateAgent(null)
     setDuplicateName('')
-  }, [duplicateAgent, duplicateName, fetchDefinitions, showToast])
+  }, [definitions, duplicateAgent, duplicateName, fetchDefinitions, showToast])
 
   const handleDuplicateClose = useCallback(() => {
     setDuplicateAgent(null)

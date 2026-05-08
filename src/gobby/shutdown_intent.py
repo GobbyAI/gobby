@@ -121,11 +121,13 @@ def read_shutdown_intent(
                 timestamp=None,
             )
 
-        data = json.loads(marker.read_text())
-        if not isinstance(data, dict):
-            raise TypeError("shutdown marker must be a JSON object")
-        if consume:
-            marker.unlink(missing_ok=True)
+        try:
+            data = json.loads(marker.read_text())
+            if not isinstance(data, dict):
+                raise TypeError("shutdown marker must be a JSON object")
+        finally:
+            if consume:
+                marker.unlink(missing_ok=True)
 
         source = str(data.get("source", "unknown"))
         timestamp = _optional_float(data.get("timestamp"))

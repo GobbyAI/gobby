@@ -173,8 +173,12 @@ async def _summarize_unsummarized(
 
     results = await summarizer.summarize_batch(symbols, read_source)
 
-    for symbol_id, summary in results.items():
-        await asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
+    await asyncio.gather(
+        *(
+            asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
+            for symbol_id, summary in results.items()
+        )
+    )
 
     if results:
         logger.info(
@@ -198,5 +202,5 @@ def _read_symbol_source(root: Path, symbol: Any) -> str | None:
         start = max(0, symbol.line_start - 1)
         end = symbol.line_end
         return "\n".join(lines[start:end])
-    except Exception:
+    except OSError:
         return None

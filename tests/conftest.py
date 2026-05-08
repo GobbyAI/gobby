@@ -210,10 +210,14 @@ def mock_daemon_config() -> "MagicMock":
     config = MagicMock()
     config.daemon_port = 60887
     config.websocket.port = 60888
-    config.telemetry.log_file = os.environ.get("GOBBY_LOGGING_CLIENT", "~/.gobby/logs/client.log")
+    temp_root = Path(tempfile.gettempdir())
+    config.telemetry.log_file = os.environ.get(
+        "GOBBY_LOGGING_CLIENT",
+        str(temp_root / "gobby_test_client.log"),
+    )
     config.telemetry.log_file_error = os.environ.get(
         "GOBBY_LOGGING_CLIENT_ERROR",
-        "~/.gobby/logs/client_error.log",
+        str(temp_root / "gobby_test_client_error.log"),
     )
     config.ui.enabled = False
     config.databases.neo4j.url = None

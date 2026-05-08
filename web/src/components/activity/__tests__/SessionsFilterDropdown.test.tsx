@@ -111,12 +111,48 @@ describe("SessionsFilterDropdown", () => {
     expect(next.datePreset).toBe("7d");
   });
 
+  it("date preset selection hides an open custom range", () => {
+    const filters = defaultSessionsFilters();
+    filters.datePreset = "custom";
+    filters.dateCustomFrom = "2026-04-01";
+    const { container, onChange } = renderDropdown({ filters });
+
+    fireEvent.click(screen.getByRole("radio", { name: "7d" }));
+
+    const next: SessionsFilters = onChange.mock.calls[0][0];
+    expect(next.datePreset).toBe("7d");
+    expect(container.querySelectorAll("input[type='date']").length).toBe(0);
+  });
+
   it("custom-range disclosure expands and reveals two date inputs", () => {
     const { container } = renderDropdown();
     fireEvent.click(screen.getByText(/Custom range/));
     // Two date inputs revealed
     const dateInputs = container.querySelectorAll("input[type='date']");
     expect(dateInputs.length).toBe(2);
+  });
+
+  it("custom-range disclosure selects custom when saved custom dates exist", () => {
+    const filters = defaultSessionsFilters();
+    filters.dateCustomFrom = "2026-04-01";
+    const { onChange } = renderDropdown({ filters });
+
+    fireEvent.click(screen.getByText(/Custom range/));
+
+    const next: SessionsFilters = onChange.mock.calls[0][0];
+    expect(next.datePreset).toBe("custom");
+  });
+
+  it("custom-range disclosure clears the preset when collapsed", () => {
+    const filters = defaultSessionsFilters();
+    filters.datePreset = "custom";
+    filters.dateCustomFrom = "2026-04-01";
+    const { onChange } = renderDropdown({ filters });
+
+    fireEvent.click(screen.getByText(/Custom range/));
+
+    const next: SessionsFilters = onChange.mock.calls[0][0];
+    expect(next.datePreset).toBe("all");
   });
 
   it("Reset is disabled when no filters are active", () => {

@@ -237,6 +237,8 @@ function compareTasks(a: GobbyTask, b: GobbyTask, col: SortColumn, dir: SortDire
 }
 
 function groupKeyPart(value: string): string {
+  // Length-prefix values so agent:, session:, and agent-session: composite keys
+  // cannot collide when agent names or short session IDs contain separators.
   return `${value.length}:${value}`
 }
 

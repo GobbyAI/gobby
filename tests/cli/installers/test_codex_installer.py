@@ -4,6 +4,7 @@ import json
 import os
 import tomllib
 from pathlib import Path
+from typing import Any, Final
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +12,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 # The hooks template events that install_codex should write
-EXPECTED_HOOK_EVENTS = (
+EXPECTED_HOOK_EVENTS: Final[tuple[str, ...]] = (
     "PreToolUse",
     "PermissionRequest",
     "PostToolUse",
@@ -21,9 +22,9 @@ EXPECTED_HOOK_EVENTS = (
     "UserPromptSubmit",
     "Stop",
 )
-EXPECTED_HOOK_EVENT_SET = set(EXPECTED_HOOK_EVENTS)
-HOOKS_WITH_MATCHERS = {"PreToolUse", "PermissionRequest", "PostToolUse"}
-EVENT_KEY_LABELS = {
+EXPECTED_HOOK_EVENT_SET: Final[set[str]] = set(EXPECTED_HOOK_EVENTS)
+HOOKS_WITH_MATCHERS: Final[set[str]] = {"PreToolUse", "PermissionRequest", "PostToolUse"}
+EVENT_KEY_LABELS: Final[dict[str, str]] = {
     "PreToolUse": "pre_tool_use",
     "PermissionRequest": "permission_request",
     "PostToolUse": "post_tool_use",
@@ -35,15 +36,15 @@ EVENT_KEY_LABELS = {
 }
 
 
-def _load_toml_file(path: Path) -> dict[str, object]:
+def _load_toml_file(path: Path) -> dict[str, Any]:
     with open(path, "rb") as f:
         return tomllib.load(f)
 
 
-def _make_hooks_template(events: tuple[str, ...] = EXPECTED_HOOK_EVENTS) -> dict[str, object]:
-    hooks: dict[str, object] = {}
+def _make_hooks_template(events: tuple[str, ...] = EXPECTED_HOOK_EVENTS) -> dict[str, Any]:
+    hooks: dict[str, Any] = {}
     for event in events:
-        group: dict[str, object] = {
+        group: dict[str, Any] = {
             "hooks": [
                 {
                     "type": "command",
@@ -59,14 +60,14 @@ def _make_hooks_template(events: tuple[str, ...] = EXPECTED_HOOK_EVENTS) -> dict
     return {"hooks": hooks}
 
 
-def _assert_stable_hooks_feature(config_data: dict[str, object]) -> None:
+def _assert_stable_hooks_feature(config_data: dict[str, Any]) -> None:
     features = config_data["features"]
     assert isinstance(features, dict)
     assert features["hooks"] is True
     assert "codex_hooks" not in features
 
 
-def _assert_gobby_trust_state(config_data: dict[str, object], hooks_path: Path) -> None:
+def _assert_gobby_trust_state(config_data: dict[str, Any], hooks_path: Path) -> None:
     hooks = config_data["hooks"]
     assert isinstance(hooks, dict)
     state = hooks["state"]
