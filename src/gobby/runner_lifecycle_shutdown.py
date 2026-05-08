@@ -21,7 +21,31 @@ _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 
 
 class ReapChildProcesses(Protocol):
-    async def __call__(self, *, preserve_agents: bool = False) -> None: ...
+    async def __call__(
+        self,
+        *,
+        preserve_agents: bool = False,
+        preserved_agent_pids: set[int] | None = None,
+    ) -> None: ...
+
+
+def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
+    """Return pane PIDs for active tmux-backed agents that survive restart."""
+    agent_runner = getattr(runner, "agent_runner", None)
+    run_storage = getattr(agent_runner, "run_storage", None)
+    if run_storage is None:
+        return set()
+    try:
+        runs = run_storage.list_active()
+    except Exception as e:
+        logger.warning("Failed to list active agent runs for restart preservation: %s", e)
+        return set()
+    pids: set[int] = set()
+    for run in runs:
+        pid = getattr(run, "pid", None)
+        if getattr(run, "tmux_session_name", None) and isinstance(pid, int) and pid > 0:
+            pids.add(pid)
+    return pids
 
 
 async def _await_critical_stop_hook_grace_window() -> None:
@@ -72,11 +96,9 @@ async def _reap_remaining_child_processes(
     timeout: float = 1.0,
     *,
     preserve_agents: bool = False,
+    preserved_agent_pids: set[int] | None = None,
 ) -> None:
     """Terminate then force-kill child processes that survived graceful shutdown."""
-    if preserve_agents:
-        logger.info("Skipping child process reap for restart-preserved terminal agents")
-        return
     try:
         import psutil
 
@@ -85,6 +107,24 @@ async def _reap_remaining_child_processes(
         if not children:
             logger.debug("No child processes remaining after graceful shutdown")
             return
+
+        if preserve_agents:
+            preserved_pids = _expand_preserved_agent_processes(
+                psutil,
+                children,
+                preserved_agent_pids or set(),
+            )
+            reapable_children = [child for child in children if child.pid not in preserved_pids]
+            preserved_count = len(children) - len(reapable_children)
+            if preserved_count:
+                logger.info(
+                    "Preserving %d terminal agent child process(es) during restart",
+                    preserved_count,
+                )
+            children = reapable_children
+            if not children:
+                logger.debug("No non-agent child processes remaining after restart preservation")
+                return
 
         logger.info(
             "Reaping %d remaining child process(es) after graceful shutdown",
@@ -114,6 +154,36 @@ async def _reap_remaining_child_processes(
                     pass
     except Exception as e:
         logger.warning(f"Child process reap failed: {e}")
+
+
+def _expand_preserved_agent_processes(
+    psutil_module: Any,
+    children: list[Any],
+    root_pids: set[int],
+) -> set[int]:
+    """Include descendants and in-daemon ancestors for preserved agent pane PIDs."""
+    preserved = set(root_pids)
+    child_pids = {child.pid for child in children}
+    for pid in root_pids:
+        try:
+            process = psutil_module.Process(pid)
+        except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):
+            continue
+        try:
+            preserved.update(child.pid for child in process.children(recursive=True))
+        except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):
+            pass
+        try:
+            parent = process.parent()
+        except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):
+            parent = None
+        while parent is not None and parent.pid in child_pids:
+            preserved.add(parent.pid)
+            try:
+                parent = parent.parent()
+            except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):
+                break
+    return preserved
 
 
 async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2.0) -> None:
@@ -253,12 +323,6 @@ async def shutdown_daemon_services(
 ) -> None:
     """Run the ordered graceful shutdown sequence."""
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
-    try:
-        get_shutdown_marker_path().unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.startup_ready = False
@@ -303,7 +367,13 @@ async def shutdown_daemon_services(
     except TimeoutError:
         logger.warning("MCP disconnect timed out")
 
-    await reap_remaining_child_processes(preserve_agents=shutdown_intent.preserve_agents)
+    preserved_agent_pids = (
+        _preserved_agent_terminal_pids(runner) if shutdown_intent.preserve_agents else set()
+    )
+    await reap_remaining_child_processes(
+        preserve_agents=shutdown_intent.preserve_agents,
+        preserved_agent_pids=preserved_agent_pids,
+    )
 
     try:
         shutdown_telemetry()
@@ -316,4 +386,10 @@ async def shutdown_daemon_services(
         logger.warning(f"Database close failed: {e}")
 
     cleanup_pid_file()
+    try:
+        get_shutdown_marker_path().unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
     logger.info("Shutdown complete")

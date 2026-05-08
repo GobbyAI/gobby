@@ -547,16 +547,13 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
             sys.exit(1)
 
 
-@click.command()
-@click.option(
-    "--docker",
-    "docker_flag",
-    is_flag=True,
-    help="Also stop Docker service containers (Qdrant, Neo4j)",
-)
-@click.pass_context
-def stop(ctx: click.Context, docker_flag: bool, shutdown_intent: str = "stop") -> None:
-    """Stop the Gobby daemon."""
+def _do_stop(
+    ctx: click.Context,
+    docker_flag: bool,
+    shutdown_intent: str = "stop",
+) -> bool:
+    """Stop the daemon and return whether shutdown succeeded."""
+    _ = ctx
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
@@ -573,7 +570,7 @@ def stop(ctx: click.Context, docker_flag: bool, shutdown_intent: str = "stop") -
             elapsed = _wait_for_service_stop(previous_pid)
             if elapsed is None:
                 _step("Service stop returned, but daemon is still running", error=True)
-                sys.exit(1)
+                return False
             _step(f"Daemon stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")
         else:
             click.echo(f"Service stop failed: {result.get('error')}", err=True)
@@ -586,7 +583,7 @@ def stop(ctx: click.Context, docker_flag: bool, shutdown_intent: str = "stop") -
             docker_stopped = True
 
         if result.get("success"):
-            sys.exit(0)
+            return True
 
     success = stop_daemon_util(
         quiet=False,
@@ -599,7 +596,20 @@ def stop(ctx: click.Context, docker_flag: bool, shutdown_intent: str = "stop") -
         click.echo("Stopping Docker containers...")
         _services_stop(get_gobby_home())
 
-    sys.exit(0 if success else 1)
+    return bool(success)
+
+
+@click.command()
+@click.option(
+    "--docker",
+    "docker_flag",
+    is_flag=True,
+    help="Also stop Docker service containers (Qdrant, Neo4j)",
+)
+@click.pass_context
+def stop(ctx: click.Context, docker_flag: bool) -> None:
+    """Stop the Gobby daemon."""
+    sys.exit(0 if _do_stop(ctx, docker_flag) else 1)
 
 
 @click.command()
@@ -625,12 +635,8 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
     """Restart the Gobby daemon (stop then start)."""
     setup_logging(verbose)
 
-    try:
-        ctx.invoke(stop, docker_flag=docker_flag, shutdown_intent="restart")
-    except SystemExit as exc:
-        code = exc.code
-        if code not in (None, 0):
-            sys.exit(code if isinstance(code, int) else 1)
+    if not _do_stop(ctx, docker_flag, shutdown_intent="restart"):
+        sys.exit(1)
 
     ctx.invoke(start, verbose=verbose, no_ui=no_ui, docker_flag=docker_flag)
     ctx.invoke(status)

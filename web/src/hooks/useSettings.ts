@@ -39,6 +39,7 @@ const STORAGE_KEY = 'gobby-settings'
 const DARK_LOGO_PATH = '/logo.png'
 const LIGHT_LOGO_PATH = '/logo-light.png'
 const ICON_CACHE_PARAM = 'v=2'
+const [ICON_CACHE_KEY = 'v', ICON_CACHE_VALUE = ''] = ICON_CACHE_PARAM.split('=')
 
 /** Keys persisted to the backend (excludes per-conversation chatMode). */
 type PersistableKey =
@@ -123,12 +124,18 @@ function logoPathForTheme(theme: 'dark' | 'light'): string {
   return theme === 'light' ? LIGHT_LOGO_PATH : DARK_LOGO_PATH
 }
 
-function cacheBustedIconHref(path: string): string {
+export function cacheBustedIconHref(path: string): string {
   const fragmentIndex = path.indexOf('#')
   const pathWithoutFragment = fragmentIndex >= 0 ? path.slice(0, fragmentIndex) : path
   const fragment = fragmentIndex >= 0 ? path.slice(fragmentIndex) : ''
-  const separator = pathWithoutFragment.includes('?') ? '&' : '?'
-  return `${pathWithoutFragment}${separator}${ICON_CACHE_PARAM}${fragment}`
+  const queryIndex = pathWithoutFragment.indexOf('?')
+  const basePath = queryIndex >= 0 ? pathWithoutFragment.slice(0, queryIndex) : pathWithoutFragment
+  const query = queryIndex >= 0 ? pathWithoutFragment.slice(queryIndex + 1) : ''
+  const params = new URLSearchParams(query)
+  params.delete(ICON_CACHE_KEY)
+  params.append(ICON_CACHE_KEY, ICON_CACHE_VALUE)
+  const queryString = params.toString()
+  return `${basePath}${queryString ? `?${queryString}` : ''}${fragment}`
 }
 
 function upsertIconLinks(rel: string, href: string, type?: string): void {

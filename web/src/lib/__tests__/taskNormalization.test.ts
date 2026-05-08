@@ -110,4 +110,18 @@ describe('parseReviewerAgentSelector', () => {
     expect(parseReviewerAgentSelector('{bad')).toBeNull()
     expect(parseReviewerAgentSelector(JSON.stringify({ rules: [] }))).toBeNull()
   })
+
+  it('trims padded selector defaults, categories, and reviewer agents', () => {
+    expect(
+      parseReviewerAgentSelector(
+        JSON.stringify({
+          default: ' qa-reviewer ',
+          rules: [{ category: ' docs ', reviewer_agent: ' doc-reviewer ' }],
+        }),
+      ),
+    ).toEqual({
+      default: 'qa-reviewer',
+      rules: [{ category: 'docs', reviewer_agent: 'doc-reviewer' }],
+    })
+  })
 })

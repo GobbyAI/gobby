@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.digest import (
@@ -39,6 +39,10 @@ if TYPE_CHECKING:
     from gobby.llm.service import LLMService
 
 logger = logging.getLogger(__name__)
+
+
+class SupportsTaskDecomposition(Protocol):
+    def create_task_with_decomposition(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 # Helper to get current project context
@@ -78,7 +82,7 @@ def _speculative_memory_task_title(content: str) -> str | None:
 def _redirect_speculative_memory_to_task(
     *,
     memory_manager: MemoryManager,
-    task_manager: Any | None,
+    task_manager: SupportsTaskDecomposition | None,
     title: str,
     content: str,
     project_id: str | None,
@@ -128,7 +132,7 @@ def create_memory_registry(
     memory_sync_manager: Any | None = None,
     session_manager: Any | None = None,
     config: DaemonConfig | None = None,
-    task_manager: Any | None = None,
+    task_manager: SupportsTaskDecomposition | None = None,
 ) -> InternalToolRegistry:
     """
     Create a memory tool registry with all memory-related tools.
@@ -194,20 +198,27 @@ def create_memory_registry(
 
             redirected_task_title = _speculative_memory_task_title(content)
             if redirected_task_title:
-                task = _redirect_speculative_memory_to_task(
-                    memory_manager=memory_manager,
-                    task_manager=task_manager,
-                    title=redirected_task_title,
-                    content=content,
-                    project_id=project_id,
-                    source_session_id=resolved_session_id,
-                )
-                return {
-                    "success": True,
-                    "redirected_to_task_note": True,
-                    "task_id": task["id"],
-                    "task_ref": task["ref"],
-                }
+                try:
+                    task = _redirect_speculative_memory_to_task(
+                        memory_manager=memory_manager,
+                        task_manager=task_manager,
+                        title=redirected_task_title,
+                        content=content,
+                        project_id=project_id,
+                        source_session_id=resolved_session_id,
+                    )
+                    return {
+                        "success": True,
+                        "redirected_to_task_note": True,
+                        "task_id": task["id"],
+                        "task_ref": task["ref"],
+                    }
+                except Exception as e:
+                    logger.warning(
+                        "Speculative memory redirection failed; storing original memory: %s",
+                        e,
+                        exc_info=True,
+                    )
 
             memory = await memory_manager.create_memory(
                 content=content,

@@ -532,6 +532,11 @@ async def spawn_agent_impl(
                 await ensure_isolation_code_index(isolation_ctx.cwd)
             except Exception as e:
                 reason = str(e)
+                logger.warning(
+                    "Code index preflight failed for isolated agent cwd=%s: %s",
+                    isolation_ctx.cwd,
+                    reason,
+                )
                 # Keep code_index preflight failures structured so callers can distinguish
                 # isolation failures from normal spawn failures without parsing text.
                 return {

@@ -254,18 +254,17 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             current_pid = os.getpid()
 
-            # Write shutdown source in the parent before spawning restarter
-            from gobby.runner_maintenance import write_shutdown_source
-
-            write_shutdown_source("http_restart", intent="restart")
-            _request_runner_shutdown(server, ShutdownIntent.RESTART)
-
             _spawn_restart_helper(
                 current_pid=current_pid,
                 port=server.port,
                 service_managed=service_managed,
                 shutdown_source="http_restart",
             )
+
+            from gobby.runner_maintenance import write_shutdown_source
+
+            write_shutdown_source("http_restart", intent="restart")
+            _request_runner_shutdown(server, ShutdownIntent.RESTART)
 
             # Schedule shutdown of the current daemon
             task = asyncio.create_task(server._process_shutdown())

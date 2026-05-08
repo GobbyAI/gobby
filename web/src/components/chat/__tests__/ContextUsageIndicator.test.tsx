@@ -16,9 +16,8 @@ describe('ContextUsageIndicator', () => {
       />,
     )
 
-    const percent = screen.getByText('25%')
-    expect(percent).toBeVisible()
     const indicator = screen.getByTestId('context-usage-indicator')
+    expect(indicator).toHaveTextContent('25%')
     expect(indicator).toHaveAttribute(
       'title',
       [

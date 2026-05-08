@@ -962,33 +962,37 @@ class LocalAgentRunManager:
 
         return timed_out
 
-    def cleanup_stale_pending_runs(self, timeout_minutes: int = 60) -> int:
-        """
-        Mark stale pending agent runs as failed.
-
-        Pending runs that never started within the timeout period are marked as errors.
-
-        Args:
-            timeout_minutes: Minutes since creation before marking as failed.
-
-        Returns:
-            Number of runs failed.
-        """
+    def cleanup_stale_pending_runs(
+        self, timeout_minutes: int = 60, long_timeout_minutes: int = 1440
+    ) -> int:
+        """Mark stale pending agent runs as failed."""
         now = datetime.now(UTC).isoformat()
         cursor = self.db.execute(
             """
             UPDATE agent_runs
             SET status = 'error',
-                error = 'Pending run never started',
+                error = CASE
+                    WHEN tmux_session_name IS NULL THEN 'Pending run never started'
+                    ELSE 'Pending tmux-initialized run never started'
+                END,
                 completed_at = ?,
                 updated_at = ?
             WHERE status = 'pending'
-            AND tmux_session_name IS NULL
-            AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+            AND (
+                tmux_session_name IS NULL
+                AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+                OR tmux_session_name IS NOT NULL
+                AND datetime(created_at) < datetime('now', 'utc', ? || ' minutes')
+            )
             """,
-            (now, now, f"-{timeout_minutes}"),
+            (now, now, f"-{timeout_minutes}", f"-{long_timeout_minutes}"),
         )
         count = _positive_rowcount(cursor)
         if count > 0:
-            logger.info(f"Failed {count} stale pending agent runs (>{timeout_minutes}m)")
+            logger.info(
+                "Failed %s stale pending agent runs (>%sm; tmux >%sm)",
+                count,
+                timeout_minutes,
+                long_timeout_minutes,
+            )
         return count

@@ -39,6 +39,7 @@ from .shared import (
 logger = logging.getLogger(__name__)
 
 type TomlValue = str | int | float | bool | datetime | list["TomlValue"] | dict[str, "TomlValue"]
+type HookTrustEntry = tuple[str, str]
 
 CODEX_HOOK_EVENT_KEY_LABELS: dict[str, str] = {
     "PreToolUse": "pre_tool_use",
@@ -275,7 +276,7 @@ def _normalized_codex_command_hook_hash(
 def _iter_gobby_hook_trust_entries(
     hooks_file: Path,
     hooks_config: dict[str, Any],
-) -> Iterator[tuple[str, str]]:
+) -> Iterator[HookTrustEntry]:
     """Yield Codex hooks.state key/hash pairs for Gobby-owned command hooks."""
     hooks = hooks_config.get("hooks")
     if not isinstance(hooks, dict):
@@ -316,17 +317,11 @@ def _ensure_table(parent: TOMLDocument | Table | dict[str, Any], key: str) -> Ta
     return new_table
 
 
-def _state_entry_trusted_hash(entry: Any) -> str | None:
-    if not isinstance(entry, (dict, Table)):
-        return None
-    value = entry.get("trusted_hash")
-    return value if isinstance(value, str) else None
-
-
 def _remove_stale_gobby_hook_trust_state(
     state_table: Table,
     hooks_file: Path,
-    current_entries: list[tuple[str, str]],
+    current_entries: list[HookTrustEntry],
+    previous_entries: list[HookTrustEntry],
 ) -> None:
     """Remove stale Gobby-owned positional trust entries for this hooks file.
 
@@ -335,9 +330,12 @@ def _remove_stale_gobby_hook_trust_state(
     unrelated user trust state remains intact.
     """
     current_keys = {key for key, _ in current_entries}
-    current_hashes = {trusted_hash for _, trusted_hash in current_entries}
     hooks_prefix = f"{hooks_file.resolve()}:"
     event_labels = set(CODEX_HOOK_EVENT_KEY_LABELS.values())
+    previous_keys = {key for key, _ in previous_entries}
+    previous_suffixes = {
+        key.removeprefix(hooks_prefix) for key in previous_keys if key.startswith(hooks_prefix)
+    }
 
     for key in list(state_table.keys()):
         if not isinstance(key, str) or not key.startswith(hooks_prefix):
@@ -347,14 +345,16 @@ def _remove_stale_gobby_hook_trust_state(
         suffix_parts = key.removeprefix(hooks_prefix).split(":")
         if len(suffix_parts) < 3 or suffix_parts[0] not in event_labels:
             continue
-        trusted_hash = _state_entry_trusted_hash(state_table.get(key))
-        if trusted_hash in current_hashes or (
-            trusted_hash is not None and "gobby" in trusted_hash.lower()
-        ):
+        suffix = key.removeprefix(hooks_prefix)
+        if key in previous_keys or suffix in previous_suffixes:
             del state_table[key]
 
 
-def _ensure_codex_hook_trust_state(config: TOMLDocument, hooks_file: Path) -> set[str]:
+def _ensure_codex_hook_trust_state(
+    config: TOMLDocument,
+    hooks_file: Path,
+    previous_entries: list[HookTrustEntry] | None = None,
+) -> set[str]:
     """Mark installed Gobby hooks as trusted in Codex config.toml."""
     hooks_config = json.loads(hooks_file.read_text(encoding="utf-8"))
     entries = list(_iter_gobby_hook_trust_entries(hooks_file, hooks_config))
@@ -363,7 +363,7 @@ def _ensure_codex_hook_trust_state(config: TOMLDocument, hooks_file: Path) -> se
 
     hooks_table = _ensure_table(config, "hooks")
     state_table = _ensure_table(hooks_table, "state")
-    _remove_stale_gobby_hook_trust_state(state_table, hooks_file, entries)
+    _remove_stale_gobby_hook_trust_state(state_table, hooks_file, entries, previous_entries or [])
     trusted_keys: set[str] = set()
 
     for key, trusted_hash in entries:
@@ -399,10 +399,13 @@ def _remove_codex_hook_trust_state(config: TOMLDocument, state_keys: set[str]) -
         del config["hooks"]
 
 
-def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
+def _install_hooks_json(
+    codex_home: Path, hooks_dir: Path
+) -> tuple[list[str], list[HookTrustEntry]]:
     """Load hooks-template.json, substitute $HOOKS_DIR, merge into ~/.codex/hooks.json.
 
-    Returns list of installed hook type names.
+    Returns installed hook type names and Gobby hook trust entries from the
+    pre-clean hooks file.
     """
     install_dir = get_install_dir()
     template_path = install_dir / "codex" / "hooks-template.json"
@@ -423,6 +426,10 @@ def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Could not read existing hooks.json, overwriting: {e}")
 
+    previous_gobby_trust_entries: list[HookTrustEntry] = []
+    if isinstance(existing.get("hooks"), dict):
+        previous_gobby_trust_entries = list(_iter_gobby_hook_trust_entries(hooks_file, existing))
+
     if not isinstance(existing.get("hooks"), dict):
         existing["hooks"] = {}
 
@@ -437,7 +444,7 @@ def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
 
     _atomic_write_json(hooks_file, existing)
 
-    return hooks_installed
+    return hooks_installed, previous_gobby_trust_entries
 
 
 def _is_gobby_hook(hook_entry: Any) -> bool:
@@ -500,7 +507,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
 
     # 2. Install hooks.json
     try:
-        installed_hooks = _install_hooks_json(codex_home, hooks_dir)
+        installed_hooks, previous_gobby_trust_entries = _install_hooks_json(codex_home, hooks_dir)
         hooks_installed.extend(installed_hooks)
     except (FileNotFoundError, OSError, json.JSONDecodeError) as e:
         result["error"] = f"Failed to install hooks.json: {e}"
@@ -531,7 +538,11 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         # Enable stable hooks and remove the deprecated codex_hooks flag.
         _remove_toml_key(updated_config, "features.codex_hooks")
         _set_toml_value(updated_config, "features.hooks", True)
-        _ensure_codex_hook_trust_state(updated_config, codex_home / "hooks.json")
+        _ensure_codex_hook_trust_state(
+            updated_config,
+            codex_home / "hooks.json",
+            previous_entries=previous_gobby_trust_entries,
+        )
 
         if updated_config != parsed_config:
             if codex_config_path.exists():

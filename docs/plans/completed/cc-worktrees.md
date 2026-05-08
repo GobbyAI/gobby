@@ -194,6 +194,7 @@ For Claude provider agents, Gobby's `spawn_agent` could delegate to Claude Code'
 1. **Compose prompt from agent definition** — Resolve the `AgentDefinitionBody`, compose its persona (role, goal, instructions, personality) into a single prompt string — the same pattern used when gobby-skills injects skill content via `inject_context`. No file creation needed.
 
 2. **Return delegation response from `spawn_agent`** — Instead of launching tmux, return a response like:
+
    ```json
    {
      "delegation": "native_agent",
@@ -202,6 +203,7 @@ For Claude provider agents, Gobby's `spawn_agent` could delegate to Claude Code'
      "prompt": "{composed persona + user prompt}"
    }
    ```
+
    The calling agent reads this and invokes Claude Code's native Agent tool with the composed prompt.
 
 3. **Track via SUBAGENT_START/STOP hooks** — When the native subagent starts, Gobby creates an `agent_runs` DB record and (if worktree) a `worktrees` DB record. On SUBAGENT_STOP, marks completion and can handle cleanup.

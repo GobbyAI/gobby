@@ -31,13 +31,12 @@ def main() -> int:
         sys.stderr.write(f"ghook_guard: command not found or not executable: {ghook_args[0]}\n")
         return 127
 
-    stdin_bytes = sys.stdin.buffer.read()
-
     if _is_stop_hook(ghook_args) and not _daemon_is_reachable() and _fresh_shutdown_marker():
         sys.stdout.write(json.dumps({"continue": True}))
         sys.stdout.write("\n")
         return 0
 
+    stdin_bytes = sys.stdin.buffer.read()
     result = subprocess.run(ghook_args, input=stdin_bytes, check=False)  # noqa: S603
     return int(result.returncode)
 
@@ -118,7 +117,10 @@ def _daemon_url() -> str:
 
     host = _yaml_scalar(data, "bind_host") or "localhost"
     port = _yaml_scalar(data, "daemon_port") or "60887"
-    return f"http://{host}:{port}"
+    scheme = (_yaml_scalar(data, "scheme") or _yaml_scalar(data, "daemon_scheme") or "").lower()
+    if scheme not in {"http", "https"}:
+        scheme = "https" if port == "443" else "http"
+    return f"{scheme}://{host}:{port}"
 
 
 def _yaml_scalar(data: str, key: str) -> str | None:

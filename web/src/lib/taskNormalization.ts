@@ -57,20 +57,22 @@ export function parseReviewerAgentSelector(
   if (!parsed || typeof parsed !== 'object') return null
   const record = parsed as { default?: unknown; rules?: unknown }
   if (typeof record.default !== 'string' || !record.default.trim()) return null
+  const defaultReviewer = record.default.trim()
   const rules = Array.isArray(record.rules)
     ? record.rules.flatMap((rule): ReviewerAgentSelectorRule[] => {
       if (!rule || typeof rule !== 'object') return []
       const item = rule as { category?: unknown; reviewer_agent?: unknown }
       if (typeof item.reviewer_agent !== 'string' || !item.reviewer_agent.trim()) return []
+      const category = typeof item.category === 'string' ? item.category.trim() : ''
       return [{
-        ...(typeof item.category === 'string' && item.category.trim()
-          ? { category: item.category }
+        ...(category
+          ? { category }
           : {}),
-        reviewer_agent: item.reviewer_agent,
+        reviewer_agent: item.reviewer_agent.trim(),
       }]
     })
     : []
-  return { default: record.default, rules }
+  return { default: defaultReviewer, rules }
 }
 
 export interface StagesRegistryWireResponse {

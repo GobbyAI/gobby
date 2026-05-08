@@ -103,6 +103,7 @@ class HTTPServer:
         self._running = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._daemon: Any = None  # Set externally by daemon
+        # Assigned by runner_init.py after GobbyRunner construction; nullable until then.
         self._runner: GobbyRunner | None = None
 
     def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:

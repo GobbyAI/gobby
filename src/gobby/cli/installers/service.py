@@ -917,7 +917,7 @@ def service_restart(shutdown_source: str = "service_restart") -> dict[str, Any]:
         restart_fn = _macos_restart
     elif sys.platform == "linux":
         restart_fn = _linux_restart
-    elif sys.platform == "win32" and os.name == "nt":
+    elif sys.platform == "win32":
         from gobby.cli.installers.service_windows import _windows_restart
 
         restart_fn = _windows_restart
@@ -957,7 +957,7 @@ def service_stop(
         stop_fn = _macos_stop
     elif sys.platform == "linux":
         stop_fn = _linux_stop
-    elif sys.platform == "win32" and os.name == "nt":
+    elif sys.platform == "win32":
         from gobby.cli.installers.service_windows import _windows_stop
 
         stop_fn = _windows_stop

@@ -223,6 +223,37 @@ class TestCreateMemory:
         assert call_kwargs["task_type"] == "research_spike"
 
     @pytest.mark.asyncio
+    async def test_create_memory_persists_original_when_speculative_redirect_fails(
+        self,
+        mock_memory_manager,
+    ) -> None:
+        task_manager = MagicMock()
+        task_manager.create_task_with_decomposition.side_effect = RuntimeError("task store down")
+        registry = create_memory_registry(mock_memory_manager, task_manager=task_manager)
+        proposal = (
+            "SessionStart proposal: call an idempotent ensure_session_activation helper "
+            "rather than replay raw SessionStart side effects wholesale."
+        )
+
+        with patch(
+            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+        ):
+            result = await registry.call(
+                "create_memory",
+                {
+                    "content": proposal,
+                    "memory_type": "debugging_pattern",
+                    "tags": ["session-start"],
+                },
+            )
+
+        assert result["success"] is True
+        task_manager.create_task_with_decomposition.assert_called_once()
+        call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
+        assert call_kwargs["memory_type"] == "debugging_pattern"
+        assert call_kwargs["tags"] == ["session-start"]
+
+    @pytest.mark.asyncio
     async def test_create_memory_with_session_id(self, memory_registry, mock_memory_manager):
         """Test memory creation resolves and passes source_session_id."""
         mock_memory_manager.search_memories.return_value = []

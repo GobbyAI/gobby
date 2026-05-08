@@ -144,14 +144,23 @@ def test_codex_hook_trust_state_prunes_stale_gobby_positions(tmp_path: Path) -> 
     config = _load_toml_config(
         f"""
 [hooks.state."{hooks_prefix}:pre_tool_use:0:0"]
-trusted_hash = "sha256:gobby-old"
+trusted_hash = "sha256:old-position-without-gobby-marker"
 
 [hooks.state."{hooks_prefix}:pre_tool_use:9:0"]
 trusted_hash = "sha256:user-tool"
 """
     )
 
-    trusted_keys = _ensure_codex_hook_trust_state(config, hooks_path)
+    trusted_keys = _ensure_codex_hook_trust_state(
+        config,
+        hooks_path,
+        previous_entries=[
+            (
+                f"{hooks_prefix}:pre_tool_use:0:0",
+                "sha256:old-position-without-gobby-marker",
+            )
+        ],
+    )
 
     state = config["hooks"]["state"]
     assert f"{hooks_prefix}:pre_tool_use:1:0" in trusted_keys

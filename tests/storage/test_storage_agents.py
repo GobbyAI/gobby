@@ -1186,6 +1186,33 @@ class TestLocalAgentRunManager:
         fresh = agent_manager.get(pending.id)
         assert fresh.status == "pending"
 
+    def test_cleanup_stale_pending_runs_uses_long_timeout_for_tmux_initialized(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        pending = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Tmux initialized pending",
+        )
+        agent_manager.update_runtime(pending.id, tmux_session_name="gobby-agent-1")
+        agent_manager.db.execute(
+            "UPDATE agent_runs SET created_at = datetime('now', '-23 hours') WHERE id = ?",
+            (pending.id,),
+        )
+
+        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == 0
+
+        agent_manager.db.execute(
+            "UPDATE agent_runs SET created_at = datetime('now', '-25 hours') WHERE id = ?",
+            (pending.id,),
+        )
+        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == 1
+        cleaned = agent_manager.get(pending.id)
+        assert cleaned.status == "error"
+        assert cleaned.error == "Pending tmux-initialized run never started"
+
     def test_cleanup_stale_pending_runs_logs_when_cleaned(
         self,
         agent_manager: LocalAgentRunManager,
@@ -1208,7 +1235,12 @@ class TestLocalAgentRunManager:
             count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
             assert count == 1
             mock_logger.info.assert_called_once()
-            assert "Failed 1 stale pending agent runs" in mock_logger.info.call_args[0][0]
+            assert mock_logger.info.call_args.args == (
+                "Failed %s stale pending agent runs (>%sm; tmux >%sm)",
+                1,
+                60,
+                1440,
+            )
 
     def test_cleanup_stale_pending_runs_skips_non_pending(
         self,

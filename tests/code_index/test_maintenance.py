@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
@@ -81,3 +82,25 @@ async def test_summary_updates_are_concurrency_limited() -> None:
     await _update_symbol_summaries(context, results)
 
     assert max_active <= 4
+
+
+@pytest.mark.asyncio
+async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCaptureFixture) -> None:
+    """One summary write failure does not cancel the rest of the batch."""
+    updated: list[str] = []
+
+    def update_symbol_summary(symbol_id: str, _summary: str) -> None:
+        updated.append(symbol_id)
+        if symbol_id == "sym-bad":
+            raise RuntimeError("write failed")
+
+    context = SimpleNamespace(storage=SimpleNamespace(update_symbol_summary=update_symbol_summary))
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
+        await _update_symbol_summaries(
+            context,
+            {"sym-ok": "ok", "sym-bad": "bad", "sym-later": "later"},
+        )
+
+    assert set(updated) == {"sym-ok", "sym-bad", "sym-later"}
+    assert "Failed to persist summary for symbol sym-bad: write failed" in caplog.text

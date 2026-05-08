@@ -201,9 +201,16 @@ async def _update_symbol_summaries(
         async with semaphore:
             await asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
 
-    await asyncio.gather(
-        *(update_one(symbol_id, summary) for symbol_id, summary in results.items())
+    items = list(results.items())
+    write_results = await asyncio.gather(
+        *(update_one(symbol_id, summary) for symbol_id, summary in items),
+        return_exceptions=True,
     )
+    for (symbol_id, _summary), result in zip(items, write_results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, BaseException):
+            logger.warning("Failed to persist summary for symbol %s: %s", symbol_id, result)
 
 
 def _read_symbol_source(root: Path, symbol: Any) -> str | None:

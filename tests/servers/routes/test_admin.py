@@ -1,4 +1,5 @@
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +22,12 @@ class RunnerShutdownStub:
         if intent is not None:
             self._shutdown_intent = intent
         self._shutdown_requested = True
+
+
+class MinimalRunnerFallbackStub:
+    def __init__(self) -> None:
+        self._shutdown_requested = False
+        self._shutdown_intent: ShutdownIntent | None = None
 
 
 class TestAdminRoutes:
@@ -204,6 +211,15 @@ class TestAdminRoutes:
         # Instead of checking background_tasks (which might clear quickly via callback),
         # verify the method was called.
         mock_server._process_shutdown.assert_called()
+
+    def test_request_runner_shutdown_falls_back_to_runner_attrs(self) -> None:
+        from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
+
+        runner = MinimalRunnerFallbackStub()
+        _request_runner_shutdown(SimpleNamespace(_runner=runner), ShutdownIntent.RESTART)
+
+        assert runner._shutdown_requested is True
+        assert runner._shutdown_intent is ShutdownIntent.RESTART
 
     @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
     @patch(

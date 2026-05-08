@@ -31,8 +31,9 @@ function baseTask() {
     seq_num: 1,
     path_cache: '1',
     requires_user_review: false,
+    state: null as { owner_session_id: string | null } | null,
     assignee: null,
-    agent_name: null,
+    agent_name: null as string | null,
     sequence_order: null,
     start_date: null,
     due_date: null,
@@ -40,8 +41,7 @@ function baseTask() {
   }
 }
 
-function useTasksResult() {
-  const tasks = [baseTask()]
+function useTasksResult(tasks = [baseTask()]) {
   return {
     allTasks: tasks,
     tasks,
@@ -104,5 +104,37 @@ describe('TasksPage lifecycle board integration', () => {
     fireEvent.click(screen.getByTitle('Kanban view'))
 
     expect(screen.getByRole('region', { name: /lifecycle board/i })).toBeTruthy()
+  })
+
+  it('groups same-prefix owner sessions by full owner id', () => {
+    const ownerA = 'abcdefgh-1111-4444-8888-aaaaaaaaaaaa'
+    const ownerB = 'abcdefgh-2222-4444-8888-bbbbbbbbbbbb'
+    useTasksMock.mockReturnValue(useTasksResult([
+      {
+        ...baseTask(),
+        id: 'task-1',
+        ref: '#1',
+        title: 'First task',
+        agent_name: 'Reviewer',
+        state: { owner_session_id: ownerA },
+      },
+      {
+        ...baseTask(),
+        id: 'task-2',
+        ref: '#2',
+        seq_num: 2,
+        title: 'Second task',
+        agent_name: 'Reviewer',
+        state: { owner_session_id: ownerB },
+      },
+    ]))
+
+    render(<TasksPage />)
+    fireEvent.click(screen.getByText('By Agent'))
+
+    const duplicateLabelGroups = screen.getAllByText((_content, node) =>
+      node?.textContent === 'Reviewer #abcdefgh (1)'
+    )
+    expect(duplicateLabelGroups).toHaveLength(2)
   })
 })

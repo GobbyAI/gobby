@@ -118,7 +118,15 @@ class TmuxSessionManager:
             try:
                 proc.kill()
             except ProcessLookupError:
-                pass
+                logger.debug(
+                    "Tmux command exited before timeout kill "
+                    "(pid=%s, timeout=%ss, command=%r, socket_name=%r, socket_path=%r)",
+                    getattr(proc, "pid", None),
+                    timeout,
+                    cmd,
+                    self._config.socket_name,
+                    self._config.socket_path,
+                )
             await proc.wait()
             raise
         return (

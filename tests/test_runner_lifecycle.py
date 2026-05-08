@@ -2,14 +2,15 @@
 
 import asyncio
 import logging
+import os
 import signal
+import sys
 from contextlib import ExitStack, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from _pytest.logging import LogCaptureFixture
 
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
@@ -398,7 +399,7 @@ class TestInitSubsystems:
     @pytest.mark.asyncio
     async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(
         self,
-        caplog: LogCaptureFixture,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from gobby.runner_lifecycle_subsystems import _start_agent_lifecycle_monitor
 
@@ -429,6 +430,151 @@ class TestInitSubsystems:
         assert "Agent restart reconciliation failed during startup" in caplog.text
         assert "Agent stale pending cleanup failed during startup" in caplog.text
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
+
+
+class TestShutdownDaemonServices:
+    @pytest.mark.asyncio
+    async def test_shutdown_marker_is_removed_after_cleanup(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        marker = tmp_path / "shutdown_source.json"
+        marker.write_text("{}", encoding="utf-8")
+        cleanup_saw_marker = False
+        runner = SimpleNamespace(
+            _shutdown_intent=ShutdownIntent.STOP,
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+                _terminate_streamable_http_sessions=AsyncMock(),
+            ),
+            lifecycle_manager=SimpleNamespace(stop=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+            config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
+            memory_manager=None,
+            vector_store=None,
+            mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
+            database=SimpleNamespace(close=MagicMock()),
+        )
+        server = SimpleNamespace(should_exit=False)
+        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+
+        def cleanup_pid_file() -> None:
+            nonlocal cleanup_saw_marker
+            cleanup_saw_marker = marker.exists()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            server_task,
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=cleanup_pid_file,
+        )
+
+        assert cleanup_saw_marker is True
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_restart_reaps_only_non_terminal_agent_children(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeNoSuchProcess(Exception):
+            pass
+
+        class FakeAccessDenied(Exception):
+            pass
+
+        class FakeProcess:
+            def __init__(
+                self,
+                pid: int,
+                name: str,
+                cmdline: list[str],
+                children: list["FakeProcess"] | None = None,
+            ) -> None:
+                self.pid = pid
+                self._name = name
+                self._cmdline = cmdline
+                self._children = children or []
+                self._parent: FakeProcess | None = None
+                self.terminated = False
+                for child in self._children:
+                    child._parent = self
+
+            def children(self, recursive: bool = False) -> list["FakeProcess"]:
+                if not recursive:
+                    return list(self._children)
+                result: list[FakeProcess] = []
+                pending = list(self._children)
+                while pending:
+                    child = pending.pop(0)
+                    result.append(child)
+                    pending.extend(child._children)
+                return result
+
+            def parent(self) -> "FakeProcess | None":
+                return self._parent
+
+            def name(self) -> str:
+                return self._name
+
+            def cmdline(self) -> list[str]:
+                return self._cmdline
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.terminated = True
+
+        pane = FakeProcess(200, "zsh", ["zsh"])
+        tmux = FakeProcess(100, "tmux", ["tmux", "-L", "gobby"], [pane])
+        unrelated_tmux = FakeProcess(250, "tmux", ["tmux", "-L", "other"])
+        worker = FakeProcess(300, "gcode", ["gcode", "index"])
+        current = FakeProcess(os.getpid(), "python", ["python"], [tmux, unrelated_tmux, worker])
+        processes = {
+            process.pid: process for process in [current, tmux, pane, unrelated_tmux, worker]
+        }
+
+        class FakePsutil:
+            NoSuchProcess = FakeNoSuchProcess
+            AccessDenied = FakeAccessDenied
+
+            @staticmethod
+            def Process(pid: int) -> FakeProcess:
+                return processes[pid]
+
+            @staticmethod
+            def wait_procs(
+                children: list[FakeProcess], timeout: float
+            ) -> tuple[list[FakeProcess], list[FakeProcess]]:
+                return children, []
+
+        monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+
+        await runner_lifecycle_shutdown._reap_remaining_child_processes(
+            preserve_agents=True,
+            preserved_agent_pids={pane.pid},
+        )
+
+        assert tmux.terminated is False
+        assert pane.terminated is False
+        assert unrelated_tmux.terminated is True
+        assert worker.terminated is True
 
 
 class TestRunGobbyFunction:
@@ -725,7 +871,7 @@ class TestSignalHandlerBehavior:
     def test_signal_handler_still_shuts_down_when_intent_callback_fails(
         self,
         tmp_path: Path,
-        caplog: LogCaptureFixture,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from gobby.runner_maintenance import setup_signal_handlers
 

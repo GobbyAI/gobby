@@ -245,9 +245,9 @@ function groupKeyPart(value: string): string {
 function groupKeyAndLabel(t: GobbyTask): { key: string; label: string; sortPriority: number } {
   const ownerId = getCanonicalTaskState(t).owner_session_id ?? null
   const shortId = ownerId ? ownerId.slice(0, 8) : null
-  if (t.agent_name && shortId) {
+  if (t.agent_name && ownerId && shortId) {
     return {
-      key: `agent-session:${groupKeyPart(t.agent_name)}:${groupKeyPart(shortId)}`,
+      key: `agent-session:${groupKeyPart(t.agent_name)}:${groupKeyPart(ownerId)}`,
       label: `${t.agent_name} #${shortId}`,
       sortPriority: 0,
     }
@@ -255,8 +255,8 @@ function groupKeyAndLabel(t: GobbyTask): { key: string; label: string; sortPrior
   if (t.agent_name) {
     return { key: `agent:${groupKeyPart(t.agent_name)}`, label: t.agent_name, sortPriority: 0 }
   }
-  if (shortId) {
-    return { key: `session:${groupKeyPart(shortId)}`, label: `#${shortId}`, sortPriority: 1 }
+  if (ownerId && shortId) {
+    return { key: `session:${groupKeyPart(ownerId)}`, label: `#${shortId}`, sortPriority: 1 }
   }
   return { key: 'unassigned:all', label: 'Unassigned', sortPriority: 2 }
 }

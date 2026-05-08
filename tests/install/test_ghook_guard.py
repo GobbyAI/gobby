@@ -35,6 +35,30 @@ def test_yaml_scalar_uses_safe_load_for_bootstrap_values() -> None:
     assert ghook_guard._yaml_scalar(data, "missing") is None
 
 
+def test_daemon_url_uses_bootstrap_scheme_and_https_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
+    bootstrap = tmp_path / "bootstrap.yaml"
+
+    bootstrap.write_text("bind_host: gobby.local\ndaemon_port: 443\n", encoding="utf-8")
+    assert ghook_guard._daemon_url() == "https://gobby.local:443"
+
+    bootstrap.write_text(
+        "bind_host: gobby.local\ndaemon_port: 60887\ndaemon_scheme: https\n",
+        encoding="utf-8",
+    )
+    assert ghook_guard._daemon_url() == "https://gobby.local:60887"
+
+    bootstrap.write_text(
+        "bind_host: gobby.local\ndaemon_port: 60887\nscheme: http\n",
+        encoding="utf-8",
+    )
+    assert ghook_guard._daemon_url() == "http://gobby.local:60887"
+
+
 def test_ghook_guard_allows_stop_when_fresh_shutdown_marker_exists(tmp_path: Path) -> None:
     marker = tmp_path / "shutdown_intent_active.json"
     marker.write_text(
@@ -69,6 +93,27 @@ def test_ghook_guard_allows_stop_when_fresh_shutdown_marker_exists(tmp_path: Pat
 
     assert result.returncode == 0
     assert json.loads(result.stdout) == {"continue": True}
+
+
+def test_ghook_guard_stop_shortcut_does_not_read_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class BrokenBuffer:
+        def read(self) -> bytes:
+            raise AssertionError("stdin should not be read")
+
+    class BrokenStdin:
+        buffer = BrokenBuffer()
+
+    monkeypatch.setattr(sys, "argv", ["ghook_guard.py", "--", sys.executable, "--type=Stop"])
+    monkeypatch.setattr(sys, "stdin", BrokenStdin())
+    monkeypatch.setattr(ghook_guard, "_child_command_available", lambda _command: True)
+    monkeypatch.setattr(ghook_guard, "_daemon_is_reachable", lambda: False)
+    monkeypatch.setattr(ghook_guard, "_fresh_shutdown_marker", lambda: True)
+
+    assert ghook_guard.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"continue": True}
 
 
 def test_ghook_guard_runs_child_for_stale_shutdown_marker(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useSettings } from '../useSettings'
+import { cacheBustedIconHref, useSettings } from '../useSettings'
 
 function iconLink() {
   return document.head.querySelector<HTMLLinkElement>('link[rel="icon"]')
@@ -59,5 +59,11 @@ describe('useSettings', () => {
     })
     expect(iconLink()).toHaveAttribute('href', '/logo-light.png?v=2')
     expect(appleTouchIconLink()).toHaveAttribute('href', '/logo-light.png?v=2')
+  })
+
+  it('replaces the icon cache param while preserving other query params and fragments', () => {
+    expect(cacheBustedIconHref('/logo.png?theme=dark&v=1#mask')).toBe(
+      '/logo.png?theme=dark&v=2#mask',
+    )
   })
 })

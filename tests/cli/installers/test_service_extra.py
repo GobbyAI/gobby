@@ -107,11 +107,13 @@ class TestDirectStartStopCommands:
 
 class TestServiceDispatchHelpers:
     @patch("gobby.cli.installers.service.sys")
+    @patch("gobby.cli.installers.service_windows._windows_start")
     @patch("gobby.cli.installers.service._macos_start")
     @patch("gobby.cli.installers.service._linux_start")
-    def test_service_start(self, mock_ls, mock_ms, mock_sys) -> None:
+    def test_service_start(self, mock_ls, mock_ms, mock_ws, mock_sys) -> None:
         mock_ms.return_value = {"success": True, "p": "mac"}
         mock_ls.return_value = {"success": True, "p": "linux"}
+        mock_ws.return_value = {"success": True, "p": "win"}
 
         mock_sys.platform = "darwin"
         assert service_start()["p"] == "mac"
@@ -120,14 +122,16 @@ class TestServiceDispatchHelpers:
         assert service_start()["p"] == "linux"
 
         mock_sys.platform = "win32"
-        assert service_start()["success"] is False
+        assert service_start()["p"] == "win"
 
     @patch("gobby.cli.installers.service.sys")
+    @patch("gobby.cli.installers.service_windows._windows_stop")
     @patch("gobby.cli.installers.service._macos_stop")
     @patch("gobby.cli.installers.service._linux_stop")
-    def test_service_stop(self, mock_ls, mock_ms, mock_sys) -> None:
+    def test_service_stop(self, mock_ls, mock_ms, mock_ws, mock_sys) -> None:
         mock_ms.return_value = {"success": True, "p": "mac"}
         mock_ls.return_value = {"success": True, "p": "linux"}
+        mock_ws.return_value = {"success": True, "p": "win"}
 
         mock_sys.platform = "darwin"
         assert service_stop()["p"] == "mac"
@@ -136,15 +140,24 @@ class TestServiceDispatchHelpers:
         assert service_stop()["p"] == "linux"
 
         mock_sys.platform = "win32"
-        assert service_stop()["success"] is False
+        assert service_stop()["p"] == "win"
 
     @patch("gobby.cli.installers.service.sys")
+    @patch("gobby.cli.installers.service_windows._windows_restart")
     @patch("gobby.cli.installers.service._macos_restart")
     @patch("gobby.cli.installers.service._linux_restart")
     @patch("gobby.runner_maintenance.write_shutdown_source")
-    def test_service_restart(self, mock_write_shutdown, mock_lr, mock_mr, mock_sys) -> None:
+    def test_service_restart(
+        self,
+        mock_write_shutdown,
+        mock_lr,
+        mock_mr,
+        mock_wr,
+        mock_sys,
+    ) -> None:
         mock_mr.return_value = {"success": True, "p": "mac"}
         mock_lr.return_value = {"success": True, "p": "linux"}
+        mock_wr.return_value = {"success": True, "p": "win"}
 
         mock_sys.platform = "darwin"
         assert service_restart()["p"] == "mac"
@@ -153,12 +166,14 @@ class TestServiceDispatchHelpers:
         assert service_restart(shutdown_source="http_restart")["p"] == "linux"
 
         mock_sys.platform = "win32"
-        assert service_restart()["success"] is False
-        assert mock_write_shutdown.call_count == 2
+        assert service_restart()["p"] == "win"
+        assert mock_write_shutdown.call_count == 3
         assert mock_write_shutdown.call_args_list[0].args == ("service_restart",)
         assert mock_write_shutdown.call_args_list[0].kwargs == {"intent": "restart"}
         assert mock_write_shutdown.call_args_list[1].args == ("http_restart",)
         assert mock_write_shutdown.call_args_list[1].kwargs == {"intent": "restart"}
+        assert mock_write_shutdown.call_args_list[2].args == ("service_restart",)
+        assert mock_write_shutdown.call_args_list[2].kwargs == {"intent": "restart"}
 
     @patch("gobby.cli.installers.service.sys")
     @patch("gobby.cli.installers.service._linux_stop")

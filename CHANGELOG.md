@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0]
 
-This section summarizes 1,238 non-merge commits since `v0.3.8`.
+This section summarizes the non-merge changes since `v0.3.8`.
 
 ### Added
 

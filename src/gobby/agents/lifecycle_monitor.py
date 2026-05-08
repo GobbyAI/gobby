@@ -152,8 +152,7 @@ class AgentLifecycleMonitor:
 
     def get_cleanup_agent(self) -> Callable[..., Awaitable[None]] | None:
         """Return the cleanup callable used for restart reconciliation."""
-        cleanup_agent = getattr(self._cleanup_handler, "cleanup_agent", None)
-        return cleanup_agent if callable(cleanup_agent) else None
+        return self._cleanup_handler.cleanup_agent
 
     async def terminalize_cancelled_run(
         self,
