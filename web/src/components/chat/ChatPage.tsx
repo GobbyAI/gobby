@@ -541,13 +541,18 @@ export function ChatPage({
     planArtifactIdRef.current = planArtifactId;
   }, [planArtifactId]);
 
-  // Clear artifacts and plan state on session switch / new chat
+  // Reset plan state on session switch / new chat. Render-time comparison
+  // avoids cascading setState-in-effect renders.
+  const [prevSwitchKey, setPrevSwitchKey] = useState(chat.conversationSwitchKey);
+  if (prevSwitchKey !== chat.conversationSwitchKey) {
+    setPrevSwitchKey(chat.conversationSwitchKey);
+    setPlanArtifactId(null);
+    setPendingPlanArtifactId(null);
+  }
   useEffect(() => {
     clearArtifacts();
     planArtifactIdRef.current = null;
     lastPlanArtifactContentRef.current = null;
-    setPlanArtifactId(null);
-    setPendingPlanArtifactId(null);
   }, [chat.conversationSwitchKey, clearArtifacts]);
 
   useEffect(() => {
