@@ -15,7 +15,6 @@ import {
   WORKFLOWS_TOOLBAR_CLS,
   WORKFLOWS_TOOLBAR_LEFT_CLS,
   WORKFLOWS_TOOLBAR_TITLE_CLS,
-  WORKFLOWS_TOOLBAR_COUNT_CLS,
   WORKFLOWS_TOOLBAR_RIGHT_CLS,
   WORKFLOWS_TOOLBAR_BTN_CLS,
   WORKFLOWS_NEW_BTN_CLS,
@@ -276,7 +275,6 @@ export function SkillsPage() {
       <div className={WORKFLOWS_TOOLBAR_CLS}>
         <div className={WORKFLOWS_TOOLBAR_LEFT_CLS}>
           <h1 className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Skills</h1>
-          <span className={WORKFLOWS_TOOLBAR_COUNT_CLS}>{stats?.total ?? 0}</span>
         </div>
         <div className={WORKFLOWS_TOOLBAR_RIGHT_CLS}>
           <div className={cn(VIEW_TOGGLE_CLS, activeTab === 'installed' && 'mr-2')}>
