@@ -65,6 +65,7 @@ def install_global_hooks() -> list[str]:
     installed: list[str] = []
 
     hook_files = {
+        "ghook_guard.py": True,
         "validate_settings.py": True,  # Make executable
     }
 

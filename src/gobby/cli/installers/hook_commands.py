@@ -9,6 +9,7 @@ from typing import Any
 from gobby.utils.native_bin import resolve_native_bin_or_default
 
 _GOBBY_OWNED_MARKER = "--gobby-owned"
+_STOP_HOOK_TYPES = {"stop"}
 
 
 def is_gobby_hook_command(command: str) -> bool:
@@ -39,18 +40,16 @@ def config_contains_gobby_hook(node: Any) -> bool:
 
 
 def build_hook_command_prefix(
-    _hooks_dir: Path,
+    hooks_dir: Path,
     *,
     ghook_bin: str | None = None,
 ) -> str:
     """Build the shared command prefix for hook templates.
 
-    `_hooks_dir` is retained for backward compatibility with older callers and
-    template helpers, but it is intentionally unused now that `resolved_ghook`
-    from `resolve_native_bin_or_default("ghook")` is the authoritative source
-    of the executable path. The returned prefix always includes
-    `_GOBBY_OWNED_MARKER`, so removing `_hooks_dir` would be a breaking API
-    change without changing runtime behavior.
+    The returned prefix always includes `_GOBBY_OWNED_MARKER`, so removing
+    `hooks_dir` would be a breaking API change without changing most runtime
+    behavior. Stop hooks still use `hooks_dir` to run the native ghook process
+    through a small shutdown-aware guard.
     """
     resolved_ghook = ghook_bin or resolve_native_bin_or_default("ghook")
     return f"{shlex.quote(resolved_ghook)} {_GOBBY_OWNED_MARKER}"
@@ -65,7 +64,12 @@ def build_hook_command(
 ) -> str:
     """Build the full hook command for a CLI hook type."""
     prefix = build_hook_command_prefix(hooks_dir, ghook_bin=ghook_bin)
-    return f"{prefix} --cli={cli_name} --type={hook_type}"
+    command = f"{prefix} --cli={cli_name} --type={hook_type}"
+    if hook_type.strip().lower() not in _STOP_HOOK_TYPES:
+        return command
+
+    guard = hooks_dir / "ghook_guard.py"
+    return f"{shlex.quote(str(guard))} -- {command}"
 
 
 def rewrite_hook_template_commands(

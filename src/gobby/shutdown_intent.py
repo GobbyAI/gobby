@@ -72,6 +72,13 @@ def get_shutdown_marker_path(home: Path | None = None) -> Path:
     return home / "shutdown_source.json"
 
 
+def get_active_shutdown_marker_path(home: Path | None = None) -> Path:
+    """Return the non-consuming shutdown marker path used by hook guards."""
+    if home is None:
+        home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
+    return home / "shutdown_intent_active.json"
+
+
 def write_shutdown_intent(
     source: str,
     intent: str | ShutdownIntent,
@@ -89,6 +96,11 @@ def write_shutdown_intent(
         "timestamp": time.time(),
     }
     marker.write_text(json.dumps(data))
+    active_marker = get_active_shutdown_marker_path(home)
+    try:
+        active_marker.write_text(json.dumps(data))
+    except OSError:
+        pass
 
 
 def write_stop_intent(source: str, sender_pid: int | None = None) -> None:
