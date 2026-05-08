@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.integrations.linear import LinearIntegration
-from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
+from gobby.integrations.linear_graphql import LinearGraphQLClient
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed, is_task_escalated
 from gobby.utils.project_init import update_project_json_fields
 
@@ -721,7 +721,7 @@ class LinearSyncService:
                     team_id=effective_team_id,
                     project_id=self._get_linear_project_id(),
                 )
-            except LinearGraphQLError as graphql_error:
+            except Exception as graphql_error:
                 logger.error(f"Failed to fetch Linear issues: {graphql_error}")
                 stats["errors"] = len(rows)
                 return stats
@@ -807,13 +807,21 @@ class LinearSyncService:
         pull_stats = await self.pull_linear_updates(team_id=effective_team_id)
         push_stats = await self.push_dirty_tasks()
 
-        # Update cursor after both complete
-        self._update_synced_at()
+        pull_errors = int(pull_stats.get("errors", 0))
+        push_errors = int(push_stats.get("errors", 0))
+        cursor_updated = pull_errors == 0 and push_errors == 0
+        synced_at: str | None
+        if cursor_updated:
+            synced_at = datetime.now(UTC).isoformat()
+            self._update_synced_at(synced_at)
+        else:
+            synced_at = self._get_project_synced_at()
 
         return {
             "pull": pull_stats,
             "push": push_stats,
-            "synced_at": datetime.now(UTC).isoformat(),
+            "cursor_updated": cursor_updated,
+            "synced_at": synced_at,
         }
 
     def map_gobby_state_to_linear(self, gobby_state: str) -> str:

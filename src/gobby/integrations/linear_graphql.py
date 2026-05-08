@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
 import httpx
@@ -10,6 +13,11 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.secrets import SecretStore
 
 __all__ = ["LinearGraphQLClient", "LinearGraphQLError"]
+
+
+_MAX_ATTEMPTS = 3
+_INITIAL_RETRY_DELAY_SECONDS = 0.5
+_MAX_RETRY_DELAY_SECONDS = 5.0
 
 
 class LinearGraphQLError(RuntimeError):
@@ -45,7 +53,28 @@ class LinearGraphQLClient:
         }
         payload = {"query": query, "variables": variables or {}}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(self.endpoint, headers=headers, json=payload)
+            for attempt in range(_MAX_ATTEMPTS):
+                try:
+                    response = await client.post(self.endpoint, headers=headers, json=payload)
+                except (httpx.TransportError, httpx.TimeoutException) as exc:
+                    if _is_final_attempt(attempt):
+                        raise LinearGraphQLError(
+                            "Linear GraphQL request failed after 3 attempts due to a "
+                            "network error."
+                        ) from exc
+                    await asyncio.sleep(_retry_delay(attempt))
+                    continue
+
+                if _is_retryable_status(response.status_code):
+                    if _is_final_attempt(attempt):
+                        raise LinearGraphQLError(
+                            "Linear GraphQL request failed after 3 attempts with "
+                            f"HTTP {response.status_code}."
+                        ) from _status_error(response)
+                    await asyncio.sleep(_retry_delay(attempt, response))
+                    continue
+
+                break
         response.raise_for_status()
         body = response.json()
         errors = body.get("errors")
@@ -314,3 +343,48 @@ def _connection_nodes(value: Any) -> list[dict[str, Any]]:
     if not isinstance(nodes, list):
         return []
     return [node for node in nodes if isinstance(node, dict)]
+
+
+def _is_final_attempt(attempt: int) -> bool:
+    return attempt >= _MAX_ATTEMPTS - 1
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return status_code == 429 or status_code >= 500
+
+
+def _retry_delay(attempt: int, response: httpx.Response | None = None) -> float:
+    if response is not None:
+        retry_after = response.headers.get("Retry-After")
+        parsed_retry_after = _parse_retry_after(retry_after)
+        if parsed_retry_after is not None:
+            return parsed_retry_after
+    return float(min(_INITIAL_RETRY_DELAY_SECONDS * (2**attempt), _MAX_RETRY_DELAY_SECONDS))
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+def _status_error(response: httpx.Response) -> httpx.HTTPStatusError:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return exc
+    return httpx.HTTPStatusError(
+        f"Unexpected retryable HTTP status {response.status_code}",
+        request=response.request,
+        response=response,
+    )

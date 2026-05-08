@@ -386,6 +386,45 @@ class TestLinearSyncServiceSync:
         assert call.kwargs["arguments"]["teamId"] == "team-123"
         assert call.kwargs["arguments"]["projectId"] == "lin-proj"
 
+    @pytest.mark.asyncio
+    async def test_sync_all_does_not_update_cursor_when_pull_has_errors(
+        self, sync_service: LinearSyncService
+    ) -> None:
+        """sync_all preserves the cursor when Linear pull fails."""
+        sync_service.pull_linear_updates = AsyncMock(
+            return_value={"updated": 0, "skipped": 0, "errors": 2}
+        )
+        sync_service.push_dirty_tasks = AsyncMock(
+            return_value={"pushed": 0, "skipped": 0, "errors": 0}
+        )
+        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
+        sync_service._update_synced_at = MagicMock()
+
+        result = await sync_service.sync_all(team_id="team-123")
+
+        assert result["cursor_updated"] is False
+        assert result["synced_at"] == "old-cursor"
+        sync_service._update_synced_at.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_all_updates_cursor_when_pull_and_push_succeed(
+        self, sync_service: LinearSyncService
+    ) -> None:
+        """sync_all advances the cursor after an error-free bidirectional sync."""
+        sync_service.pull_linear_updates = AsyncMock(
+            return_value={"updated": 0, "skipped": 1, "errors": 0}
+        )
+        sync_service.push_dirty_tasks = AsyncMock(
+            return_value={"pushed": 1, "skipped": 0, "errors": 0}
+        )
+        sync_service._update_synced_at = MagicMock()
+
+        result = await sync_service.sync_all(team_id="team-123")
+
+        assert result["cursor_updated"] is True
+        assert isinstance(result["synced_at"], str)
+        sync_service._update_synced_at.assert_called_once_with(result["synced_at"])
+
 
 class TestLinearSyncServiceCreate:
     """Test create_issue_for_task method."""
