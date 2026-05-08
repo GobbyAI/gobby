@@ -293,6 +293,57 @@ describe("useChat streaming and event handling", () => {
     expect(result.current.planPendingApproval).toBe(true);
   });
 
+  it("does not replay existing plan content when registering the plan callback", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "plan_pending_approval",
+        plan_content: "# My Plan\n\nStep 1...",
+      });
+    });
+
+    const onPlanReady = vi.fn();
+    act(() => result.current.setOnPlanReady(onPlanReady));
+
+    expect(result.current.planPendingApproval).toBe(true);
+    expect(onPlanReady).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates repeated identical plan_pending_approval callbacks", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+    const onPlanReady = vi.fn();
+    act(() => result.current.setOnPlanReady(onPlanReady));
+
+    act(() => {
+      ws.simulateMessage({
+        type: "plan_pending_approval",
+        plan_content: "# My Plan\n\nStep 1...",
+      });
+      ws.simulateMessage({
+        type: "plan_pending_approval",
+        plan_content: "# My Plan\n\nStep 1...",
+      });
+      ws.simulateMessage({
+        type: "plan_pending_approval",
+        plan_content: "# My Plan\n\nStep 2...",
+      });
+    });
+
+    expect(result.current.planPendingApproval).toBe(true);
+    expect(onPlanReady).toHaveBeenCalledTimes(2);
+    expect(onPlanReady).toHaveBeenNthCalledWith(1, "# My Plan\n\nStep 1...");
+    expect(onPlanReady).toHaveBeenNthCalledWith(2, "# My Plan\n\nStep 2...");
+  });
+
   it("contextUsage tracks token usage from chat_stream", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

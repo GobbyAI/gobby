@@ -437,6 +437,7 @@ class TestLinearSyncServiceSync:
         sync_service.push_dirty_tasks = AsyncMock(
             return_value={"pushed": 1, "skipped": 0, "errors": 0}
         )
+        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
         sync_service._update_synced_at = MagicMock()
 
         result = await sync_service.sync_all(team_id="team-123")

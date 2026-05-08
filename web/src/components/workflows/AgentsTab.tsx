@@ -109,13 +109,18 @@ export function AgentsTab({
     setLoading(true)
     try {
       const nextDefinitions = await loadAgentDefinitions(includeDeleted)
-      if (nextDefinitions) setDefinitions(nextDefinitions)
+      if (nextDefinitions === null) {
+        showToast('Failed to load agent definitions', 'error')
+        return
+      }
+      setDefinitions(nextDefinitions)
     } catch (e) {
       console.error('Failed to fetch agent definitions:', e)
+      showToast('Failed to load agent definitions', 'error')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [showToast])
 
   useEffect(() => {
     fetchDefinitions(true)

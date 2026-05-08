@@ -32,6 +32,7 @@ from gobby.memory.digest import (
     memory_sync_import,
 )
 from gobby.memory.manager import MemoryManager
+from gobby.sync.memories import is_ephemeral_implementation_note
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -167,6 +168,15 @@ def create_memory_registry(
             session_id: Session ID that created this memory (accepts #N, N, UUID, or prefix)
         """
         try:
+            if is_ephemeral_implementation_note(
+                {"content": content, "type": memory_type, "tags": tags or []}
+            ):
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "ephemeral_implementation_note",
+                }
+
             project_id = get_current_project_id()
 
             # Resolve session_id to UUID before passing to storage layer

@@ -315,9 +315,12 @@ const connect = useCallback(() => {
           const planContent = (data as Record<string, unknown>)
             .plan_content as string | undefined;
           if (planContent) {
+            const previousPlanContent = planContentRef.current;
             setPlanPendingApproval(true);
             planContentRef.current = planContent;
-            onPlanReadyRef.current?.(planContent);
+            if (planContent !== previousPlanContent) {
+              onPlanReadyRef.current?.(planContent);
+            }
           }
         }
       } else if (data.type === "mode_changed") {

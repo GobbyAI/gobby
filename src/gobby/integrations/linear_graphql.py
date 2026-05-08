@@ -81,8 +81,18 @@ class LinearGraphQLClient:
 
             if response is None:
                 raise LinearGraphQLError("Linear GraphQL request did not produce a response.")
-            response.raise_for_status()
-            body = response.json()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise LinearGraphQLError(
+                    f"Linear GraphQL request failed with HTTP {response.status_code}."
+                ) from exc
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise LinearGraphQLError("Linear GraphQL response was not valid JSON.") from exc
+            if not isinstance(body, dict):
+                raise LinearGraphQLError("Linear GraphQL response was not a JSON object.")
             errors = body.get("errors")
             if errors:
                 messages = [

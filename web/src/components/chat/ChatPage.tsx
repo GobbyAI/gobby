@@ -534,10 +534,20 @@ export function ChatPage({
   const [pendingPlanArtifactId, setPendingPlanArtifactId] = useState<
     string | null
   >(null);
+  const planArtifactIdRef = useRef<string | null>(null);
+  const lastPlanArtifactContentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    planArtifactIdRef.current = planArtifactId;
+  }, [planArtifactId]);
 
   // Clear artifacts and plan state on session switch / new chat
   useEffect(() => {
     clearArtifacts();
+    planArtifactIdRef.current = null;
+    lastPlanArtifactContentRef.current = null;
+    setPlanArtifactId(null);
+    setPendingPlanArtifactId(null);
   }, [chat.conversationSwitchKey, clearArtifacts]);
 
   useEffect(() => {
@@ -588,23 +598,33 @@ export function ChatPage({
   const onPlanReady = useCallback(
     (content: string | null) => {
       if (!content) return;
+      const existingArtifactId = planArtifactIdRef.current;
+      if (existingArtifactId && content === lastPlanArtifactContentRef.current) {
+        setPendingPlanArtifactId(existingArtifactId);
+        openArtifact(existingArtifactId);
+        showTab("plans");
+        return;
+      }
+
       const headingMatch = content.match(/^#\s+(.+)$/m);
       const title = headingMatch?.[1]?.trim() || "Implementation Plan";
-      let nextArtifactId = planArtifactId;
+      let nextArtifactId = existingArtifactId;
 
-      if (planArtifactId && artifacts.has(planArtifactId)) {
-        updateArtifact(planArtifactId, content);
-        openArtifact(planArtifactId);
+      if (existingArtifactId && artifacts.has(existingArtifactId)) {
+        updateArtifact(existingArtifactId, content);
+        openArtifact(existingArtifactId);
       } else {
         nextArtifactId = createArtifact("text", content, "markdown", title, {
           isPlan: true,
         });
       }
+      planArtifactIdRef.current = nextArtifactId;
+      lastPlanArtifactContentRef.current = content;
       setPlanArtifactId(nextArtifactId);
       setPendingPlanArtifactId(nextArtifactId);
       showTab("plans");
     },
-    [artifacts, createArtifact, openArtifact, planArtifactId, showTab, updateArtifact],
+    [artifacts, createArtifact, openArtifact, showTab, updateArtifact],
   );
 
   useEffect(() => {

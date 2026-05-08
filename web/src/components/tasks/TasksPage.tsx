@@ -397,6 +397,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
   }, [tasks, sortColumn, sortDirection])
 
   const displayTasks = scopedTasks
+  const groupedByAgent = useMemo(() => groupTasksByAgent(displayTasks), [displayTasks])
 
   const selectedTaskObjects = useMemo(() => {
     return displayTasks.filter(t => selectedTaskIds.has(t.id)).map(t => ({
@@ -630,7 +631,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         <div className={TABLE_CONTAINER_CLS}>
           {groupBy === 'agent' ? (
             <>
-              {groupTasksByAgent(displayTasks).map(({ key, label, tasks: agentTasks }) => (
+              {groupedByAgent.map(({ key, label, tasks: agentTasks }) => (
                 <div key={key} className={GROUP_SECTION_CLS}>
                   <div className={GROUP_HEADER_CLS}>{label} <span className={GROUP_COUNT_CLS}>({agentTasks.length})</span></div>
                   <table className={TABLE_CLS}>

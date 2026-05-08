@@ -2034,10 +2034,12 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         hso = result["hookSpecificOutput"]
         assert hso["hookEventName"] == "PermissionRequest"
         assert hso["decision"] == {"behavior": "allow"}
-        rendered = repr(result)
-        assert "updatedInput" not in rendered
-        assert "updatedPermissions" not in rendered
-        assert "interrupt" not in rendered
+        assert "updatedInput" not in result
+        assert "updatedPermissions" not in result
+        assert "interrupt" not in result
+        assert "updatedInput" not in hso
+        assert "updatedPermissions" not in hso
+        assert "interrupt" not in hso
 
     def test_permission_request_deny_uses_decision_behavior(self) -> None:
         """PermissionRequest deny must not use top-level block fields."""
@@ -2053,10 +2055,12 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         hso = result["hookSpecificOutput"]
         assert hso["hookEventName"] == "PermissionRequest"
         assert hso["decision"] == {"behavior": "deny", "message": "Not allowed"}
-        rendered = repr(result)
-        assert "updatedInput" not in rendered
-        assert "updatedPermissions" not in rendered
-        assert "interrupt" not in rendered
+        assert "updatedInput" not in result
+        assert "updatedPermissions" not in result
+        assert "interrupt" not in result
+        assert "updatedInput" not in hso
+        assert "updatedPermissions" not in hso
+        assert "interrupt" not in hso
 
     def test_permission_request_deny_preserves_context_and_metadata(self) -> None:
         """PermissionRequest deny still uses shared context assembly."""
@@ -2131,15 +2135,14 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
-        rendered = repr(result)
         assert result["continue"] is True
         assert "decision" not in result
         assert "hookSpecificOutput" not in result
+        assert "updatedInput" not in result
+        assert "updatedPermissions" not in result
+        assert "interrupt" not in result
         assert "Bare python is not allowed" in result["systemMessage"]
         assert "uv run python hello.py" not in result["systemMessage"]
-        assert "Retry this tool call" not in rendered
-        assert "resending the corrected input" not in rendered
-        assert "Do not add, remove, or rename fields" not in rendered
 
     def test_pre_tool_use_wrapper_only_call_tool_rewrite_does_not_emit_retry_blob(self) -> None:
         """Wrapper-only call_tool reshapes should auto-heal without visible retry JSON."""

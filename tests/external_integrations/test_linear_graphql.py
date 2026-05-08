@@ -167,8 +167,42 @@ async def test_execute_does_not_retry_non_retryable_client_error(
     calls = _install_fake_client(monkeypatch, [_response(400)])
     delays = _capture_sleep(monkeypatch)
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(LinearGraphQLError, match="HTTP 400"):
         await LinearGraphQLClient("lin-api-key").execute("query Broken { nope }")
 
     assert len(calls) == 1
     assert delays == []
+
+
+@pytest.mark.asyncio
+async def test_execute_wraps_malformed_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_fake_client(
+        monkeypatch,
+        [
+            httpx.Response(
+                200,
+                content=b"not-json",
+                request=httpx.Request("POST", "https://api.linear.app/graphql"),
+            ),
+        ],
+    )
+
+    with pytest.raises(LinearGraphQLError, match="not valid JSON"):
+        await LinearGraphQLClient("lin-api-key").execute("query Broken { nope }")
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_preserves_graphql_error_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_fake_client(
+        monkeypatch,
+        [_response(200, {"errors": [{"message": "Invalid query"}]})],
+    )
+
+    with pytest.raises(LinearGraphQLError, match="Invalid query"):
+        await LinearGraphQLClient("lin-api-key").execute("query Broken { nope }")
+
+    assert len(calls) == 1

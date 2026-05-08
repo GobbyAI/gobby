@@ -49,7 +49,8 @@ call_tool(server_name="gobby-plans", tool_name="create_plan", ...)
 Plan mode is enforced through workflow/rule state. In plan mode:
 
 - The agent may write the active plan artifact.
-- Non-plan file writes are blocked by plan-mode write rules.
+- Unrelated file writes are blocked by `block-writes-outside-plan-artifact.yaml`.
+- `gobby-tasks` Task Management MCP calls remain allowed for organizing work.
 - User approval can exit plan mode and authorize execution.
 - The UI can show an approval bar for the active plan state.
 

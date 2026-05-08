@@ -30,6 +30,7 @@ from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.processor import SessionMessageProcessor
+from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.mcp import LocalMCPManager
@@ -180,8 +181,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     _ensure_headless_settings()
 
     runner._shutdown_requested = False
-    from gobby.shutdown_intent import ShutdownIntent
-
     runner._shutdown_intent = ShutdownIntent.STOP
     runner._metrics_cleanup_task = None
     runner._vector_rebuild_task = None

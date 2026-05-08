@@ -164,6 +164,40 @@ describe("ChatPage – rendering", () => {
     expect(showTabSpy).toHaveBeenCalledWith("artifacts");
   });
 
+  it("does not create duplicate plan artifacts for identical plan-ready content", async () => {
+    let planReady: ((content: string | null) => void) | null = null;
+    const setOnPlanReady = vi.fn((fn) => {
+      planReady = fn;
+    });
+    createArtifactSpy.mockReturnValue("artifact-plan-1");
+
+    render(
+      <ChatPage
+        chat={createChat({ setOnPlanReady })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(setOnPlanReady).toHaveBeenCalled();
+    });
+
+    act(() => {
+      planReady?.("# Plan\n\nStep 1");
+      planReady?.("# Plan\n\nStep 1");
+    });
+
+    expect(createArtifactSpy).toHaveBeenCalledTimes(1);
+    expect(createArtifactSpy).toHaveBeenCalledWith(
+      "text",
+      "# Plan\n\nStep 1",
+      "markdown",
+      "Plan",
+      { isPlan: true },
+    );
+    expect(showTabSpy).toHaveBeenCalledWith("plans");
+  });
 
   it("normalizes the input chip to a valid model for the active provider", async () => {
     render(

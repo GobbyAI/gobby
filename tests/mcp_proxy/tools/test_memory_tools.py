@@ -165,6 +165,29 @@ class TestCreateMemory:
         assert call_kwargs["tags"] == ["tag1", "tag2"]
 
     @pytest.mark.asyncio
+    async def test_create_memory_skips_ephemeral_implementation_note(
+        self,
+        memory_registry,
+        mock_memory_manager,
+    ) -> None:
+        """Run-specific build notes should not enter persistent memory."""
+        result = await memory_registry.call(
+            "create_memory",
+            {
+                "content": "Gobby build #epic E2E docs test #14353 completed.",
+                "memory_type": "implementation_note",
+                "tags": ["gobby", "build-e2e", "#14353"],
+            },
+        )
+
+        assert result == {
+            "success": True,
+            "skipped": True,
+            "reason": "ephemeral_implementation_note",
+        }
+        mock_memory_manager.create_memory.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_create_memory_redirects_session_start_proposal_to_task(
         self,
         mock_memory_manager,

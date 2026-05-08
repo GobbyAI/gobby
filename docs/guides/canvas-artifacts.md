@@ -51,13 +51,15 @@ The A2UI renderer accepts component types such as `Text`, `Button`, `TextField`,
 
 Important limits are enforced by the daemon:
 
-- Maximum 50 canvases per conversation.
-- Maximum 1,000 canvases globally.
-- Maximum 200 components per surface.
-- Maximum 64 KB data model.
-- Maximum 10 render calls per minute per conversation.
-- Default interaction timeout of 300 seconds.
-- Maximum interaction timeout of 600 seconds.
+| Resource | Limit |
+|----------|-------|
+| Canvases per conversation | 50 |
+| Canvases globally | 1,000 |
+| Components per surface | 200 |
+| Data model | 64 KB |
+| Render calls per conversation | 10 per minute |
+| Default interaction timeout | 300 seconds |
+| Maximum interaction timeout | 600 seconds |
 
 ## Artifact Panel
 

@@ -108,6 +108,40 @@ describe('AgentsTab card actions', () => {
     })
   })
 
+  it('surfaces malformed successful definition payloads', async () => {
+    const fetchStub = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/agents/definitions')) {
+        return Response.json({ status: 'success', definitions: { bad: true } })
+      }
+      if (url.includes('/api/source-control/branches')) {
+        return Response.json({ branches: [] })
+      }
+      if (url.includes('/api/source-control/status')) {
+        return Response.json({ repo_path: null })
+      }
+      if (url.includes('/api/workflows')) {
+        return Response.json({ workflows: [] })
+      }
+      return Response.json({})
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    render(
+      <AgentsTab
+        searchText=""
+        sourceFilter="installed"
+        devMode={false}
+        showCreateForm={false}
+        onToggleCreateForm={() => {}}
+        filterProvider="all"
+        onProvidersChange={() => {}}
+      />,
+    )
+
+    expect(await screen.findByText('Failed to load agent definitions')).toBeInTheDocument()
+  })
+
   it('blocks duplicate save when the new name already exists', async () => {
     const fetchStub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

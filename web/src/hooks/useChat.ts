@@ -230,10 +230,6 @@ export function useChat() {
   );
   const setOnPlanReady = useCallback((fn: (content: string | null) => void) => {
     onPlanReadyRef.current = fn;
-    // Empty string is an unready plan payload; replay only non-empty content.
-    if (planContentRef.current) {
-      fn(planContentRef.current);
-    }
   }, []);
 
   // Callback when artifact event arrives from backend (show_file)

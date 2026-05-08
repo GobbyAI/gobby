@@ -21,7 +21,7 @@ export async function loadAgentDefinitions(includeDeleted = false): Promise<Agen
   const res = await fetch(`${getBaseUrl()}/api/agents/definitions${params}`)
   const data = await res.json()
   if (data.status === 'success') {
-    return Array.isArray(data.definitions) ? data.definitions : []
+    return Array.isArray(data.definitions) ? data.definitions : null
   }
   return null
 }
