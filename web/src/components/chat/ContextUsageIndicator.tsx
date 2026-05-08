@@ -70,7 +70,7 @@ export function ContextUsageIndicator({
 
   return (
     <div
-      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      className="flex items-center gap-1.5"
       style={{ opacity: isStale ? 0.55 : 1 }}
       title={tooltipLines.join('\n')}
     >
@@ -96,7 +96,7 @@ export function ContextUsageIndicator({
           strokeLinecap="round"
         />
       </svg>
-      <span className="tabular-nums">{indicatorLabel}</span>
+      <span className="chat-session-status__state tabular-nums">{indicatorLabel}</span>
     </div>
   )
 }
