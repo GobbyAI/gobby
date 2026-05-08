@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0]
 
+This section summarizes 1,238 non-merge commits since `v0.3.8`.
+
 ### Added
 
 - Add Factory Droid as a first-class CLI source across hooks, sessions, storage,
@@ -27,6 +29,173 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [GobbyAI/gobby-cli#5](https://github.com/GobbyAI/gobby-cli/pull/5), including
   Droid diagnose support and `source="droid"` forwarding to the unified Gobby
   hook endpoint (#12285).
+- Add the build automation stack: `gobby build`, HTTP and MCP entry points,
+  build profiles, subtree cascade state, task-scoped controls, isolated
+  integration workspaces, branch cleanup, retry recovery, and dispatch
+  diagnostics (#12801, #12802, #12803, #12804, #12805, #12806, #12807, #12808,
+  #14153, #14291, #14305).
+- Add stage-native lifecycle dispatch with task artifacts, dispatch mutexes,
+  lifecycle event storage, lifecycle manifests, PR and merge delivery artifacts,
+  category-based development review routing, and explicit stage completion
+  flows (#12781, #12782, #12783, #12784, #12785, #13850, #13852, #13853,
+  #13854, #14248, #14312).
+- Add configurable task expansion depth with a three-level default, five-level
+  hard ceiling, expansion QA coverage manifests, and task coverage inventory
+  checks (#13212, #13224, #13242, #13249, #13268, #13276).
+- Add first-class skill loading rules, on-demand skill retrieval, brevity
+  injection, verification and review skill patterns, the build and tech-writer
+  skills, writing-skill authoring guidance, and hidden internal methodology
+  skills (#12058, #12063, #12093, #12708, #13399, #13938, #14148, #14207,
+  #14213, #14340).
+- Add SkillsMP and skill-hub improvements, including authenticated hub search,
+  GitHub-backed skill installs, hub auth status handling, and compact MCP skill
+  discovery output (#12053, #12062, #12068, #12278, #14299).
+- Add Linear integration improvements, including active forward sync, guided
+  setup, project-scoped task registration, Gobby-ref reporting, and transient
+  API failure tolerance (#14268, #14277, #14278, #14279, #14281, #14465).
+- Add session and token observability: per-event token tracking, session persona
+  switching, local model flags, local chips on sessions and agent cards, model
+  breakdown views, token timelines, and context usage polish (#12000, #12020,
+  #12964, #12965, #12966).
+- Add memory and code graph maintenance tools, including memory graph clearing,
+  asynchronous traceable knowledge-graph rebuilds, a nightly stale-memory
+  auditor, embedding health reporting, and code-index refreshes (#12016,
+  #12014, #14302).
+- Add GitHub issue triage automation, PR delivery state tracking, branch
+  protection probes, and a GitHub native binary updater (#13923, #13927,
+  #14161).
+- Add web UI capabilities across chat, sessions, tasks, workflows, cron, and
+  projects: responsive project files, recent cron runs, session and task
+  filters, attached-mode chat UX, compact 320px layouts, shared segmented
+  controls, chat panel compression, and light-mode branding (#12095, #12097,
+  #12098, #13320, #13321, #13322, #14316, #14317, #14326, #14344, #14359,
+  #14407, #14418, #14426, #14428, #14435, #14438).
+
+### Changed
+
+- Move hook handling to the Claude hooks v2 parity model and normalized
+  lifecycle events, with Codex MCP hook synthesis, shared session-ref
+  resolution, and stricter progressive-discovery enforcement across adapters
+  (#11980, #12018, #12019, #12026, #12028, #12114, #12764, #14447).
+- Replace legacy task status semantics with stage-native task lifecycle state,
+  stage snapshots, lifecycle boards, stage filters, and review verdict flows
+  (#12796, #12798, #12918, #13175, #13195, #13291, #13292, #13849, #13859,
+  #13895).
+- Consolidate session management and adapter plumbing, including the
+  `SessionManager`/`LocalSessionManager` merge, ACP base client extraction,
+  Codex item normalization, Gemini/Qwen ACP shared paths, and deterministic
+  synthetic tool-use IDs (#12092, #12102, #12103, #14158, #14235, #14236).
+- Rework agent and spawned-terminal lifecycle handling around daemon-owned
+  registration, tmux metadata, wake notifications, cancellation cleanup,
+  restart preservation, auth environment handling, and terminal prompt
+  detection (#12731, #12754, #12907, #12909, #14301, #14322, #14352, #14444).
+- Flatten SQLite migrations to the 219 baseline, split storage and task
+  manager modules, and harden migration transaction handling (#12084, #12646,
+  #14164).
+- Migrate large web surfaces toward Tailwind, shared tokens, canonical type and
+  color scales, accessible dialog semantics, visible focus rings, and container
+  queries (#13673, #13674, #13899, #13929, #13949, #13950, #13951, #13958,
+  #14132).
+- Decompose large source files across chat, workflows, agents, memory, tasks,
+  storage, code index, hooks, installers, worktrees, and tests to keep module
+  boundaries smaller and easier to maintain (#12087, #12096, #12126, #12213,
+  #12251, #12252, #12253, #12255, #12256, #12257, #12258, #12261, #12263,
+  #12265, #12286, #14139, #14144, #14165, #14166, #14167, #14175).
+- Refresh CLI install behavior for Codex, Claude, Gemini, Qwen, Droid, ghook,
+  gcode, gloc, and gsqz, including CLI trust seeding and policy file
+  installation (#12264, #14147, #14298).
+
+### Fixed
+
+- Harden daemon shutdown, restart, and cleanup behavior for session
+  registration, MCP cleanup, streamable HTTP sessions, child workflow cleanup,
+  tmux pane expiry, terminal session expiry, and stale live-session removal
+  (#12031, #12035, #12036, #12067, #12127, #12614, #12637, #12649, #12717,
+  #12719, #14404, #14467).
+- Fix MCP proxy and session-ref edge cases, including nested refs, unresolved
+  inner MCP refs, call_tool session context separation, Codex envelope
+  unwrapping, variable tool refs, stdio project headers, compact discovery
+  output, and targeted install embedding skips (#12032, #12034, #12650,
+  #12733, #12773, #13058, #13880, #14306, #14468).
+- Stabilize build, dispatch, and worktree automation around agent spawn
+  heartbeats, readiness gates, branch reuse, docs index conflict resolution,
+  child-stage hydration, merge recovery, stale branch cleanup, and successful
+  worktree cleanup (#14138, #14143, #14217, #14305, #14332, #14341, #14366,
+  #14408, #14411, #14413, #14420, #14423, #14434).
+- Repair task lifecycle gates and review flows for task creation, close/reopen,
+  claimed work, delegated child claims, lifecycle-only updates, holistic QA,
+  docs review, stage completion, and validator feedback (#12033, #12038,
+  #12745, #12770, #13048, #13897, #13990, #14244, #14265, #14431, #14462).
+- Fix provider-specific runtime issues across Codex, Claude, Gemini, Qwen,
+  Droid, and ACP children, including Claude statusline migration, Codex root
+  cwd hook lookup, Gemini model discovery, ACP phantom sessions, local Qwen
+  warmup, and spawned-agent MCP startup (#12017, #12132, #12655, #14249,
+  #14339, #14345).
+- Fix memory, search, embedding, and knowledge-graph correctness issues,
+  including Neo4j identity cutover, embedding dimension mismatches, provider
+  state reads, Qdrant startup status, invalid MCP tracking variables, and
+  stale-graph requeueing (#11812, #11813, #11814, #11817, #11985, #11993,
+  #11998, #14290).
+- Fix web chat, activity panel, sessions, tasks, and workflow UI regressions:
+  chat restore, task restore, attached mode, filters, compact controls,
+  transcript refresh, session sorting, task grouping, long tool output, and
+  panel toggles (#12013, #12051, #12094, #12960, #14240, #14311, #14333,
+  #14335, #14337, #14338, #14419, #14425, #14439, #14440).
+- Fix security and dependency issues, including vulnerable dependency updates,
+  pip-audit findings, a Bandit `nosec` warning, and Claude OAuth environment
+  forwarding from spawned agents (#14304, #14437, #14443).
+
+### Removed
+
+- Remove legacy hook dispatcher fallback code, Python statusline handling,
+  Codex preflight paths, injected-skills compatibility surfaces, the
+  front-half conductor surface, and retired task status flows (#11842, #12055,
+  #13905, #13939, #13941).
+- Remove retired terminal page surfaces and stale terminal chat plumbing after
+  terminal agent behavior moved into the unified chat and agent lifecycle paths
+  (#11988).
+- Remove VoxCPM and Kokoro TTS providers and related stale voice configuration
+  after the voice surface was simplified (#12131, #12137).
+- Remove stale docs, obsolete plans, and old agent workflow definitions
+  (#12814, #12815).
+
+### Documentation
+
+- Refresh the guide set for agents, CLI commands, code index, communications,
+  configuration, dispatch, hooks, HTTP endpoints, integrations, MCP tools,
+  memory, orchestration, pipelines, rules, sandboxing, search, sessions,
+  skills, testing, variables, voice, webhooks, workflows, worktrees, and the
+  guide index (#14183, #14185, #14342, #14354, #14355, #14356, #14357, #14358,
+  #14370, #14371, #14373, #14374, #14375, #14376, #14377, #14378, #14379,
+  #14380, #14381, #14382, #14383, #14384, #14385, #14386, #14387, #14388,
+  #14389, #14390, #14391, #14392, #14393, #14394, #14395, #14396, #14397,
+  #14398, #14399, #14400).
+- Add guides for admin operations, canvas artifacts, cron scheduling,
+  observability, plans and plan mode, prompts, providers and models,
+  test-quality auditing, web UI behavior, GitHub issue triage, and uncovered
+  feature areas (#14449).
+- Document build automation diagnostics, build e2e validation, lifecycle
+  dispatch, task expansion, PostgreSQL migration planning, Neo4j cleanup,
+  brand standards, planning v3, and markdown monolith exemptions (#11981,
+  #11984, #12716, #13172, #13870, #13926, #13984, #14405, #14409, #14410,
+  #14414, #14415).
+- Update repository and agent guidance to require isolated pytest daemon state,
+  clarify refactor-task requirements, and standardize project descriptions
+  across instruction files.
+
+### Tooling and Tests
+
+- Expand focused backend, frontend, e2e, ACP, lifecycle, stage, plan parser,
+  worktree, build, transcript, and visual-regression coverage across the
+  release range.
+- Split monolithic test suites for chat, hooks, HTTP, Gemini, Codex, runner,
+  spawn-agent MCP, storage, tasks, worktrees, and workflow surfaces.
+- Add a test-quality audit gate and reduce heavy-mock and mock-quality findings
+  across the existing test suite (#14258, #14284, #14287, #14288, #14292,
+  #14293, #14296).
+- Repair strict mypy, Ruff, frontend lint, pytest collection, and pre-push
+  drift failures uncovered during the release hardening pass (#12006, #12618,
+  #14159, #14436).
 
 ### Notice
 
