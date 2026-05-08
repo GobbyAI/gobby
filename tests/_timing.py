@@ -5,12 +5,9 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
-async def wait_for_async_condition(
+async def wait_for_async_condition[T](
     predicate: Callable[[], T],
     *,
     timeout: float = 1.0,
@@ -29,7 +26,7 @@ async def wait_for_async_condition(
         await asyncio.sleep(min(interval, max(deadline - loop.time(), 0)))
 
 
-def wait_for_condition(
+def wait_for_condition[T](
     predicate: Callable[[], T],
     *,
     timeout: float = 1.0,

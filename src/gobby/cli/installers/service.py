@@ -913,17 +913,22 @@ def service_restart(shutdown_source: str = "service_restart") -> dict[str, Any]:
     """Restart the daemon through the OS service manager."""
     from gobby.runner_maintenance import write_shutdown_source
 
-    write_shutdown_source(shutdown_source, intent="restart")
     if sys.platform == "darwin":
-        return _macos_restart()
+        restart_fn = _macos_restart
     elif sys.platform == "linux":
-        return _linux_restart()
-    elif sys.platform == "win32":
+        restart_fn = _linux_restart
+    elif sys.platform == "win32" and os.name == "nt":
         from gobby.cli.installers.service_windows import _windows_restart
 
-        return _windows_restart()
+        restart_fn = _windows_restart
     else:
         return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
+
+    try:
+        write_shutdown_source(shutdown_source, intent="restart")
+    except Exception as e:
+        logger.warning("Failed to write shutdown source before service restart: %s", e)
+    return restart_fn()
 
 
 def service_start() -> dict[str, Any]:
@@ -948,14 +953,19 @@ def service_stop(
     """Stop the daemon through the OS service manager."""
     from gobby.runner_maintenance import write_shutdown_source
 
-    write_shutdown_source(shutdown_source, intent=shutdown_intent)
     if sys.platform == "darwin":
-        return _macos_stop()
+        stop_fn = _macos_stop
     elif sys.platform == "linux":
-        return _linux_stop()
-    elif sys.platform == "win32":
+        stop_fn = _linux_stop
+    elif sys.platform == "win32" and os.name == "nt":
         from gobby.cli.installers.service_windows import _windows_stop
 
-        return _windows_stop()
+        stop_fn = _windows_stop
     else:
         return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
+
+    try:
+        write_shutdown_source(shutdown_source, intent=shutdown_intent)
+    except Exception as e:
+        logger.warning("Failed to write shutdown source before service stop: %s", e)
+    return stop_fn()

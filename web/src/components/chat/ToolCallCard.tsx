@@ -7,6 +7,7 @@ import { cn } from '../../lib/utils'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { JsonBlock } from './JsonBlock'
+import { PanelIcon } from './icons/PanelIcon'
 import type { A2UISurfaceState, UserAction } from '../canvas'
 import { A2UIRenderer } from '../canvas'
 import { useArtifactContext } from './artifacts/ArtifactContext'
@@ -124,15 +125,6 @@ function ToolErrorBody({ error }: { error: string }) {
         <pre className={TOOL_ERROR_PRE_CLASS}>{cleaned}</pre>
       )}
     </div>
-  )
-}
-
-function PanelIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-      <line x1="12" y1="3" x2="12" y2="21" />
-    </svg>
   )
 }
 
@@ -377,7 +369,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
             }}
             title="Open in artifacts panel"
           >
-            <PanelIcon />
+            <PanelIcon size={14} />
           </button>
         )}
         {hasDetails && (

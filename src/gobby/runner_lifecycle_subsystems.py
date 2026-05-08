@@ -80,6 +80,8 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
                 tracker.error("Qdrant", f"unreachable at {db_cfg.qdrant.url}")
         elif tracker:
             tracker.complete("Qdrant healthy")
+    else:
+        logger.debug("Qdrant URL is not configured; vector health check skipped")
 
     if runner.memory_manager and db_cfg.neo4j.url:
         from gobby.cli.services import is_neo4j_healthy
@@ -93,6 +95,8 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
                 tracker.error("Neo4j", f"unreachable at {db_cfg.neo4j.url}")
         elif tracker:
             tracker.complete("Neo4j healthy")
+    elif runner.memory_manager:
+        logger.debug("Neo4j URL is not configured; graph health check skipped")
 
 
 async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker | None) -> None:

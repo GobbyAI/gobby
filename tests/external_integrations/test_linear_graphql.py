@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from email.utils import format_datetime
 from typing import Any
 
 import httpx
 import pytest
 
-from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
+from gobby.integrations import linear_graphql
+from gobby.integrations.linear_graphql import (
+    LinearGraphQLClient,
+    LinearGraphQLError,
+    _parse_retry_after,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -70,6 +77,7 @@ def _capture_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 async def test_execute_retries_rate_limit_with_retry_after_and_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("gobby.integrations.linear_graphql.random.uniform", lambda _low, _high: 0.0)
     calls = _install_fake_client(
         monkeypatch,
         [
@@ -84,6 +92,30 @@ async def test_execute_retries_rate_limit_with_retry_after_and_succeeds(
     assert result == {"viewer": {"id": "user-1"}}
     assert len(calls) == 2
     assert delays == [1.25]
+
+
+def test_parse_numeric_retry_after_adds_bounded_jitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.integrations.linear_graphql.random.uniform", lambda _low, high: high)
+
+    assert _parse_retry_after("1.0") == pytest.approx(1.1)
+    assert _parse_retry_after("999") == 5.0
+
+
+def test_parse_date_retry_after_adds_bounded_jitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(linear_graphql, "datetime", FrozenDateTime)
+    monkeypatch.setattr("gobby.integrations.linear_graphql.random.uniform", lambda _low, high: high)
+    retry_at = format_datetime(datetime(2026, 5, 8, 12, 0, 1, tzinfo=UTC))
+
+    assert _parse_retry_after(retry_at) == pytest.approx(1.1)
 
 
 @pytest.mark.asyncio

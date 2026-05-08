@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useEffect, useState, type MutableRefObject } from "react";
 import type { GobbySession } from "../../types/sessions";
 import {
   loadPersistedConversationId,
@@ -31,10 +31,7 @@ export function useSessionReconciliation({
   switchConversation,
   startNewChat,
 }: UseSessionReconciliationArgs) {
-  const initialPersistedDbSessionIdRef = useRef<string | null | undefined>(undefined);
-  if (initialPersistedDbSessionIdRef.current === undefined) {
-    initialPersistedDbSessionIdRef.current = loadPersistedDbSessionId();
-  }
+  const [initialPersistedDbSessionId] = useState(() => loadPersistedDbSessionId());
 
   useEffect(() => {
     if (!projectReady) return;
@@ -48,11 +45,11 @@ export function useSessionReconciliation({
 
     const persistedConversationId = loadPersistedConversationId();
     const persistedDbSessionId = loadPersistedDbSessionId();
-    // rejectedInitialPersistedSession means initialPersistedDbSessionIdRef saw a
+    // rejectedInitialPersistedSession means initialPersistedDbSessionId saw a
     // persisted session at mount, but persistedDbSessionId, persistedConversationId,
     // and dbSessionId are now all cleared.
     const rejectedInitialPersistedSession =
-      initialPersistedDbSessionIdRef.current !== null &&
+      typeof initialPersistedDbSessionId === "string" &&
       persistedDbSessionId === null &&
       persistedConversationId === null &&
       dbSessionId === null;
@@ -98,5 +95,6 @@ export function useSessionReconciliation({
     switchConversation,
     startNewChat,
     initialReconciliationDoneRef,
+    initialPersistedDbSessionId,
   ]);
 }

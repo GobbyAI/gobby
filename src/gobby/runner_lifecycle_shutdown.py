@@ -254,9 +254,11 @@ async def shutdown_daemon_services(
     """Run the ordered graceful shutdown sequence."""
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
     try:
-        get_shutdown_marker_path().unlink(missing_ok=True)
-    except OSError:
-        logger.debug("Failed to remove shutdown marker during shutdown", exc_info=True)
+        get_shutdown_marker_path().unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.startup_ready = False

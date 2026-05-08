@@ -189,6 +189,22 @@ def test_discovery_methodology_skill_exists(slug: str, spec: dict[str, Any]) -> 
     assert "methodology" in text.lower()
 
 
+@pytest.mark.parametrize("slug", DISCOVERY_AGENTS)
+def test_discovery_agents_include_task_skill_gates(slug: str) -> None:
+    selectors = _raw_agent(slug)["workflows"]["rule_selectors"]
+
+    assert "tag:task-skill-gates" in selectors["include"]
+    assert "tag:task-skill-gates" not in selectors["exclude"]
+
+
+def test_plan_adversary_documents_task_skill_gate_exclusion() -> None:
+    raw_text = _agent_path("plan-adversary").read_text(encoding="utf-8")
+    selectors = _raw_agent("plan-adversary")["workflows"]["rule_selectors"]
+
+    assert "tag:task-skill-gates" in selectors["exclude"]
+    assert "Review/orchestration agents deliberately exclude task-skill gates" in raw_text
+
+
 def test_planner_treats_discovery_markers_as_authoritative_context() -> None:
     planner = _raw_agent("planner")
     instructions = planner["instructions"]

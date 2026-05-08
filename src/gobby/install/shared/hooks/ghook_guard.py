@@ -6,11 +6,14 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 import urllib.parse
 from pathlib import Path
+
+import yaml
 
 DEFAULT_DAEMON_URL = "http://localhost:60887"
 DEFAULT_ALLOW_SECONDS = 120.0
@@ -19,16 +22,21 @@ STOP_HOOK_TYPES = {"stop"}
 
 def main() -> int:
     ghook_args = _ghook_args(sys.argv[1:])
+
+    if not ghook_args:
+        sys.stderr.write("ghook_guard: missing ghook command\n")
+        return 2
+
+    if not _child_command_available(ghook_args[0]):
+        sys.stderr.write(f"ghook_guard: command not found or not executable: {ghook_args[0]}\n")
+        return 127
+
     stdin_bytes = sys.stdin.buffer.read()
 
     if _is_stop_hook(ghook_args) and not _daemon_is_reachable() and _fresh_shutdown_marker():
         sys.stdout.write(json.dumps({"continue": True}))
         sys.stdout.write("\n")
         return 0
-
-    if not ghook_args:
-        sys.stderr.write("ghook_guard: missing ghook command\n")
-        return 2
 
     result = subprocess.run(ghook_args, input=stdin_bytes, check=False)  # noqa: S603
     return int(result.returncode)
@@ -38,6 +46,14 @@ def _ghook_args(args: list[str]) -> list[str]:
     if args and args[0] == "--":
         return args[1:]
     return args
+
+
+def _child_command_available(command: str) -> bool:
+    if not command:
+        return False
+    if os.sep in command or (os.altsep and os.altsep in command):
+        return Path(command).is_file() and os.access(command, os.X_OK)
+    return shutil.which(command) is not None
 
 
 def _is_stop_hook(args: list[str]) -> bool:
@@ -106,14 +122,17 @@ def _daemon_url() -> str:
 
 
 def _yaml_scalar(data: str, key: str) -> str | None:
-    prefix = f"{key}:"
-    for line in data.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith(prefix):
-            continue
-        value = stripped[len(prefix) :].strip().strip('"').strip("'")
-        return value or None
-    return None
+    try:
+        loaded = yaml.safe_load(data)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    value = loaded.get(key)
+    if value is None:
+        return None
+    value_str = str(value)
+    return value_str or None
 
 
 def _fresh_shutdown_marker() -> bool:

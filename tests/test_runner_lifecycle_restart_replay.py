@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
+from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
 
 pytestmark = pytest.mark.unit
 
@@ -46,6 +47,8 @@ class TestAgentRestartReconciliation:
         ):
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
 
+        # One live tmux-backed run performs three recovery actions: completion
+        # registry hydration, runtime PID refresh, and output-reader restart.
         assert reconciled == 3
         runner.completion_registry.register.assert_called_once_with(
             "run-1",
@@ -122,6 +125,12 @@ class TestAgentRestartReconciliation:
             subscribers=["parent-1"],
             continuation_prompt=None,
         )
+
+    def test_list_active_agent_runs_requires_agent_runner(self) -> None:
+        runner = SimpleNamespace(agent_runner=None)
+
+        with pytest.raises(RuntimeError, match="runner.agent_runner is not configured"):
+            _list_active_agent_runs_once(runner)
 
     def _runner(self, run_storage: SimpleNamespace) -> SimpleNamespace:
         cleanup_agent = AsyncMock()

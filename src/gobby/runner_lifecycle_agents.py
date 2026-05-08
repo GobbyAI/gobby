@@ -119,11 +119,10 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
         run_storage = runner.agent_runner.run_storage
         pane_pid = getattr(live_info, "pane_pid", None)
         update_runtime = getattr(run_storage, "update_runtime", None)
-        did_reconcile = False
         if pane_pid is not None and pane_pid != getattr(run, "pid", None):
             if callable(update_runtime):
                 update_runtime(run_id, pid=pane_pid, tmux_session_name=session_name)
-                did_reconcile = True
+                reconciled += 1
 
         if output_reader is None:
             from gobby.agents.tmux import get_tmux_output_reader
@@ -131,22 +130,21 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
             output_reader = get_tmux_output_reader()
         try:
             if await output_reader.start_reader(run_id, session_name):
-                did_reconcile = True
+                reconciled += 1
         except Exception as e:
             logger.warning(
                 "Failed to restart tmux output reader for recovered agent %s: %s",
                 run_id,
                 e,
             )
-        if did_reconcile:
-            reconciled += 1
 
     return reconciled
 
 
 def _list_active_agent_runs_once(runner: GobbyRunner) -> list[Any]:
     """List one de-duplicated view of active agent runs."""
-    assert runner.agent_runner is not None
+    if runner.agent_runner is None:
+        raise RuntimeError("Cannot list active agent runs: runner.agent_runner is not configured")
     run_storage = runner.agent_runner.run_storage
     active_runs: list[Any] = []
     seen_ids: set[str] = set()

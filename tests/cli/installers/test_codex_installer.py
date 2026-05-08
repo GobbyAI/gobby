@@ -109,6 +109,56 @@ def test_codex_hook_trust_hash_matches_codex_discovery() -> None:
     )
 
 
+def test_codex_hook_trust_state_prunes_stale_gobby_positions(tmp_path: Path) -> None:
+    from gobby.cli.installers.codex import (
+        _ensure_codex_hook_trust_state,
+        _load_toml_config,
+    )
+
+    hooks_path = tmp_path / "hooks.json"
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": ".*",
+                            "hooks": [{"type": "command", "command": "python3 /tmp/user.py"}],
+                        },
+                        {
+                            "matcher": ".*",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "ghook --gobby-owned --cli=codex --type=PreToolUse",
+                                }
+                            ],
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    hooks_prefix = str(hooks_path.resolve())
+    config = _load_toml_config(
+        f"""
+[hooks.state."{hooks_prefix}:pre_tool_use:0:0"]
+trusted_hash = "sha256:gobby-old"
+
+[hooks.state."{hooks_prefix}:pre_tool_use:9:0"]
+trusted_hash = "sha256:user-tool"
+"""
+    )
+
+    trusted_keys = _ensure_codex_hook_trust_state(config, hooks_path)
+
+    state = config["hooks"]["state"]
+    assert f"{hooks_prefix}:pre_tool_use:1:0" in trusted_keys
+    assert f"{hooks_prefix}:pre_tool_use:0:0" not in state
+    assert state[f"{hooks_prefix}:pre_tool_use:9:0"]["trusted_hash"] == "sha256:user-tool"
+
+
 class TestInstallCodex:
     """Tests for install_codex function."""
 

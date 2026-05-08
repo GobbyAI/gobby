@@ -76,6 +76,18 @@ describe('normalizeStageRow display_name fallback', () => {
 })
 
 describe('parseReviewerAgentSelector', () => {
+  it('rejects missing, blank, non-object, and blank-default payloads', () => {
+    expect(parseReviewerAgentSelector(null)).toBeNull()
+    expect(parseReviewerAgentSelector(undefined)).toBeNull()
+    expect(parseReviewerAgentSelector('')).toBeNull()
+    expect(parseReviewerAgentSelector('   ')).toBeNull()
+    expect(parseReviewerAgentSelector('[]')).toBeNull()
+    expect(parseReviewerAgentSelector('"qa-reviewer"')).toBeNull()
+    expect(parseReviewerAgentSelector('42')).toBeNull()
+    expect(parseReviewerAgentSelector('true')).toBeNull()
+    expect(parseReviewerAgentSelector(JSON.stringify({ default: '   ', rules: [] }))).toBeNull()
+  })
+
   it('parses reviewer agent selector JSON for future stage registry callers', () => {
     expect(
       parseReviewerAgentSelector(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
@@ -18,6 +19,8 @@ __all__ = ["LinearGraphQLClient", "LinearGraphQLError"]
 _MAX_ATTEMPTS = 3
 _INITIAL_RETRY_DELAY_SECONDS = 0.5
 _MAX_RETRY_DELAY_SECONDS = 5.0
+_RETRY_AFTER_JITTER_FRACTION = 0.1
+_MAX_RETRY_AFTER_JITTER_SECONDS = 0.5
 
 
 class LinearGraphQLError(RuntimeError):
@@ -369,7 +372,7 @@ def _parse_retry_after(value: str | None) -> float | None:
     if not value:
         return None
     try:
-        return max(0.0, float(value))
+        return _bounded_retry_after_delay(max(0.0, float(value)))
     except ValueError:
         pass
     try:
@@ -378,7 +381,13 @@ def _parse_retry_after(value: str | None) -> float | None:
         return None
     if retry_at.tzinfo is None:
         retry_at = retry_at.replace(tzinfo=UTC)
-    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+    return _bounded_retry_after_delay(max(0.0, (retry_at - datetime.now(UTC)).total_seconds()))
+
+
+def _bounded_retry_after_delay(delay: float) -> float:
+    capped_delay = min(delay, _MAX_RETRY_DELAY_SECONDS)
+    jitter_max = min(capped_delay * _RETRY_AFTER_JITTER_FRACTION, _MAX_RETRY_AFTER_JITTER_SECONDS)
+    return min(_MAX_RETRY_DELAY_SECONDS, capped_delay + random.uniform(0.0, jitter_max))
 
 
 def _status_error(response: httpx.Response) -> httpx.HTTPStatusError:

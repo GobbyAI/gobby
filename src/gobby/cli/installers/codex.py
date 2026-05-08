@@ -316,6 +316,44 @@ def _ensure_table(parent: TOMLDocument | Table | dict[str, Any], key: str) -> Ta
     return new_table
 
 
+def _state_entry_trusted_hash(entry: Any) -> str | None:
+    if not isinstance(entry, (dict, Table)):
+        return None
+    value = entry.get("trusted_hash")
+    return value if isinstance(value, str) else None
+
+
+def _remove_stale_gobby_hook_trust_state(
+    state_table: Table,
+    hooks_file: Path,
+    current_entries: list[tuple[str, str]],
+) -> None:
+    """Remove stale Gobby-owned positional trust entries for this hooks file.
+
+    Codex keys hook trust by file, event, group index, and handler index. Reinstalling
+    can move Gobby handlers to new positions, so old Gobby keys must be pruned while
+    unrelated user trust state remains intact.
+    """
+    current_keys = {key for key, _ in current_entries}
+    current_hashes = {trusted_hash for _, trusted_hash in current_entries}
+    hooks_prefix = f"{hooks_file.resolve()}:"
+    event_labels = set(CODEX_HOOK_EVENT_KEY_LABELS.values())
+
+    for key in list(state_table.keys()):
+        if not isinstance(key, str) or not key.startswith(hooks_prefix):
+            continue
+        if key in current_keys:
+            continue
+        suffix_parts = key.removeprefix(hooks_prefix).split(":")
+        if len(suffix_parts) < 3 or suffix_parts[0] not in event_labels:
+            continue
+        trusted_hash = _state_entry_trusted_hash(state_table.get(key))
+        if trusted_hash in current_hashes or (
+            trusted_hash is not None and "gobby" in trusted_hash.lower()
+        ):
+            del state_table[key]
+
+
 def _ensure_codex_hook_trust_state(config: TOMLDocument, hooks_file: Path) -> set[str]:
     """Mark installed Gobby hooks as trusted in Codex config.toml."""
     hooks_config = json.loads(hooks_file.read_text(encoding="utf-8"))
@@ -325,6 +363,7 @@ def _ensure_codex_hook_trust_state(config: TOMLDocument, hooks_file: Path) -> se
 
     hooks_table = _ensure_table(config, "hooks")
     state_table = _ensure_table(hooks_table, "state")
+    _remove_stale_gobby_hook_trust_state(state_table, hooks_file, entries)
     trusted_keys: set[str] = set()
 
     for key, trusted_hash in entries:

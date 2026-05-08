@@ -394,7 +394,7 @@
   min-height: var(--activity-panel-control-height);
 }
 
-.activity-panel-toolbar-segmented > [role="radio"] {
+.activity-panel-toolbar-segmented > .segmented-control__option {
   min-height: calc(var(--activity-panel-control-height) - 2px);
   padding-block: 0;
 }

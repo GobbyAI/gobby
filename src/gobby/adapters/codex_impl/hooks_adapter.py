@@ -132,26 +132,25 @@ class CodexHooksAdapter(BaseAdapter):
                 response.decision or "allow",
             )
 
+        result: dict[str, Any] = {"continue": True}
+
         if response.decision in ("deny", "block"):
             if hook_event_name == "PermissionRequest":
                 decision: dict[str, Any] = {"behavior": "deny"}
                 if normalized_reason:
                     decision["message"] = normalized_reason
-                return {
-                    "continue": True,
-                    "hookSpecificOutput": {
-                        "hookEventName": "PermissionRequest",
-                        "decision": decision,
-                    },
+                result["hookSpecificOutput"] = {
+                    "hookEventName": "PermissionRequest",
+                    "decision": decision,
                 }
 
-            if hook_event_name in self.COMPACT_EVENTS:
+            elif hook_event_name in self.COMPACT_EVENTS:
                 return {
                     "continue": False,
                     "stopReason": normalized_reason or "Blocked by Gobby hook",
                 }
 
-            if hook_event_name == "PreToolUse":
+            elif hook_event_name == "PreToolUse":
                 deny_result: dict[str, Any] = {
                     "decision": "block",
                     "hookSpecificOutput": {
@@ -181,13 +180,13 @@ class CodexHooksAdapter(BaseAdapter):
                     )
                 return deny_result
 
-            block_result: dict[str, Any] = {"continue": False, "decision": "block"}
-            if normalized_reason:
-                block_result["reason"] = normalized_reason
-            return block_result
+            else:
+                block_result: dict[str, Any] = {"continue": False, "decision": "block"}
+                if normalized_reason:
+                    block_result["reason"] = normalized_reason
+                return block_result
 
-        result: dict[str, Any] = {"continue": True}
-        if hook_event_name == "PermissionRequest":
+        if hook_event_name == "PermissionRequest" and "hookSpecificOutput" not in result:
             result["hookSpecificOutput"] = {
                 "hookEventName": "PermissionRequest",
                 "decision": {"behavior": "allow"},
@@ -244,10 +243,13 @@ class CodexHooksAdapter(BaseAdapter):
                 else:
                     result["systemMessage"] = combined_context
             else:
-                result["hookSpecificOutput"] = {
-                    "hookEventName": hook_event_name,
-                    "additionalContext": combined_context,
-                }
+                hook_specific = result.get("hookSpecificOutput")
+                if not isinstance(hook_specific, dict):
+                    hook_specific = {"hookEventName": hook_event_name}
+                    result["hookSpecificOutput"] = hook_specific
+                else:
+                    hook_specific.setdefault("hookEventName", hook_event_name)
+                hook_specific["additionalContext"] = combined_context
 
         return result
 

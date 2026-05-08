@@ -154,7 +154,36 @@ class TestServiceDispatchHelpers:
 
         mock_sys.platform = "win32"
         assert service_restart()["success"] is False
+        assert mock_write_shutdown.call_count == 2
         assert mock_write_shutdown.call_args_list[0].args == ("service_restart",)
         assert mock_write_shutdown.call_args_list[0].kwargs == {"intent": "restart"}
         assert mock_write_shutdown.call_args_list[1].args == ("http_restart",)
         assert mock_write_shutdown.call_args_list[1].kwargs == {"intent": "restart"}
+
+    @patch("gobby.cli.installers.service.sys")
+    @patch("gobby.cli.installers.service._linux_stop")
+    @patch("gobby.runner_maintenance.write_shutdown_source", side_effect=OSError("readonly"))
+    def test_service_stop_continues_when_shutdown_source_write_fails(
+        self,
+        _mock_write_shutdown,
+        mock_linux_stop,
+        mock_sys,
+    ) -> None:
+        mock_sys.platform = "linux"
+        mock_linux_stop.return_value = {"success": True, "p": "linux"}
+
+        assert service_stop()["p"] == "linux"
+
+    @patch("gobby.cli.installers.service.sys")
+    @patch("gobby.cli.installers.service._linux_restart")
+    @patch("gobby.runner_maintenance.write_shutdown_source", side_effect=OSError("readonly"))
+    def test_service_restart_continues_when_shutdown_source_write_fails(
+        self,
+        _mock_write_shutdown,
+        mock_linux_restart,
+        mock_sys,
+    ) -> None:
+        mock_sys.platform = "linux"
+        mock_linux_restart.return_value = {"success": True, "p": "linux"}
+
+        assert service_restart()["p"] == "linux"

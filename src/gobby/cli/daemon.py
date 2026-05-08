@@ -588,18 +588,11 @@ def stop(ctx: click.Context, docker_flag: bool, shutdown_intent: str = "stop") -
         if result.get("success"):
             sys.exit(0)
 
-    if shutdown_intent == "restart":
-        success = stop_daemon_util(
-            quiet=False,
-            shutdown_intent="restart",
-            shutdown_source=shutdown_source,
-        )
-    else:
-        success = stop_daemon_util(
-            quiet=False,
-            shutdown_intent=shutdown_intent,
-            shutdown_source=shutdown_source,
-        )
+    success = stop_daemon_util(
+        quiet=False,
+        shutdown_intent=shutdown_intent,
+        shutdown_source=shutdown_source,
+    )
 
     # Stop Docker containers if requested (only if not already stopped above)
     if docker_flag and not docker_stopped:

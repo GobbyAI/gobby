@@ -272,6 +272,11 @@
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
+.command-bar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .command-bar-session {
   display: flex;
   align-items: center;

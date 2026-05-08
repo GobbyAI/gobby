@@ -162,6 +162,8 @@ workflows:
       - "tag:worker-safety"
     exclude:
       - "tag:sync"
+      # Review/orchestration agents deliberately exclude task-skill gates:
+      # lifecycle calls are stage-control actions, not discovery deliverables.
       - "tag:task-skill-gates"
 
 step_variables:

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeBlock } from '../shared/CodeBlock'
 import { cn } from '../../lib/utils'
 import { useArtifactContext } from './artifacts/ArtifactContext'
+import { PanelIcon } from './icons/PanelIcon'
 
 const MIN_ARTIFACT_LINES = 15
 
@@ -71,7 +72,7 @@ export function CodeBlockInner({ children, className }: CodeProps) {
               onClick={handleOpenArtifact}
               title="Open in panel"
             >
-              <PanelIcon />
+              <PanelIcon size={14} />
             </button>
           )}
           <button
@@ -167,24 +168,6 @@ function CheckIcon() {
       strokeLinejoin="round"
     >
       <polyline points="20 6 9 17 4 12" />
-    </svg>
-  )
-}
-
-function PanelIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-      <line x1="12" y1="3" x2="12" y2="21" />
     </svg>
   )
 }

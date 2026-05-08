@@ -213,7 +213,8 @@ class BaseChannelAdapter(ABC):
             return response
 
         # All retries exhausted — raise on last response
-        assert last_response is not None
+        if last_response is None:
+            raise RuntimeError("Retry loop completed without producing a response.")
         last_response.raise_for_status()
         return last_response  # Unreachable, but satisfies type checker
 

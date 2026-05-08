@@ -2058,6 +2058,30 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "updatedPermissions" not in rendered
         assert "interrupt" not in rendered
 
+    def test_permission_request_deny_preserves_context_and_metadata(self) -> None:
+        """PermissionRequest deny still uses shared context assembly."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="deny",
+            reason="Not allowed",
+            system_message="Session banner",
+            context="Rule context",
+            metadata={
+                "session_id": "session-uuid",
+                "session_ref": "#123",
+                "_first_hook_for_session": True,
+            },
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        hso = result["hookSpecificOutput"]
+        assert hso["decision"] == {"behavior": "deny", "message": "Not allowed"}
+        assert "Session banner" in result["systemMessage"]
+        assert "Rule context" in result["systemMessage"]
+        assert "Gobby Session ID: #123 (session-uuid)" in result["systemMessage"]
+
     @pytest.mark.parametrize("hook_type", ["PreCompact", "PostCompact"])
     def test_compact_block_uses_continue_false_stop_reason(self, hook_type: str) -> None:
         """Compact blocks use only universal output fields."""

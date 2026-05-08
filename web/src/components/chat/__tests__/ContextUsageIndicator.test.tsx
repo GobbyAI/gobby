@@ -18,7 +18,7 @@ describe('ContextUsageIndicator', () => {
 
     const percent = screen.getByText('25%')
     expect(percent).toBeVisible()
-    const indicator = percent.closest('div')
+    const indicator = screen.getByTestId('context-usage-indicator')
     expect(indicator).toHaveAttribute(
       'title',
       [
@@ -42,7 +42,7 @@ describe('ContextUsageIndicator', () => {
       />,
     )
 
-    const indicator = screen.getByText('0%').closest('div')
+    const indicator = screen.getByTestId('context-usage-indicator')
     expect(indicator).toHaveAttribute(
       'title',
       'Context usage: waiting for first response...',
