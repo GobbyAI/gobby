@@ -41,8 +41,8 @@ dependencies = [
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "qdrant-client>=1.12.0",
-    # python-multipart <0.0.26 has CVE-2026-24486, CVE-2026-40347 - pin to fixed version
-    "python-multipart>=0.0.26",
+    # python-multipart <0.0.27 has CVE-2026-24486, CVE-2026-40347, CVE-2026-42561
+    "python-multipart>=0.0.27",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
     # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
@@ -91,12 +91,15 @@ constraint-dependencies = [
     # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) — see override-dependencies below
     "torch>=2.8.0",
 ]
-# torch is exact-pinned by chatterbox-tts==0.1.7 to ==2.6.0 on Python <3.14,
-# so the constraint above is unsatisfiable on its own; override forces 2.8+
-# and unifies the resolution at torch 2.11.0. Voice extra is opt-in; revisit
-# if chatterbox-tts surfaces ABI/API drift at runtime.
+# torch, diffusers, and safetensors are exact-pinned by chatterbox-tts==0.1.7 to
+# vulnerable or incompatible versions, so constraints are unsatisfiable on their own;
+# overrides force fixed versions and unify the voice-extra resolution. Voice extra is
+# opt-in; revisit if chatterbox-tts surfaces ABI/API drift at runtime.
 override-dependencies = [
     "torch>=2.8.0",
+    # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts voice extra)
+    "diffusers>=0.38.0",
+    "safetensors>=0.8.0rc0",
 ]
 
 [build-system]
@@ -238,7 +241,7 @@ dev = [
     "black>=26.3.1",  # CVE-2026-32274
     "mypy>=1.8.0",
     "mutmut>=3.0.0",
-    "pip>=26.0",  # CVE-2026-1703
+    "pip>=26.1",  # CVE-2026-1703, CVE-2026-3219, CVE-2026-6357
     "pip-audit>=2.7.0",
     "pre-commit>=4.0.0",
     "pytest>=9.0.3",
