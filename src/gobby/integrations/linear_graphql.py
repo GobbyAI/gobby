@@ -395,11 +395,12 @@ def _parse_retry_after(value: str | None) -> float | None:
 
 
 def _bounded_retry_after_delay(delay: float) -> float:
+    # random.uniform here is retry-backoff jitter, never used for security tokens.
     capped_delay = min(delay, _MAX_RETRY_DELAY_SECONDS)
     jitter_max = min(capped_delay * _RETRY_AFTER_JITTER_FRACTION, _MAX_RETRY_AFTER_JITTER_SECONDS)
     return min(
         _MAX_RETRY_DELAY_SECONDS,
-        capped_delay + random.uniform(0.0, jitter_max),  # nosec B311  retry jitter, not security-sensitive
+        capped_delay + random.uniform(0.0, jitter_max),  # nosec B311
     )
 
 
