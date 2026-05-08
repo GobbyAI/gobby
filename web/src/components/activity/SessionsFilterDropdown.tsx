@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { Button } from "../chat/ui/Button";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { getProviderDisplayName } from "../../lib/providerModels";
 import { useIsMobile } from "../../hooks/useIsMobile";
@@ -238,15 +239,7 @@ export function SessionsFilterDropdown({
               <button
                 type="button"
                 className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground hover:text-foreground text-left"
-                onClick={() => {
-                  const next = !showCustomDate;
-                  setShowCustomDate(next);
-                  if (next) {
-                    update({ datePreset: "custom" });
-                  } else if (filters.datePreset === "custom") {
-                    update({ datePreset: "all" });
-                  }
-                }}
+                onClick={() => setShowCustomDate((prev) => !prev)}
                 aria-expanded={showCustomDate}
               >
                 {showCustomDate ? "▾" : "▸"} Custom range
@@ -281,21 +274,23 @@ export function SessionsFilterDropdown({
           className="flex items-center justify-between border-t border-border px-2 py-1.5"
           style={{ background: "var(--bg-secondary)" }}
         >
-          <button
+          <Button
             type="button"
-            className="text-[length:var(--text-md)] text-muted-foreground hover:text-foreground disabled:opacity-50"
+            variant="ghost"
+            size="sm"
             onClick={handleReset}
             disabled={activeCount === 0}
           >
             Reset
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="text-[length:var(--text-md)] text-accent hover:underline"
+            variant="default"
+            size="sm"
             onClick={onClose}
           >
             Apply
-          </button>
+          </Button>
         </div>
       </div>
     </>
