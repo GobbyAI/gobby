@@ -564,7 +564,7 @@ class StageStatesManager:
                   JOIN subtree ON tasks.parent_task_id = subtree.id
             )
             SELECT id FROM subtree WHERE id IN ({placeholders})
-            """,  # nosec B608 - placeholder count is derived from cited_ids length.
+            """,  # nosec B608 # placeholder count is derived from cited_ids length.
             (task_id, *cited_ids),
         ).fetchall()
         descendant_ids = {str(row["id"]) for row in rows}
