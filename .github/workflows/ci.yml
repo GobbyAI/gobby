@@ -9,13 +9,13 @@ on:
       - 'LICENSE*'
       - '.gobby/**'
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - 'LICENSE*'
       - '.gobby/**'
-  workflow_dispatch:  # Manual trigger for dev if needed
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -170,6 +170,26 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  voice-extra:
+    name: Voice Extra (safetensors rc0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install voice extra dependencies
+        run: uv sync --dev --extra voice
+
+      - name: Run focused voice tests
+        run: uv run pytest tests/voice tests/servers/routes/test_voice_routes.py
 
   security:
     name: Security Scan

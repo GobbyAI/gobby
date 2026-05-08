@@ -13,11 +13,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.app_context import ServiceContainer
+from gobby.servers.http import HTTPServer
 from gobby.servers.routes.sessions import (
     _get_commit_count,
     _get_session_stats,
     create_sessions_router,
 )
+from tests._timing import wait_for_condition
 
 pytestmark = pytest.mark.unit
 
@@ -25,7 +28,13 @@ NOW_ISO = "2026-02-10T12:00:00+00:00"
 
 
 def _make_session(**overrides) -> MagicMock:
-    """Create a mock Session with sensible defaults."""
+    """Create a mock Session with sensible defaults.
+
+    `to_dict` reads attributes lazily via side_effect, so callers and route
+    code that mutate fields after construction (e.g., assigning
+    claimed_task_refs from a bulk join) see those mutations reflected in the
+    serialized output.
+    """
     defaults = {
         "id": "sess-abc123",
         "external_id": "ext-123",
@@ -43,12 +52,16 @@ def _make_session(**overrides) -> MagicMock:
         "updated_at": NOW_ISO,
         "seq_num": 42,
         "message_count": 0,
+        "claimed_task_refs": [],
+        "created_task_refs": [],
+        "closed_task_refs": [],
     }
     defaults.update(overrides)
+    keys = list(defaults.keys())
     session = MagicMock()
     for key, val in defaults.items():
         setattr(session, key, val)
-    session.to_dict.return_value = defaults
+    session.to_dict.side_effect = lambda: {key: getattr(session, key) for key in keys}
     return session
 
 
@@ -103,6 +116,45 @@ def client(mock_server, mock_hook_manager):
     app.include_router(router)
     app.state.hook_manager = mock_hook_manager
     return TestClient(app)
+
+
+def test_app_wires_session_change_listener_to_websocket(session_storage, sample_project) -> None:
+    """SessionManager changes are bridged to websocket session_event broadcasts."""
+    ws_server = MagicMock()
+    ws_server.broadcast_session_event = AsyncMock()
+    ws_server.cleanup_voice = None
+    services = ServiceContainer(
+        config=None,
+        database=session_storage.db,
+        session_manager=session_storage,
+        task_manager=MagicMock(),
+        websocket_server=ws_server,
+    )
+    server = HTTPServer(
+        services=services,
+        port=60887,
+        test_mode=True,
+    )
+
+    with TestClient(server.app):
+        session = session_storage.register(
+            external_id="app-session-change-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        wait_for_condition(
+            lambda: ws_server.broadcast_session_event.await_count > 0,
+            description="session broadcast",
+        )
+
+        ws_server.broadcast_session_event.assert_awaited_once_with(
+            "session_created",
+            session.id,
+        )
+        assert ws_server.broadcast_session_event.await_count == 1
+        assert ws_server.broadcast_session_event.await_args is not None
 
 
 # =============================================================================
@@ -469,6 +521,7 @@ class TestCreateWebChatSession:
             source="claude",
             title="Web Chat",
             model="sonnet",
+            is_local=False,
             chat_mode="plan",
             sandbox_enabled=True,
             sandbox_policy_hash="hash-123",
@@ -485,7 +538,7 @@ class TestCreateWebChatSession:
         assert response.status_code == 400
         assert (
             response.json()["detail"]
-            == "Invalid provider. Must be one of: claude, gemini, qwen, codex"
+            == "Invalid provider. Must be one of: claude, gemini, qwen, codex, droid"
         )
         mock_server.session_manager.create_web_chat_session.assert_not_called()
 
@@ -545,13 +598,167 @@ class TestListSessions:
         )
 
         assert response.status_code == 200
-        mock_server.session_manager.list.assert_called_once_with(
-            project_id="proj-1",
-            status="active",
-            source="Claude Code",
-            limit=50,
-            exclude_subagents=False,
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["project_id"] == "proj-1"
+        assert kwargs["status"] == "active"
+        assert kwargs["source"] == "Claude Code"
+        assert kwargs["limit"] == 50
+        assert kwargs["exclude_subagents"] is False
+        assert kwargs["cursor_updated_at"] is None
+        assert kwargs["cursor_id"] is None
+
+    def test_list_emits_task_refs_per_session(self, client, mock_server) -> None:
+        """The route enriches each session with claimed/created/closed task refs."""
+        sessions = [
+            _make_session(id="sess-A"),
+            _make_session(id="sess-B"),
+        ]
+        mock_server.session_manager.list.return_value = sessions
+        mock_server.session_manager.fetch_task_refs_by_session.return_value = {
+            "sess-A": {"claimed": [10, 11], "created": [20], "closed": []},
+            "sess-B": {"claimed": [], "created": [], "closed": [99]},
+        }
+
+        response = client.get("/api/sessions")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sessions"][0]["id"] == "sess-A"
+        assert data["sessions"][0]["claimed_task_refs"] == [10, 11]
+        assert data["sessions"][0]["created_task_refs"] == [20]
+        assert data["sessions"][0]["closed_task_refs"] == []
+        assert data["sessions"][1]["id"] == "sess-B"
+        assert data["sessions"][1]["claimed_task_refs"] == []
+        assert data["sessions"][1]["closed_task_refs"] == [99]
+
+        # Single bulk join — fetch_task_refs_by_session called once with all ids.
+        mock_server.session_manager.fetch_task_refs_by_session.assert_called_once_with(
+            ["sess-A", "sess-B"]
         )
+
+    def test_list_task_refs_default_empty_when_helper_silent(self, client, mock_server) -> None:
+        """Sessions absent from the bulk-query result still serialize with empty lists."""
+        sessions = [_make_session(id="sess-A")]
+        mock_server.session_manager.list.return_value = sessions
+        mock_server.session_manager.fetch_task_refs_by_session.return_value = {}
+
+        response = client.get("/api/sessions")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sessions"][0]["claimed_task_refs"] == []
+        assert data["sessions"][0]["created_task_refs"] == []
+        assert data["sessions"][0]["closed_task_refs"] == []
+
+    def test_list_emits_next_cursor_when_page_full(self, client, mock_server) -> None:
+        """next_cursor is built from the last session when the page hits the limit."""
+        sessions = [
+            _make_session(id=f"sess-{index}", updated_at=f"2026-04-29T10:00:{index:02d}+00:00")
+            for index in range(2)
+        ]
+        mock_server.session_manager.list.return_value = sessions
+
+        response = client.get("/api/sessions", params={"limit": 2})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["next_cursor"] == {
+            "updated_at": "2026-04-29T10:00:01+00:00",
+            "id": "sess-1",
+        }
+
+    def test_list_next_cursor_null_when_page_partial(self, client, mock_server) -> None:
+        """A short page (fewer than limit rows) means there's no next page."""
+        sessions = [_make_session(id="sess-only")]
+        mock_server.session_manager.list.return_value = sessions
+
+        response = client.get("/api/sessions", params={"limit": 100})
+
+        assert response.status_code == 200
+        assert response.json()["next_cursor"] is None
+
+    def test_list_passes_filter_params_to_storage(self, client, mock_server) -> None:
+        """All new query params reach storage with the right kwarg names."""
+        mock_server.session_manager.list.return_value = []
+
+        response = client.get(
+            "/api/sessions",
+            params=[
+                ("sources", "claude"),
+                ("sources", "codex"),
+                ("status_in", "active"),
+                ("status_in", "paused"),
+                ("mode", "interactive"),
+                ("model", "claude-opus-4-7"),
+                ("session_seq_min", "10"),
+                ("session_seq_max", "100"),
+                ("task_ref_min", "5000"),
+                ("task_ref_max", "5500"),
+                ("task_ref_role", "claimed"),
+                ("task_ref_role", "created"),
+                ("created_after", "2026-04-01T00:00:00+00:00"),
+                ("created_before", "2026-04-30T00:00:00+00:00"),
+            ],
+        )
+
+        assert response.status_code == 200
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["sources"] == ["claude", "codex"]
+        assert kwargs["statuses"] == ["active", "paused"]
+        assert kwargs["modes"] == ["interactive"]
+        assert kwargs["models"] == ["claude-opus-4-7"]
+        assert kwargs["session_seq_min"] == 10
+        assert kwargs["session_seq_max"] == 100
+        assert kwargs["task_ref_min"] == 5000
+        assert kwargs["task_ref_max"] == 5500
+        assert kwargs["task_ref_roles"] == ["claimed", "created"]
+        assert kwargs["created_after"] == "2026-04-01T00:00:00+00:00"
+        assert kwargs["created_before"] == "2026-04-30T00:00:00+00:00"
+
+    def test_list_status_in_alone_reaches_storage(self, client, mock_server) -> None:
+        """status_in is wired through even when no other filter params are sent."""
+        mock_server.session_manager.list.return_value = []
+
+        response = client.get("/api/sessions", params=[("status_in", "expired")])
+
+        assert response.status_code == 200
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["statuses"] == ["expired"]
+
+    def test_list_passes_cursor_to_storage(self, client, mock_server) -> None:
+        """cursor_updated_at and cursor_id reach the storage layer verbatim."""
+        mock_server.session_manager.list.return_value = []
+
+        response = client.get(
+            "/api/sessions",
+            params={
+                "cursor_updated_at": "2026-04-29T10:00:00+00:00",
+                "cursor_id": "sess-cursor",
+            },
+        )
+
+        assert response.status_code == 200
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["cursor_updated_at"] == "2026-04-29T10:00:00+00:00"
+        assert kwargs["cursor_id"] == "sess-cursor"
+
+    def test_list_next_cursor_null_when_resumability(self, client, mock_server) -> None:
+        """include_resumability disables cursor pagination — next_cursor is always null."""
+        sessions = [
+            _make_session(id=f"sess-{index}", updated_at=f"2026-04-29T10:00:{index:02d}+00:00")
+            for index in range(5)
+        ]
+        mock_server.session_manager.list.return_value = sessions
+
+        response = client.get(
+            "/api/sessions",
+            params={"limit": 2, "include_resumability": "true"},
+        )
+
+        assert response.status_code == 200
+        # The route still trims to limit when resumability filtering is in effect, but
+        # cursor positioning would be ambiguous, so next_cursor stays null.
+        assert response.json()["next_cursor"] is None
 
     def test_list_no_session_manager(self, client, mock_server) -> None:
         """Returns 503 when session_manager is None."""

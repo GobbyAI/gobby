@@ -101,10 +101,18 @@ def normalize_persisted_args(name: str, args: list[str] | None) -> list[str]:
     return normalized_args
 
 
+def normalize_bundled_managed_args(name: str, args: list[str] | None) -> list[str]:
+    """Normalize args for Gobby-managed bundled server rows before persistence."""
+    normalized_args = normalize_persisted_args(name, args)
+    if name.lower() == CHROME_DEVTOOLS_SERVER_NAME:
+        normalized_args = _pin_chrome_devtools_package(normalized_args)
+    return normalized_args
+
+
 def normalize_bundled_server_config(config: MCPServerConfig) -> MCPServerConfig:
     """Return a config normalized to Gobby's bundled-server storage rules."""
     project_id = canonical_project_id_for_server(config.name, config.project_id)
-    args = normalize_persisted_args(config.name, config.args)
+    args = normalize_bundled_managed_args(config.name, config.args)
     if project_id == config.project_id and args == config.args:
         return config
     return replace(config, project_id=project_id, args=args)
@@ -241,6 +249,16 @@ def _strip_flag_args(args: list[str], flag: str) -> list[str]:
             continue
         stripped.append(arg)
     return stripped
+
+
+def _pin_chrome_devtools_package(args: list[str]) -> list[str]:
+    """Normalize bundled chrome-devtools-mcp launches to Gobby's tested package pin."""
+    return [
+        CHROME_DEVTOOLS_NPM_PACKAGE
+        if arg == "chrome-devtools-mcp" or arg.startswith("chrome-devtools-mcp@")
+        else arg
+        for arg in args
+    ]
 
 
 def _first_existing_path(candidates: Iterable[str | None]) -> str | None:

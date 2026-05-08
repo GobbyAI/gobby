@@ -19,7 +19,7 @@ export const dashboardGridClass =
   'grid grid-cols-1 gap-3 lg:grid-cols-3'
 
 export const dashboardCardClass =
-  'overflow-hidden rounded-lg border border-border bg-[var(--bg-secondary)]'
+  '@container overflow-hidden rounded-lg border border-border bg-[var(--bg-secondary)]'
 
 export const dashboardFullCardClass =
   'lg:col-span-3'
@@ -34,10 +34,10 @@ export const dashboardCardBodyClass =
   'px-4 pb-4'
 
 export const dashboardCardBodyCenteredClass =
-  'flex items-center gap-4'
+  'flex flex-col items-center gap-4 @sm:flex-row'
 
 export const dashboardCardBodyRowClass =
-  'flex items-start gap-4'
+  'flex flex-col items-start gap-4 @sm:flex-row'
 
 export const dashboardStatGridClass =
   'grid grid-cols-2 gap-3'

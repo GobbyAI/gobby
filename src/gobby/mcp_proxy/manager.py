@@ -15,6 +15,11 @@ from mcp import ClientSession
 from opentelemetry.trace import Status, StatusCode
 
 from gobby.mcp_proxy.bundled import normalize_bundled_server_config
+from gobby.mcp_proxy.connection_cleanup import (
+    describe_exception,
+    discard_connection,
+    finalize_disconnect_all,
+)
 from gobby.mcp_proxy.lazy import (
     CircuitBreakerOpen,
     LazyServerConnector,
@@ -502,40 +507,17 @@ class MCPClientManager:
     async def disconnect_all(self) -> None:
         """Disconnect all active connections."""
         self._running = False
-
-        if self._health_check_task:
-            self._health_check_task.cancel()
-            try:
-                await self._health_check_task
-            except asyncio.CancelledError:
-                pass
+        try:
+            await finalize_disconnect_all(
+                connections=self._connections,
+                health=self.health,
+                lazy_connector=self._lazy_connector,
+                reconnect_tasks=self._reconnect_tasks,
+                health_check_task=self._health_check_task,
+                logger=logger,
+            )
+        finally:
             self._health_check_task = None
-
-        # Cancel any pending reconnect tasks
-        for task in list(self._reconnect_tasks):
-            task.cancel()
-        if self._reconnect_tasks:
-            await asyncio.gather(*self._reconnect_tasks, return_exceptions=True)
-        self._reconnect_tasks.clear()
-
-        async def disconnect_with_timeout(name: str, connection: Any) -> None:
-            try:
-                await asyncio.wait_for(connection.disconnect(), timeout=5.0)
-            except TimeoutError:
-                logger.warning(f"Connection disconnect timed out for {name}")
-            except Exception as e:
-                logger.warning(f"Error disconnecting {name}: {e}")
-
-        tasks = []
-        for name, connection in self._connections.items():
-            if connection.is_connected:
-                tasks.append(asyncio.create_task(disconnect_with_timeout(name, connection)))
-                self.health[name].state = ConnectionState.DISCONNECTED
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        self._connections.clear()
 
     async def ensure_connected(self, server_name: str) -> ClientSession:
         """
@@ -736,37 +718,79 @@ class MCPClientManager:
             Dict mapping server names to tool lists
         """
         results = {}
-        servers = [server_name] if server_name else self._connections.keys()
-
-        for name in servers:
+        if server_name:
             try:
-                session = await self.get_client_session(name)
-                tools = await session.list_tools()
-                # Assuming tools is a ListToolsResult or similar Pydantic model
-                # We need to serialize it or return it as is.
-                # Inspecting mcp-python-sdk, list_tools returns ListToolsResult.
-                # Let's return the raw object or access .tools
-                if hasattr(tools, "tools"):
-                    tool_list = [
-                        {
-                            "name": t.name,
-                            "description": getattr(t, "description", "") or "",
-                            "inputSchema": getattr(t, "inputSchema", {}) or {},
-                        }
-                        for t in tools.tools
-                    ]
-                    results[name] = tool_list
-                    self._cache_discovered_tools(name, tool_list)
-                else:
-                    results[name] = []
-
-                self.health[name].record_success()
+                return {server_name: await self._list_tools_for_server(server_name)}
             except Exception as e:
-                logger.warning(f"Failed to list tools for {name}: {e}")
-                self.health[name].record_failure(str(e))
+                logger.warning("Failed to list tools for %s: %s", server_name, e)
+                return {server_name: []}
+
+        for name in list(self._connections.keys()):
+            try:
+                results[name] = await self._list_tools_for_server(name)
+            except Exception as e:
+                logger.warning("Failed to list tools for %s: %s", name, e)
                 results[name] = []
 
         return results
+
+    async def _list_tools_for_server(self, server_name: str) -> list[dict[str, Any]]:
+        try:
+            session = await self.get_client_session(server_name)
+            tool_list = await self._list_tools_from_session(session)
+        except Exception as initial_error:
+            error_message = describe_exception(initial_error)
+            logger.warning("Failed to list tools for %s: %s", server_name, error_message)
+            if server_name in self.health:
+                self.health[server_name].record_failure(error_message)
+            return await self._retry_list_tools_after_failure(server_name, initial_error)
+
+        self.health[server_name].record_success()
+        self._cache_discovered_tools(server_name, tool_list)
+        return tool_list
+
+    async def _retry_list_tools_after_failure(
+        self,
+        server_name: str,
+        initial_error: Exception,
+    ) -> list[dict[str, Any]]:
+        await discard_connection(
+            server_name,
+            self._connections,
+            self.health,
+            self._lazy_connector,
+            logger,
+        )
+        try:
+            session = await self.ensure_connected(server_name)
+            tool_list = await self._list_tools_from_session(session)
+        except Exception as retry_error:
+            retry_message = describe_exception(retry_error)
+            if server_name in self.health:
+                self.health[server_name].record_failure(retry_message)
+            raise MCPError(
+                f"Failed to list tools for server '{server_name}': "
+                f"initial listing failed: {describe_exception(initial_error)}; "
+                f"reconnect retry failed: {retry_message}"
+            ) from retry_error
+
+        self.health[server_name].record_success()
+        self._cache_discovered_tools(server_name, tool_list)
+        return tool_list
+
+    @staticmethod
+    async def _list_tools_from_session(session: ClientSession) -> list[dict[str, Any]]:
+        tools = await session.list_tools()
+        if not hasattr(tools, "tools"):
+            return []
+        return [
+            {
+                "name": t.name,
+                "description": getattr(t, "description", "") or "",
+                "inputSchema": getattr(t, "inputSchema", {}) or {},
+            }
+            for t in tools.tools
+        ]
 
     def _cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
         """Cache discovered tools to DB and update in-memory config."""
@@ -795,8 +819,7 @@ class MCPClientManager:
         # we try to fetch it. But standard MCP list_tools returns everything.
         # So we just filter the output of list_tools.
 
-        tools = await self.list_tools(server_name)
-        server_tools = tools.get(server_name, [])
+        server_tools = await self._list_tools_for_server(server_name)
 
         for tool in server_tools:
             # tool might be an object or dict
@@ -833,9 +856,34 @@ class MCPClientManager:
 
                 for name, result in zip(server_names, results, strict=False):
                     if isinstance(result, Exception) or result is False:
-                        # Health check failed
+                        previous_health = self.health[name].health
                         self.health[name].record_failure("Health check failed")
-                        logger.warning(f"Health check failed for {name}")
+                        failure_context = {
+                            "server_name": name,
+                            "previous_health": previous_health.value,
+                            "current_health": self.health[name].health.value,
+                            "consecutive_failures": self.health[name].consecutive_failures,
+                            "last_error": self.health[name].last_error,
+                        }
+                        if self.health[name].health == HealthState.UNHEALTHY:
+                            if previous_health != HealthState.UNHEALTHY:
+                                logger.warning(
+                                    "Health check failed for %s; server is unhealthy",
+                                    name,
+                                    extra=failure_context,
+                                )
+                            else:
+                                logger.debug(
+                                    "Health check failed for %s",
+                                    name,
+                                    extra=failure_context,
+                                )
+                        else:
+                            logger.debug(
+                                "Health check failed for %s",
+                                name,
+                                extra=failure_context,
+                            )
 
                         # Trigger reconnect if critical
                         if self.health[name].health == HealthState.UNHEALTHY:

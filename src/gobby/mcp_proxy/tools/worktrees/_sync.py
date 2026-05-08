@@ -99,6 +99,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         source_branch: str | None = None,
         target_branch: str | None = None,
         push: bool = False,
+        prefer_remote: bool = False,
         project_path: str | None = None,
     ) -> dict[str, Any]:
         """Merge and optionally push from worktree -- fully isolated, never touches main repo.
@@ -114,6 +115,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             source_branch: Agent's working branch (defaults to worktree's branch_name).
             target_branch: Branch to merge into (defaults to worktree's base_branch).
             push: If True, push source branch to origin as target after merge.
+            prefer_remote: If True, merge origin/target_branch instead of local target_branch.
             project_path: Path to project directory (pass cwd from CLI).
 
         Returns:
@@ -132,46 +134,80 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
 
         effective_source = source_branch or worktree.branch_name
-        merge_target = target_branch or worktree.base_branch
+        raw_merge_target = target_branch or worktree.base_branch
+        remote_target_requested = raw_merge_target.startswith("origin/")
+        merge_target = raw_merge_target.removeprefix("origin/")
+        use_remote_target = prefer_remote or remote_target_requested
         wt_path = worktree.worktree_path
 
         # Step 1: Fetch latest in the worktree
         fetch_result = await asyncio.to_thread(
-            resolved_git_mgr._run_git, ["fetch", "origin"], cwd=wt_path, timeout=60
+            resolved_git_mgr.run_git_command, ["fetch", "origin"], cwd=wt_path, timeout=60
         )
         if fetch_result.returncode != 0:
             logger.warning(f"Fetch failed in worktree (non-fatal): {fetch_result.stderr.strip()}")
+
+        remote_merge_ref = f"origin/{merge_target}"
+        local_ref_result = await asyncio.to_thread(
+            resolved_git_mgr.run_git_command,
+            ["show-ref", "--verify", "--quiet", f"refs/heads/{merge_target}"],
+            cwd=wt_path,
+            timeout=10,
+        )
+        remote_ref_result = await asyncio.to_thread(
+            resolved_git_mgr.run_git_command,
+            ["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_merge_ref}"],
+            cwd=wt_path,
+            timeout=10,
+        )
+        local_ref_exists = local_ref_result.returncode == 0
+        remote_ref_exists = remote_ref_result.returncode == 0
+        if use_remote_target:
+            merge_ref = remote_merge_ref if remote_ref_exists else None
+        else:
+            merge_ref = None
+            if local_ref_exists:
+                merge_ref = merge_target
+            elif remote_ref_exists:
+                merge_ref = remote_merge_ref
+        if merge_ref is None:
+            return {
+                "success": False,
+                "error": (
+                    f"Target branch '{merge_target}' not found as local branch "
+                    f"or remote ref '{remote_merge_ref}'"
+                ),
+                "worktree_path": wt_path,
+                "source_branch": effective_source,
+                "target_branch": merge_target,
+            }
 
         # Step 2: Stash dirty .gobby/ sync files to prevent merge blocking
         # Compare stash list before/after to reliably detect if a stash was created
         # (same pattern as merge_clone)
         stash_created = False
         stash_list_before = await asyncio.to_thread(
-            resolved_git_mgr._run_git, ["stash", "list"], cwd=wt_path, timeout=10
+            resolved_git_mgr.run_git_command, ["stash", "list"], cwd=wt_path, timeout=10
         )
         stash_push = await asyncio.to_thread(
-            resolved_git_mgr._run_git,
+            resolved_git_mgr.run_git_command,
             ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
             cwd=wt_path,
             timeout=10,
         )
         if stash_push.returncode == 0:
             stash_list_after = await asyncio.to_thread(
-                resolved_git_mgr._run_git, ["stash", "list"], cwd=wt_path, timeout=10
+                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=wt_path, timeout=10
             )
             stash_created = stash_list_after.stdout != stash_list_before.stdout
 
         # Step 3: Merge target INTO source branch (in worktree)
         # Wrapped in try/finally to ensure stashed .gobby/ files are always restored
-        merge_ref = (
-            f"origin/{merge_target}" if not merge_target.startswith("origin/") else merge_target
-        )
-
         async def _restore_stash() -> None:
             """Restore stashed .gobby/ files if any were stashed."""
             if stash_created:
                 pop_result = await asyncio.to_thread(
-                    resolved_git_mgr._run_git, ["stash", "pop"], cwd=wt_path, timeout=10
+                    resolved_git_mgr.run_git_command, ["stash", "pop"], cwd=wt_path, timeout=10
                 )
                 if pop_result.returncode != 0:
                     logger.warning(
@@ -190,7 +226,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         try:
             merge_result = await asyncio.to_thread(
-                resolved_git_mgr._run_git,
+                resolved_git_mgr.run_git_command,
                 ["merge", merge_ref, "--no-edit"],
                 cwd=wt_path,
                 timeout=60,
@@ -199,15 +235,9 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if merge_result.returncode != 0:
                 # Detect unmerged (conflicted) files via git index — more reliable
                 # than parsing human-readable merge output for "CONFLICT" strings
-                unmerged_result = await asyncio.to_thread(
-                    resolved_git_mgr._run_git,
-                    ["diff", "--name-only", "--diff-filter=U"],
-                    cwd=wt_path,
-                    timeout=10,
+                conflicted_files = await asyncio.to_thread(
+                    resolved_git_mgr.get_unmerged_files, cwd=wt_path
                 )
-                conflicted_files = [
-                    f.strip() for f in unmerged_result.stdout.strip().split("\n") if f.strip()
-                ]
                 if conflicted_files:
                     # Auto-resolve trivial conflicts (.gobby/*.jsonl)
                     from gobby.worktrees.merge.resolver import auto_resolve_trivial_conflicts
@@ -217,7 +247,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     if not remaining:
                         # All conflicts were trivial — commit the merge and continue
                         commit_result = await asyncio.to_thread(
-                            resolved_git_mgr._run_git,
+                            resolved_git_mgr.run_git_command,
                             ["commit", "--no-edit"],
                             cwd=wt_path,
                             timeout=30,
@@ -241,7 +271,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
                     # Still have real conflicts — abort and report
                     await asyncio.to_thread(
-                        resolved_git_mgr._run_git,
+                        resolved_git_mgr.run_git_command,
                         ["merge", "--abort"],
                         cwd=wt_path,
                         timeout=10,
@@ -270,7 +300,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             # Step 4 (optional): Push source branch to origin as target
             if push:
                 push_result = await asyncio.to_thread(
-                    resolved_git_mgr._run_git,
+                    resolved_git_mgr.run_git_command,
                     ["push", "--no-verify", "origin", f"{effective_source}:{merge_target}"],
                     cwd=wt_path,
                     timeout=60,
@@ -285,7 +315,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "target_branch": merge_target,
                     }
                 fetch_target = await asyncio.to_thread(
-                    resolved_git_mgr._run_git,
+                    resolved_git_mgr.run_git_command,
                     ["fetch", "origin", merge_target],
                     cwd=wt_path,
                     timeout=60,
@@ -334,5 +364,56 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return result
         finally:
             await _restore_stash()
+
+    @registry.tool(
+        name="push_branch",
+        description="Push a worktree branch to a remote branch.",
+    )
+    async def push_branch(
+        worktree_id: str,
+        branch: str | None = None,
+        remote: str = "origin",
+        target_branch: str | None = None,
+        force_with_lease: bool = False,
+        project_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Push a branch from the isolated worktree."""
+        resolved_git_mgr, _, error = resolve_project_context(
+            project_path, ctx.git_manager, ctx.project_id
+        )
+        if error:
+            return {"success": False, "error": error}
+        if resolved_git_mgr is None:
+            return {"success": False, "error": "Git manager not available"}
+
+        worktree = ctx.worktree_storage.get(worktree_id)
+        if not worktree:
+            return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+
+        source_branch = branch or worktree.branch_name
+        destination_branch = target_branch or source_branch
+        command = ["push", "--no-verify"]
+        if force_with_lease:
+            command.append("--force-with-lease")
+        command.extend([remote, f"{source_branch}:{destination_branch}"])
+
+        result = await asyncio.to_thread(
+            resolved_git_mgr.run_git_command,
+            command,
+            cwd=worktree.worktree_path,
+            timeout=60,
+        )
+        return {
+            "success": result.returncode == 0,
+            "worktree_id": worktree_id,
+            "worktree_path": worktree.worktree_path,
+            "branch": source_branch,
+            "remote": remote,
+            "target_branch": destination_branch,
+            "force_with_lease": force_with_lease,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "error": None if result.returncode == 0 else result.stderr.strip(),
+        }
 
     return registry

@@ -78,7 +78,7 @@ class TestAdminEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "tasks" in data
-        assert "open" in data["tasks"]
+        assert "ready" in data["tasks"]
         assert "in_progress" in data["tasks"]
 
     def test_status_check_with_memory_manager(
@@ -759,6 +759,7 @@ class TestInternalRegistries:
             )
 
         assert response.status_code == 500
+        assert "Tool error" in response.text
 
     def test_get_tool_schema_internal_server(self, session_storage: SessionManager) -> None:
         """Test getting tool schema from internal server."""

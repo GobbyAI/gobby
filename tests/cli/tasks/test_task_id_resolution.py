@@ -206,8 +206,10 @@ class TestCliShowCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        # Run the command - this tests the CLI invocation path
-        runner.invoke(cli, ["tasks", "show", "#1"])
+        result = runner.invoke(cli, ["tasks", "show", "#1"])
+        assert result.exit_code == 0
+        mock_manager.resolve_task_reference.assert_called()
+        mock_manager.get_task.assert_called()
 
 
 class TestCliUpdateCommandWithHashFormat:
@@ -222,7 +224,7 @@ class TestCliUpdateCommandWithHashFormat:
         runner: CliRunner,
         mock_task_with_uuid: MagicMock,
     ) -> None:
-        """Test `gobby tasks update #5 --status done` resolves correctly."""
+        """Test `gobby tasks update #5 --title ...` resolves correctly."""
         mock_manager = MagicMock()
         mock_manager.resolve_task_reference.return_value = mock_task_with_uuid.id
         mock_manager.get_task.return_value = mock_task_with_uuid
@@ -230,8 +232,10 @@ class TestCliUpdateCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        # Run the command - this tests the CLI invocation path
-        runner.invoke(cli, ["tasks", "update", "#5", "--status", "in_progress"])
+        result = runner.invoke(cli, ["tasks", "update", "#5", "--title", "Updated title"])
+        assert result.exit_code == 0
+        mock_manager.update_task.assert_called()
+        assert mock_manager.update_task.call_args.kwargs["title"] == "Updated title"
 
 
 class TestCliDeleteCommandWithHashFormat:
@@ -253,8 +257,9 @@ class TestCliDeleteCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        # Run the command (--yes auto-confirms deletion)
-        runner.invoke(cli, ["tasks", "delete", "#10", "--yes"])
+        result = runner.invoke(cli, ["tasks", "delete", "#10", "--yes"])
+        assert result.exit_code == 0
+        mock_manager.delete_task.assert_called()
 
 
 class TestCliCloseCommandWithHashFormat:
@@ -278,8 +283,9 @@ class TestCliCloseCommandWithHashFormat:
         mock_crud_get_manager.return_value = mock_manager
         mock_utils_get_manager.return_value = mock_manager
 
-        # Run the command - this tests the CLI invocation path
-        runner.invoke(cli, ["tasks", "close", "#3"])
+        result = runner.invoke(cli, ["tasks", "close", "#3"])
+        assert result.exit_code == 0
+        mock_manager.close_task.assert_called()
 
 
 class TestIntegrationResolveTaskId:

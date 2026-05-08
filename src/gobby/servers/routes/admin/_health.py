@@ -172,31 +172,31 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         # Get task statistics using efficient count queries
         task_stats: dict[str, Any] = {
-            "open": 0,
+            "ready": 0,
             "in_progress": 0,
             "closed": 0,
             "needs_review": 0,
             "review_approved": 0,
             "escalated": 0,
-            "ready": 0,
+            "ready_unblocked": 0,
             "blocked": 0,
             "closed_24h": 0,
         }
         if server.task_manager is not None:
             try:
-                # Use count_by_status for efficient grouped counts
-                status_counts = server.task_manager.count_by_status()
+                # Use count_by_state for efficient grouped counts
+                state_counts = server.task_manager.count_by_state()
                 for key in (
-                    "open",
+                    "ready",
                     "in_progress",
                     "closed",
                     "needs_review",
                     "review_approved",
                     "escalated",
                 ):
-                    task_stats[key] = status_counts.get(key, 0)
-                # Get ready, blocked, and recent closed counts
-                task_stats["ready"] = server.task_manager.count_ready_tasks()
+                    task_stats[key] = state_counts.get(key, 0)
+                # Keep availability and recent closure counters alongside state buckets.
+                task_stats["ready_unblocked"] = server.task_manager.count_ready_tasks()
                 task_stats["blocked"] = server.task_manager.count_blocked_tasks()
                 task_stats["closed_24h"] = server.task_manager.count_closed_since(hours=24)
             except Exception as e:

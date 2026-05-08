@@ -39,6 +39,7 @@ class TestProject:
         assert d["name"] == "test-project"
         assert d["repo_path"] == "/tmp/repo"
         assert d["github_url"] == "https://github.com/test/repo"
+        assert d["linear_project_id"] is None
         assert "created_at" in d
         assert "updated_at" in d
 
@@ -153,6 +154,15 @@ class TestLocalProjectManager:
         assert updated is not None
         assert updated.name == "updated"
         assert updated.repo_path == "/new/path"
+
+    def test_update_linear_project_id(self, project_manager: LocalProjectManager) -> None:
+        """Test updating the Linear project binding."""
+        created = project_manager.create(name="linear-bound")
+
+        updated = project_manager.update(created.id, linear_project_id="lin-proj")
+
+        assert updated is not None
+        assert updated.linear_project_id == "lin-proj"
 
     def test_update_partial(self, project_manager: LocalProjectManager) -> None:
         """Test updating only some fields."""

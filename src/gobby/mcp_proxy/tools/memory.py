@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.digest import (
@@ -32,12 +32,23 @@ from gobby.memory.digest import (
     memory_sync_import,
 )
 from gobby.memory.manager import MemoryManager
+from gobby.sync.memories import is_ephemeral_implementation_note
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.llm.service import LLMService
 
 logger = logging.getLogger(__name__)
+
+
+class SupportsTaskDecomposition(Protocol):
+    def create_task_with_decomposition(
+        self,
+        *,
+        project_id: str,
+        title: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]: ...
 
 
 # Helper to get current project context
@@ -51,12 +62,83 @@ def get_current_project_id() -> str | None:
     return None
 
 
+def _speculative_memory_task_title(content: str) -> str | None:
+    """Return a planning task title for narrow implementation-proposal memories."""
+    normalized = " ".join(content.lower().split())
+    has_session_start_pattern = (
+        "sessionstart" in normalized
+        and "ensure_session_activation" in normalized
+        and "helper" in normalized
+        and "replay raw sessionstart side effects" in normalized
+    )
+    has_proposal_language = any(
+        marker in normalized
+        for marker in (
+            "proposed",
+            "proposal",
+            "call an idempotent",
+            "call a helper",
+        )
+    )
+    if has_session_start_pattern and has_proposal_language:
+        return "gobby-session-start-reconciliation-proposal"
+    return None
+
+
+def _redirect_speculative_memory_to_task(
+    *,
+    memory_manager: MemoryManager,
+    task_manager: SupportsTaskDecomposition | None,
+    title: str,
+    content: str,
+    project_id: str | None,
+    source_session_id: str | None,
+) -> dict[str, Any]:
+    from gobby.storage.projects import PERSONAL_PROJECT_ID
+    from gobby.storage.session_tasks import SessionTaskManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    manager = task_manager or LocalTaskManager(memory_manager.db)
+    result = manager.create_task_with_decomposition(
+        project_id=project_id or PERSONAL_PROJECT_ID,
+        title=title,
+        description=(
+            "Redirected from gobby-memory.create_memory because this content is a "
+            "speculative implementation proposal rather than durable memory.\n\n"
+            f"{content}"
+        ),
+        priority=3,
+        task_type="research_spike",
+        labels=["memory-redirect", "planning-note"],
+        category="planning",
+        created_in_session_id=source_session_id,
+    )
+    task = result.get("task") if isinstance(result, dict) else None
+    if not isinstance(task, dict) or not task.get("id"):
+        raise RuntimeError("Speculative memory redirection did not create a task.")
+
+    if source_session_id:
+        try:
+            SessionTaskManager(memory_manager.db).link_task(
+                source_session_id, task["id"], "created"
+            )
+        except Exception as e:
+            logger.debug("Failed to link redirected memory task to session: %s", e)
+
+    seq_num = task.get("seq_num")
+    return {
+        "id": task["id"],
+        "ref": f"#{seq_num}" if seq_num else task["id"],
+    }
+
+
 def create_memory_registry(
     memory_manager: MemoryManager,
     llm_service: LLMService | None = None,
     memory_sync_manager: Any | None = None,
     session_manager: Any | None = None,
     config: DaemonConfig | None = None,
+    task_manager: SupportsTaskDecomposition | None = None,
 ) -> InternalToolRegistry:
     """
     Create a memory tool registry with all memory-related tools.
@@ -96,6 +178,15 @@ def create_memory_registry(
             session_id: Session ID that created this memory (accepts #N, N, UUID, or prefix)
         """
         try:
+            if is_ephemeral_implementation_note(
+                {"content": content, "type": memory_type, "tags": tags or []}
+            ):
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "ephemeral_implementation_note",
+                }
+
             project_id = get_current_project_id()
 
             # Resolve session_id to UUID before passing to storage layer
@@ -110,6 +201,30 @@ def create_memory_registry(
                     )
                 except Exception as e:
                     logger.warning(f"Could not resolve session_id '{session_id}': {e}")
+
+            redirected_task_title = _speculative_memory_task_title(content)
+            if redirected_task_title:
+                try:
+                    task = _redirect_speculative_memory_to_task(
+                        memory_manager=memory_manager,
+                        task_manager=task_manager,
+                        title=redirected_task_title,
+                        content=content,
+                        project_id=project_id,
+                        source_session_id=resolved_session_id,
+                    )
+                    return {
+                        "success": True,
+                        "redirected_to_task_note": True,
+                        "task_id": task["id"],
+                        "task_ref": task["ref"],
+                    }
+                except Exception as e:
+                    logger.warning(
+                        "Speculative memory redirection failed; storing original memory: %s",
+                        e,
+                        exc_info=True,
+                    )
 
             memory = await memory_manager.create_memory(
                 content=content,
@@ -753,6 +868,10 @@ def create_memory_registry(
     )
     async def audit_memories(
         max_stale_age_days: int = 30,
+        max_stale_access_count: int = 1,
+        stale_confidence_threshold: float = 0.85,
+        limit_per_category: int = 500,
+        use_stale_classifier: bool = True,
         categories: list[str] | None = None,
     ) -> dict[str, Any]:
         """
@@ -761,19 +880,32 @@ def create_memory_registry(
         Equivalent to cleanup_memories with dry_run=True.
 
         Args:
-            max_stale_age_days: Memories older than this with 0 access are stale (default: 30)
+            max_stale_age_days: Memories inactive longer than this are stale candidates.
+            max_stale_access_count: Maximum access_count still considered low-access.
+            stale_confidence_threshold: Minimum classifier confidence for stale deletion.
+            limit_per_category: Maximum candidates to scan per category.
+            use_stale_classifier: Whether stale candidates require LLM classification.
             categories: Which categories to audit (default: all).
                 Valid: "stale", "duplicates", "code_derivable", "orphaned"
         """
         from gobby.memory.services.maintenance import execute_cleanup
 
         try:
+            stale_audit_config = (
+                config.memory.stale_audit if config is not None and config.memory else None
+            )
             report = await execute_cleanup(
                 memory_manager=memory_manager,
                 dry_run=True,
                 categories=categories,
                 max_stale_age_days=max_stale_age_days,
+                max_stale_access_count=max_stale_access_count,
+                stale_confidence_threshold=stale_confidence_threshold,
+                limit_per_category=limit_per_category,
                 project_id=get_current_project_id(),
+                llm_service=llm_service,
+                stale_audit_config=stale_audit_config,
+                use_stale_classifier=use_stale_classifier,
             )
             if "error" in report:
                 return {"success": False, "error": report["error"]}
@@ -788,7 +920,11 @@ def create_memory_registry(
     async def cleanup_memories(
         dry_run: bool = False,
         max_stale_age_days: int = 30,
+        max_stale_access_count: int = 1,
+        stale_confidence_threshold: float = 0.85,
         similarity_threshold: float = 0.95,
+        limit_per_category: int = 500,
+        use_stale_classifier: bool = True,
         categories: list[str] | None = None,
     ) -> dict[str, Any]:
         """
@@ -796,21 +932,34 @@ def create_memory_registry(
 
         Args:
             dry_run: If true, report what would be cleaned without deleting (default: false)
-            max_stale_age_days: Memories older than this with 0 access are stale (default: 30)
+            max_stale_age_days: Memories inactive longer than this are stale candidates.
+            max_stale_access_count: Maximum access_count still considered low-access.
+            stale_confidence_threshold: Minimum classifier confidence for stale deletion.
             similarity_threshold: Vector similarity threshold for duplicate detection (default: 0.95)
+            limit_per_category: Maximum candidates to scan per category.
+            use_stale_classifier: Whether stale candidates require LLM classification.
             categories: Which categories to clean (default: all).
                 Valid: "stale", "duplicates", "code_derivable", "orphaned"
         """
         from gobby.memory.services.maintenance import execute_cleanup
 
         try:
+            stale_audit_config = (
+                config.memory.stale_audit if config is not None and config.memory else None
+            )
             report = await execute_cleanup(
                 memory_manager=memory_manager,
                 dry_run=dry_run,
                 categories=categories,
                 max_stale_age_days=max_stale_age_days,
+                max_stale_access_count=max_stale_access_count,
+                stale_confidence_threshold=stale_confidence_threshold,
                 similarity_threshold=similarity_threshold,
+                limit_per_category=limit_per_category,
                 project_id=get_current_project_id(),
+                llm_service=llm_service,
+                stale_audit_config=stale_audit_config,
+                use_stale_classifier=use_stale_classifier,
             )
             if "error" in report:
                 return {"success": False, "error": report["error"]}

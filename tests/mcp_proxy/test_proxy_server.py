@@ -163,9 +163,7 @@ async def test_list_mcp_servers(daemon_tools, mock_mcp_manager):
     daemon_tools.internal_manager.get_all_registries.return_value = []
 
     result = await daemon_tools.list_mcp_servers()
-    assert len(result["servers"]) == 1
-    assert result["servers"][0]["name"] == "server1"
-    assert result["servers"][0]["state"] == "connected"
+    assert result["servers"] == ["server1"]
     assert result["connected"] == 1
 
 
@@ -277,14 +275,6 @@ async def test_recommend_tools(daemon_tools, mock_mcp_manager):
     assert "recommendation" in result
 
 
-@pytest.mark.skip(reason="GobbyDaemonTools does not have call_hook method - removed in refactor")
-@pytest.mark.asyncio
-async def test_call_hook(daemon_tools):
-    # GobbyDaemonTools no longer exposes call_hook - this functionality
-    # is handled by the hook system directly, not through MCP tools
-    pass
-
-
 @pytest.mark.asyncio
 async def test_call_tool_returns_mcp_error_on_validation_failure(daemon_tools):
     """Test that call_tool returns CallToolResult(isError=True) when validation fails."""
@@ -394,7 +384,11 @@ async def test_call_tool_with_project_id_override(daemon_tools):
 
     assert result == {"ok": True}
     mock_ref.assert_called_once_with("other-project", mock_sm.db)
+    assert mock_ref.call_count == 1
+    assert mock_ref.call_args is not None
     mock_reset.assert_called_once_with(mock_token)
+    assert mock_reset.call_count == 1
+    assert mock_reset.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -478,6 +472,8 @@ async def test_call_tool_project_id_priority_over_session(daemon_tools):
     assert result == {"ok": True}
     # project_id path was used, not session path
     mock_ref.assert_called_once_with("override-project", mock_sm.db)
+    assert mock_ref.call_count == 1
+    assert mock_ref.call_args is not None
 
 
 @pytest.mark.asyncio

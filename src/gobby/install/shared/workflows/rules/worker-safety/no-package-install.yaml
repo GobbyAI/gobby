@@ -16,7 +16,7 @@ rules:
   no-npx:
     description: "Block npx for spawned agents."
     event: before_tool
-    enabled: true
+    enabled: false
     priority: 50
     when: "variables.get('is_spawned_agent')"
     effects:

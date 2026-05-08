@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { CanonicalTaskState, TaskCompatProjection } from '../../lib/taskState'
-import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
+import { getCategoryColorVar } from './categoryColors'
 
 // =============================================================================
 // Types
@@ -41,7 +42,6 @@ interface TaskData {
   closed_in_session_id: string | null
   created_in_session_id: string | null
   claimed_by_session_id?: string | null
-  lifecycle_stage?: string | null
   validation_fail_count: number
   escalated_at: string | null
 }
@@ -122,7 +122,12 @@ function identifyAgent(session: SessionData): { id: string; name: string; source
 
 function SuccessBar({ rate }: { rate: number }) {
   const pct = Math.round(rate * 100)
-  const color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444'
+  const color =
+    pct >= 80
+      ? 'var(--color-success-foreground)'
+      : pct >= 50
+        ? 'var(--color-warning-foreground)'
+        : 'var(--color-destructive-foreground)'
   return (
     <div className="agent-success-bar">
       <div className="agent-success-bar-fill" style={{ width: `${pct}%`, background: color }} />
@@ -136,17 +141,6 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
   const total = entries.reduce((sum, [, n]) => sum + n, 0)
   if (total === 0) return <span className="agent-muted">No tasks</span>
 
-  const COLORS: Record<string, string> = {
-    code: '#3b82f6',
-    test: '#22c55e',
-    docs: '#a855f7',
-    config: '#f59e0b',
-    refactor: '#06b6d4',
-    research: '#ec4899',
-    planning: '#737373',
-    manual: '#f97316',
-  }
-
   return (
     <div className="agent-category-chart">
       <div className="agent-category-bar">
@@ -156,7 +150,7 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
             className="agent-category-segment"
             style={{
               width: `${(count / total) * 100}%`,
-              background: COLORS[cat] || '#525252',
+              background: getCategoryColorVar(cat),
             }}
             title={`${cat}: ${count}`}
           />
@@ -165,7 +159,7 @@ function CategoryChart({ breakdown }: { breakdown: Record<string, number> }) {
       <div className="agent-category-legend">
         {entries.slice(0, 4).map(([cat, count]) => (
           <span key={cat} className="agent-category-label">
-            <span className="agent-category-dot" style={{ background: COLORS[cat] || '#525252' }} />
+            <span className="agent-category-dot" style={{ background: getCategoryColorVar(cat) }} />
             {cat} ({count})
           </span>
         ))}
@@ -372,13 +366,13 @@ export function AgentPortfolioPage() {
       const closed = tasks.filter(
         t => {
           const state = getCanonicalTaskState(t)
-          const bucket = getTaskBucket(t)
+          const displayState = getTaskDisplayState(t)
 
-          if (bucket === 'closed') {
+          if (displayState === 'closed') {
             return Boolean(state.closed_in_session_id && sessionIds.has(state.closed_in_session_id))
           }
 
-          if (bucket === 'merge_ready') {
+          if (displayState === 'review_approved') {
             return Boolean(state.owner_session_id && sessionIds.has(state.owner_session_id))
           }
 
@@ -412,7 +406,7 @@ export function AgentPortfolioPage() {
         : 0
 
       // Success rate: closed / (assigned non-open)
-      const attempted = assigned.filter(t => getTaskBucket(t) !== 'ready')
+      const attempted = assigned.filter(t => getTaskDisplayState(t) !== 'ready')
       const successRate = attempted.length > 0 ? closed.length / attempted.length : 0
 
       // Category breakdown from closed tasks
@@ -505,7 +499,7 @@ export function AgentPortfolioPage() {
       {/* Toolbar */}
       <div className="agent-toolbar">
         <div className="agent-toolbar-left">
-          <h2 className="agent-page-title">Agent Portfolio</h2>
+          <h1 className="agent-page-title">Agent Portfolio</h1>
           <span className="agent-page-count">{agents.length} agents</span>
         </div>
         <div className="agent-toolbar-right">

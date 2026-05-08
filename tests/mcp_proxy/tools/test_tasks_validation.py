@@ -36,7 +36,7 @@ except ImportError:
     IMPORT_SUCCEEDED = False
     create_validation_registry = None
 
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager, StageState, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
 
 # Skip all tests if module doesn't exist yet (TDD red phase)
@@ -44,6 +44,42 @@ pytestmark = pytest.mark.skipif(
     not IMPORT_SUCCEEDED,
     reason="tasks_validation module not yet extracted (TDD red phase)",
 )
+
+
+def _stage(task_id: str, state: str) -> StageState:
+    return StageState(
+        task_id=task_id,
+        stage_name="development",
+        position=0,
+        state=state,
+        review_policy="required",
+        reviewer_agent=None,
+        entered_at="now",
+        entered_by_session_id=None,
+        completed_at=None,
+        completed_by_session_id=None,
+        completed_commit_sha=None,
+        work_attempt_count=0,
+        review_round_count=0,
+        max_work_attempts=None,
+        max_review_rounds=None,
+        artifact_refs=None,
+        notes=None,
+        updated_at="now",
+    )
+
+
+def _task(**kwargs) -> Task:
+    status = kwargs.pop("status", "open")
+    task_id = kwargs["id"]
+    if status == "closed":
+        kwargs.setdefault("closed_at", "now")
+    elif status == "escalated":
+        kwargs.setdefault("is_escalated", True)
+        kwargs.setdefault("escalated_at", "now")
+    elif status in {"ready", "in_progress", "needs_review", "review_approved"}:
+        kwargs.setdefault("stages", (_stage(task_id, status),))
+    return Task(**kwargs)
 
 
 @pytest.fixture
@@ -88,7 +124,7 @@ class TestValidateTaskTool:
         self, mock_task_manager, mock_task_validator, validation_registry
     ):
         """Test validate_task returns valid for a leaf task that passes validation."""
-        task = Task(
+        task = _task(
             id="t1",
             title="Implement feature",
             description="Add the new feature",
@@ -122,7 +158,7 @@ class TestValidateTaskTool:
         self, mock_task_manager, mock_task_validator, validation_registry
     ):
         """Test validate_task returns invalid for a leaf task that fails validation."""
-        task = Task(
+        task = _task(
             id="t1",
             title="Add tests",
             description="Write unit tests",
@@ -156,7 +192,7 @@ class TestValidateTaskTool:
         self, mock_task_manager, validation_registry
     ):
         """Test validate_task for parent task when all children are closed."""
-        parent_task = Task(
+        parent_task = _task(
             id="t1",
             title="Epic task",
             project_id="p1",
@@ -170,7 +206,7 @@ class TestValidateTaskTool:
 
         # All children closed
         children = [
-            Task(
+            _task(
                 id="c1",
                 title="Subtask 1",
                 project_id="p1",
@@ -180,7 +216,7 @@ class TestValidateTaskTool:
                 created_at="now",
                 updated_at="now",
             ),
-            Task(
+            _task(
                 id="c2",
                 title="Subtask 2",
                 project_id="p1",
@@ -202,7 +238,7 @@ class TestValidateTaskTool:
     @pytest.mark.asyncio
     async def test_validate_task_parent_open_children(self, mock_task_manager, validation_registry):
         """Test validate_task for parent task with open children."""
-        parent_task = Task(
+        parent_task = _task(
             id="t1",
             title="Epic task",
             project_id="p1",
@@ -216,7 +252,7 @@ class TestValidateTaskTool:
 
         # Some children open
         children = [
-            Task(
+            _task(
                 id="c1",
                 title="Closed subtask",
                 project_id="p1",
@@ -226,7 +262,7 @@ class TestValidateTaskTool:
                 created_at="now",
                 updated_at="now",
             ),
-            Task(
+            _task(
                 id="c2",
                 title="Open subtask",
                 project_id="p1",
@@ -259,7 +295,7 @@ class TestValidateTaskTool:
         self, mock_task_manager, mock_task_validator, validation_registry
     ):
         """Test that validate_task creates a fix task after validation failure."""
-        task = Task(
+        task = _task(
             id="t1",
             title="Broken task",
             project_id="p1",
@@ -279,7 +315,7 @@ class TestValidateTaskTool:
             feedback="Implementation is incorrect",
         )
 
-        fix_task = Task(
+        fix_task = _task(
             id="fix-t1",
             title="Fix validation failures for Broken task",
             project_id="p1",
@@ -308,7 +344,7 @@ class TestValidateTaskTool:
         self, mock_task_manager, mock_task_validator, validation_registry
     ):
         """Test that validate_task increments fail count on invalid result."""
-        task = Task(
+        task = _task(
             id="t1",
             title="Task",
             project_id="p1",
@@ -328,7 +364,7 @@ class TestValidateTaskTool:
             feedback="Still broken",
         )
 
-        mock_task_manager.create_task.return_value = Task(
+        mock_task_manager.create_task.return_value = _task(
             id="fix-t1",
             title="Fix",
             project_id="p1",
@@ -354,7 +390,7 @@ class TestValidateTaskTool:
         self, mock_task_manager, mock_task_validator, validation_registry
     ):
         """Test that validate_task auto-gathers context when changes_summary not provided."""
-        task = Task(
+        task = _task(
             id="t1",
             title="Task",
             project_id="p1",
@@ -383,6 +419,8 @@ class TestValidateTaskTool:
 
             # Should call smart context gathering
             mock_context.assert_called_once()
+            assert mock_context.call_count == 1
+            assert mock_context.call_args is not None
 
 
 # ============================================================================
@@ -398,7 +436,7 @@ class TestGetValidationStatusTool:
         self, mock_task_manager, validation_registry
     ):
         """Test that get_validation_status returns all validation-related fields."""
-        task = Task(
+        task = _task(
             id="t1",
             title="Task",
             project_id="p1",
@@ -443,7 +481,7 @@ class TestResetValidationCountTool:
     @pytest.mark.asyncio
     async def test_reset_validation_count_success(self, mock_task_manager, validation_registry):
         """Test that reset_validation_count resets to zero."""
-        task = Task(
+        task = _task(
             id="t1",
             title="Task",
             project_id="p1",
@@ -456,7 +494,7 @@ class TestResetValidationCountTool:
         )
         mock_task_manager.get_task.return_value = task
 
-        updated_task = Task(
+        updated_task = _task(
             id="t1",
             title="Task",
             project_id="p1",

@@ -81,10 +81,12 @@ class LinearIntegration:
         if not self.mcp_manager.has_server(self.server_name):
             return False
 
-        # Check if server is connected
+        # Check if server is connected. Lazy CLI managers may not have opened
+        # the stdio connection yet; configured lazy servers are still usable
+        # because the first tool call connects on demand.
         health = self.mcp_manager.health
         if self.server_name not in health:
-            return False
+            return getattr(self.mcp_manager, "lazy_connect", False) is True
 
         server_health = health[self.server_name]
         # Handle both object with .state attribute and dict with 'state' key
@@ -92,7 +94,9 @@ class LinearIntegration:
         if state is None and isinstance(server_health, dict):
             state = server_health.get("state")
 
-        return state == "connected"
+        if state == "connected":
+            return True
+        return state == "pending" and getattr(self.mcp_manager, "lazy_connect", False) is True
 
     def clear_cache(self) -> None:
         """Clear the availability cache, forcing next is_available() to check fresh."""

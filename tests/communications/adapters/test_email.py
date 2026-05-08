@@ -90,6 +90,8 @@ class TestEmailAdapter:
 
         await adapter._ensure_smtp_connected()
         adapter._smtp_client.noop.assert_called_once()
+        assert adapter._smtp_client.noop.call_count == 1
+        assert adapter._smtp_client.noop.call_args is not None
 
     @pytest.mark.asyncio
     @patch("gobby.communications.adapters.email.aiosmtplib", create=True)
@@ -108,9 +110,17 @@ class TestEmailAdapter:
         await adapter._ensure_smtp_connected()
 
         old_client.close.assert_called_once()
+        assert old_client.close.call_count == 1
+        assert old_client.close.call_args is not None
         mock_smtp.SMTP.assert_called_once()
+        assert mock_smtp.SMTP.call_count == 1
+        assert mock_smtp.SMTP.call_args is not None
         new_client.connect.assert_called_once()
+        assert new_client.connect.call_count == 1
+        assert new_client.connect.call_args is not None
         new_client.login.assert_called_with("bot", "pass")
+        assert new_client.login.call_count >= 1
+        assert new_client.login.call_args is not None
 
     @pytest.mark.asyncio
     async def test_send_message_uninitialized(self, adapter) -> None:

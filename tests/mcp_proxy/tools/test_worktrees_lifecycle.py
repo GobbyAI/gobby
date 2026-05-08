@@ -17,6 +17,17 @@ def mock_worktree_storage():
 def mock_git_manager():
     manager = MagicMock()
     manager.repo_path = "/tmp/repo"
+    manager.run_git_command.side_effect = (
+        lambda args, cwd=None, timeout=30, check=False: manager._run_git(
+            args, cwd=cwd, timeout=timeout, check=check
+        )
+    )
+
+    def get_unmerged_files(cwd=None):
+        result = manager._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=cwd, timeout=10)
+        return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+
+    manager.get_unmerged_files.side_effect = get_unmerged_files
     return manager
 
 
@@ -711,6 +722,26 @@ async def test_merge_worktree_push_success(
     )
 
 
+def _merge_worktree_push_failure_git_sequence() -> list[MagicMock]:
+    successful_git_call = MagicMock(returncode=0, stdout="", stderr="")
+    local_target_exists = successful_git_call
+    remote_target_missing = MagicMock(returncode=1, stdout="", stderr="")
+    stash_before = MagicMock(returncode=0, stdout="stash@{0}", stderr="")
+    stash_after = MagicMock(returncode=0, stdout="stash@{0}\nstash@{1}", stderr="")
+    push_rejected = MagicMock(returncode=1, stdout="", stderr="rejected: non-fast-forward")
+    return [
+        successful_git_call,  # fetch
+        local_target_exists,  # show-ref refs/heads/main
+        remote_target_missing,  # show-ref refs/remotes/origin/main
+        stash_before,  # stash list before
+        successful_git_call,  # stash push
+        stash_after,  # stash list after
+        successful_git_call,  # merge
+        push_rejected,  # push
+        successful_git_call,  # stash pop
+    ]
+
+
 @pytest.mark.asyncio
 async def test_merge_worktree_push_failure(
     registry, mock_worktree_storage, mock_git_manager
@@ -731,16 +762,7 @@ async def test_merge_worktree_push_failure(
     )
     mock_worktree_storage.get.return_value = wt
 
-    ok = MagicMock(returncode=0, stdout="", stderr="")
-    mock_git_manager._run_git.side_effect = [
-        ok,
-        MagicMock(returncode=0, stdout="stash@{0}", stderr=""),
-        ok,
-        MagicMock(returncode=0, stdout="stash@{0}\nstash@{1}", stderr=""),
-        ok,
-        MagicMock(returncode=1, stdout="", stderr="rejected: non-fast-forward"),
-        ok,
-    ]
+    mock_git_manager._run_git.side_effect = _merge_worktree_push_failure_git_sequence()
     mock_worktree_storage.mark_merged.return_value = True
 
     result = await registry.call(
@@ -795,7 +817,7 @@ async def test_merge_worktree_default_target_branch(
     calls = mock_git_manager._run_git.call_args_list
     wt_merge = [c for c in calls if c[0][0][:1] == ["merge"] and "--no-edit" in c[0][0]]
     assert len(wt_merge) == 1
-    assert "origin/develop" in wt_merge[0][0][0]
+    assert wt_merge[0][0][0] == ["merge", "develop", "--no-edit"]
 
 
 @pytest.mark.asyncio

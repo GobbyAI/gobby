@@ -338,6 +338,7 @@ class TestImportFromProject:
                 result = await importer.import_from_project("source-project")
 
                 assert "existing-server" in result.get("skipped", [])
+                assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_filters_by_server_names(self, importer):

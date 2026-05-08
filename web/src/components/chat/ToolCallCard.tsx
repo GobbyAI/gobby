@@ -1,24 +1,24 @@
-import React, { memo, useCallback, useMemo, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { memo, useCallback, useMemo, useState } from 'react'
+import { CodeBlock } from '../shared/CodeBlock'
+import { MarkdownBody } from '../shared/MarkdownBody'
 import type { ToolCall, ToolResult } from '../../types/chat'
 import type { ArtifactType } from '../../types/artifacts'
 import { cn } from '../../lib/utils'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
+import { JsonBlock } from './JsonBlock'
+import { PanelIcon } from './icons/PanelIcon'
 import type { A2UISurfaceState, UserAction } from '../canvas'
 import { A2UIRenderer } from '../canvas'
 import { useArtifactContext } from './artifacts/ArtifactContext'
 import {
-  buildChainSummary,
   COMPACT_HEADER_NAMES,
   COMPACT_HEADER_TOOL_TYPES,
-  computeLineDiff,
+  defaultExpandedForCall,
   extractBase64Image,
   extractResultContent,
   extractResultMetadata,
+  extractShellOutputContent,
   FILE_TOOL_TYPES,
   formatToolName,
   getToolDisplayName,
@@ -26,11 +26,24 @@ import {
   getToolSummary,
   groupToolCalls,
   parseGrepOutput,
+  parseGsqzWrapper,
   parseReadOutput,
   pathBasename,
   resolveToolType,
   type ToolCallGroup,
+  unwrapMcpResultEnvelope,
 } from './ToolCallCard.helpers'
+import {
+  GsqzResultBlock,
+  JsonResultBlock,
+  MetadataStrip,
+  ToolResultBody,
+} from './ToolResultBlocks'
+import { ToolResultImage } from './ToolResultImage'
+import { DiffBlock } from '../shared/DiffBlock'
+import { computeSyntheticDiffLines } from '../shared/DiffBlock.helpers'
+import { TOOL_CARD_SPACING } from '../shared/spacing'
+import { TOOL_ERROR_PRE_CLASS, TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
 
 interface ToolCallCardProps {
   toolCalls: ToolCall[]
@@ -52,81 +65,6 @@ interface AskUserQuestionItem {
   multiSelect: boolean
 }
 
-// Shared <pre> styles used across tool-result fallbacks and error blocks.
-// Extracted so the long className lists don't drift between call-sites
-// (three result-fallback places and two error-block places).
-const TOOL_RESULT_PRE_CLASS =
-  'bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto ' +
-  'overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs'
-const TOOL_ERROR_PRE_CLASS =
-  'bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words ' +
-  'overflow-x-hidden text-destructive-foreground'
-
-const highlighterTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: '#0d0d0d',
-    margin: '0',
-    padding: '0.75rem',
-    fontSize: '0.75rem',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-  },
-}
-
-function InlineDiff({ oldStr, newStr, language }: { oldStr: string; newStr: string; language: string }) {
-  const diff = useMemo(() => computeLineDiff(oldStr, newStr), [oldStr, newStr])
-  const content = useMemo(() => diff.map(e => {
-    const prefix = e.type === 'add' ? '+' : e.type === 'remove' ? '-' : ' '
-    return `${prefix} ${e.line}`
-  }).join('\n'), [diff])
-
-  const lineProps = useCallback((lineNumber: number): React.HTMLProps<HTMLElement> => {
-    const entry = diff[lineNumber - 1]
-    if (!entry) return { style: { display: 'block' } }
-    const bg = entry.type === 'add' ? 'rgba(63, 185, 80, 0.15)'
-             : entry.type === 'remove' ? 'rgba(248, 81, 73, 0.3)'
-             : 'transparent'
-    return { style: { background: bg, display: 'block' } }
-  }, [diff])
-
-  const diffLineNumberStyle = useCallback((lineNumber: number) => {
-    const entry = diff[lineNumber - 1]
-    const color = entry?.type === 'add' ? '#3fb950'
-               : entry?.type === 'remove' ? '#f85149'
-               : '#555'
-    return { ...lineNumberStyle, color }
-  }, [diff])
-
-  return (
-    <SyntaxHighlighter
-      style={highlighterTheme}
-      language={language}
-      PreTag="div"
-      showLineNumbers
-      startingLineNumber={1}
-      wrapLines
-      lineProps={lineProps}
-      lineNumberStyle={diffLineNumberStyle}
-      customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
-    >
-      {content}
-    </SyntaxHighlighter>
-  )
-}
-
-const lineNumberStyle = {
-  minWidth: '2.5em',
-  paddingRight: '1em',
-  textAlign: 'right' as const,
-  userSelect: 'none' as const,
-  color: '#555',
-}
-
 function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
   const filePath = args.file_path as string | undefined
 
@@ -135,20 +73,16 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
     const language = getLanguageFromPath(filePath)
     return (
       <div>
-        <div className="text-muted-foreground mb-1 font-medium">
+        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
           Write <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <SyntaxHighlighter
-          style={highlighterTheme}
+        <CodeBlock
           language={language}
-          PreTag="div"
-          showLineNumbers
           startingLineNumber={1}
-          lineNumberStyle={lineNumberStyle}
-          customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+          customStyle={TOOL_RESULT_CUSTOM_STYLE}
         >
           {args.content as string}
-        </SyntaxHighlighter>
+        </CodeBlock>
       </div>
     )
   }
@@ -158,10 +92,10 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
     const language = getLanguageFromPath(filePath)
     return (
       <div>
-        <div className="text-muted-foreground mb-1 font-medium">
+        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
           Edit <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <InlineDiff oldStr={args.old_string as string} newStr={args.new_string as string} language={language} />
+        <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} />
       </div>
     )
   }
@@ -169,25 +103,28 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
   // Fallback: syntax-highlighted JSON
   return (
     <div>
-      <div className="text-muted-foreground mb-1 font-medium">Arguments</div>
-      <SyntaxHighlighter
-        style={highlighterTheme}
-        language="json"
-        PreTag="div"
-        customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
-      >
-        {JSON.stringify(args, null, 2)}
-      </SyntaxHighlighter>
+      <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Arguments</div>
+      <JsonBlock
+        value={args}
+        className="rounded max-h-96"
+        testId="toolcall-json"
+      />
     </div>
   )
 }
 
-function PanelIcon() {
+function ToolErrorBody({ error }: { error: string }) {
+  const cleaned = error.replace(/<\/?tool_use_error>/g, '').trim()
+  const looksLikeJson = cleaned.startsWith('{') || cleaned.startsWith('[')
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-      <line x1="12" y1="3" x2="12" y2="21" />
-    </svg>
+    <div>
+      <div className={cn('text-destructive-foreground', TOOL_CARD_SPACING.label)}>Error</div>
+      {looksLikeJson ? (
+        <JsonResultBlock value={cleaned} variant="error" />
+      ) : (
+        <pre className={TOOL_ERROR_PRE_CLASS}>{cleaned}</pre>
+      )}
+    </div>
   )
 }
 
@@ -204,9 +141,12 @@ function getArtifactTypeForFile(filePath: string): { type: ArtifactType; languag
 }
 
 function ToolResultContent({ call }: { call: ToolCall }) {
-  const rawContent = extractResultContent(call.result)
-  const metadata = extractResultMetadata(call.result)
   const toolType = resolveToolType(call)
+  const extractedContent = extractResultContent(call.result)
+  const rawContent = toolType === 'bash'
+    ? extractShellOutputContent(extractedContent)
+    : extractedContent
+  const metadata = extractResultMetadata(call.result)
 
   const imageSrc = useMemo(() => extractBase64Image(rawContent), [rawContent])
 
@@ -230,13 +170,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
 
   // Base64 image — render inline
   if (imageSrc) {
-    return (
-      <img
-        src={imageSrc}
-        alt="Tool result image"
-        className="max-w-full max-h-96 rounded-lg border border-border"
-      />
-    )
+    return <ToolResultImage src={imageSrc} />
   }
 
   if (filePath) {
@@ -253,32 +187,17 @@ function ToolResultContent({ call }: { call: ToolCall }) {
               <span className="text-muted-foreground/60 ml-2">{lineCount} lines</span>
             )}
           </div>
-          <SyntaxHighlighter
-            style={highlighterTheme}
+          <CodeBlock
             language={language}
-            PreTag="div"
-            showLineNumbers
             startingLineNumber={parsed.startLine}
             wrapLongLines
-            lineNumberStyle={{
-              minWidth: '2.5em',
-              paddingRight: '1em',
-              textAlign: 'right',
-              userSelect: 'none',
-              color: '#555',
-            }}
             customStyle={{
-              margin: 0,
+              ...TOOL_RESULT_CUSTOM_STYLE,
               borderRadius: 0,
-              maxHeight: '24rem',
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
             }}
           >
             {parsed.content}
-          </SyntaxHighlighter>
+          </CodeBlock>
         </div>
       )
     }
@@ -301,26 +220,14 @@ function ToolResultContent({ call }: { call: ToolCall }) {
             return (
               <div key={i}>
                 <div className="text-muted-foreground text-xs mb-1 font-mono">{group.filePath}</div>
-                <SyntaxHighlighter
-                  style={highlighterTheme}
+                <CodeBlock
                   language={lang}
-                  PreTag="div"
-                  showLineNumbers
                   startingLineNumber={startLine}
                   wrapLongLines
-                  lineNumberStyle={lineNumberStyle}
-                  customStyle={{
-                    margin: 0,
-                    borderRadius: '0.25rem',
-                    maxHeight: '24rem',
-                    overflowY: 'auto',
-                    overflowX: 'hidden',
-                    whiteSpace: 'pre-wrap',
-                    overflowWrap: 'anywhere',
-                  }}
+                  customStyle={TOOL_RESULT_CUSTOM_STYLE}
                 >
                   {content}
-                </SyntaxHighlighter>
+                </CodeBlock>
               </div>
             )
           })}
@@ -343,14 +250,17 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   // Bash results: show exit code from metadata when available
   if (toolType === 'bash' && metadata?.exit_code != null) {
     const exitCode = metadata.exit_code as number
+    const wrapper = parseGsqzWrapper(resultStr)
     return (
       <div>
         {exitCode !== 0 && (
           <div className="text-destructive-foreground/70 text-xs mb-1">exit code {exitCode}</div>
         )}
-        <pre className={TOOL_RESULT_PRE_CLASS}>
-          {resultStr}
-        </pre>
+        {wrapper ? (
+          <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
+        ) : (
+          <ToolResultBody body={resultStr} />
+        )}
       </div>
     )
   }
@@ -360,44 +270,40 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   if (toolName === 'Agent' || toolName === 'Task') {
     return (
       <div className="max-h-96 overflow-y-auto text-xs p-2">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{resultStr}</ReactMarkdown>
+        <MarkdownBody content={resultStr} id={`tool-result-${call.id}`} />
       </div>
     )
   }
 
-  // Detect if result looks like JSON for syntax highlighting
-  const looksLikeJson = resultStr.trimStart().startsWith('{') || resultStr.trimStart().startsWith('[')
+  // MCP-style structured envelope: surface the dominant string field as the
+  // body and the remaining keys as a compact metadata strip.
+  const envelope = unwrapMcpResultEnvelope(rawContent)
+  if (envelope) {
+    const wrapper = parseGsqzWrapper(envelope.primary)
+    return (
+      <div className="overflow-hidden rounded border border-border/40 bg-muted/30">
+        <MetadataStrip meta={envelope.meta} />
+        {wrapper ? (
+          <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
+        ) : (
+          <ToolResultBody body={envelope.primary} />
+        )}
+      </div>
+    )
+  }
 
-  return looksLikeJson ? (
-    <SyntaxHighlighter
-      style={highlighterTheme}
-      language="json"
-      PreTag="div"
-      wrapLongLines
-      customStyle={{
-        margin: 0,
-        borderRadius: '0.25rem',
-        maxHeight: '24rem',
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        whiteSpace: 'pre-wrap',
-        overflowWrap: 'anywhere',
-      }}
-    >
-      {resultStr}
-    </SyntaxHighlighter>
-  ) : (
-    <pre className={TOOL_RESULT_PRE_CLASS}>
-      {resultStr}
-    </pre>
-  )
+  const wrapper = parseGsqzWrapper(resultStr)
+  if (wrapper) {
+    return <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
+  }
+
+  return <ToolResultBody body={resultStr} />
 }
 
 const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void; canvasSurfaces?: Map<string, A2UISurfaceState>; onCanvasInteraction?: (canvasId: string, action: UserAction) => void; nested?: boolean }) {
-  const isActive = call.status === 'calling' || call.status === 'pending_approval'
   const displayName = getToolDisplayName(call)
   const toolType = resolveToolType(call)
-  const [expanded, setExpanded] = useState(isActive || toolType !== 'protocol')
+  const [expanded, setExpanded] = useState(defaultExpandedForCall(call))
   const summary = getToolSummary(call)
   const isCompact = summary !== null && (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
   const isFileHeader = FILE_TOOL_TYPES.has(toolType)
@@ -433,24 +339,25 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
 
   return (
     <div className={cn(
+      '@container',
       nested
         ? 'border-b border-border last:border-b-0 overflow-hidden'
         : 'rounded-lg border border-border overflow-hidden my-1.5',
       call.status === 'error' && 'border-destructive-foreground/30'
     )}>
       <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors"
+        className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors')}
         onClick={() => hasDetails && setExpanded(!expanded)}
       >
         <StatusIcon status={call.status} />
         <span className="font-mono text-foreground">{displayName}</span>
         {summary && isFileHeader ? (
           <>
-            <span className="text-muted-foreground text-xs truncate hidden sm:inline">{summary}</span>
-            <span className="text-muted-foreground text-xs truncate sm:hidden">{pathBasename(summary)}</span>
+            <span className="text-muted-foreground text-xs truncate hidden @sm:inline">{summary}</span>
+            <span className="text-muted-foreground text-xs truncate @sm:hidden">{pathBasename(summary)}</span>
           </>
         ) : summary ? (
-          <span className="text-muted-foreground text-xs truncate max-w-[12rem] sm:max-w-[24rem]">{summary}</span>
+          <span className="text-muted-foreground text-xs truncate max-w-[12rem] @sm:max-w-[24rem]">{summary}</span>
         ) : null}
         <div className="flex-1" />
         {artifactButton && (
@@ -462,7 +369,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
             }}
             title="Open in artifacts panel"
           >
-            <PanelIcon />
+            <PanelIcon size={14} />
           </button>
         )}
         {hasDetails && (
@@ -470,23 +377,18 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         )}
       </div>
       {expanded && hasDetails && (
-        <div className="border-t border-border px-3 py-2 text-xs space-y-2">
+        <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
           {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
             <ToolArgumentsContent args={call.arguments} />
           )}
           {call.status === 'completed' && call.result !== undefined && toolType !== 'edit' && (
-            <div>
-              <div className="text-muted-foreground mb-1 font-medium">Result</div>
+            <div className="min-w-0 max-w-full overflow-hidden">
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Result</div>
               <ToolResultContent call={call} />
             </div>
           )}
           {call.status === 'error' && call.error && (
-            <div>
-              <div className="text-destructive-foreground mb-1 font-medium">Error</div>
-              <pre className={TOOL_ERROR_PRE_CLASS}>
-                {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
-              </pre>
-            </div>
+            <ToolErrorBody error={call.error} />
           )}
         </div>
       )}
@@ -514,14 +416,14 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
     const wasError = call.status === 'error'
     return (
       <div className="rounded-lg border border-border/30 bg-muted/5 overflow-hidden my-1.5 opacity-75">
-        <div className="flex items-center gap-2 px-3 py-2 text-sm">
+        <div className={cn(TOOL_CARD_SPACING.headerDense, 'text-sm')}>
           <span className="font-mono text-foreground">{displayName}</span>
           {wasApproved && <Badge variant="success">Approved</Badge>}
           {wasError && <Badge variant="error">Rejected</Badge>}
           {!wasApproved && !wasError && <Badge variant="warning">Pending</Badge>}
         </div>
         {call.arguments && Object.keys(call.arguments).length > 0 && (
-          <div className="px-3 pb-2 text-xs">
+          <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
             <ToolArgumentsContent args={call.arguments} />
           </div>
         )}
@@ -531,7 +433,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
 
   return (
     <div className="rounded-lg border border-warning-foreground/30 bg-warning/20 overflow-hidden my-1.5">
-      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+      <div className={cn(TOOL_CARD_SPACING.headerDense, 'text-sm')}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground shrink-0">
           <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
           <line x1="12" y1="9" x2="12" y2="13" />
@@ -541,7 +443,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         <Badge variant="warning">Approval Required</Badge>
       </div>
       {call.arguments && Object.keys(call.arguments).length > 0 && (
-        <div className="px-3 pb-2 text-xs">
+        <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
           <ToolArgumentsContent args={call.arguments} />
         </div>
       )}
@@ -557,7 +459,7 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
         </Button>
       </div>
       {sendError && (
-        <div className="px-3 pb-2 text-xs text-warning-foreground">{sendError}</div>
+        <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs text-warning-foreground')}>{sendError}</div>
       )}
     </div>
   )
@@ -566,17 +468,23 @@ function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRes
 /** Parse answered values from AskUserQuestion result content. */
 function parseAnsweredValues(result: ToolResult | undefined): Record<string, string> | null {
   if (!result?.content) return null
-  try {
-    const text = typeof result.content === 'string' ? result.content : JSON.stringify(result.content)
-    // The result is JSON with {answers: {question: answer}} or just {question: answer}
-    const parsed = JSON.parse(text)
-    if (parsed && typeof parsed === 'object') {
-      return parsed.answers ?? parsed
+  if (result.kind === 'json') {
+    const obj = result.content as Record<string, unknown>
+    const answers = (obj.answers ?? obj) as Record<string, string>
+    return answers
+  }
+  if (result.kind === 'text') {
+    const text = result.content as string
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') {
+        return parsed.answers ?? parsed
+      }
+    } catch {
+      // Fall back to treating content as a plain string
     }
-  } catch {
-    // Fall back to treating content as a plain string
-    if (typeof result.content === 'string' && result.content.trim()) {
-      return { _raw: result.content }
+    if (text.trim()) {
+      return { _raw: text }
     }
   }
   return null
@@ -788,7 +696,7 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
       call.status === 'error' && 'border-destructive-foreground/30'
     )}>
       <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors bg-accent/5"
+        className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors bg-accent/5')}
         onClick={() => setExpanded(!expanded)}
       >
         <StatusIcon status={call.status} />
@@ -799,18 +707,15 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
         <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
       </div>
       {expanded && (
-        <div className="border-t border-border px-3 py-2 text-xs space-y-2">
+        <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
           {surfaceState && onCanvasInteraction ? (
             <A2UIRenderer surfaceState={surfaceState} onAction={onCanvasInteraction} />
           ) : (
             <div className="text-muted-foreground italic">Targeting {canvasId || 'an unknown canvas'}</div>
           )}
           {call.status === 'error' && call.error && (
-            <div>
-              <div className="text-destructive-foreground mb-1 font-medium mt-2">Error</div>
-              <pre className={TOOL_ERROR_PRE_CLASS}>
-                {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
-              </pre>
+            <div className="mt-2">
+              <ToolErrorBody error={call.error} />
             </div>
           )}
         </div>
@@ -855,14 +760,16 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }) {
   const serverName = group.tool_calls[0]?.server_name
+  const accentClass = group.hasErrors
+    ? 'border-destructive-foreground/40'
+    : group.hasInFlight
+      ? 'border-accent/40'
+      : 'border-border'
 
   return (
-    <div className={cn(
-      'rounded-lg border overflow-hidden my-1.5',
-      group.hasErrors ? 'border-destructive-foreground/30' : group.hasInFlight ? 'border-accent/30' : 'border-border'
-    )}>
+    <div className={cn('border-l my-1', accentClass)}>
       <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors"
+        className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
         onClick={onToggle}
       >
         <GroupStatusIcon hasErrors={group.hasErrors} allCompleted={group.allCompleted} hasInFlight={group.hasInFlight} />
@@ -873,7 +780,7 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
         <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
       </div>
       {expanded && (
-        <div className="border-t border-border pl-4">
+        <div className="pl-3">
           {group.tool_calls.map(call => (
             <ToolCallItem
               key={call.id}
@@ -890,72 +797,6 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
     </div>
   )
 }
-
-// --- Tier 1: Tool Chain wrapper (collapsible group of all calls between text blocks) ---
-
-interface ToolChainGroupProps {
-  toolCalls: ToolCall[]
-  onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
-  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
-  canvasSurfaces?: Map<string, A2UISurfaceState>
-  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
-}
-
-export const ToolChainGroup = memo(function ToolChainGroup({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolChainGroupProps) {
-  const hasInFlight = toolCalls.some(tc => tc.status === 'calling')
-  const hasErrors = toolCalls.some(tc => tc.status === 'error')
-  const allCompleted = toolCalls.every(tc => tc.status === 'completed')
-  const [expanded, setExpanded] = useState(hasInFlight || !allCompleted)
-
-  const summary = useMemo(() => buildChainSummary(toolCalls), [toolCalls])
-  const count = toolCalls.length
-
-  if (!count) return null
-
-  // Single call — no point wrapping in a "1 tool call" group, render directly
-  if (count === 1) {
-    return (
-      <ToolCallCards
-        toolCalls={toolCalls}
-        onRespond={onRespond}
-        onRespondToApproval={onRespondToApproval}
-        canvasSurfaces={canvasSurfaces}
-        onCanvasInteraction={onCanvasInteraction}
-      />
-    )
-  }
-
-  return (
-    <div className={cn(
-      'rounded-lg border overflow-hidden my-1.5',
-      hasErrors ? 'border-destructive-foreground/30' : hasInFlight ? 'border-accent/30' : 'border-border'
-    )}>
-      <div
-        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <GroupStatusIcon hasErrors={hasErrors} allCompleted={allCompleted} hasInFlight={hasInFlight} />
-        <span className="text-muted-foreground">
-          {count} tool call{count !== 1 ? 's' : ''}
-        </span>
-        <span className="text-muted-foreground/60 text-xs truncate">{summary}</span>
-        <div className="flex-1" />
-        <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
-      </div>
-      {expanded && (
-        <div className="border-t border-border px-3">
-          <ToolCallCards
-            toolCalls={toolCalls}
-            onRespond={onRespond}
-            onRespondToApproval={onRespondToApproval}
-            canvasSurfaces={canvasSurfaces}
-            onCanvasInteraction={onCanvasInteraction}
-          />
-        </div>
-      )}
-    </div>
-  )
-})
 
 export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolCallCardProps) {
   const segments = useMemo(() => groupToolCalls(toolCalls), [toolCalls])

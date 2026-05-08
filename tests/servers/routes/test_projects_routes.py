@@ -234,6 +234,16 @@ class TestProjectRoutes:
         data = response.json()
         assert data["linear_team_id"] == "TEAM-123"
 
+    def test_update_project_linear_project_id(self, client: TestClient, real_project: dict) -> None:
+        """Update project linear_project_id field."""
+        response = client.put(
+            f"/api/projects/{real_project['id']}",
+            json={"linear_project_id": "LIN-PROJ"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["linear_project_id"] == "LIN-PROJ"
+
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""
         response = client.put(

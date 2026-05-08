@@ -149,6 +149,14 @@ async def test_handle_plan_approval_approve_pending_plan_unblocks_into_post_plan
         await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
 
     session.set_chat_mode.assert_called_once_with("normal")
+    assert session.set_chat_mode.call_count == 1
+    assert session.set_chat_mode.call_args is not None
     session.provide_plan_decision.assert_called_once_with("approve")
+    assert session.provide_plan_decision.call_count == 1
+    assert session.provide_plan_decision.call_args is not None
     session.sync_sdk_permission_mode.assert_awaited_once()
+    assert session.sync_sdk_permission_mode.await_count == 1
+    assert session.sync_sdk_permission_mode.await_args is not None
     websocket.send.assert_not_called()
+    assert websocket.send.call_count == 0
+    assert not websocket.send.called

@@ -66,10 +66,10 @@ describe('AgentStatusBar', () => {
 
     const attachButton = screen.getByRole('button', { name: 'Attach' })
     const resumeButton = screen.getByRole('button', { name: 'Resume' })
-    expect(attachButton).toHaveClass('session-pane-action')
-    expect(attachButton).not.toHaveClass('session-pane-action--primary')
-    expect(resumeButton).toHaveClass('session-pane-action')
-    expect(resumeButton).not.toHaveClass('session-pane-action--primary')
+    expect(attachButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
+    expect(attachButton).not.toHaveClass('btn-primary')
+    expect(resumeButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
+    expect(resumeButton).not.toHaveClass('btn-primary')
     expect(screen.queryByText('#88')).toBeNull()
     expect(screen.queryByText('Observed Session')).toBeNull()
 
@@ -108,7 +108,31 @@ describe('AgentStatusBar', () => {
     expect(screen.queryByText('WEB')).toBeNull()
   })
 
-  it('shows only Detach while attached', () => {
+  it('renders the New Chat button by default and invokes onNewChat when clicked', async () => {
+    const onNewChat = vi.fn()
+
+    render(
+      <AgentStatusBar interactionMode="none" onNewChat={onNewChat} />,
+    )
+
+    const newChatButton = screen.getByRole('button', { name: /new chat/i })
+    expect(newChatButton).toBeInTheDocument()
+    expect(newChatButton).toBeEnabled()
+    expect(newChatButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
+
+    await userEvent.click(newChatButton)
+    expect(onNewChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the New Chat button when onNewChat is not provided', () => {
+    render(<AgentStatusBar interactionMode="none" />)
+
+    const newChatButton = screen.getByRole('button', { name: /new chat/i })
+    expect(newChatButton).toBeDisabled()
+  })
+
+  it('shows Resume and Detach (but not Attach) while attached', () => {
+    const onResume = vi.fn()
     const onDetach = vi.fn()
 
     render(
@@ -131,45 +155,45 @@ describe('AgentStatusBar', () => {
         interactionMode="proxy"
         isAttached={true}
         onAttach={vi.fn()}
-        onResume={vi.fn()}
+        onResume={onResume}
         onDetach={onDetach}
       />,
     )
 
     expect(screen.queryByRole('button', { name: 'Attach' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull()
     expect(screen.getByText('Attached')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Detach' })).toBeInTheDocument()
   })
 
-  it('renders a fallback activity-panel toggle when requested', async () => {
-    const onTogglePanel = vi.fn()
-
+  it('hides Resume while attached if the session is autonomous', () => {
     render(
       <AgentStatusBar
         viewingMeta={{
           ref: '#90',
           source: 'claude',
-          title: 'Observed Session',
+          title: 'Autonomous Agent Session',
           status: 'active',
           model: 'sonnet',
           externalId: 'ext-90',
           chatMode: 'accept_edits',
           gitBranch: null,
           contextWindow: null,
-          agentRunId: null,
+          agentRunId: 'run-1',
           workflowName: null,
           agentName: null,
           sessionType: 'terminal',
         }}
-        interactionMode="observe"
-        onTogglePanel={onTogglePanel}
-        isPanelPinned={true}
+        interactionMode="proxy"
+        isAttached={true}
+        isAutonomousSession={true}
+        onResume={vi.fn()}
+        onDetach={vi.fn()}
       />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: 'Hide activity panel' }))
-
-    expect(onTogglePanel).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Detach' })).toBeInTheDocument()
   })
+
 })

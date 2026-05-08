@@ -57,6 +57,25 @@ class TestWebChatRuntimeManager:
         assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
 
+    def test_health_snapshot_contains_droid(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        health = manager.health_snapshot()
+
+        assert "droid" in health
+        assert health["droid"]["provider"] == "droid"
+
+    def test_create_session_routes_droid_to_managed_backend(self) -> None:
+        from gobby.servers.websocket.chat.backends import DroidManagedChatSession
+
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        droid_session = manager.create_session(provider="droid", conversation_id="conv-droid")
+
+        assert isinstance(droid_session, DroidManagedChatSession)
+        assert droid_session.provider == "droid"
+        assert droid_session._provider_label() == "droid"
+
     def test_create_session_applies_codex_transcript_retry_config(self) -> None:
         manager = WebChatRuntimeManager(
             codex_client=None,
@@ -90,6 +109,9 @@ class TestWebChatRuntimeManager:
         assert manager._gemini_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
         assert manager._qwen_backend._sandbox_config is not None
         assert manager._qwen_backend._sandbox_config.extra_write_paths == ["/tmp/web-write"]
+        assert manager._droid_backend._sandbox_config is not None
+        assert manager._droid_backend._sandbox_config.enabled is False
+        assert manager._droid_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
 
     def test_manager_defaults_web_chat_sandbox_to_enabled(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None, daemon_config=DaemonConfig())
@@ -97,15 +119,31 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         assert manager.sandbox_policy_hash
 
+    @pytest.mark.asyncio
+    async def test_background_start_skips_acp_backends(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+        manager._codex_backend.start = AsyncMock()
+        manager._gemini_backend.start = AsyncMock()
+        manager._qwen_backend.start = AsyncMock()
+        manager._droid_backend.start = AsyncMock()
+
+        await manager.start(background=True)
+
+        manager._codex_backend.start.assert_awaited_once_with(background=True)
+        manager._droid_backend.start.assert_awaited_once_with(background=True)
+        manager._gemini_backend.start.assert_not_awaited()
+        manager._qwen_backend.start.assert_not_awaited()
+
 
 class TestGeminiBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.backends.gemini.GeminiACPClient") as mock_client:
+        with patch.object(GeminiWebChatBackend, "acp_client_cls") as mock_client:
             GeminiWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
+        # Provider/display_name now come from class attributes on GeminiACPClient;
+        # the backend should not pass any sandbox-leaking process args.
+        assert mock_client.call_args is not None
         kwargs = mock_client.call_args.kwargs
-        assert kwargs["cli_name"] == "gemini"
-        assert kwargs["display_name"] == "Gemini"
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
 
@@ -148,12 +186,15 @@ class TestGeminiBackend:
         )
         session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
         session._connected = True
+        session._model = "gemini-ctx"
+        session._context_window_overrides = {"gemini-ctx": 123_000}
         session.sdk_session_id = "sess-1"
 
         events = [event async for event in session.send_message("hi")]
 
         assert [e.content for e in events if isinstance(e, TextChunk)] == ["Hello ", "Gemini"]
         assert isinstance(events[-1], DoneEvent)
+        assert events[-1].context_window == 123_000
 
     @pytest.mark.asyncio
     async def test_managed_session_defers_tool_lifecycle_context_to_next_turn(self) -> None:
@@ -206,18 +247,37 @@ class TestGeminiBackend:
         assert PYTHON_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
         assert TASK_TRANSITIONS_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
 
+    def test_plan_mode_context_teaches_gcode(self) -> None:
+        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=MagicMock())
+        session.chat_mode = "plan"
+
+        context = session._pop_plan_mode_context()
+
+        assert context is not None
+        assert "gcode outline/search/symbol" in context
+        assert "Bash/exec_command" in context
+
 
 class TestQwenBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.backends.qwen.GeminiACPClient") as mock_client:
+        with patch.object(QwenWebChatBackend, "acp_client_cls") as mock_client:
             QwenWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
+        # cli_name / display_name / prompt_timeout_env are now class attributes
+        # on QwenACPClient; the backend should not pass sandbox-leaking process args.
+        assert mock_client.call_args is not None
         kwargs = mock_client.call_args.kwargs
-        assert kwargs["cli_name"] == "qwen"
-        assert kwargs["display_name"] == "Qwen"
-        assert kwargs["prompt_timeout_env"] == "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
+
+    def test_qwen_inherits_gemini_plan_mode_gcode_context(self) -> None:
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
+        session.chat_mode = "plan"
+
+        context = session._pop_plan_mode_context()
+
+        assert context is not None
+        assert "gcode outline/search/symbol" in context
 
     def test_managed_session_logs_upstream_error_context(
         self, caplog: pytest.LogCaptureFixture
@@ -238,6 +298,24 @@ class TestQwenBackend:
         assert isinstance(event, TextChunk)
         assert event.content == "Error: Internal error"
         assert any("Managed qwen upstream error" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_managed_session_done_event_includes_context_window(self) -> None:
+        backend = MagicMock()
+        backend.attach_session = AsyncMock()
+        backend.send_message = MagicMock(
+            return_value=_async_stream(StreamEvent(event_type="result", data={}))
+        )
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
+        session._connected = True
+        session.sdk_session_id = "sess-qwen"
+        session._model = "qwen3-coder"
+        session._context_window_overrides = {"qwen3-coder": 262_144}
+
+        events = [event async for event in session.send_message("hi")]
+
+        assert isinstance(events[-1], DoneEvent)
+        assert events[-1].context_window == 262_144
 
     @pytest.mark.asyncio
     async def test_attach_session_warms_local_openai_models(self) -> None:
@@ -263,11 +341,16 @@ class TestQwenBackend:
             "qwen3.6-35b-a3b-q8-local(openai)",
             project_path="/tmp/project",
         )
+        assert mock_warmup.await_count == 1
+        assert mock_warmup.await_args is not None
+        resolved_project_path = str(Path(session.project_path).resolve())
         client.create_session.assert_awaited_once_with(
             model="qwen3.6-35b-a3b-q8-local(openai)",
-            cwd="/tmp/project",
+            cwd=resolved_project_path,
             reasoning_effort=None,
         )
+        assert client.create_session.await_count == 1
+        assert client.create_session.await_args is not None
 
 
 class TestCodexBackend:
@@ -324,6 +407,8 @@ class TestCodexBackend:
             approval_policy="on-request",
             sandbox="read-only",
         )
+        assert client.start_thread.await_count == 1
+        assert client.start_thread.await_args is not None
 
     @pytest.mark.asyncio
     async def test_managed_session_delegates_send_message(self) -> None:
@@ -380,6 +465,7 @@ class TestCodexBackend:
         session._connected = True
         session._thread_id = "thread-1"
         session._model = "gpt-5.4"
+        session._context_window_overrides = {"gpt-5.4": 200_000}
         session.reasoning_effort = "xhigh"
         session._get_transcript_offset = AsyncMock(return_value=0)
         session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
@@ -394,6 +480,7 @@ class TestCodexBackend:
             effort="xhigh",
         )
         assert isinstance(events[-1], DoneEvent)
+        assert events[-1].context_window == 200_000
 
     @pytest.mark.asyncio
     async def test_interrupt_uses_thread_and_turn_identity(self) -> None:
@@ -413,6 +500,8 @@ class TestCodexBackend:
         await backend.interrupt(session)
 
         client.interrupt_turn.assert_awaited_once_with("thread-1", "turn-9")
+        assert client.interrupt_turn.await_count == 1
+        assert client.interrupt_turn.await_args is not None
         assert session._turn_id is None
 
     @pytest.mark.asyncio
@@ -457,6 +546,8 @@ class TestCodexBackend:
 
         assert assistant_text == "Recovered from transcript"
         sleep.assert_awaited_once_with(0.25)
+        assert sleep.await_count == 1
+        assert sleep.await_args is not None
 
     @pytest.mark.asyncio
     async def test_handle_approval_request_accepts_decision_dict(self) -> None:
@@ -486,6 +577,7 @@ class TestCodexBackend:
             result = await backend.handle_approval_request("tools/call", {"threadId": "thread-1"})
 
         assert result == backend._accept_response("tools/call")
+        assert session._wait_for_tool_approval.await_count == 1
 
     @pytest.mark.asyncio
     async def test_handle_approval_request_respects_managed_pre_tool_block(self) -> None:
@@ -526,6 +618,38 @@ class TestCodexBackend:
             }
         )
         assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_allows_gcode_in_plan_mode(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "plan"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+
+        result = await backend.handle_approval_request(
+            "item/commandExecution/requestApproval",
+            {"threadId": "thread-1", "parsedCmd": 'gcode search "ChatSession"'},
+        )
+
+        assert result == backend._accept_response("item/commandExecution/requestApproval")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_blocks_gcode_redirection_in_plan_mode(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "plan"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+
+        result = await backend.handle_approval_request(
+            "item/commandExecution/requestApproval",
+            {"threadId": "thread-1", "parsedCmd": 'gcode search "ChatSession" > notes.txt'},
+        )
+
+        assert result == backend._decline_response("item/commandExecution/requestApproval")
 
     @pytest.mark.asyncio
     async def test_send_message_replays_deferred_context_prefix(self) -> None:
@@ -712,6 +836,8 @@ class TestCodexBackend:
                 "mcp_tool": "close_task",
             }
         )
+        assert session._on_post_tool.await_count == 1
+        assert session._on_post_tool.await_args is not None
 
     def test_translate_approval_request_parses_json_string_arguments_for_mcp_tool_call(
         self,

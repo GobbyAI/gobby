@@ -92,30 +92,41 @@ def build_persona_changes(
     if agent_body.blocked_mcp_tools:
         changes["_agent_blocked_mcp_tools"] = agent_body.blocked_mcp_tools
 
-    if agent_body.steps:
+    if agent_body.steps and is_spawned:
         from gobby.workflows.definitions import WorkflowInstance
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
         step_wf_name = f"{agent_body.name}-steps"
-        step_instance = WorkflowInstance(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            workflow_name=step_wf_name,
-            enabled=True,
-            priority=10,
-            current_step=agent_body.steps[0].name,
-            variables=dict(agent_body.step_variables),
-        )
-        WorkflowInstanceManager(db).save_instance(step_instance)
+        instance_mgr = WorkflowInstanceManager(db)
+        existing_instance = instance_mgr.get_instance(session_id, step_wf_name)
+        if existing_instance is None:
+            step_instance = WorkflowInstance(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                workflow_name=step_wf_name,
+                enabled=True,
+                priority=10,
+                current_step=agent_body.steps[0].name,
+                variables=dict(agent_body.step_variables),
+            )
+            instance_mgr.save_instance(step_instance)
+            logger.info(
+                "Created step workflow instance %s for session %s (agent=%s, step=%s)",
+                step_wf_name,
+                session_id,
+                agent_body.name,
+                agent_body.steps[0].name,
+            )
+        else:
+            logger.info(
+                "Preserved existing step workflow instance %s for session %s (agent=%s, step=%s)",
+                step_wf_name,
+                session_id,
+                agent_body.name,
+                existing_instance.current_step,
+            )
         changes["_step_workflow_name"] = step_wf_name
         changes["step_workflow_complete"] = False
-        logger.info(
-            "Created step workflow instance %s for session %s (agent=%s, step=%s)",
-            step_wf_name,
-            session_id,
-            agent_body.name,
-            agent_body.steps[0].name,
-        )
 
     return changes, active_rules, active_skills
 
@@ -150,7 +161,6 @@ def build_session_persona_context(
     identity_only: bool = False,
 ) -> tuple[str | None, set[str] | None]:
     """Build prompt context for a persona-capable agent definition."""
-    from gobby.hooks.event_handlers._session_start import select_and_format_agent_skills
     from gobby.skills.manager import SkillManager
     from gobby.workflows.selectors import resolve_skills_for_agent
 
@@ -167,15 +177,6 @@ def build_session_persona_context(
 
     all_skills = SkillManager(db).list_skills()
     active_skills = resolve_skills_for_agent(agent_body, all_skills)
-    if not identity_only:
-        formatted, _, _ = select_and_format_agent_skills(
-            agent_body,
-            all_skills,
-            active_skills,
-            cli_source,
-        )
-        if formatted:
-            parts.append(formatted)
 
     return ("\n\n".join(parts) if parts else None), active_skills
 

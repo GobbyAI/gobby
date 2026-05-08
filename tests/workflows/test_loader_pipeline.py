@@ -5,9 +5,11 @@ LocalWorkflowDefinitionManager rather than written to YAML files.
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -52,6 +54,16 @@ def loader(db: LocalDatabase) -> WorkflowLoader:
     return WorkflowLoader(db=db)
 
 
+@pytest.fixture(scope="module")
+def bundled_workflow_payload() -> Callable[[Path], dict[str, object]]:
+    def load(path: Path) -> dict[str, object]:
+        if not path.exists():
+            pytest.skip(f"Bundled workflow not found: {path}")
+        return json.loads(json.dumps(yaml.safe_load(path.read_text())))
+
+    return load
+
+
 class TestLoadPipeline:
     """Tests for load_pipeline method."""
 
@@ -81,6 +93,42 @@ class TestLoadPipeline:
         assert result.name == "test-pipeline"
         assert result.type == "pipeline"
         assert len(result.steps) == 2
+
+    @pytest.mark.parametrize(
+        ("path", "step_id"),
+        [
+            (
+                Path("src/gobby/install/shared/workflows/pipelines/spawn-developer.yaml"),
+                "spawn",
+            ),
+            (Path("src/gobby/install/shared/workflows/dev.yaml"), "spawn_developer"),
+        ],
+    )
+    def test_legacy_developer_dispatch_defaults_to_enabled_backend_agent(
+        self,
+        path: Path,
+        step_id: str,
+        bundled_workflow_payload: Callable[[Path], dict[str, object]],
+    ) -> None:
+        payload = bundled_workflow_payload(path)
+        pipeline = PipelineDefinition.model_validate(payload)
+        step = next(item for item in pipeline.steps if item.id == step_id)
+
+        assert pipeline.inputs["agent"]["default"] == "backend-developer"
+        assert step.mcp is not None
+        assert step.mcp.arguments["agent"] == "${{ inputs.agent }}"
+
+    def test_qa_dispatch_targets_enabled_reviewer_agent(
+        self,
+        bundled_workflow_payload: Callable[[Path], dict[str, object]],
+    ) -> None:
+        path = Path("src/gobby/install/shared/workflows/qa.yaml")
+        payload = bundled_workflow_payload(path)
+        pipeline = PipelineDefinition.model_validate(payload)
+        step = next(item for item in pipeline.steps if item.id == "spawn_qa_reviewer")
+
+        assert step.mcp is not None
+        assert step.mcp.arguments["agent"] == "qa-reviewer"
 
     @pytest.mark.asyncio
     async def test_load_pipeline_not_found(self, loader) -> None:
@@ -399,8 +447,7 @@ class TestValidatePipelineReferences:
                 {"id": "step2", "prompt": "Process the output from $step1.output"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_rejects_forward_reference(self) -> None:
         """Test that $later_step.output (forward ref) is rejected."""
@@ -447,8 +494,7 @@ class TestValidatePipelineReferences:
                 },
             ],
         }
-        # Should not raise - all references are to earlier steps
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_validates_condition_references(self) -> None:
         """Test that references in condition fields are validated."""
@@ -464,8 +510,7 @@ class TestValidatePipelineReferences:
                 },
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_validates_input_references(self) -> None:
         """Test that references in input fields are validated."""
@@ -477,8 +522,7 @@ class TestValidatePipelineReferences:
                 {"id": "step2", "exec": "process", "input": "$step1.output"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_validates_output_references(self) -> None:
         """Test that references in pipeline outputs are validated."""
@@ -494,8 +538,7 @@ class TestValidatePipelineReferences:
                 {"id": "final", "exec": "./finish.sh"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_rejects_invalid_output_reference(self) -> None:
         """Test that invalid references in outputs are rejected."""
@@ -521,8 +564,7 @@ class TestValidatePipelineReferences:
                 {"id": "step1", "exec": "echo $inputs.target"},
             ],
         }
-        # Should not raise - $inputs.* is not a step reference
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_multiple_refs_all_valid(self) -> None:
         """Test pipeline with multiple valid references."""
@@ -535,8 +577,7 @@ class TestValidatePipelineReferences:
                 {"id": "step3", "prompt": "Combine $step1.output and $step2.output"},
             ],
         }
-        # Should not raise
-        _validate_pipeline_references(data)
+        assert _validate_pipeline_references(data) is None
 
     def test_multiple_refs_one_invalid(self) -> None:
         """Test that one invalid ref among valid ones is caught."""

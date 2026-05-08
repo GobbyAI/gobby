@@ -1,7 +1,8 @@
 import claudeLogo from "../../assets/provider-logos/claude-symbol.svg";
+import droidLogo from "../../assets/provider-logos/droid-logo.svg";
 import geminiLogo from "../../assets/provider-logos/gemini-icon-2025.svg";
 import qwenLogo from "../../assets/provider-logos/qwen-logo.svg";
-import { SOURCE_COLORS } from "./sourceTheme";
+import { getSourceColorVar } from "./sourceTheme";
 import type { SourceType } from "./sourceIconUtils";
 
 interface SourceIconProps {
@@ -11,6 +12,7 @@ interface SourceIconProps {
 
 const PROVIDER_LOGOS = {
   claude: claudeLogo,
+  droid: droidLogo,
   gemini: geminiLogo,
   qwen: qwenLogo,
 } as const;
@@ -23,7 +25,7 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
         height={size}
         viewBox="0 0 158.7128 157.296"
         fill="none"
-        className="source-icon source-icon-codex"
+        className="source-icon source-icon-codex shrink-0"
         aria-hidden="true"
       >
         <path
@@ -43,7 +45,7 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
         src={providerLogo}
         width={size}
         height={size}
-        className={`source-icon source-icon-${source}`}
+        className={`source-icon source-icon-${source} shrink-0`}
         alt=""
         aria-hidden="true"
         draggable={false}
@@ -51,7 +53,7 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
     );
   }
 
-  const color = SOURCE_COLORS[source] || SOURCE_COLORS.default;
+  const color = getSourceColorVar(source);
 
   switch (source) {
     default:
@@ -61,7 +63,7 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
           height={size}
           viewBox="0 0 24 24"
           fill="none"
-          className="source-icon"
+          className="source-icon shrink-0"
           stroke={color}
           strokeWidth="2"
           strokeLinecap="round"

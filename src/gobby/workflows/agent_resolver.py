@@ -14,6 +14,7 @@ _SOURCE_TO_PROVIDER: dict[str, str] = {
     "claude": "claude",
     "gemini": "gemini",
     "codex": "codex",
+    "droid": "droid",
 }
 
 

@@ -2,7 +2,7 @@
 """Unified settings validator for all CLI integrations.
 
 Validates hook configuration files across Claude Code, Gemini CLI,
-Qwen CLI, and Codex.
+Qwen CLI, Codex, and Factory Droid.
 
 CLI is identified via --cli flag (primary) or path-based detection (fallback).
 
@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
+from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.cli.installers.hook_commands import is_gobby_hook_command
 
 
@@ -99,12 +100,22 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         settings_dir=".codex",
         settings_file="hooks.json",
         required_hooks=(
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact",
             "SessionStart",
             "UserPromptSubmit",
-            "PreToolUse",
-            "PostToolUse",
             "Stop",
         ),
+        nested=True,
+    ),
+    "droid": ValidationConfig(
+        cli_name="Factory droid",
+        settings_dir=".factory/hooks",
+        settings_file="hooks.json",
+        required_hooks=DROID_PASCAL_HOOK_NAMES,
         nested=True,
     ),
 }
@@ -220,7 +231,7 @@ def main() -> int:
     """Main entry point."""
     config = detect_cli_config()
     if config is None:
-        print("Could not detect CLI. Use --cli=<name> (claude, gemini, qwen, codex)")
+        print("Could not detect CLI. Use --cli=<name> (claude, gemini, qwen, codex, droid)")
         return 1
 
     return validate(config)

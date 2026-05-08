@@ -1,17 +1,55 @@
 """Additional tests for AgentLifecycleMonitor."""
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from datetime import UTC, datetime
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.storage.agents import AgentRun
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
+from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
+from gobby.workflows.task_claim_state import add_claimed_task
 
 pytestmark = pytest.mark.unit
+
+
+def _stage(state: str) -> dict[str, object]:
+    return {"name": "development", "state": state, "position": 0}
+
+
+def _task(
+    *,
+    task_id: str = "task-123",
+    owner: str | None = "owner-1",
+    stage_state: str = "in_progress",
+    seq_num: int | None = 5,
+    dispatch_failure_count: int = 0,
+    closed_at: str | None = None,
+) -> Task:
+    return Task(
+        id=task_id,
+        project_id="project-1",
+        title="test",
+        priority=2,
+        task_type="task",
+        created_at="2024-01-01",
+        updated_at="2024-01-01",
+        claimed_by_session_id=owner,
+        closed_at=closed_at,
+        seq_num=seq_num,
+        dispatch_failure_count=dispatch_failure_count,
+        stages=(_stage(stage_state),),
+    )
+
+
+def _use_stall_classifier(monitor: AgentLifecycleMonitor, stall_classifier: MagicMock) -> None:
+    monitor._task_recovery._stall_classifier = stall_classifier
 
 
 class TestRecoverTaskFromFailedAgent:
@@ -31,7 +69,7 @@ class TestRecoverTaskFromFailedAgent:
             task_manager=mock_task_mgr,
             check_interval_seconds=1.0,
         )
-        monitor._stall_classifier = mock_stall
+        _use_stall_classifier(monitor, mock_stall)
 
         # Setup mock db run
         db_run = AgentRun(
@@ -48,21 +86,21 @@ class TestRecoverTaskFromFailedAgent:
         mock_run_mgr.get.return_value = db_run
 
         # Setup mock task
-        mock_task = MagicMock()
-        mock_task.status = "in_progress"
-        mock_task.claimed_by_session_id = "owner-1"
-        mock_task.seq_num = 5
-        mock_task.dispatch_failure_count = 0
+        mock_task = _task(task_id="task-123", owner="owner-1", seq_num=5)
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = True
 
         await monitor._recover_task_from_failed_agent("run-1")
 
         mock_task_mgr.get_task.assert_called_once_with("task-123")
+        assert mock_task_mgr.get_task.call_count == 1
+        assert mock_task_mgr.get_task.call_args is not None
         # Provider error: dispatch_failure_count unchanged (stays at 0)
         mock_task_mgr.release_task_claim.assert_called_once_with(
-            "task-123", status="open", dispatch_failure_count=0
+            "task-123", dispatch_failure_count=0
         )
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_fallback_assignee(self) -> None:
@@ -77,7 +115,7 @@ class TestRecoverTaskFromFailedAgent:
             db=mock_db,
             task_manager=mock_task_mgr,
         )
-        monitor._stall_classifier = mock_stall
+        _use_stall_classifier(monitor, mock_stall)
 
         # Setup mock db run (no task_id, but has child_session_id)
         db_run = AgentRun(
@@ -94,12 +132,11 @@ class TestRecoverTaskFromFailedAgent:
         )
         mock_run_mgr.get.return_value = db_run
 
-        mock_fallback_task = MagicMock()
-        mock_fallback_task.id = "task-fallback"
-        mock_fallback_task.status = "in_progress"
-        mock_fallback_task.claimed_by_session_id = "child-123"
-        mock_fallback_task.seq_num = None
-        mock_fallback_task.dispatch_failure_count = 0
+        mock_fallback_task = _task(
+            task_id="task-fallback",
+            owner="child-123",
+            seq_num=None,
+        )
         mock_task_mgr.list_tasks.return_value = [mock_fallback_task]
         mock_task_mgr.get_task.return_value = mock_fallback_task
         mock_stall.is_provider_error.return_value = False
@@ -110,11 +147,17 @@ class TestRecoverTaskFromFailedAgent:
             claimed_by_session_id="child-123",
             closed=False,
         )
+        assert mock_task_mgr.list_tasks.call_count == 1
+        assert mock_task_mgr.list_tasks.call_args is not None
         mock_task_mgr.get_task.assert_called_once_with("task-fallback")
+        assert mock_task_mgr.get_task.call_count == 1
+        assert mock_task_mgr.get_task.call_args is not None
         # Non-provider error: dispatch_failure_count incremented from 0 to 1
         mock_task_mgr.release_task_claim.assert_called_once_with(
-            "task-fallback", status="open", dispatch_failure_count=1
+            "task-fallback", dispatch_failure_count=1
         )
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_releases_review_claim_without_status_change(self) -> None:
@@ -128,7 +171,7 @@ class TestRecoverTaskFromFailedAgent:
             db=MagicMock(),
             task_manager=mock_task_mgr,
         )
-        monitor._stall_classifier = mock_stall
+        _use_stall_classifier(monitor, mock_stall)
 
         db_run = AgentRun(
             id="run-review",
@@ -143,16 +186,20 @@ class TestRecoverTaskFromFailedAgent:
         )
         mock_run_mgr.get.return_value = db_run
 
-        mock_task = MagicMock()
-        mock_task.status = "needs_review"
-        mock_task.claimed_by_session_id = "reviewer-1"
-        mock_task.seq_num = 22
+        mock_task = _task(
+            task_id="task-review",
+            owner="reviewer-1",
+            stage_state="needs_review",
+            seq_num=22,
+        )
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = False
 
         await monitor._recover_task_from_failed_agent("run-review")
 
         mock_task_mgr.release_task_claim.assert_called_once_with("task-review")
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_no_task_manager(self) -> None:
@@ -161,8 +208,9 @@ class TestRecoverTaskFromFailedAgent:
             agent_run_manager=MagicMock(),
             db=MagicMock(),
         )
-        await monitor._recover_task_from_failed_agent("run-1")
-        # Should return safely
+        result = await monitor._recover_task_from_failed_agent("run-1")
+        assert result is None
+        assert monitor._task_manager is None
 
     @pytest.mark.asyncio
     async def test_recover_task_not_in_progress(self) -> None:
@@ -187,13 +235,17 @@ class TestRecoverTaskFromFailedAgent:
         )
         mock_run_mgr.get.return_value = db_run
 
-        mock_task = MagicMock()
-        mock_task.status = "completed"
-        mock_task.claimed_by_session_id = "owner-1"
+        mock_task = _task(
+            task_id="task-123",
+            owner="owner-1",
+            closed_at="2024-01-02T00:00:00Z",
+        )
         mock_task_mgr.get_task.return_value = mock_task
 
         await monitor._recover_task_from_failed_agent("run-1")
         mock_task_mgr.release_task_claim.assert_not_called()
+        assert mock_task_mgr.release_task_claim.call_count == 0
+        assert not mock_task_mgr.release_task_claim.called
 
     @pytest.mark.asyncio
     async def test_recover_task_escalates_after_three_failures(self) -> None:
@@ -207,7 +259,7 @@ class TestRecoverTaskFromFailedAgent:
             db=MagicMock(),
             task_manager=mock_task_mgr,
         )
-        monitor._stall_classifier = mock_stall
+        _use_stall_classifier(monitor, mock_stall)
 
         db_run = AgentRun(
             id="run-1",
@@ -222,11 +274,12 @@ class TestRecoverTaskFromFailedAgent:
         )
         mock_run_mgr.get.return_value = db_run
 
-        mock_task = MagicMock()
-        mock_task.status = "in_progress"
-        mock_task.claimed_by_session_id = "owner-1"
-        mock_task.seq_num = 10
-        mock_task.dispatch_failure_count = 2  # Already 2 failures, this will be 3rd
+        mock_task = _task(
+            task_id="task-1",
+            owner="owner-1",
+            seq_num=10,
+            dispatch_failure_count=2,
+        )
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = False
 
@@ -234,10 +287,12 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task_mgr.release_task_claim.assert_called_once_with(
             "task-1",
-            status="escalated",
             dispatch_failure_count=0,
-            escalation_reason="Failed 3 times across different agents",
+            escalated_at=ANY,
+            escalation_reason="Failed 3 dispatch attempts",
         )
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_provider_error_not_counted(self) -> None:
@@ -251,7 +306,7 @@ class TestRecoverTaskFromFailedAgent:
             db=MagicMock(),
             task_manager=mock_task_mgr,
         )
-        monitor._stall_classifier = mock_stall
+        _use_stall_classifier(monitor, mock_stall)
 
         db_run = AgentRun(
             id="run-1",
@@ -266,20 +321,21 @@ class TestRecoverTaskFromFailedAgent:
         )
         mock_run_mgr.get.return_value = db_run
 
-        mock_task = MagicMock()
-        mock_task.status = "in_progress"
-        mock_task.claimed_by_session_id = "owner-1"
-        mock_task.seq_num = 10
-        mock_task.dispatch_failure_count = 2
+        mock_task = _task(
+            task_id="task-1",
+            owner="owner-1",
+            seq_num=10,
+            dispatch_failure_count=2,
+        )
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = True  # Provider error
 
         await monitor._recover_task_from_failed_agent("run-1")
 
         # Should NOT block — provider errors are excluded
-        mock_task_mgr.release_task_claim.assert_called_once_with(
-            "task-1", status="open", dispatch_failure_count=2
-        )
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-1", dispatch_failure_count=2)
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
     async def test_recover_task_uses_persisted_claimed_session_id(self) -> None:
@@ -293,7 +349,7 @@ class TestRecoverTaskFromFailedAgent:
             db=MagicMock(),
             task_manager=mock_task_mgr,
         )
-        monitor._stall_classifier = mock_stall
+        _use_stall_classifier(monitor, mock_stall)
 
         db_run = AgentRun(
             id="run-claim-owner",
@@ -309,17 +365,19 @@ class TestRecoverTaskFromFailedAgent:
         )
         mock_run_mgr.get.return_value = db_run
 
-        mock_task = MagicMock()
-        mock_task.status = "in_progress"
-        mock_task.claimed_by_session_id = "different-owner"
-        mock_task.seq_num = 10
-        mock_task.dispatch_failure_count = 0
+        mock_task = _task(
+            task_id="task-1",
+            owner="different-owner",
+            seq_num=10,
+        )
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = False
 
         await monitor._recover_task_from_failed_agent("run-claim-owner")
 
         mock_task_mgr.release_task_claim.assert_not_called()
+        assert mock_task_mgr.release_task_claim.call_count == 0
+        assert not mock_task_mgr.release_task_claim.called
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_pending_runs(self) -> None:
@@ -405,9 +463,13 @@ class TestLoopPromptEscalation:
         ) as mock_kill:
             await monitor.check_loop_prompts()
             mock_kill.assert_called_once_with(run)
+            assert mock_kill.call_count == 1
+            assert mock_kill.call_args is not None
 
         # send_keys should NOT have been called (escalated instead)
         mock_tmux.send_keys.assert_not_called()
+        assert mock_tmux.send_keys.call_count == 0
+        assert not mock_tmux.send_keys.called
 
 
 class TestApprovalPromptAutoEnter:
@@ -696,11 +758,11 @@ class TestDispatchFailureCountCRUD:
             id="t-1",
             project_id="p-1",
             title="test",
-            status="open",
             priority=2,
             task_type="task",
             created_at="2024-01-01",
             updated_at="2024-01-01",
+            stages=(_stage("ready"),),
         )
         assert task.dispatch_failure_count == 0
 
@@ -711,12 +773,12 @@ class TestDispatchFailureCountCRUD:
             id="t-1",
             project_id="p-1",
             title="test",
-            status="open",
             priority=2,
             task_type="task",
             created_at="2024-01-01",
             updated_at="2024-01-01",
             dispatch_failure_count=3,
+            stages=(_stage("ready"),),
         )
         d = task.to_dict()
         assert d["dispatch_failure_count"] == 3
@@ -728,12 +790,14 @@ class TestDispatchFailureCountCRUD:
             id="t-1",
             project_id="p-1",
             title="test",
-            status="escalated",
             priority=2,
             task_type="task",
             created_at="2024-01-01",
             updated_at="2024-01-01",
             dispatch_failure_count=3,
+            escalated_at="2024-01-02T00:00:00Z",
+            escalation_reason="manual review",
+            stages=(_stage("ready"),),
         )
         brief = task.to_brief()
         assert brief["dispatch_failure_count"] == 3
@@ -789,11 +853,12 @@ class TestTerminalizeCancelledRun:
         )
         mock_run_mgr.cancel.return_value = run
 
-        task = MagicMock()
-        task.status = "in_progress"
-        task.lifecycle_stage = "in_progress"
-        task.claimed_by_session_id = "child-1"
-        task.seq_num = 42
+        task = _task(
+            task_id="task-1",
+            owner="child-1",
+            stage_state="in_progress",
+            seq_num=42,
+        )
         mock_task_mgr.get_task.return_value = task
 
         monitor = AgentLifecycleMonitor(
@@ -810,7 +875,9 @@ class TestTerminalizeCancelledRun:
         )
 
         assert transitioned is True
-        mock_task_mgr.release_task_claim.assert_called_once_with("task-1", status="open")
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-1")
+        assert mock_task_mgr.release_task_claim.call_count == 1
+        assert mock_task_mgr.release_task_claim.call_args is not None
         mock_completion_registry.notify.assert_awaited_once_with(
             "run-cancel",
             result={
@@ -820,7 +887,11 @@ class TestTerminalizeCancelledRun:
             },
             message="Agent run-cancel cancelled",
         )
+        assert mock_completion_registry.notify.await_count == 1
+        assert mock_completion_registry.notify.await_args is not None
         mock_session_mgr.update_status.assert_called_once_with("child-1", "expired")
+        assert mock_session_mgr.update_status.call_count == 1
+        assert mock_session_mgr.update_status.call_args is not None
 
     @pytest.mark.asyncio
     async def test_clears_claim_without_status_change_for_review_task(self) -> None:
@@ -841,11 +912,12 @@ class TestTerminalizeCancelledRun:
         )
         mock_run_mgr.cancel.return_value = run
 
-        task = MagicMock()
-        task.status = "needs_review"
-        task.lifecycle_stage = "needs_review"
-        task.claimed_by_session_id = "child-1"
-        task.seq_num = 7
+        task = _task(
+            task_id="task-review",
+            owner="child-1",
+            stage_state="needs_review",
+            seq_num=7,
+        )
         mock_task_mgr.get_task.return_value = task
 
         monitor = AgentLifecycleMonitor(
@@ -861,6 +933,185 @@ class TestTerminalizeCancelledRun:
 
         assert transitioned is True
         mock_task_mgr.release_task_claim.assert_called_once_with("task-review")
+
+    @pytest.mark.asyncio
+    async def test_cancelled_task_linked_run_cleans_child_session_claim_state(
+        self,
+        temp_db: LocalDatabase,
+        sample_project: dict,
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        parent = session_manager.register(
+            external_id="parent-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        child = session_manager.register(
+            external_id="child-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Child work",
+            task_type="task",
+            category="code",
+        )
+        task_manager.initialize_task_manifest(task.id, stage_names=["development"])
+        task_manager.stage_states.start_stage(task.id, "development", by_session_id=child.id)
+        claimed = task_manager.claim_task(task.id, child.id)
+
+        session_vars = SessionVariableManager(temp_db)
+        session_vars.merge_variables(
+            child.id,
+            add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
+        )
+        workflow_instances = WorkflowInstanceManager(temp_db)
+        workflow_instances.save_instance(
+            WorkflowInstance(
+                id="inst-child-agent",
+                session_id=child.id,
+                workflow_name="developer-workflow",
+                enabled=True,
+                priority=100,
+                current_step="implement",
+                step_entered_at=datetime.now(UTC),
+                variables={"task_claimed": True},
+            )
+        )
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=child.id,
+            claimed_session_id=child.id,
+            provider="claude",
+            prompt="do work",
+            run_id="run-cancel-task",
+            task_id=task.id,
+        )
+        run_manager.start(run.id)
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+        )
+
+        transitioned = await monitor.terminalize_cancelled_run(
+            run.id,
+            terminal_reason="user_cancelled",
+        )
+
+        updated_task = task_manager.get_task(task.id)
+        child_vars = session_vars.get_variables(child.id)
+
+        assert transitioned is True
+        assert updated_task is not None
+        assert updated_task.claimed_by_session_id is None
+        assert child_vars["task_claimed"] is False
+        assert child_vars["claimed_tasks"] == {}
+        assert workflow_instances.get_instance(child.id, "developer-workflow") is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_run_preserves_replacement_claim_and_cleans_old_child_state(
+        self,
+        temp_db: LocalDatabase,
+        sample_project: dict,
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        parent = session_manager.register(
+            external_id="parent-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        old_child = session_manager.register(
+            external_id="old-child-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        replacement = session_manager.register(
+            external_id="replacement-session",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Replacement work",
+            task_type="task",
+            category="code",
+        )
+        task_manager.initialize_task_manifest(task.id, stage_names=["development"])
+        task_manager.stage_states.start_stage(task.id, "development", by_session_id=old_child.id)
+        claimed = task_manager.claim_task(task.id, replacement.id)
+
+        session_vars = SessionVariableManager(temp_db)
+        session_vars.merge_variables(
+            old_child.id,
+            add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
+        )
+        session_vars.merge_variables(
+            replacement.id,
+            add_claimed_task({}, claimed.id, f"#{claimed.seq_num}"),
+        )
+        WorkflowInstanceManager(temp_db).save_instance(
+            WorkflowInstance(
+                id="inst-old-child-agent",
+                session_id=old_child.id,
+                workflow_name="developer-workflow",
+                enabled=True,
+                priority=100,
+                current_step="implement",
+                step_entered_at=datetime.now(UTC),
+                variables={"task_claimed": True},
+            )
+        )
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=old_child.id,
+            claimed_session_id=old_child.id,
+            provider="claude",
+            prompt="old work",
+            run_id="run-cancel-replaced",
+            task_id=task.id,
+        )
+        run_manager.start(run.id)
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+        )
+
+        transitioned = await monitor.terminalize_cancelled_run(
+            run.id,
+            terminal_reason="user_cancelled",
+        )
+
+        updated_task = task_manager.get_task(task.id)
+        old_vars = session_vars.get_variables(old_child.id)
+        replacement_vars = session_vars.get_variables(replacement.id)
+
+        assert transitioned is True
+        assert updated_task is not None
+        assert updated_task.claimed_by_session_id == replacement.id
+        assert old_vars["task_claimed"] is False
+        assert old_vars["claimed_tasks"] == {}
+        assert replacement_vars["task_claimed"] is True
+        assert replacement_vars["claimed_tasks"] == {claimed.id: f"#{claimed.seq_num}"}
+        assert (
+            WorkflowInstanceManager(temp_db).get_instance(old_child.id, "developer-workflow")
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_no_second_notification_when_run_already_terminal(self) -> None:
@@ -891,3 +1142,5 @@ class TestTerminalizeCancelledRun:
 
         assert transitioned is False
         mock_completion_registry.notify.assert_not_awaited()
+        assert mock_completion_registry.notify.await_count == 0
+        assert mock_completion_registry.notify.await_args is None

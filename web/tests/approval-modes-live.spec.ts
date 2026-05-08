@@ -156,7 +156,7 @@ async function selectProviderAndModel(
 
 async function selectMode(
   page: Parameters<typeof test>[0]["page"],
-  modeLabel: "Act" | "Auto",
+  modeLabel: "Act" | "YOLO",
 ): Promise<void> {
   const radio = page.getByRole("radio", { name: modeLabel, exact: true });
   await radio.click();
@@ -259,23 +259,23 @@ async function verifyActModeApproval(
   await removeFile(filePath);
 }
 
-async function verifyAutoModeSuppression(
+async function verifyYoloModeSuppression(
   page: Parameters<typeof test>[0]["page"],
   request: Parameters<typeof test>[0]["request"],
   provider: string,
   model: ProviderModelEntry["models"][number],
   runId: string,
 ): Promise<void> {
-  const token = `auto-${sanitizeToken(provider)}-${runId}`;
+  const token = `yolo-${sanitizeToken(provider)}-${runId}`;
   const filePath = join(
     tmpdir(),
-    `gobby-approval-${sanitizeToken(provider)}-${runId}-auto.txt`,
+    `gobby-approval-${sanitizeToken(provider)}-${runId}-yolo.txt`,
   );
   await removeFile(filePath);
 
-  await openFreshChat(page, `${runId}-${sanitizeToken(provider)}-auto`);
+  await openFreshChat(page, `${runId}-${sanitizeToken(provider)}-yolo`);
   await selectProviderAndModel(page, provider, model.label);
-  await selectMode(page, "Auto");
+  await selectMode(page, "YOLO");
 
   const dbSessionId = await sendPrompt(page, buildCommandPrompt(filePath, token));
   await waitForSessionSummary(request, dbSessionId, provider, model.value);
@@ -318,7 +318,7 @@ test.describe("Live approval mode verification", () => {
     `Set ${LIVE_E2E_FLAG}=1 to run real daemon-backed approval verification.`,
   );
 
-  test("Claude, Gemini, Qwen, and Codex prompt in Act and suppress prompts in Auto", async ({
+  test("Claude, Gemini, Qwen, and Codex prompt in Act and suppress prompts in YOLO", async ({
     page,
     request,
   }) => {
@@ -348,8 +348,8 @@ test.describe("Live approval mode verification", () => {
       await test.step(`${providerName} Act mode prompts before execution`, async () => {
         await verifyActModeApproval(page, request, providerName, model, runId);
       });
-      await test.step(`${providerName} Auto mode suppresses approval prompts`, async () => {
-        await verifyAutoModeSuppression(page, request, providerName, model, runId);
+      await test.step(`${providerName} YOLO mode suppresses approval prompts`, async () => {
+        await verifyYoloModeSuppression(page, request, providerName, model, runId);
       });
     }
   });

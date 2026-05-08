@@ -38,7 +38,11 @@ class TestRunSubprocess:
             await _run_subprocess("sleep", "10", timeout=0.1)
 
         mock_proc.kill.assert_called_once()
+        assert mock_proc.kill.call_count == 1
+        assert mock_proc.kill.call_args is not None
         mock_proc.wait.assert_called_once()
+        assert mock_proc.wait.call_count == 1
+        assert mock_proc.wait.call_args is not None
 
 
 class TestValidateTerminalValue:
@@ -127,6 +131,51 @@ class TestKillAgent:
             created_at="2024-01-01T00:00:00Z",
             updated_at="2024-01-01T00:00:00Z",
         )
+
+    @pytest.mark.asyncio
+    @patch("gobby.agents.kill._close_terminal_window")
+    @patch("gobby.agents.kill._close_tmux_session")
+    async def test_close_terminal_prefers_persisted_tmux_session(
+        self,
+        mock_close_tmux,
+        mock_close_window,
+        agent_run,
+        mock_db,
+    ):
+        agent_run.tmux_session_name = "gobby-run-123"
+        mock_close_tmux.return_value = {
+            "success": True,
+            "method": "tmux_kill_session",
+            "tmux_session_name": "gobby-run-123",
+        }
+
+        res = await kill_agent(agent_run, mock_db, close_terminal=True)
+
+        assert res["success"] is True
+        assert res["method"] == "tmux_kill_session"
+        mock_close_tmux.assert_awaited_once_with("gobby-run-123")
+        mock_close_window.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("gobby.agents.kill._close_terminal_window")
+    @patch("gobby.agents.kill._close_tmux_session")
+    async def test_close_terminal_falls_back_to_session_context(
+        self,
+        mock_close_tmux,
+        mock_close_window,
+        agent_run,
+        mock_db,
+    ):
+        agent_run.tmux_session_name = "gobby-run-123"
+        mock_close_tmux.return_value = {"success": False, "error": "missing"}
+        mock_close_window.return_value = {"success": True, "method": "tmux_kill_pane"}
+
+        res = await kill_agent(agent_run, mock_db, close_terminal=True)
+
+        assert res["success"] is True
+        assert res["method"] == "tmux_kill_pane"
+        mock_close_tmux.assert_awaited_once_with("gobby-run-123")
+        mock_close_window.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill._close_terminal_window")

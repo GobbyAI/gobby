@@ -189,4 +189,6 @@ async def test_malformed_string_arguments_return_schema_guidance(proxy_parts) ->
     assert result["success"] is False
     assert result["error_code"] == "invalid_arguments"
     assert "expected dict" in result["error"]
+    assert result["validation_errors"] == [result["error"]]
     assert result["schema"] == input_schema
+    mcp_manager.call_tool.assert_not_awaited()

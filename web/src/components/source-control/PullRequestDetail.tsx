@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { PullRequest } from '../../hooks/useSourceControl'
 import { StatusBadge } from './StatusBadge'
+import { pullRequestLabelStyle } from './githubLabelStyles'
 
 interface Props {
   prNumber: number
@@ -75,7 +76,7 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
                   <span
                     key={l.name}
                     className="sc-pr-detail__label"
-                    style={{ borderColor: `#${l.color}` }}
+                    style={pullRequestLabelStyle(l.color)}
                   >
                     {l.name}
                   </span>

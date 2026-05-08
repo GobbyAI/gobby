@@ -77,15 +77,14 @@ class TestTaskGitHubFields:
             conn.execute(
                 """
                 INSERT INTO tasks (
-                    id, project_id, title, status, priority, task_type,
+                    id, project_id, title, priority, task_type,
                     created_at, updated_at, github_issue_number, github_pr_number, github_repo
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "gt-test01",
                     project_id,
                     "GitHub linked task",
-                    "open",
                     2,
                     "task",
                     now,

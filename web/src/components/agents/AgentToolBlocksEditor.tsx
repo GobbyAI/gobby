@@ -1,4 +1,17 @@
 import { useState } from 'react'
+import {
+  AGENT_BTN_CLS,
+  AGENT_EDIT_FIELD_CLS,
+  AGENT_EDIT_INPUT_CLS,
+  AGENT_EDIT_LABEL_CLS,
+  STEP_CHIP_ADD_BTN_CLS,
+  STEP_CHIP_ADD_ROW_CLS,
+  STEP_CHIP_CLS,
+  STEP_CHIP_FIELD_CLS,
+  STEP_CHIP_INPUT_CLS,
+  STEP_CHIP_REMOVE_CLS,
+  STEP_CHIPS_CLS,
+} from './agents-styles'
 
 function ChipInput({ values, onChange, placeholder }: {
   values: string[]
@@ -16,24 +29,24 @@ function ChipInput({ values, onChange, placeholder }: {
   }
 
   return (
-    <div className="step-chip-input">
-      <div className="step-chips">
+    <div className={STEP_CHIP_INPUT_CLS}>
+      <div className={STEP_CHIPS_CLS}>
         {values.map(v => (
-          <span key={v} className="step-chip">
+          <span key={v} className={STEP_CHIP_CLS}>
             {v}
-            <button type="button" className="step-chip-remove" onClick={() => onChange(values.filter(x => x !== v))}>&times;</button>
+            <button type="button" className={STEP_CHIP_REMOVE_CLS} onClick={() => onChange(values.filter(x => x !== v))}>&times;</button>
           </span>
         ))}
       </div>
-      <div className="step-chip-add-row">
+      <div className={STEP_CHIP_ADD_ROW_CLS}>
         <input
-          className="agent-edit-input step-chip-field"
+          className={`${AGENT_EDIT_INPUT_CLS} ${STEP_CHIP_FIELD_CLS}`}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAdd() } }}
           placeholder={placeholder}
         />
-        <button type="button" className="agent-defs-btn step-chip-add-btn" onClick={handleAdd} disabled={!input.trim()}>+</button>
+        <button type="button" className={`${AGENT_BTN_CLS} ${STEP_CHIP_ADD_BTN_CLS}`} onClick={handleAdd} disabled={!input.trim()}>+</button>
       </div>
     </div>
   )
@@ -53,10 +66,10 @@ export function AgentToolBlocksEditor({
   onBlockedMcpToolsChange,
 }: AgentToolBlocksEditorProps) {
   return (
-    <div className="agent-tool-blocks-editor">
+    <div>
       {onBlockedToolsChange && (
-        <div className="agent-edit-field">
-          <span className="agent-edit-label">Blocked Native Tools</span>
+        <div className={AGENT_EDIT_FIELD_CLS}>
+          <span className={AGENT_EDIT_LABEL_CLS}>Blocked Native Tools</span>
           <ChipInput
             values={blockedTools}
             onChange={onBlockedToolsChange}
@@ -65,12 +78,12 @@ export function AgentToolBlocksEditor({
         </div>
       )}
       {onBlockedMcpToolsChange && (
-        <div className="agent-edit-field">
-          <span className="agent-edit-label">Blocked MCP Tools</span>
+        <div className={AGENT_EDIT_FIELD_CLS}>
+          <span className={AGENT_EDIT_LABEL_CLS}>Blocked MCP Tools</span>
           <ChipInput
             values={blockedMcpTools}
             onChange={onBlockedMcpToolsChange}
-            placeholder="e.g. gobby-tasks:mark_task_needs_review"
+            placeholder="e.g. gobby-tasks-ops:submit_for_review"
           />
         </div>
       )}

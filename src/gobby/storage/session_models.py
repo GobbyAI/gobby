@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from gobby.llm.local_detection import is_local_legacy_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,7 @@ class Session:
     usage_cache_read_tokens: int = 0
     context_window: int | None = None
     model: str | None = None  # LLM model used (e.g., "claude-3-5-sonnet-20241022")
+    is_local: bool = False
     # Terminal context (JSON blob with tty, parent_pid, tmux_pane, term_program)
     terminal_context: dict[str, Any] | None = None
     # Global sequence number
@@ -73,10 +76,22 @@ class Session:
     session_type: str = "terminal"
     sandbox_enabled: bool | None = False
     sandbox_policy_hash: str | None = None
+    # Task-ref enrichment populated post-load by callers that join the tasks
+    # table. Default empty so unenriched Session instances serialize cleanly.
+    claimed_task_refs: list[int] = field(default_factory=list)
+    created_task_refs: list[int] = field(default_factory=list)
+    closed_task_refs: list[int] = field(default_factory=list)
 
     @classmethod
     def from_row(cls, row: Any) -> Session:
         """Create Session from database row."""
+        is_local: bool
+        if "is_local" in row.keys() and row["is_local"] is not None:
+            is_local = bool(row["is_local"])
+        else:
+            model = row["model"] if "model" in row.keys() else None
+            is_local = is_local_legacy_fallback(row["source"], model)
+
         return cls(
             id=row["id"],
             external_id=row["external_id"],
@@ -105,6 +120,7 @@ class Session:
             usage_cache_read_tokens=row["usage_cache_read_tokens"] or 0,
             context_window=row["context_window"] if "context_window" in row.keys() else None,
             model=row["model"] if "model" in row.keys() else None,
+            is_local=is_local,
             terminal_context=cls._parse_terminal_context(row["terminal_context"]),
             seq_num=row["seq_num"] if "seq_num" in row.keys() else None,
             had_edits=bool(row["had_edits"]) if "had_edits" in row.keys() else False,
@@ -224,6 +240,7 @@ class Session:
             "usage_cache_read_tokens": self.usage_cache_read_tokens,
             "context_window": self.context_window,
             "model": self.model,
+            "is_local": self.is_local,
             "terminal_context": self.terminal_context,
             "had_edits": self.had_edits,
             "digest_markdown": self.digest_markdown,
@@ -242,6 +259,9 @@ class Session:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
+            "claimed_task_refs": self.claimed_task_refs,
+            "created_task_refs": self.created_task_refs,
+            "closed_task_refs": self.closed_task_refs,
             "id": self.id,  # UUID at end for backwards compat
         }
 
@@ -257,6 +277,7 @@ class Session:
             "status": self.status,
             "git_branch": self.git_branch,
             "model": self.model,
+            "is_local": self.is_local,
             "had_edits": self.had_edits,
             "message_count": self.message_count,
             "turn_count": self.turn_count,
@@ -268,5 +289,8 @@ class Session:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
+            "claimed_task_refs": self.claimed_task_refs,
+            "created_task_refs": self.created_task_refs,
+            "closed_task_refs": self.closed_task_refs,
             "id": self.id,
         }

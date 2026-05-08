@@ -63,6 +63,7 @@ async def test_cleanup_respects_retention_days():
     cutoff_arg = mock_store.delete_messages_before.call_args[0][0]
     expected = datetime.now(UTC) - timedelta(days=7)
     assert abs((cutoff_arg - expected).total_seconds()) < 5
+    assert mock_store.delete_messages_before.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -89,6 +90,7 @@ async def test_cleanup_runs_on_interval():
         await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
 
     # Should have called sleep for each iteration
+    assert len(sleep_mock.call_args_list) == max_calls
     for call in sleep_mock.call_args_list:
         assert call[0][0] == 24 * 60 * 60
 
@@ -105,8 +107,10 @@ async def test_cleanup_handles_cancelled_error():
             return_value=mock_store,
         ),
     ):
-        # Should not raise
-        await cleanup_comms_messages_loop(MagicMock(), lambda: False, retention_days=30)
+        result = await cleanup_comms_messages_loop(MagicMock(), lambda: False, retention_days=30)
+
+    assert result is None
+    assert mock_store.delete_messages_before.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -133,6 +137,7 @@ async def test_cleanup_handles_db_error_gracefully():
         await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
 
     assert mock_store.delete_messages_before.call_count == 2
+    assert call_count == 3
 
 
 @pytest.mark.asyncio
@@ -156,3 +161,5 @@ async def test_cleanup_zero_deleted_no_error():
         await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
 
     mock_store.delete_messages_before.assert_called_once()
+    assert mock_store.delete_messages_before.call_count == 1
+    assert mock_store.delete_messages_before.call_args is not None

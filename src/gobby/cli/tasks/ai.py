@@ -8,6 +8,7 @@ from typing import Any
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
+from gobby.tasks.state_semantics import current_stage_state, is_task_closed
 
 
 @click.command("validate")
@@ -91,7 +92,7 @@ def validate_task_cmd(
 
     if children:
         # Parent task: validate based on child completion
-        open_children = [c for c in children if c.status != "closed"]
+        open_children = [c for c in children if not is_task_closed(c)]
         all_closed = len(open_children) == 0
 
         if all_closed:
@@ -243,7 +244,7 @@ def suggest_cmd(task_type: str | None, no_prefer_subtasks: bool, json_format: bo
         score += (4 - task.priority) * 10
 
         # Check if it's a leaf task (no children)
-        children = manager.list_tasks(parent_task_id=task.id, status="open", limit=1)
+        children = manager.list_tasks(parent_task_id=task.id, closed=False, limit=1)
         is_leaf = len(children) == 0
 
         if prefer_subtasks and is_leaf:
@@ -284,7 +285,10 @@ def suggest_cmd(task_type: str | None, no_prefer_subtasks: bool, json_format: bo
     click.echo("Suggested next task:\n")
     click.echo(f"  {best_task.id}")
     click.echo(f"  {best_task.title}")
-    click.echo(f"  Priority: {best_task.priority} | Status: {best_task.status}")
+    stage_state = current_stage_state(best_task) or "ready"
+    if is_task_closed(best_task):
+        stage_state = "closed"
+    click.echo(f"  Priority: {best_task.priority} | Current Stage: {stage_state}")
     if best_task.description:
         desc_preview = best_task.description[:200]
         if len(best_task.description) > 200:

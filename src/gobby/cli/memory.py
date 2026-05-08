@@ -480,6 +480,55 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) ->
             click.echo("No memories to backup.")
 
 
+@memory.command("restore")
+@click.option(
+    "--input",
+    "input_path",
+    type=click.Path(),
+    help="Input file path (default: .gobby/memories.jsonl)",
+)
+@click.option("--quiet", "-q", is_flag=True, help="Suppress output")
+@click.pass_context
+def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) -> None:
+    """Restore memories from a JSONL backup file.
+
+    Imports memories from a JSONL file into the database. This runs synchronously
+    and is the explicit CLI path for reading .gobby/memories.jsonl.
+
+    Examples:
+
+        gobby memory restore
+
+        gobby memory restore --input ~/backups/mem.jsonl
+    """
+    from pathlib import Path
+
+    from gobby.config.persistence import MemoryBackupConfig
+    from gobby.sync.memories import MemoryBackupManager
+
+    manager = get_memory_manager(ctx)
+    restore_path = Path(input_path) if input_path else Path(".gobby/memories.jsonl")
+    if not restore_path.is_file():
+        if input_path:
+            raise click.ClickException(f"Memory backup not found: {restore_path}")
+        if not quiet:
+            click.echo(f"No memory backup found at {restore_path}")
+        return
+    config = MemoryBackupConfig(enabled=True, export_path=restore_path)
+    backup_mgr = MemoryBackupManager(
+        db=manager.db,
+        memory_manager=manager,
+        config=config,
+    )
+
+    count = backup_mgr.import_sync(force=True)
+    if not quiet:
+        if count > 0:
+            click.echo(f"Restored {count} memories from {restore_path}")
+        else:
+            click.echo("No memories restored.")
+
+
 @memory.command("reindex-embeddings")
 @click.pass_context
 def reindex_embeddings(ctx: click.Context) -> None:

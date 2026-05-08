@@ -123,14 +123,32 @@ class TestRunDaemonSetup:
         run_daemon_setup(tmp_path)
 
         mock_init.assert_called_once()
+        assert mock_init.call_count == 1
+        assert mock_init.call_args is not None
         mock_sync.assert_called_once_with(mock_db)
+        assert mock_sync.call_count == 1
+        assert mock_sync.call_args is not None
         mock_db.close.assert_called_once()
+        assert mock_db.close.call_count == 1
+        assert mock_db.close.call_args is not None
         mock_mcp.assert_called_once()
+        assert mock_mcp.call_count == 1
+        assert mock_mcp.call_args is not None
         mock_gsqz.assert_called_once()
+        assert mock_gsqz.call_count == 1
+        assert mock_gsqz.call_args is not None
         mock_gcode.assert_called_once()
+        assert mock_gcode.call_count == 1
+        assert mock_gcode.call_args is not None
         mock_ghook.assert_called_once()
+        assert mock_ghook.call_count == 1
+        assert mock_ghook.call_args is not None
         mock_gloc.assert_called_once()
+        assert mock_gloc.call_count == 1
+        assert mock_gloc.call_args is not None
         mock_ide.assert_called_once()
+        assert mock_ide.call_count == 1
+        assert mock_ide.call_args is not None
 
     @patch("gobby.cli.utils.init_local_storage")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")

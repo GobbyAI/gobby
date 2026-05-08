@@ -486,6 +486,37 @@ class TestAutoLinkCommits:
             assert "#1" in result.linked_tasks
             assert "#2" not in result.linked_tasks
 
+    def test_uuid_task_filter_accepts_matching_seq_ref(self, mock_task_manager) -> None:
+        """Stage handoff may filter by UUID while commits mention the #seq ref."""
+        mock_task = MagicMock()
+        mock_task.id = "task-uuid"
+        mock_task.seq_num = 14205
+        mock_task.commits = []
+        mock_task_manager.get_task.return_value = mock_task
+
+        with (
+            patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None),
+            patch("gobby.tasks.commits.run_git_command") as mock_git,
+        ):
+            mock_git.return_value = (
+                "f5d66e7|[gobby-#14205] docs: refresh worktree guide\n"
+                "def4567|[gobby-#14206] different task\n"
+            )
+
+            result = auto_link_commits(
+                mock_task_manager,
+                task_id="task-uuid",
+                cwd="/tmp/repo",
+                project_name="gobby",
+            )
+
+            assert result.linked_tasks == {"#14205": ["f5d66e7"]}
+            mock_task_manager.link_commit.assert_called_once_with(
+                "task-uuid",
+                "f5d66e7",
+                cwd="/tmp/repo",
+            )
+
     def test_handles_empty_git_log(self, mock_task_manager) -> None:
         """Test handling of empty git log output."""
         with patch("gobby.tasks.commits.run_git_command") as mock_git:

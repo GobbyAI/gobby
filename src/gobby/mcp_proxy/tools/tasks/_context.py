@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from gobby.config.tasks import TaskValidationConfig
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
+    from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.storage.database import DatabaseProtocol
     from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
@@ -42,6 +43,7 @@ class RegistryContext:
     config: "DaemonConfig | None" = None
     llm_service: "LLMService | None" = None
     completion_registry: "CompletionEventRegistry | None" = None
+    mcp_manager: "MCPClientManager | None" = None
 
     # Derived managers (initialized in __post_init__)
     dep_manager: TaskDependencyManager = field(init=False)

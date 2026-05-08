@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -649,8 +648,8 @@ class TestRunningAgentRegistryCleanup:
         for agent in agents:
             registry.add(agent)
 
-        # Wait a tiny bit so agents have some age
-        time.sleep(0.01)
+        for agent in agents:
+            agent.started_at = datetime.now(UTC) - timedelta(seconds=1)
 
         # Use tiny max_age that all agents exceed
         removed = registry.cleanup_stale(max_age_seconds=0.001)
@@ -682,6 +681,8 @@ class TestRunningAgentRegistryEventCallbacks:
         registry.add(agent)
 
         callback.assert_called_once()
+        assert callback.call_count == 1
+        assert callback.call_args is not None
 
     def test_event_callback_on_add(self, registry) -> None:
         """Event callback is invoked when agent is added."""
@@ -708,6 +709,8 @@ class TestRunningAgentRegistryEventCallbacks:
                 "tmux_session_name": None,
             },
         )
+        assert callback.call_count == 1
+        assert callback.call_args is not None
 
     def test_event_callback_on_remove_completed(self, registry) -> None:
         """Event callback is invoked with agent_completed when removed."""
@@ -735,6 +738,8 @@ class TestRunningAgentRegistryEventCallbacks:
                 "tmux_session_name": None,
             },
         )
+        assert callback.call_count == 1
+        assert callback.call_args is not None
 
     def test_event_callback_on_remove_failed(self, registry) -> None:
         """Event callback uses status for event type."""
@@ -842,6 +847,8 @@ class TestRunningAgentRegistryEventCallbacks:
 
         # Good callback should still be called
         good_callback.assert_called_once()
+        assert good_callback.call_count == 1
+        assert good_callback.call_args is not None
 
     def test_multiple_event_callbacks(self, registry) -> None:
         """Multiple event callbacks are all invoked."""
@@ -858,6 +865,8 @@ class TestRunningAgentRegistryEventCallbacks:
 
         for callback in callbacks:
             callback.assert_called_once()
+            assert callback.call_count == 1
+            assert callback.call_args is not None
 
     def test_remove_nonexistent_does_not_trigger_callback(self, registry) -> None:
         """Removing nonexistent agent does not trigger callback."""
@@ -867,6 +876,8 @@ class TestRunningAgentRegistryEventCallbacks:
         registry.remove("nonexistent-id")
 
         callback.assert_not_called()
+        assert callback.call_count == 0
+        assert not callback.called
 
 
 class TestRunningAgentRegistryThreadSafety:
@@ -1262,6 +1273,8 @@ class TestRunningAgentRegistryEdgeCases:
 
         for callback in callbacks:
             callback.assert_called_once()
+            assert callback.call_count == 1
+            assert callback.call_args is not None
 
     def test_callback_modification_during_iteration(self, registry) -> None:
         """Event callback list modification during iteration is safe."""
@@ -1443,3 +1456,5 @@ class TestEmitEvent:
         registry.emit_event("custom_event", "run-123", {"key": "value"})
 
         callback.assert_called_once_with("custom_event", "run-123", {"key": "value"})
+        assert callback.call_count == 1
+        assert callback.call_args is not None

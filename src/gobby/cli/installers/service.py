@@ -909,18 +909,26 @@ def get_service_status() -> dict[str, Any]:
         return {"installed": False, "enabled": False, "running": False, "platform": sys.platform}
 
 
-def service_restart() -> dict[str, Any]:
+def service_restart(shutdown_source: str = "service_restart") -> dict[str, Any]:
     """Restart the daemon through the OS service manager."""
+    from gobby.runner_maintenance import write_shutdown_source
+
     if sys.platform == "darwin":
-        return _macos_restart()
+        restart_fn = _macos_restart
     elif sys.platform == "linux":
-        return _linux_restart()
+        restart_fn = _linux_restart
     elif sys.platform == "win32":
         from gobby.cli.installers.service_windows import _windows_restart
 
-        return _windows_restart()
+        restart_fn = _windows_restart
     else:
         return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
+
+    try:
+        write_shutdown_source(shutdown_source, intent="restart")
+    except Exception as e:
+        logger.warning("Failed to write shutdown source before service restart: %s", e)
+    return restart_fn()
 
 
 def service_start() -> dict[str, Any]:
@@ -937,15 +945,27 @@ def service_start() -> dict[str, Any]:
         return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
 
 
-def service_stop() -> dict[str, Any]:
+def service_stop(
+    *,
+    shutdown_intent: str = "stop",
+    shutdown_source: str = "service_stop",
+) -> dict[str, Any]:
     """Stop the daemon through the OS service manager."""
+    from gobby.runner_maintenance import write_shutdown_source
+
     if sys.platform == "darwin":
-        return _macos_stop()
+        stop_fn = _macos_stop
     elif sys.platform == "linux":
-        return _linux_stop()
+        stop_fn = _linux_stop
     elif sys.platform == "win32":
         from gobby.cli.installers.service_windows import _windows_stop
 
-        return _windows_stop()
+        stop_fn = _windows_stop
     else:
         return {"success": False, "error": f"Unsupported platform: {sys.platform}"}
+
+    try:
+        write_shutdown_source(shutdown_source, intent=shutdown_intent)
+    except Exception as e:
+        logger.warning("Failed to write shutdown source before service stop: %s", e)
+    return stop_fn()

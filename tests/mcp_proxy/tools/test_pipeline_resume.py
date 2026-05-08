@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     resume_interrupted_pipelines,
 )
 from gobby.workflows.pipeline_state import ExecutionStatus
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -230,8 +231,7 @@ async def test_resume_parses_inputs_from_execution() -> None:
     assert result == [execution.id]
     assert len(_background_tasks) == 1
 
-    # Give the background task a chance to start
-    await asyncio.sleep(0)
+    await drain_asyncio_tasks()
 
     executor.execute.assert_called_once()
     assert executor.execute.call_args.kwargs["inputs"] == {"repo": "gobby", "ref": "main"}
@@ -259,3 +259,5 @@ async def test_resume_handles_malformed_inputs_json() -> None:
     )
 
     assert result == [execution.id]
+    await drain_asyncio_tasks()
+    assert executor.execute.call_args.kwargs["inputs"] == {}

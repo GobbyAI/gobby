@@ -1079,7 +1079,6 @@ class TestResolutionHistoryTracking:
 
     def test_update_changes_updated_at(self, tmp_path) -> None:
         """Test that updating a resolution changes updated_at."""
-        import time
 
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
@@ -1106,9 +1105,6 @@ class TestResolutionHistoryTracking:
         )
 
         original_updated_at = resolution.updated_at
-
-        # Small delay to ensure timestamp difference
-        time.sleep(0.01)
 
         updated = manager.update_resolution(resolution.id, status="resolved")
 

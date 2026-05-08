@@ -124,8 +124,8 @@ class SeededContextTokens:
     Dispatchers propagate ``resolved_session_id`` (never the raw input ref) to
     ``tool_proxy.call_tool`` / ``get_tool_schema``. ``ToolProxyService`` prefers
     the explicit session_id arg over the ContextVar, so passing the raw ref
-    would re-poison workflow checks, tool filters, and synthetic after-tool
-    events even after the ContextVar is clean.
+    would re-poison workflow checks and tool filters even after the ContextVar
+    is clean.
     """
 
     session_token: contextvars.Token[SessionContext | None] | None = None

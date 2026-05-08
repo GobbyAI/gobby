@@ -262,6 +262,8 @@ class TestCheckDeadAgents:
             await mon.check_unhealthy_agents()
 
         mock_coordinator.release_session_worktrees.assert_called_once_with(child_session.id)
+        assert mock_coordinator.release_session_worktrees.call_count == 1
+        assert mock_coordinator.release_session_worktrees.call_args is not None
 
 
 class TestStartStop:
@@ -613,6 +615,64 @@ class TestCheckIdleAgents:
 
         assert handled == 1
         # Pane capture SHOULD have been called since session was stale
+        mock_capture.assert_called_once()
+        mock_send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_naive_legacy_session_timestamp_is_treated_as_utc(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Naive legacy updated_at values should not crash idle checks."""
+        import time
+        from datetime import UTC, datetime, timedelta
+
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+        child = session_manager.register(
+            external_id="child-naive-stale",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        stale_time = (datetime.now(UTC) - timedelta(seconds=120)).replace(tzinfo=None).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            (stale_time, child.id),
+        )
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-session-naive-stale",
+            tmux_session_name="gobby-session-naive-stale",
+            child_session_id=child.id,
+        )
+        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 120
+
+        with (
+            patch.object(
+                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
+            ) as mock_capture,
+            patch.object(
+                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+            ) as mock_send,
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 1
         mock_capture.assert_called_once()
         mock_send.assert_called_once()
 
@@ -1277,6 +1337,8 @@ class TestCheckExpiredAgents:
             await mon.check_unhealthy_agents()
 
         mock_coordinator.release_session_worktrees.assert_called_once_with(child_session.id)
+        assert mock_coordinator.release_session_worktrees.call_count == 1
+        assert mock_coordinator.release_session_worktrees.call_args is not None
 
     @pytest.mark.asyncio
     async def test_expired_agent_releases_clones(
@@ -1321,6 +1383,8 @@ class TestCheckExpiredAgents:
             await mon.check_unhealthy_agents()
 
         mock_clone_storage.release.assert_called_once_with("clone-456")
+        assert mock_clone_storage.release.call_count == 1
+        assert mock_clone_storage.release.call_args is not None
 
 
 class TestCheckProviderStalls:
@@ -1653,6 +1717,51 @@ class TestCheckInitializationTimeout:
         mock_kill.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_naive_legacy_init_timestamps_are_treated_as_utc(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        """Naive started_at/created_at/updated_at values should not crash init checks."""
+        child = session_manager.register(
+            external_id="child-naive-uninit",
+            machine_id="machine-1",
+            source="gemini",
+            project_id=sample_project["id"],
+        )
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-naive-uninit",
+            tmux_session_name="gobby-naive-uninit",
+            child_session_id=child.id,
+        )
+        started = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
+        session_time = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
+        agent_run_manager.db.execute(
+            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            (started, run.id),
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET created_at = ?, updated_at = ? WHERE id = ?",
+            (session_time, session_time, child.id),
+        )
+        monitor._session_manager = session_manager
+
+        with patch.object(
+            monitor._tmux,
+            "kill_session",
+            new_callable=AsyncMock,
+        ) as mock_kill:
+            killed = await monitor.check_initialization_timeout()
+
+        assert killed == 1
+        mock_kill.assert_called_once_with("gobby-naive-uninit")
+
+    @pytest.mark.asyncio
     async def test_error_matches_provider_pattern(
         self,
         monitor: AgentLifecycleMonitor,
@@ -1855,8 +1964,9 @@ class TestRecoverTaskFromFailedAgent:
             db=temp_db,
             task_manager=None,
         )
-        # Should not raise
-        await mon._recover_task_from_failed_agent("nonexistent-run")
+        result = await mon._recover_task_from_failed_agent("nonexistent-run")
+        assert result is None
+        assert mon._task_manager is None
 
     @pytest.mark.asyncio
     async def test_no_db_run_is_noop(
@@ -1873,6 +1983,8 @@ class TestRecoverTaskFromFailedAgent:
         )
         await mon._recover_task_from_failed_agent("nonexistent-run")
         mock_task_manager.update_task.assert_not_called()
+        assert mock_task_manager.update_task.call_count == 0
+        assert not mock_task_manager.update_task.called
 
 
 class TestSetSessionCoordinator:
@@ -1936,6 +2048,8 @@ class TestDeadAgentCompletionEvent:
             await mon.check_unhealthy_agents()
 
         mock_cr.notify.assert_called_once()
+        assert mock_cr.notify.call_count == 1
+        assert mock_cr.notify.call_args is not None
 
     @pytest.mark.asyncio
     async def test_releases_clones_on_dead_tmux_agent(
@@ -1965,6 +2079,8 @@ class TestDeadAgentCompletionEvent:
             await mon.check_unhealthy_agents()
 
         mock_clone_storage.release.assert_called_once_with("clone-789")
+        assert mock_clone_storage.release.call_count == 1
+        assert mock_clone_storage.release.call_args is not None
 
 
 class TestDeadAgentKillsOrphanedProcess:
@@ -2087,7 +2203,7 @@ class TestCleanupAgentFdClose:
             )
             monitor.register_master_fd("run-fd-test", r_fd)
 
-            await monitor._cleanup_agent(run, error="test cleanup", is_success=True)
+            await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
 
             # fd should be closed — closing again should raise
             with pytest.raises(OSError):
@@ -2113,5 +2229,7 @@ class TestCleanupAgentFdClose:
             tmux_session_name="gobby-no-fd",
         )
 
-        # Should not raise
-        await monitor._cleanup_agent(run, error="test cleanup", is_success=True)
+        result = await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
+
+        assert result is None
+        assert run.id not in monitor._master_fds

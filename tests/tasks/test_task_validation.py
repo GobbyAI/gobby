@@ -417,6 +417,8 @@ class TestGetValidationContextSmart:
         )
         # Should try to find files mentioned in criteria
         mock_find.assert_called()
+        assert mock_find.call_count >= 1
+        assert mock_find.call_args is not None
 
     @patch("subprocess.run")
     @patch("gobby.tasks.validation.get_multi_commit_diff")
@@ -424,10 +426,11 @@ class TestGetValidationContextSmart:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         mock_diff.return_value = None
 
-        get_validation_context_smart(
+        context = get_validation_context_smart(
             "Task with no related files",
             max_chars=100,  # Very limited
         )
+        assert context is None
         # May return None or minimal context
         # The function should handle this gracefully
 

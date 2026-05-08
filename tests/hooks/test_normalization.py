@@ -1,5 +1,7 @@
 """Tests for shared MCP field normalization."""
 
+import json
+
 import pytest
 
 from gobby.hooks.normalization import normalize_mcp_fields, normalize_tool_fields
@@ -117,6 +119,45 @@ class TestSingleUnderscoreNormalization:
         assert data["tool_name"] == "mcp__gobby__call_tool"
         assert data["mcp_server"] == "gobby-memory"
         assert data["mcp_tool"] == "create_memory"
+
+
+class TestTripleUnderscoreNormalization:
+    """Tests for droid <server>___<tool> MCP normalization."""
+
+    def test_triple_underscore_sets_canonical_tool_name(self) -> None:
+        data = {"tool_name": "gobby___list_mcp_servers"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "list_mcp_servers"
+
+    def test_canonical_mcp_name_is_idempotent(self) -> None:
+        data = {"tool_name": "mcp__gobby__list_mcp_servers"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "list_mcp_servers"
+
+    def test_single_underscore_regression(self) -> None:
+        data = {"tool_name": "mcp_gobby_list_mcp_servers"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "list_mcp_servers"
+
+    def test_pascal_case_native_tool_name_passes_through(self) -> None:
+        data = {"tool_name": "Read"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "Read"
+        assert "mcp_server" not in result
+        assert "mcp_tool" not in result
+
+    def test_server_names_with_underscore_split_on_triple_separator(self) -> None:
+        data = {"tool_name": "gobby_tasks___claim_task"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby_tasks__claim_task"
+        assert result["mcp_server"] == "gobby_tasks"
+        assert result["mcp_tool"] == "claim_task"
 
 
 class TestCallToolExtraction:
@@ -254,6 +295,31 @@ class TestToolOutputNormalization:
         result = normalize_mcp_fields(data)
         assert result["tool_output"] == {"result": {"success": True, "skill": {"name": "brevity"}}}
 
+    def test_tool_output_envelope_parses_json_output_payload(self) -> None:
+        data = {
+            "tool_output": {
+                "output": '{"result": {"success": true, "skill": {"name": "brevity"}}}',
+            }
+        }
+        result = normalize_mcp_fields(data)
+        assert result["tool_output"] == {"result": {"success": True, "skill": {"name": "brevity"}}}
+
+    def test_tool_output_envelope_ignores_non_dict_json_output_payload(self) -> None:
+        data = {"tool_output": {"output": '["not", "an", "object"]'}}
+        result = normalize_mcp_fields(data)
+        assert result["tool_output"] == {"output": '["not", "an", "object"]'}
+
+    def test_tool_output_unwrap_stops_at_max_depth(self) -> None:
+        output: dict[str, object] = {"status": "deep"}
+        for _ in range(12):
+            output = {"output": json.dumps(output)}
+        data = {"tool_output": output}
+
+        result = normalize_mcp_fields(data)
+
+        assert isinstance(result["tool_output"], dict)
+        assert "output" in result["tool_output"]
+
     def test_string_tool_output_non_json_left_as_string(self) -> None:
         """Non-JSON tool output (e.g. plain text) should remain a string."""
         data = {"tool_response": "Error: file not found"}
@@ -284,6 +350,33 @@ class TestCombinedNormalization:
         assert result["mcp_server"] == "gobby-tasks"
         assert result["mcp_tool"] == "create_task"
         assert result["tool_output"] == {"id": "task-123"}
+
+    def test_native_codex_mcp_post_tool_use_payload(self) -> None:
+        data = {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {"title": "Test"},
+            },
+            "tool_response": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '{"success": true, "result": {"ref": "#42"}}',
+                    }
+                ],
+                "isError": False,
+            },
+        }
+
+        result = normalize_tool_fields(data)
+
+        assert result["tool_name"] == "mcp__gobby__call_tool"
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "create_task"
+        assert result["tool_input"]["arguments"] == {"title": "Test"}
+        assert result["tool_output"] == {"success": True, "result": {"ref": "#42"}}
 
     def test_mutates_in_place(self) -> None:
         data = {"tool_name": "mcp__s__t"}

@@ -181,7 +181,6 @@ class TestTaskExpansionConfigDefaults:
         assert config.codebase_research_enabled is True
         assert config.research_model is None
         assert config.research_max_steps == 10
-        assert config.max_subtasks == 15
         assert config.default_strategy == "auto"
         assert config.timeout == 300.0
         assert config.research_timeout == 60.0
@@ -211,13 +210,6 @@ class TestTaskExpansionConfigCustom:
 
         config = TaskExpansionConfig(provider="gemini")
         assert config.provider == "gemini"
-
-    def test_custom_max_subtasks(self) -> None:
-        """Test setting custom max_subtasks."""
-        from gobby.config.tasks import TaskExpansionConfig
-
-        config = TaskExpansionConfig(max_subtasks=20)
-        assert config.max_subtasks == 20
 
     def category_options(self) -> None:
         """Test different strategy options."""
@@ -417,10 +409,9 @@ class TestGobbyTasksConfigCustom:
         """Test custom expansion config."""
         from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig
 
-        expansion = TaskExpansionConfig(model="claude-sonnet-4-5", max_subtasks=20)
+        expansion = TaskExpansionConfig(model="claude-sonnet-4-5")
         config = GobbyTasksConfig(expansion=expansion)
         assert config.expansion.model == "claude-sonnet-4-5"
-        assert config.expansion.max_subtasks == 20
 
     def test_custom_validation_config(self) -> None:
         """Test custom validation config."""
@@ -521,7 +512,6 @@ class TestTaskExpansionConfigFromTasksModule:
 
         config = TaskExpansionConfig()
         assert config.enabled is True
-        assert config.max_subtasks == 15
 
 
 class TestTaskValidationConfigFromAppPy:
@@ -1026,3 +1016,5 @@ class TestBackwardCompatibilityLayer:
         with unittest.mock.patch.object(test_logger, "warning") as mock_warning:
             get_effective_with_deprecation_check(yaml_variables, old_config_values, test_logger)
             mock_warning.assert_not_called()
+            assert mock_warning.call_count == 0
+            assert not mock_warning.called

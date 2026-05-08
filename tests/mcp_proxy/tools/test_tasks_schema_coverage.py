@@ -81,16 +81,18 @@ class TestToolSchemas:
             "task_id",
             "title",
             "description",
-            "status",
             "priority",
             "assignee",
             "labels",
             "validation_criteria",
             "parent_task_id",
             "category",
+            "task_type",
             "workflow_name",
             "verification",
             "sequence_order",
+            "start_date",
+            "due_date",
         ]
 
         for prop in expected_props:
@@ -131,7 +133,7 @@ class TestToolSchemas:
         props = schema["inputSchema"]["properties"]
 
         expected_props = [
-            "status",
+            "current_stage_state",
             "priority",
             "task_type",
             "assignee",
@@ -140,6 +142,7 @@ class TestToolSchemas:
             "title_like",
             "limit",
             "all_projects",
+            "project",
         ]
 
         for prop in expected_props:

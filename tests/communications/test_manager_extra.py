@@ -141,6 +141,8 @@ class TestGobbyChatAutoCreate:
         await manager._ensure_gobby_chat_channel()
 
         manager._store.create_channel.assert_not_called()
+        assert manager._store.create_channel.call_count == 0
+        assert not manager._store.create_channel.called
 
     def test_set_websocket_broadcast(self, manager):
         from gobby.communications.adapters.gobby_chat import GobbyChatAdapter
@@ -152,6 +154,8 @@ class TestGobbyChatAutoCreate:
         manager.set_websocket_broadcast(mock_broadcast)
 
         adapter_instance.set_broadcast.assert_called_once_with(mock_broadcast)
+        assert adapter_instance.set_broadcast.call_count == 1
+        assert adapter_instance.set_broadcast.call_args is not None
 
 
 class TestDelegates:
@@ -168,10 +172,14 @@ class TestDelegates:
     def test_get_identity_by_external(self, manager):
         manager.get_identity_by_external("chan1", "ext1")
         manager._store.get_identity_by_external.assert_called_with("chan1", "ext1")
+        assert manager._store.get_identity_by_external.call_count >= 1
+        assert manager._store.get_identity_by_external.call_args is not None
 
     def test_list_identities(self, manager):
         manager.list_identities("chan1")
         manager._store.list_identities.assert_called_with(channel_id="chan1")
+        assert manager._store.list_identities.call_count >= 1
+        assert manager._store.list_identities.call_args is not None
 
     def test_find_cross_channel_identity(self, manager):
         manager._identity_manager.find_cross_channel_identity = MagicMock(return_value="id_1")
@@ -181,3 +189,5 @@ class TestDelegates:
         manager._identity_manager.bridge_identity = MagicMock()
         manager._bridge_identity("id_1", "sess_1")
         manager._identity_manager.bridge_identity.assert_called_with("id_1", "sess_1")
+        assert manager._identity_manager.bridge_identity.call_count >= 1
+        assert manager._identity_manager.bridge_identity.call_args is not None

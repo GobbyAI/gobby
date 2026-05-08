@@ -49,9 +49,12 @@ class TestCascadeProgress:
         tasks = [MagicMock(id="t1", seq_num=42, title="Test Task")]
 
         # Just verify it runs without error for now
+        processed = []
         with cascade_progress(tasks, label="Expanding") as progress:
-            for _task, update in progress:
+            for task, update in progress:
+                processed.append((task.seq_num, task.title))
                 update()
+        assert processed == [(42, "Test Task")]
 
     def test_cascade_progress_truncates_long_titles(self) -> None:
         """Test that very long titles are truncated."""
@@ -60,9 +63,12 @@ class TestCascadeProgress:
         long_title = "A" * 100  # Very long title
         tasks = [MagicMock(id="t1", seq_num=1, title=long_title)]
 
+        processed_titles = []
         with cascade_progress(tasks, label="Testing") as progress:
-            for _task, update in progress:
+            for task, update in progress:
+                processed_titles.append(task.title)
                 update()
+        assert processed_titles == [long_title]
 
     def test_cascade_progress_handles_empty_list(self) -> None:
         """Test that empty task list is handled gracefully."""

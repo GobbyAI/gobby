@@ -1,14 +1,100 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import './FilesPage.css'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { CodeBlock } from './shared/CodeBlock'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { markdownComponents } from './shared/MarkdownComponents'
-import { codeTheme } from './shared/codeTheme'
+import { MarkdownBody } from './shared/MarkdownBody'
+import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
 import { undo, redo } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
 import type { FileEntry, OpenFile, Project, GitStatus } from '../hooks/useFiles'
+import { cn } from '../lib/utils'
+
+const PAGE_CLS = 'flex flex-1 overflow-hidden'
+
+const SIDEBAR_CLS =
+  'flex w-[var(--sidebar-width)] min-w-[var(--sidebar-width)] flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)] max-md:w-[200px] max-md:min-w-[160px]'
+const SIDEBAR_HEADER_CLS = 'flex items-center justify-between border-b border-[var(--border)] px-3 py-2.5'
+const SIDEBAR_TITLE_CLS =
+  'text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
+
+const TREE_CLS = 'flex-1 overflow-x-hidden overflow-y-auto py-1'
+const EMPTY_TREE_CLS = 'px-4 py-6 text-center text-[length:var(--text-md)] text-[var(--text-muted)]'
+
+const PROJECT_NODE_CLS = 'mb-0.5'
+const PROJECT_HEADER_CLS =
+  'flex w-full cursor-pointer select-none appearance-none items-center gap-1.5 border-0 bg-transparent px-2 py-1.5 text-left text-[length:var(--text-md)] font-medium text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+const PROJECT_NAME_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
+
+const TREE_ARROW_CLS = 'w-2.5 shrink-0 text-center text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+const TREE_ITEM_CLS =
+  'flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const TREE_NAME_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
+const TREE_GIT_BADGE_CLS = 'ml-auto shrink-0 font-mono text-[length:var(--text-2xs)] font-semibold opacity-85'
+const TREE_LOADING_CLS = 'px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]'
+
+const MAIN_CLS = 'relative flex flex-1 flex-col overflow-hidden bg-[var(--bg-primary)]'
+
+const TABS_CLS =
+  'flex overflow-x-auto border-b border-[var(--border)] bg-[var(--bg-secondary)] [scrollbar-width:thin]'
+const TAB_CLS =
+  'group flex min-w-0 cursor-pointer select-none items-center gap-1.5 whitespace-nowrap border-r border-[var(--border)] px-3 py-2 text-[length:var(--text-md)] text-[var(--text-muted)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
+const TAB_ACTIVE_CLS = '-mb-px border-b-2 border-b-[var(--accent)] bg-[var(--bg-primary)] text-[var(--text-primary)]'
+const TAB_NAME_CLS = 'overflow-hidden text-ellipsis'
+const TAB_CLOSE_CLS =
+  'flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-[length:var(--text-base)] leading-none text-[var(--text-muted)] opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+
+const TOOLBAR_CLS =
+  'flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)]'
+const TOOLBAR_PATH_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]'
+const TOOLBAR_ACTIONS_CLS = 'flex shrink-0 items-center gap-1.5'
+
+const TOOLBAR_BTN_BASE_CLS =
+  'cursor-pointer rounded border border-[var(--border)] bg-transparent px-2 py-0.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const ICON_BTN_CLS =
+  'flex cursor-pointer items-center justify-center rounded border border-[var(--border)] bg-transparent px-1.5 py-0.5 text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const SAVE_BTN_CLS =
+  'cursor-pointer rounded border-0 bg-[var(--color-success-foreground)] px-2.5 py-0.5 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--color-success-foreground)_85%,var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-11'
+const DIFF_BTN_ACTIVE_CLS =
+  'border-[var(--color-warning-foreground)] bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]'
+
+const VIEWER_CLS = 'flex flex-1 flex-col overflow-hidden'
+const CODE_VIEWER_CLS = 'min-h-0 flex-1 overflow-auto [&>div]:min-h-full'
+
+const MARKDOWN_VIEWER_CLS =
+  'overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]'
+
+const EMPTY_VIEWER_CLS =
+  'flex flex-1 flex-col items-center justify-center gap-3 text-[length:var(--text-base)] text-[var(--text-muted)]'
+
+const VIEWER_STATUS_CLS =
+  'flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--text-muted)]'
+const VIEWER_ERROR_CLS = 'text-[var(--color-error)]'
+const VIEWER_MUTED_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
+
+const IMAGE_VIEWER_CLS = 'flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-8'
+const IMAGE_PREVIEW_CLS =
+  'max-h-[calc(100%-3rem)] max-w-full rounded-lg object-contain [background:repeating-conic-gradient(var(--bg-primary)_0%_25%,var(--bg-secondary)_0%_50%)_50%/20px_20px]'
+const IMAGE_INFO_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
+
+const BRANCH_BADGE_CLS =
+  'ml-auto rounded-sm bg-[var(--bg-tertiary)] px-1.5 py-px text-[length:var(--text-xs)] font-normal text-[var(--text-muted)]'
+
+const CONFIRM_OVERLAY_CLS = 'absolute inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)]'
+const CONFIRM_DIALOG_CLS =
+  'w-[90%] max-w-[340px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5'
+const CONFIRM_TITLE_CLS = 'mb-1.5 mt-0 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
+const CONFIRM_MESSAGE_CLS = 'mb-4 mt-0 text-[length:var(--text-base)] text-[var(--text-secondary)]'
+const CONFIRM_ACTIONS_CLS = 'flex justify-end gap-2'
+const CONFIRM_KEEP_CLS =
+  'cursor-pointer rounded border border-[var(--border)] bg-transparent px-3 py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const CONFIRM_DISCARD_CLS =
+  'cursor-pointer rounded border-0 bg-[var(--color-error)] px-3 py-1 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--color-error)_85%,var(--text-primary))] pointer-coarse:min-h-11'
+
+const CONFIRM_DIALOG_QUERY_CLS = 'files-confirm-dialog'
+
+const GIT_M_CLS = 'text-[var(--color-warning-foreground)]'
+const GIT_A_CLS = 'text-[var(--color-success-foreground)]'
+const GIT_D_CLS = 'text-[var(--color-error)]'
+const GIT_R_CLS = 'text-[var(--color-info)]'
 
 interface FilesPageProps {
   projects: Project[]
@@ -75,12 +161,11 @@ export function FilesPage({
     setShowDiff(false)
   }, [onCancelEditing])
 
-  // Keyboard accessibility for cancel confirmation dialog
   const previousFocusRef = useRef<Element | null>(null)
   useEffect(() => {
     if (!showCancelConfirm) return
     previousFocusRef.current = document.activeElement
-    const dialog = document.querySelector('.files-confirm-dialog') as HTMLElement | null
+    const dialog = document.querySelector(`.${CONFIRM_DIALOG_QUERY_CLS}`) as HTMLElement | null
     dialog?.focus()
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -128,19 +213,18 @@ export function FilesPage({
     setShowDiff(true)
   }, [activeFile, showDiff, onFetchDiff])
 
-  // Get git status for active file's project
   const activeGitStatus = activeFile ? gitStatuses.get(activeFile.projectId) : undefined
   const activeFileGitStatus = activeFile && activeGitStatus ? activeGitStatus.files[activeFile.path] : undefined
 
   return (
-    <div className="files-page">
-      <div className="files-sidebar">
-        <div className="files-sidebar-header">
-          <span className="files-sidebar-title">Explorer</span>
+    <div className={PAGE_CLS}>
+      <div className={SIDEBAR_CLS}>
+        <div className={SIDEBAR_HEADER_CLS}>
+          <span className={SIDEBAR_TITLE_CLS}>Explorer</span>
         </div>
-        <div className="files-tree">
+        <div className={TREE_CLS}>
           {projects.length === 0 ? (
-            <div className="files-empty-tree">No projects registered</div>
+            <div className={EMPTY_TREE_CLS}>No projects registered</div>
           ) : (
             projects.map(project => (
               <ProjectNode
@@ -159,38 +243,41 @@ export function FilesPage({
         </div>
       </div>
 
-      <div className="files-main">
+      <div className={MAIN_CLS}>
         {openFiles.length > 0 && (
-          <div className="files-tabs">
-            {openFiles.map((file, i) => (
-              <div
-                key={`${file.projectId}:${file.path}`}
-                className={`files-tab ${i === activeFileIndex ? 'active' : ''}`}
-                onClick={() => onSetActiveFile(i)}
-              >
-                <FileIcon extension={file.name.split('.').pop() || ''} size={14} />
-                <span className="files-tab-name">{file.dirty ? `${file.name} \u25CF` : file.name}</span>
-                <button
-                  className="files-tab-close"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onCloseFile(i)
-                  }}
+          <div className={TABS_CLS}>
+            {openFiles.map((file, i) => {
+              const isActive = i === activeFileIndex
+              return (
+                <div
+                  key={`${file.projectId}:${file.path}`}
+                  className={cn(TAB_CLS, isActive && TAB_ACTIVE_CLS)}
+                  onClick={() => onSetActiveFile(i)}
                 >
-                  &times;
-                </button>
-              </div>
-            ))}
+                  <FileIcon extension={file.name.split('.').pop() || ''} size={14} />
+                  <span className={TAB_NAME_CLS}>{file.dirty ? `${file.name} ●` : file.name}</span>
+                  <button
+                    className={cn(TAB_CLOSE_CLS, isActive && 'opacity-100')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onCloseFile(i)
+                    }}
+                  >
+                    &times;
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
 
         {activeFile && !activeFile.image && !activeFile.binary && !activeFile.loading && !activeFile.error && activeFile.content !== null && (
-          <div className="files-toolbar">
-            <span className="files-toolbar-path">{activeFile.path}</span>
-            <div className="files-toolbar-actions">
+          <div className={TOOLBAR_CLS}>
+            <span className={TOOLBAR_PATH_CLS}>{activeFile.path}</span>
+            <div className={TOOLBAR_ACTIONS_CLS}>
               {activeFileGitStatus && (
                 <button
-                  className={`files-diff-btn ${showDiff ? 'active' : ''}`}
+                  className={cn(TOOLBAR_BTN_BASE_CLS, showDiff && DIFF_BTN_ACTIVE_CLS)}
                   onClick={handleShowDiff}
                 >
                   Diff
@@ -198,20 +285,20 @@ export function FilesPage({
               )}
               {activeFile.editing ? (
                 <>
-                  <button className="files-undo-btn" onClick={handleUndo} title="Undo (Cmd+Z)">
+                  <button className={ICON_BTN_CLS} onClick={handleUndo} title="Undo (Cmd+Z)">
                     <UndoIcon />
                   </button>
-                  <button className="files-redo-btn" onClick={handleRedo} title="Redo (Cmd+Shift+Z)">
+                  <button className={ICON_BTN_CLS} onClick={handleRedo} title="Redo (Cmd+Shift+Z)">
                     <RedoIcon />
                   </button>
                   <button
-                    className="files-cancel-btn"
+                    className={TOOLBAR_BTN_BASE_CLS}
                     onClick={handleCancel}
                   >
                     Cancel
                   </button>
                   <button
-                    className="files-save-btn"
+                    className={SAVE_BTN_CLS}
                     onClick={() => onSaveFile(activeFileIndex)}
                     disabled={activeFile.saving || !activeFile.dirty}
                   >
@@ -220,7 +307,7 @@ export function FilesPage({
                 </>
               ) : (
                 <button
-                  className="files-edit-toggle"
+                  className={TOOLBAR_BTN_BASE_CLS}
                   onClick={() => {
                     onToggleEditing(activeFileIndex)
                     setShowDiff(false)
@@ -233,21 +320,12 @@ export function FilesPage({
           </div>
         )}
 
-        <div className="files-viewer">
+        <div className={VIEWER_CLS}>
           {showDiff && diffContent !== null ? (
-            <div className="files-code-viewer">
-              <SyntaxHighlighter
-                style={codeTheme}
+            <div className={CODE_VIEWER_CLS}>
+              <CodeBlock
                 language="diff"
-                PreTag="div"
-                showLineNumbers
-                lineNumberStyle={{
-                  minWidth: '3em',
-                  paddingRight: '1em',
-                  textAlign: 'right',
-                  userSelect: 'none',
-                  color: '#555',
-                }}
+                lineNumberMinWidth="3em"
                 customStyle={{
                   margin: 0,
                   borderRadius: 0,
@@ -255,7 +333,7 @@ export function FilesPage({
                 }}
               >
                 {diffContent || '(no changes)'}
-              </SyntaxHighlighter>
+              </CodeBlock>
             </div>
           ) : activeFile ? (
             <FileContent
@@ -266,7 +344,7 @@ export function FilesPage({
               editorViewRef={editorViewRef}
             />
           ) : (
-            <div className="files-empty-viewer">
+            <div className={EMPTY_VIEWER_CLS}>
               <FilesPlaceholderIcon />
               <p>Select a file to view</p>
             </div>
@@ -274,15 +352,23 @@ export function FilesPage({
         </div>
 
         {showCancelConfirm && (
-          <div className="files-confirm-overlay" onClick={() => setShowCancelConfirm(false)}>
-            <div className="files-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title" aria-describedby="cancel-dialog-desc" tabIndex={-1} onClick={e => e.stopPropagation()}>
-              <p className="files-confirm-title" id="cancel-dialog-title">Discard unsaved changes?</p>
-              <p className="files-confirm-message" id="cancel-dialog-desc">Your changes to this file will be lost.</p>
-              <div className="files-confirm-actions">
-                <button className="files-confirm-keep" onClick={() => setShowCancelConfirm(false)}>
+          <div className={CONFIRM_OVERLAY_CLS} onClick={() => setShowCancelConfirm(false)}>
+            <div
+              className={cn(CONFIRM_DIALOG_CLS, CONFIRM_DIALOG_QUERY_CLS)}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cancel-dialog-title"
+              aria-describedby="cancel-dialog-desc"
+              tabIndex={-1}
+              onClick={e => e.stopPropagation()}
+            >
+              <p className={CONFIRM_TITLE_CLS} id="cancel-dialog-title">Discard unsaved changes?</p>
+              <p className={CONFIRM_MESSAGE_CLS} id="cancel-dialog-desc">Your changes to this file will be lost.</p>
+              <div className={CONFIRM_ACTIONS_CLS}>
+                <button className={CONFIRM_KEEP_CLS} onClick={() => setShowCancelConfirm(false)}>
                   Keep Editing
                 </button>
-                <button className="files-confirm-discard" onClick={confirmCancel}>
+                <button className={CONFIRM_DISCARD_CLS} onClick={confirmCancel}>
                   Discard
                 </button>
               </div>
@@ -293,8 +379,6 @@ export function FilesPage({
     </div>
   )
 }
-
-// -- File Tree Components --
 
 interface ProjectNodeProps {
   project: Project
@@ -313,19 +397,25 @@ function ProjectNode({ project, isExpanded, expandedDirs, loadingDirs, gitStatus
   const isLoading = loadingDirs.has(rootKey)
 
   return (
-    <div className="files-project-node">
-      <div className="files-project-header" onClick={onToggle}>
-        <span className="files-tree-arrow">{isExpanded ? '\u25BE' : '\u25B8'}</span>
+    <div className={PROJECT_NODE_CLS}>
+      <button
+        type="button"
+        className={PROJECT_HEADER_CLS}
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${project.name}`}
+      >
+        <span className={TREE_ARROW_CLS}>{isExpanded ? '▾' : '▸'}</span>
         <ProjectIcon />
-        <span className="files-project-name">{project.name}</span>
+        <span className={PROJECT_NAME_CLS}>{project.name}</span>
         {gitStatus?.branch && (
-          <span className="files-branch-badge">{gitStatus.branch}</span>
+          <span className={BRANCH_BADGE_CLS}>{gitStatus.branch}</span>
         )}
-      </div>
+      </button>
       {isExpanded && (
-        <div className="files-project-children">
+        <div>
           {isLoading ? (
-            <div className="files-tree-loading">Loading...</div>
+            <div className={TREE_LOADING_CLS}>Loading...</div>
           ) : (
             rootEntries.map(entry => (
               <TreeEntry
@@ -358,13 +448,13 @@ interface TreeEntryProps {
   onOpenFile: (projectId: string, path: string, name: string) => void
 }
 
-function getGitStatusColor(status: string | undefined): string | undefined {
+function getGitStatusClass(status: string | undefined): string | undefined {
   if (!status) return undefined
-  if (status === 'M' || status === 'MM' || status === 'AM') return '#facc15' // modified = yellow
-  if (status === '??' || status === 'A') return '#4ade80' // untracked/added = green
-  if (status === 'D') return '#f87171' // deleted = red
-  if (status === 'R') return '#60a5fa' // renamed = blue
-  return '#facc15' // other changes = yellow
+  if (status === 'M' || status === 'MM' || status === 'AM') return GIT_M_CLS
+  if (status === '??' || status === 'A') return GIT_A_CLS
+  if (status === 'D') return GIT_D_CLS
+  if (status === 'R') return GIT_R_CLS
+  return GIT_M_CLS
 }
 
 function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFiles, onExpandDir, onOpenFile }: TreeEntryProps) {
@@ -373,24 +463,24 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
   const isLoading = loadingDirs.has(key)
   const children = expandedDirs.get(key) || []
   const gitStatus = gitFiles?.[entry.path]
-  const gitColor = getGitStatusColor(gitStatus)
+  const gitClass = getGitStatusClass(gitStatus)
 
   if (entry.is_dir) {
     return (
-      <div className="files-tree-dir">
+      <div>
         <div
-          className="files-tree-item"
+          className={TREE_ITEM_CLS}
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
           onClick={() => onExpandDir(projectId, entry.path)}
         >
-          <span className="files-tree-arrow">{isExpanded ? '\u25BE' : '\u25B8'}</span>
+          <span className={TREE_ARROW_CLS}>{isExpanded ? '▾' : '▸'}</span>
           <FolderIcon open={isExpanded} />
-          <span className="files-tree-name">{entry.name}</span>
+          <span className={TREE_NAME_CLS}>{entry.name}</span>
         </div>
         {isExpanded && (
-          <div className="files-tree-children">
+          <div>
             {isLoading ? (
-              <div className="files-tree-loading" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
+              <div className={TREE_LOADING_CLS} style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
                 Loading...
               </div>
             ) : (
@@ -416,22 +506,20 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
 
   return (
     <div
-      className="files-tree-item files-tree-file"
+      className={TREE_ITEM_CLS}
       style={{ paddingLeft: `${depth * 16 + 20}px` }}
       onClick={() => onOpenFile(projectId, entry.path, entry.name)}
     >
       <FileIcon extension={entry.extension?.replace('.', '') || ''} size={14} />
-      <span className="files-tree-name" style={gitColor ? { color: gitColor } : undefined}>{entry.name}</span>
+      <span className={cn(TREE_NAME_CLS, gitClass)}>{entry.name}</span>
       {gitStatus && (
-        <span className="files-tree-git-badge" style={{ color: gitColor }}>
+        <span className={cn(TREE_GIT_BADGE_CLS, gitClass)}>
           {gitStatus === '??' ? '?' : gitStatus.charAt(0)}
         </span>
       )}
     </div>
   )
 }
-
-// -- File Viewer --
 
 function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef }: {
   file: OpenFile
@@ -441,22 +529,22 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
   editorViewRef?: React.MutableRefObject<EditorView | null>
 }) {
   if (file.loading) {
-    return <div className="files-viewer-status">Loading...</div>
+    return <div className={VIEWER_STATUS_CLS}>Loading...</div>
   }
 
   if (file.error) {
-    return <div className="files-viewer-status files-viewer-error">Error: {file.error}</div>
+    return <div className={cn(VIEWER_STATUS_CLS, VIEWER_ERROR_CLS)}>Error: {file.error}</div>
   }
 
   if (file.image) {
     return (
-      <div className="files-image-viewer">
+      <div className={IMAGE_VIEWER_CLS}>
         <img
           src={getImageUrl(file.projectId, file.path)}
           alt={file.name}
-          className="files-image-preview"
+          className={IMAGE_PREVIEW_CLS}
         />
-        <div className="files-image-info">
+        <div className={IMAGE_INFO_CLS}>
           {file.name} &middot; {formatSize(file.size)} &middot; {file.mime_type}
         </div>
       </div>
@@ -465,21 +553,21 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
 
   if (file.binary) {
     return (
-      <div className="files-viewer-status">
+      <div className={VIEWER_STATUS_CLS}>
         <BinaryIcon />
         <p>Binary file &middot; {formatSize(file.size)}</p>
-        <p className="files-viewer-muted">{file.mime_type}</p>
+        <p className={VIEWER_MUTED_CLS}>{file.mime_type}</p>
       </div>
     )
   }
 
   if (file.content === null) {
-    return <div className="files-viewer-status">No content</div>
+    return <div className={VIEWER_STATUS_CLS}>No content</div>
   }
 
   if (file.editing) {
     return (
-      <div className="files-code-viewer">
+      <div className={CODE_VIEWER_CLS}>
         <CodeMirrorEditor
           content={file.editContent ?? file.content}
           language={file.language}
@@ -494,30 +582,22 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
 
   if (file.language === 'markdown') {
     return (
-      <div className="files-code-viewer">
-        <div className="files-markdown-viewer message-content">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {file.content}
-          </ReactMarkdown>
+      <div className={CODE_VIEWER_CLS}>
+        <div className={cn(MARKDOWN_VIEWER_CLS, 'message-content')}>
+          <MarkdownBody
+            content={file.content}
+            id={`files-page-md-${file.projectId}:${file.path}`}
+          />
         </div>
       </div>
     )
   }
 
   return (
-    <div className="files-code-viewer">
-      <SyntaxHighlighter
-        style={codeTheme}
+    <div className={CODE_VIEWER_CLS}>
+      <CodeBlock
         language={file.language}
-        PreTag="div"
-        showLineNumbers
-        lineNumberStyle={{
-          minWidth: '3em',
-          paddingRight: '1em',
-          textAlign: 'right',
-          userSelect: 'none',
-          color: '#555',
-        }}
+        lineNumberMinWidth="3em"
         customStyle={{
           margin: 0,
           borderRadius: 0,
@@ -525,12 +605,10 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
         }}
       >
         {file.content}
-      </SyntaxHighlighter>
+      </CodeBlock>
     </div>
   )
 }
-
-// -- Undo/Redo Icons --
 
 function UndoIcon() {
   return (
@@ -550,19 +628,15 @@ function RedoIcon() {
   )
 }
 
-// -- Utilities --
-
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1048576).toFixed(1)} MB`
 }
 
-// -- Icons --
-
 function ProjectIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
       <line x1="8" y1="21" x2="16" y2="21" />
       <line x1="12" y1="17" x2="12" y2="21" />
@@ -573,35 +647,21 @@ function ProjectIcon() {
 function FolderIcon({ open }: { open: boolean }) {
   if (open) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={FOLDER_ICON_COLOR_VAR} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
         <line x1="9" y1="14" x2="15" y2="14" />
       </svg>
     )
   }
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={FOLDER_ICON_COLOR_VAR} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   )
 }
 
 function FileIcon({ extension, size = 14 }: { extension: string; size?: number }) {
-  // Color-code by file type
-  let color = '#a3a3a3'
-  const ext = extension.toLowerCase()
-  if (['ts', 'tsx'].includes(ext)) color = '#3178c6'
-  else if (['js', 'jsx'].includes(ext)) color = '#f7df1e'
-  else if (ext === 'py') color = '#3776ab'
-  else if (ext === 'rs') color = '#ce422b'
-  else if (ext === 'go') color = '#00add8'
-  else if (['json', 'yaml', 'yml', 'toml'].includes(ext)) color = '#cb8742'
-  else if (['md', 'txt', 'rst'].includes(ext)) color = '#737373'
-  else if (['css', 'scss', 'less'].includes(ext)) color = '#563d7c'
-  else if (['html', 'htm'].includes(ext)) color = '#e34c26'
-  else if (['sh', 'bash', 'zsh'].includes(ext)) color = '#4eaa25'
-  else if (['sql'].includes(ext)) color = '#e38c00'
-  else if (['rb'].includes(ext)) color = '#cc342d'
+  const color = getLanguageColorVar(extension)
 
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -613,7 +673,7 @@ function FileIcon({ extension, size = 14 }: { extension: string; size?: number }
 
 function BinaryIcon() {
   return (
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#737373" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
       <polyline points="13 2 13 9 20 9" />
       <line x1="9" y1="13" x2="15" y2="13" />
@@ -624,7 +684,7 @@ function BinaryIcon() {
 
 function FilesPlaceholderIcon() {
   return (
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#737373" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   )

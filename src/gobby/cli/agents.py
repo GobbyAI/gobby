@@ -412,23 +412,7 @@ def list_agent_runs(
     elif status == "running":
         runs = manager.list_running(limit=limit)
     else:
-        # List recent runs across all sessions
-        # Note: This requires querying without session filter
-        db = LocalDatabase()
-        query = "SELECT * FROM agent_runs"
-        params: list[str | int] = []
-
-        if status:
-            query += " WHERE status = ?"
-            params.append(status)
-
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
-
-        rows = db.fetchall(query, tuple(params))
-        from gobby.storage.agents import AgentRun
-
-        runs = [AgentRun.from_row(row) for row in rows]
+        runs = manager.list_by_status(status=status, limit=limit)
 
     if json_format:
         click.echo(json.dumps([r.to_dict() for r in runs], indent=2, default=str))

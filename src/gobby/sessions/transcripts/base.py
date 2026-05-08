@@ -84,11 +84,8 @@ class ParsedMessage:
 class ParsedToolEvent:
     """A tool-call lifecycle event extracted from a transcript.
 
-    Codex CLI's experimental hook system does not fire PreToolUse / PostToolUse
-    for MCP tool calls, only for shell tools. To bring rule-engine parity to
-    Codex MCP calls, the transcript tail surfaces these records and the
-    SessionMessageProcessor synthesizes BEFORE_TOOL / AFTER_TOOL HookEvents
-    from them.
+    These records preserve provider-native lifecycle details in transcript
+    parsing. Workflow lifecycle dispatch comes from native adapter hooks.
     """
 
     phase: str  # "begin" or "end"

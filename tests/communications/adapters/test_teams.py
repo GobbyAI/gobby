@@ -115,6 +115,7 @@ async def test_send_message_success(
         msg_id = await adapter.send_message(message)
 
         assert msg_id == "msg-123"
+        assert mock_client.post.call_args.kwargs["json"]["text"] == "Hello world"
 
 
 @pytest.mark.asyncio
@@ -166,6 +167,8 @@ async def test_send_message_adaptive_card(
             json=expected_json,
             headers={"Authorization": "Bearer test-token", "Content-Type": "application/json"},
         )
+        assert mock_client.post.call_count >= 1
+        assert mock_client.post.call_args is not None
 
 
 def test_parse_webhook(adapter: TeamsAdapter) -> None:
@@ -325,6 +328,7 @@ async def test_token_refresh_lock(
         )
 
         assert refresh_call_count == 1
+        assert mock_client.post.call_count == 4
 
 
 # --- Proactive messaging ---

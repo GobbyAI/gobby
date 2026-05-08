@@ -1088,6 +1088,37 @@ class TestLocalMCPManager:
         assert len(migrated_tools) == 1
         assert migrated_tools[0].name == "inspect_page"
 
+    def test_normalize_bundled_servers_updates_chrome_devtools_package_pin(
+        self,
+        mcp_manager: LocalMCPManager,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Existing bundled chrome-devtools rows are repaired to the tested package pin."""
+        temp_db.execute(
+            """
+            INSERT INTO mcp_servers (
+                id, name, project_id, transport, command, args, enabled, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "global-chrome-server",
+                "chrome-devtools",
+                GLOBAL_PROJECT_ID,
+                "stdio",
+                "npx",
+                json.dumps(["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]),
+                1,
+            ),
+        )
+
+        stats = mcp_manager.normalize_bundled_servers(["chrome-devtools"])
+
+        assert stats["normalized"] == 1
+        global_server = mcp_manager.get_server("chrome-devtools", project_id=GLOBAL_PROJECT_ID)
+        assert global_server is not None
+        assert global_server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
+
     def test_normalize_bundled_servers_unions_disjoint_tool_sets(
         self,
         mcp_manager: LocalMCPManager,

@@ -37,12 +37,12 @@ export function VoiceStatusBar({
               <span
                 key={i}
                 aria-hidden="true"
-                className="w-0.5 bg-green-400 rounded-full animate-pulse"
+                className="w-0.5 bg-success-foreground rounded-full animate-pulse"
                 style={{ height: `${h}px`, animationDelay: `${i * 0.1}s` }}
               />
             ))}
           </div>
-          <span className="text-green-400">Listening...</span>
+          <span className="text-success-foreground">Listening...</span>
         </>
       ) : isListening ? (
         <>

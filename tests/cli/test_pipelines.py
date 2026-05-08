@@ -289,7 +289,11 @@ class TestPipelinesRun:
 
             assert result.exit_code == 0
             mock_loader.load_pipeline_sync.assert_called_once_with("deploy", project_path=ANY)
+            assert mock_loader.load_pipeline_sync.call_count == 1
+            assert mock_loader.load_pipeline_sync.call_args is not None
             mock_executor.execute.assert_called_once()
+            assert mock_executor.execute.call_count == 1
+            assert mock_executor.execute.call_args is not None
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_parses_inputs(self, runner, mock_pipeline, mock_execution) -> None:
@@ -829,6 +833,7 @@ class TestPipelinesHistory:
 
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = mock_executions
+        mock_manager.count_executions.return_value = 3
 
         with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
             result = runner.invoke(cli, ["pipelines", "history", "deploy", "--json"])
@@ -838,6 +843,43 @@ class TestPipelinesHistory:
             assert "executions" in data
             assert len(data["executions"]) == 3
             assert data["executions"][0]["id"] == "pe-abc123"
+            assert data["total"] == 3
+            assert data["limit"] == 20
+            assert data["offset"] == 0
+
+    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
+    def test_history_offset_passes_through(self, runner, mock_executions) -> None:
+        """--offset flag is forwarded to list_executions and shown in JSON."""
+        import json
+
+        mock_manager = MagicMock()
+        mock_manager.list_executions.return_value = mock_executions
+        mock_manager.count_executions.return_value = 25
+
+        with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
+            result = runner.invoke(
+                cli, ["pipelines", "history", "deploy", "--offset", "10", "--json"]
+            )
+
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert data["offset"] == 10
+            assert data["total"] == 25
+            call_kwargs = mock_manager.list_executions.call_args.kwargs
+            assert call_kwargs["offset"] == 10
+
+    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
+    def test_history_text_footer_shows_range(self, runner, mock_executions) -> None:
+        """Plain-text history output includes a 'Showing X-Y of N' footer."""
+        mock_manager = MagicMock()
+        mock_manager.list_executions.return_value = mock_executions
+        mock_manager.count_executions.return_value = 9
+
+        with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
+            result = runner.invoke(cli, ["pipelines", "history", "deploy"])
+
+            assert result.exit_code == 0
+            assert "of 9" in result.output
 
 
 class TestPipelineRunsList:
@@ -932,7 +974,11 @@ class TestPipelineRunsList:
 
         mock_manager = MagicMock()
         mock_manager.list_executions.return_value = mock_executions
-        mock_manager.count_by_status.return_value = {"completed": 1, "running": 1}
+        mock_manager.count_executions.return_value = 2
+        mock_manager.status_summary_for_executions.return_value = {
+            "completed": 1,
+            "running": 1,
+        }
 
         with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
             result = runner.invoke(cli, ["pipelines", "runs", "list", "--json"])
@@ -940,8 +986,34 @@ class TestPipelineRunsList:
             assert result.exit_code == 0
             data = json.loads(result.output)
             assert "executions" in data
-            assert data["count"] == 2
-            assert "status_summary" in data
+            assert data["total"] == 2
+            assert data["limit"] == 20
+            assert data["offset"] == 0
+            assert data["status_summary"] == {"completed": 1, "running": 1}
+
+    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
+    def test_runs_list_offset_passes_through(self, runner, mock_executions) -> None:
+        """--offset flag is forwarded to list_executions and surfaced in JSON."""
+        import json
+
+        mock_manager = MagicMock()
+        mock_manager.list_executions.return_value = mock_executions
+        mock_manager.count_executions.return_value = 50
+        mock_manager.status_summary_for_executions.return_value = {}
+
+        with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
+            result = runner.invoke(
+                cli, ["pipelines", "runs", "list", "--limit", "5", "--offset", "10", "--json"]
+            )
+
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert data["offset"] == 10
+            assert data["limit"] == 5
+            assert data["total"] == 50
+            call_kwargs = mock_manager.list_executions.call_args.kwargs
+            assert call_kwargs["offset"] == 10
+            assert call_kwargs["limit"] == 5
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_executions_empty(self, runner) -> None:
@@ -1014,14 +1086,32 @@ class TestPipelinesSearch:
 
         mock_manager = MagicMock()
         mock_manager.search_executions.return_value = mock_search_results
+        mock_manager.count_search_executions.return_value = 1
 
         with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
             result = runner.invoke(cli, ["pipelines", "search", "deploy", "--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
-            assert data["count"] == 1
+            assert data["total"] == 1
+            assert data["limit"] == 20
+            assert data["offset"] == 0
             assert data["query"] == "deploy"
+
+    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
+    def test_search_offset_passes_through(self, runner, mock_search_results) -> None:
+        """--offset flag is forwarded to search_executions."""
+        mock_manager = MagicMock()
+        mock_manager.search_executions.return_value = mock_search_results
+        mock_manager.count_search_executions.return_value = 12
+
+        with patch("gobby.cli.pipelines.get_execution_manager", return_value=mock_manager):
+            result = runner.invoke(cli, ["pipelines", "search", "deploy", "--offset", "4"])
+
+            assert result.exit_code == 0
+            assert "of 12" in result.output
+            call_kwargs = mock_manager.search_executions.call_args.kwargs
+            assert call_kwargs["offset"] == 4
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_search_no_results(self, runner) -> None:

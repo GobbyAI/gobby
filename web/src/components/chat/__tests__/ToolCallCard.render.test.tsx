@@ -3,7 +3,9 @@ import { fireEvent } from '@testing-library/react'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
 import { renderWithProviders, screen } from '../../../test/helpers'
-import { ToolCallCards, ToolChainGroup } from '../ToolCallCard'
+import { ToolCallCards } from '../ToolCallCard'
+
+const DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
 
 function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string }): ToolCall {
   return {
@@ -32,9 +34,41 @@ describe('ToolCallCard rendering', () => {
     expect(screen.getByText('git status --short')).toBeInTheDocument()
   })
 
-  it('uses canonical bash names in multi-call chain summaries', () => {
+  it('renders 3+ same-tool runs through the quieter ToolCallGroupHeader (canonical Bash name)', () => {
     renderWithProviders(
-      <ToolChainGroup
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git status --short' },
+          }),
+          makeCall({
+            id: 'tool-2',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git diff --stat' },
+          }),
+          makeCall({
+            id: 'tool-3',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git log --oneline -5' },
+          }),
+        ]}
+      />,
+    )
+
+    // Same-tool run of 3 collapses into one quieter group header (canonical "Bash" name + ×3 badge).
+    // Group is expanded by default for non-Protocol tools, so the header "Bash" plus 3 inner cards
+    // also showing "Bash" gives 4 occurrences total.
+    expect(screen.getAllByText('Bash')).toHaveLength(4)
+    expect(screen.getByText('×3')).toBeInTheDocument()
+    // No "N tool calls" outer wrapper text — the ToolChainGroup wrapper is gone.
+    expect(screen.queryByText(/^\d+ tool calls?$/)).toBeNull()
+  })
+
+  it('renders 2 same-tool calls flat with no grouping wrapper (threshold is 3)', () => {
+    renderWithProviders(
+      <ToolCallCards
         toolCalls={[
           makeCall({
             id: 'tool-1',
@@ -50,8 +84,9 @@ describe('ToolCallCard rendering', () => {
       />,
     )
 
-    expect(screen.getByText('2 tool calls')).toBeInTheDocument()
-    expect(screen.getByText('2 Bash')).toBeInTheDocument()
+    expect(screen.queryByText('×2')).toBeNull()
+    expect(screen.queryByText(/^\d+ tool calls?$/)).toBeNull()
+    expect(screen.getAllByText('Bash')).toHaveLength(2)
   })
 
   it('flattens MCP proxy wrappers in rendered tool results', () => {
@@ -67,7 +102,7 @@ describe('ToolCallCard rendering', () => {
                 result: { success: true },
                 response_time_ms: 42,
               },
-              content_type: 'json',
+              kind: 'json',
               truncated: false,
             },
           }),
@@ -75,10 +110,99 @@ describe('ToolCallCard rendering', () => {
       />,
     )
 
+    // Unknown-type tool calls collapse by default; click the header to expand.
+    fireEvent.click(screen.getByText('call_tool'))
+
+    const resultPanel = screen.getByText('Result').parentElement
+    expect(resultPanel).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
+
+    // The MCP proxy envelope ({success, result, response_time_ms}) gets flattened
+    // and rendered through JsonResultBlock — the inner `result` wrapper is gone.
     const code = container.querySelector('code')?.textContent ?? ''
     expect(code).toContain('"success": true')
     expect(code).toContain('"response_time_ms": 42')
     expect(code).not.toContain('"result":')
+  })
+
+  it('renders Codex image output tool results inline', () => {
+    renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-image',
+            tool_name: 'mcp__image_gen__imagegen',
+            tool_type: 'mcp',
+            result: {
+              content: {
+                output: [{ type: 'input_image', image_url: DATA_URI }],
+              },
+              kind: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    const previewButton = screen.getByRole('button', {
+      name: 'Open full-size tool result image',
+    })
+    const previewImage = screen.getByAltText('Tool result image')
+
+    expect(previewImage).toHaveAttribute('src', DATA_URI)
+    expect(previewButton.parentElement).toHaveClass('justify-center')
+
+    fireEvent.click(previewButton)
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByAltText('Full-size tool result image')).toHaveAttribute(
+      'src',
+      DATA_URI,
+    )
+    expect(screen.getByRole('link', { name: 'Open' })).toHaveAttribute(
+      'href',
+      DATA_URI,
+    )
+    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute(
+      'download',
+      'tool-result-image.png',
+    )
+  })
+
+  it('renders bash output envelopes as terminal text in the result panel', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'exec_command',
+            arguments: {
+              cmd: "UV_CACHE_DIR=/tmp/uv-cache uv run python - <<'PY'",
+            },
+            result: {
+              content: {
+                output:
+                  'Chunk ID: 21a8f9\nWall time: 0.1813 seconds\nOutput:\nhash ok? True\n',
+              },
+              kind: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    const resultPanel = screen.getByText('Result').parentElement
+
+    expect(screen.getByText('Result')).toBeInTheDocument()
+    expect(resultPanel).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
+
+    // Chunk metadata strip surfaces the parsed wrapper fields.
+    expect(container.textContent).toContain('chunk 21a8f9')
+
+    // Body text renders without leaking the JSON envelope key.
+    expect(container.textContent).toContain('hash ok? True')
+    expect(container.textContent).not.toContain('"output"')
   })
 
   it('renders protocol tool calls with a protocol header and tag summary', () => {
@@ -92,7 +216,7 @@ describe('ToolCallCard rendering', () => {
             arguments: { tag: 'environment_context' },
             result: {
               content: { shell: 'zsh', timezone: 'America/Chicago' },
-              content_type: 'json',
+              kind: 'json',
               truncated: false,
             },
           }),
@@ -122,7 +246,7 @@ describe('ToolCallCard rendering', () => {
             arguments: { tag: 'system_instructions' },
             result: {
               content: 'System instructions',
-              content_type: 'text',
+              kind: 'text',
               truncated: false,
             },
           }),
@@ -133,7 +257,18 @@ describe('ToolCallCard rendering', () => {
             arguments: { tag: 'environment_context' },
             result: {
               content: { shell: 'zsh' },
-              content_type: 'json',
+              kind: 'json',
+              truncated: false,
+            },
+          }),
+          makeCall({
+            id: 'tool-3',
+            tool_name: 'protocol_context',
+            tool_type: 'protocol',
+            arguments: { tag: 'collaboration_mode' },
+            result: {
+              content: 'Default',
+              kind: 'text',
               truncated: false,
             },
           }),

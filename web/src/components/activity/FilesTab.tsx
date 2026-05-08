@@ -2,12 +2,15 @@ import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProper
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { markdownComponents } from '../shared/MarkdownComponents'
+import { CodeBlock } from '../shared/CodeBlock'
+import { MarkdownBody } from '../shared/MarkdownBody'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
-import { codeTheme } from '../shared/codeTheme'
+import {
+  FOLDER_ICON_COLOR_VAR,
+  getGitStatusColorVar,
+  getLanguageColorVar,
+} from '../../lib/languageColors'
+import { ActivityPanelEmpty, FilesEmptyIcon } from './ActivityPanelEmpty'
 
 interface FilesTabProps {
   projectId?: string | null
@@ -70,26 +73,9 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
 
-function getFileIconColor(ext: string): string {
-  const e = ext.toLowerCase()
-  if (['ts', 'tsx'].includes(e)) return '#3178c6'
-  if (['js', 'jsx'].includes(e)) return '#f7df1e'
-  if (e === 'py') return '#3776ab'
-  if (e === 'rs') return '#ce422b'
-  if (e === 'go') return '#00add8'
-  if (['json', 'yaml', 'yml', 'toml'].includes(e)) return '#cb8742'
-  if (['md', 'txt', 'rst'].includes(e)) return '#737373'
-  if (['css', 'scss', 'less'].includes(e)) return '#563d7c'
-  if (['html', 'htm'].includes(e)) return '#e34c26'
-  if (['sh', 'bash', 'zsh'].includes(e)) return '#4eaa25'
-  if (['sql'].includes(e)) return '#e38c00'
-  if (['rb'].includes(e)) return '#cc342d'
-  return '#a3a3a3'
-}
-
 function FolderIcon({ open }: { open: boolean }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={FOLDER_ICON_COLOR_VAR} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       {open && <line x1="9" y1="14" x2="15" y2="14" />}
     </svg>
@@ -97,7 +83,7 @@ function FolderIcon({ open }: { open: boolean }) {
 }
 
 function FileIconSvg({ extension }: { extension: string }) {
-  const color = getFileIconColor(extension)
+  const color = getLanguageColorVar(extension)
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
@@ -345,8 +331,8 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       : { flex: 'none', height: `${topHeight}%` }
   }, [selectedFile, useHorizontal, leftWidth, topHeight])
 
-  if (loading) return <div className="activity-tab-empty"><p>Loading files...</p></div>
-  if (!projectId) return <div className="activity-tab-empty"><p>No project selected</p></div>
+  if (loading) return <ActivityPanelEmpty body="Loading files…" />
+  if (!projectId) return <ActivityPanelEmpty body="No project selected" />
 
   const renderEntry = (entry: FileEntry, depth: number) => {
     const isDir = entry.is_dir
@@ -365,7 +351,6 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             onClick={() => toggleDir(entry.path)}
             onContextMenu={(e) => handleContextMenu(e, entry)}
           >
-            <span className="files-tree-arrow">{isExpanded ? '\u25BE' : '\u25B8'}</span>
             <FolderIcon open={isExpanded} />
             {isRenaming ? (
               <input
@@ -395,7 +380,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       <div key={entry.path}>
         <div
           className={`files-tree-item files-tree-file${isSelected ? ' file-tree-entry--active' : ''}`}
-          style={{ paddingLeft: `${depth * 16 + 20}px` }}
+          style={{ paddingLeft: `${depth * 16 + 4}px` }}
           onClick={() => openFile(entry.path)}
           onContextMenu={(e) => handleContextMenu(e, entry)}
           draggable
@@ -451,7 +436,11 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
         style={treePaneStyle}
       >
         {rootEntries.length === 0 ? (
-          <div className="activity-tab-empty"><p>No files</p></div>
+          <ActivityPanelEmpty
+            icon={<FilesEmptyIcon />}
+            heading="Files"
+            body="Project files appear here once a project is loaded"
+          />
         ) : (
           rootEntries.map((e) => renderEntry(e, 0))
         )}
@@ -493,23 +482,15 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
               />
             ) : language === 'markdown' ? (
               <div className="files-markdown-viewer message-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {fileContent ?? ''}
-                </ReactMarkdown>
+                <MarkdownBody
+                  content={fileContent ?? ''}
+                  id={`files-tab-md-${selectedFile ?? 'none'}`}
+                />
               </div>
             ) : (
-              <SyntaxHighlighter
+              <CodeBlock
                 language={language}
-                style={codeTheme}
-                PreTag="div"
-                showLineNumbers
-                lineNumberStyle={{
-                  minWidth: '3em',
-                  paddingRight: '1em',
-                  textAlign: 'right',
-                  userSelect: 'none',
-                  color: '#555',
-                }}
+                lineNumberMinWidth="3em"
                 customStyle={{
                   margin: 0,
                   borderRadius: 0,
@@ -517,7 +498,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
                 }}
               >
                 {fileContent ?? ''}
-              </SyntaxHighlighter>
+              </CodeBlock>
             )}
           </div>
         </div>
@@ -547,18 +528,9 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
   )
 })
 
-const GIT_STATUS_COLORS: Record<string, string> = {
-  M: '#e5c07b',   // modified — yellow
-  A: '#4ade80',   // added — green
-  D: '#f87171',   // deleted — red
-  R: '#60a5fa',   // renamed — blue
-  '?': '#737373', // untracked — gray
-  '??': '#737373',
-}
-
 function GitStatusBadge({ status }: { status: string }) {
   const label = status === '??' ? '?' : status.charAt(0)
-  const color = GIT_STATUS_COLORS[status] ?? GIT_STATUS_COLORS[label] ?? '#737373'
+  const color = getGitStatusColorVar(label)
   return (
     <span
       className="files-git-badge"

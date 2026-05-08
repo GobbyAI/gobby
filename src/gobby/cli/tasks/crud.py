@@ -8,72 +8,80 @@ from typing import Any
 
 import click
 
+from gobby.cli.tasks._stage_filters import STAGE_STATE_CHOICE, filter_tasks_by_stage
 from gobby.cli.tasks._utils import (
     collect_ancestors,
     compute_tree_prefixes,
     format_task_list,
     get_claimed_task_ids,
     get_task_manager,
-    normalize_status,
     resolve_task_id,
     sort_tasks_for_tree,
 )
 from gobby.cli.utils import resolve_project_ref
-from gobby.tasks.state_semantics import serialize_task_state
+from gobby.storage.tasks import TASK_TYPE_CHOICES
+from gobby.tasks.state_semantics import is_task_closed, serialize_task_state
 from gobby.utils.project_context import get_project_context
+
+TASK_TYPE_CHOICE = click.Choice(TASK_TYPE_CHOICES)
+
+
+def _current_stage_display(state: dict[str, Any]) -> str:
+    current_stage = state.get("current_stage")
+    if isinstance(current_stage, dict):
+        name = current_stage.get("name")
+        stage_state = current_stage.get("state")
+        if name and stage_state:
+            return f"{name}:{stage_state}"
+        if stage_state:
+            return str(stage_state)
+    return "ready"
 
 
 @click.command("list")
 @click.option(
-    "--status",
-    "-s",
-    help="Compatibility filter by projected legacy status. Comma-separated for multiple.",
-)
-@click.option(
-    "--lifecycle",
-    help=(
-        "Filter by canonical lifecycle stage "
-        "(open, in_progress, needs_review, review_approved). "
-        "Comma-separated for multiple."
-    ),
-)
-@click.option(
     "--active",
     is_flag=True,
-    help="Show all non-closed work (canonical active tasks)",
+    help="Show all non-closed work",
 )
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
+@click.option("--stage", "stage_name", help="Filter by exact stage name")
+@click.option("--state", "stage_state", type=STAGE_STATE_CHOICE, help="Filter by stage state")
 @click.option("--assignee", "-a", help="Filter by assignee")
 @click.option("--claimed", is_flag=True, help="Show only claimed tasks")
 @click.option("--unclaimed", is_flag=True, help="Show only unclaimed tasks")
 @click.option(
-    "--ready", is_flag=True, help="Show only ready tasks (open/in_progress with no blocking deps)"
+    "--ready",
+    is_flag=True,
+    help="Show only ready tasks with no unresolved blocking dependencies",
 )
 @click.option("--blocked", is_flag=True, help="Show only canonically blocked tasks")
 @click.option("--closed", "closed_only", is_flag=True, help="Show only canonically closed tasks")
+@click.option("--escalated", is_flag=True, help="Show only canonically escalated tasks")
 @click.option("--limit", "-l", default=50, help="Max tasks to show")
 @click.option(
     "--group",
     "group_by",
-    type=click.Choice(["project", "lifecycle"]),
+    type=click.Choice(["project", "stage"]),
     default=None,
     help=(
-        "Group output by project or lifecycle. When omitted, tasks are "
+        "Group output by project or stage. When omitted, tasks are "
         "auto-grouped by project if no project context is detected."
     ),
 )
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_tasks(
-    status: str | None,
-    lifecycle: str | None,
     active: bool,
     project_ref: str | None,
+    stage_name: str | None,
+    stage_state: str | None,
     assignee: str | None,
     claimed: bool,
     unclaimed: bool,
     ready: bool,
     blocked: bool,
     closed_only: bool,
+    escalated: bool,
     limit: int,
     group_by: str | None,
     json_format: bool,
@@ -87,40 +95,21 @@ def list_tasks(
         click.echo("Error: --claimed and --unclaimed are mutually exclusive.", err=True)
         return
 
-    if active and status:
-        click.echo("Error: --active and --status are mutually exclusive.", err=True)
+    if stage_state and not stage_name:
+        click.echo("Error: --state requires --stage.", err=True)
         return
 
-    if status and lifecycle:
-        click.echo("Error: --status and --lifecycle are mutually exclusive.", err=True)
+    if sum(bool(flag) for flag in (active, closed_only, escalated)) > 1:
+        click.echo("Error: --active, --closed, and --escalated are mutually exclusive.", err=True)
         return
 
-    if active and closed_only:
-        click.echo("Error: --active and --closed are mutually exclusive.", err=True)
-        return
-
-    if (ready or blocked) and any((status, lifecycle, active, claimed, unclaimed, closed_only)):
+    if (ready or blocked) and any((active, claimed, unclaimed, closed_only, escalated, stage_name)):
         click.echo(
-            "Error: --ready/--blocked cannot be combined with --status, --lifecycle, "
-            "--active, --claimed, --unclaimed, or --closed.",
+            "Error: --ready/--blocked cannot be combined with --active, --claimed, "
+            "--unclaimed, --closed, --escalated, or --stage.",
             err=True,
         )
         return
-
-    # Parse comma-separated statuses or lifecycle stages.
-    status_filter: str | list[str] | None = None
-    if status:
-        if "," in status:
-            status_filter = [normalize_status(s.strip()) for s in status.split(",")]
-        else:
-            status_filter = normalize_status(status)
-
-    lifecycle_filter: str | list[str] | None = None
-    if lifecycle:
-        if "," in lifecycle:
-            lifecycle_filter = [normalize_status(s.strip()) for s in lifecycle.split(",")]
-        else:
-            lifecycle_filter = normalize_status(lifecycle)
 
     claimed_filter: bool | None = None
     if claimed:
@@ -131,7 +120,7 @@ def list_tasks(
     closed_filter: bool | None = None
     if closed_only:
         closed_filter = True
-    elif active:
+    elif active or escalated:
         closed_filter = False
 
     project_id = resolve_project_ref(project_ref)
@@ -158,23 +147,34 @@ def list_tasks(
     else:
         tasks_list = manager.list_tasks(
             project_id=project_id,
-            status=status_filter,
-            lifecycle_stage=lifecycle_filter,
             assignee=assignee,
             claimed=claimed_filter,
             closed=closed_filter,
-            limit=limit,
+            limit=10000 if stage_name or escalated else limit,
         )
+        if escalated:
+            tasks_list = [
+                task for task in tasks_list if serialize_task_state(task)["is_escalated"]
+            ][:limit]
+        tasks_list = filter_tasks_by_stage(
+            manager,
+            tasks_list,
+            stage_name=stage_name,
+            state=stage_state,
+            project_id=project_id,
+        )[:limit]
         if closed_filter:
             label = "closed tasks"
+        elif escalated:
+            label = "escalated tasks"
         elif claimed_filter is True:
             label = "claimed tasks"
         elif claimed_filter is False:
             label = "unclaimed tasks"
         elif active:
             label = "active tasks"
-        elif lifecycle_filter:
-            label = "lifecycle-filtered tasks"
+        elif stage_name:
+            label = "stage-filtered tasks"
         else:
             label = "tasks"
         empty_msg = "No tasks found."
@@ -193,8 +193,8 @@ def list_tasks(
     if (
         ready
         or blocked
-        or status_filter
-        or lifecycle_filter
+        or stage_name
+        or escalated
         or claimed_filter is not None
         or closed_filter is not None
     ):
@@ -213,14 +213,10 @@ def list_tasks(
         effective_group_by = "project"
 
     # Tree prefixes are precomputed against the global display order. When
-    # grouping by lifecycle, children can land in a different bucket than
-    # their parent, leaving glyphs pointing at rows that aren't adjacent.
-    # Skip the prefixes in that case so the tree doesn't render misleading
-    # connectors.
+    # grouping by stage, children can land in a different bucket than their
+    # parent, leaving glyphs pointing at rows that aren't adjacent.
     prefixes = (
-        compute_tree_prefixes(display_tasks, primary_ids)
-        if effective_group_by != "lifecycle"
-        else None
+        compute_tree_prefixes(display_tasks, primary_ids) if effective_group_by != "stage" else None
     )
     click.echo(f"Found {len(tasks_list)} {label}:")
     rendered = format_task_list(
@@ -342,7 +338,7 @@ def blocked_tasks(limit: int, project_ref: str | None, json_format: bool) -> Non
 
                 try:
                     blocker_task = manager.get_task(bid)
-                    status_icon = "✓" if blocker_task.status == "closed" else "○"
+                    status_icon = "✓" if is_task_closed(blocker_task) else "○"
                     click.echo(f"    {status_icon} {bid[:8]}: {blocker_task.title}")
                 except Exception:
                     click.echo(f"    ? {bid[:8]}: (not found)")
@@ -358,8 +354,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 
     all_tasks = manager.list_tasks(project_id=project_id, limit=10000)
     total = len(all_tasks)
-    by_lifecycle = {"open": 0, "in_progress": 0, "needs_review": 0, "review_approved": 0}
-    compat_by_status: dict[str, int] = {}
+    by_stage_state: dict[str, int] = {}
     by_priority = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
     by_type: dict[str, int] = {}
     claimed_count = 0
@@ -370,13 +365,11 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 
     for task in all_tasks:
         state = serialize_task_state(task)
-        compat_by_status[task.status] = compat_by_status.get(task.status, 0) + 1
-
         if state["is_closed"]:
             closed_count += 1
         else:
-            lifecycle = state["lifecycle_stage"] or "open"
-            by_lifecycle[lifecycle] = by_lifecycle.get(lifecycle, 0) + 1
+            stage_display = _current_stage_display(state)
+            by_stage_state[stage_display] = by_stage_state.get(stage_display, 0) + 1
             if state["is_claimed"]:
                 claimed_count += 1
             else:
@@ -396,7 +389,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 
     stats = {
         "total": total,
-        "by_lifecycle": by_lifecycle,
+        "by_stage_state": by_stage_state,
         "by_priority": {
             "critical": by_priority.get(0, 0),
             "high": by_priority.get(1, 0),
@@ -412,7 +405,6 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
         "merge_ready": merge_ready_count,
         "ready": ready_count,
         "blocked": blocked_count,
-        "compat_by_status": compat_by_status,
     }
 
     if json_format:
@@ -421,10 +413,9 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 
     click.echo("Task Statistics:")
     click.echo(f"  Total: {total}")
-    click.echo(f"  Open: {by_lifecycle.get('open', 0)}")
-    click.echo(f"  In Progress: {by_lifecycle.get('in_progress', 0)}")
-    click.echo(f"  Needs Review: {by_lifecycle.get('needs_review', 0)}")
-    click.echo(f"  Review Approved: {by_lifecycle.get('review_approved', 0)}")
+    click.echo("  By Current Stage:")
+    for stage_state, count in sorted(by_stage_state.items()):
+        click.echo(f"    {stage_state}: {count}")
     click.echo(f"  Closed: {closed_count}")
     click.echo(f"\n  Claimed: {claimed_count}")
     click.echo(f"  Unclaimed Active: {unclaimed_count}")
@@ -447,7 +438,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 @click.argument("title")
 @click.option("--description", "-d", help="Task description")
 @click.option("--priority", "-p", type=int, default=2, help="Priority (1=High, 2=Med, 3=Low)")
-@click.option("--type", "-t", "task_type", default="task", help="Task type")
+@click.option("--type", "-t", "task_type", type=TASK_TYPE_CHOICE, default="task", help="Task type")
 @click.option("--depends-on", "-D", multiple=True, help="Task(s) this task depends on (#N, UUID)")
 @click.option("--project", "project_ref", help="Target project (name or UUID)")
 def create_task(
@@ -523,23 +514,22 @@ def show_task(task_id: str) -> None:
     blocker_ids = sorted(task.active_blocked_by)
     state = serialize_task_state(task)
     if state["is_closed"]:
-        lifecycle_display = "closed"
+        stage_display = "closed"
     elif state["is_escalated"]:
-        lifecycle_display = "escalated"
+        stage_display = "escalated"
     else:
-        lifecycle_display = state["lifecycle_stage"] or "open"
+        stage_display = _current_stage_display(state)
 
     click.echo(f"Task: {task.title}")
     click.echo(f"ID: {task.id}")
     if task.seq_num:
         click.echo(f"Ref: #{task.seq_num}")
-    click.echo(f"Lifecycle: {lifecycle_display}")
+    click.echo(f"Current Stage: {stage_display}")
     click.echo(f"Owner Session: {state['owner_session_id'] or '-'}")
     click.echo(f"Blocked: {'yes' if state['is_blocked'] else 'no'}")
     click.echo(f"Escalated: {'yes' if state['is_escalated'] else 'no'}")
     click.echo(f"Merge Ready: {'yes' if state['is_merge_ready'] else 'no'}")
     click.echo(f"Closed: {'yes' if state['is_closed'] else 'no'}")
-    click.echo(f"Legacy Status: {task.status}")
     click.echo(f"Priority: {task.priority}")
     click.echo(f"Type: {task.task_type}")
     click.echo(f"Created: {task.created_at}")
@@ -580,11 +570,18 @@ def show_task(task_id: str) -> None:
 @click.option("--title", "-T", help="New title")
 @click.option("--priority", type=int, help="New priority")
 @click.option("--parent", "parent_task_id", help="Parent task (#N, path, or UUID)")
+@click.option(
+    "--task-type",
+    "task_type",
+    type=TASK_TYPE_CHOICE,
+    help="New task type",
+)
 def update_task(
     task_id: str,
     title: str | None,
     priority: int | None,
     parent_task_id: str | None,
+    task_type: str | None,
 ) -> None:
     """Update a task.
 
@@ -612,6 +609,8 @@ def update_task(
         kwargs["priority"] = priority
     if resolved_parent_id is not None:
         kwargs["parent_task_id"] = resolved_parent_id
+    if task_type is not None:
+        kwargs["task_type"] = task_type
 
     task = manager.update_task(resolved.id, **kwargs)
 
@@ -667,7 +666,7 @@ def close_task_cmd(
 
             if children:
                 # Parent task: must have all children closed
-                open_children = [c for c in children if c.status != "closed"]
+                open_children = [c for c in children if not is_task_closed(c)]
                 if open_children:
                     task_ref = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
                     click.echo(
@@ -696,12 +695,12 @@ def close_task_cmd(
 @click.argument("task_id", metavar="TASK")
 @click.option("--reason", "-r", default=None, help="Reason for reopening")
 def reopen_task_cmd(task_id: str, reason: str | None) -> None:
-    """Reopen a task to open status.
+    """Reopen a task to active stage state.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
 
-    Works on any non-open status. Sets status back to 'open', clears
-    assignee, closed fields, and resets validation_fail_count.
+    Works on closed or escalated tasks. Clears ownership, closure/escalation
+    fields, and resets validation_fail_count.
     """
     manager = get_task_manager()
     resolved = resolve_task_id(manager, task_id)
@@ -711,9 +710,9 @@ def reopen_task_cmd(task_id: str, reason: str | None) -> None:
     # Use standardized ref for errors
     resolved_ref = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
 
-    if resolved.status == "open":
+    if not is_task_closed(resolved) and not resolved.is_escalated:
         click.echo(
-            f"Task {resolved_ref} is already open",
+            f"Task {resolved_ref} is already active",
             err=True,
         )
         return
@@ -795,21 +794,13 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
 @click.command("de-escalate")
 @click.argument("task_id", metavar="TASK")
 @click.option("--reason", "-r", required=True, help="Reason for de-escalation")
-@click.option(
-    "--target-status",
-    type=click.Choice(["open", "in_progress", "needs_review", "review_approved"]),
-    default="open",
-    show_default=True,
-    help="Status to return the task to after de-escalation.",
-)
 @click.option("--reset-validation", is_flag=True, help="Reset validation fail count")
 def de_escalate_cmd(
     task_id: str,
     reason: str,
-    target_status: str,
     reset_validation: bool,
 ) -> None:
-    """Return an escalated task to an explicit next status.
+    """Return an escalated task to its preserved current stage.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
 
@@ -820,9 +811,9 @@ def de_escalate_cmd(
     if not resolved:
         return
 
-    if resolved.status != "escalated":
+    if not resolved.is_escalated:
         click.echo(
-            f"Task {resolved.id[:8]} is not escalated (status: {resolved.status})",
+            f"Task {resolved.id[:8]} is not escalated",
             err=True,
         )
         return
@@ -830,10 +821,9 @@ def de_escalate_cmd(
     manager.de_escalate_task(
         resolved.id,
         reason=reason,
-        target_status=target_status,
         reset_validation=reset_validation,
     )
-    click.echo(f"De-escalated task {resolved.id[:8]} to {target_status} ({reason})")
+    click.echo(f"De-escalated task {resolved.id[:8]} ({reason})")
     if reset_validation:
         click.echo("  Validation fail count reset to 0")
 

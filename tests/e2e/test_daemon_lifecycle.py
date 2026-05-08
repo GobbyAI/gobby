@@ -11,14 +11,15 @@ Tests verify:
 
 import os
 import signal
-import time
 
 import httpx
 import psutil
 import pytest
 
+from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
+    daemon_health_unavailable,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -91,11 +92,12 @@ class TestDaemonStop:
 
         # Wait for process to stop — must exceed the daemon's graceful
         # shutdown timeout (15 s) plus cleanup buffer
-        start = time.time()
-        while time.time() - start < 25.0:
-            if not daemon_instance.is_alive():
-                break
-            time.sleep(0.2)
+        wait_for_condition(
+            lambda: not daemon_instance.is_alive(),
+            timeout=25.0,
+            interval=0.2,
+            description="daemon process exit",
+        )
 
         # Process should have stopped
         assert not daemon_instance.is_alive(), "Daemon should stop after SIGTERM"
@@ -116,11 +118,12 @@ class TestDaemonStop:
 
         # Wait for the daemon's graceful shutdown (15 s) plus cleanup buffer,
         # matching test_daemon_stops_gracefully_on_sigterm
-        shutdown_deadline = time.time() + 25.0
-        while time.time() < shutdown_deadline:
-            if not daemon_instance.is_alive():
-                break
-            time.sleep(0.2)
+        wait_for_condition(
+            lambda: not daemon_instance.is_alive(),
+            timeout=25.0,
+            interval=0.2,
+            description="daemon process exit",
+        )
 
         # Wait for any child processes to exit as well. psutil.wait_procs treats
         # zombies as gone, which matches what we want here.
@@ -128,6 +131,7 @@ class TestDaemonStop:
         still_running = [
             c.pid for c in alive if c.is_running() and c.status() != psutil.STATUS_ZOMBIE
         ]
+        assert still_running == []
         if still_running:
             pytest.fail(f"Orphan child processes still running: {still_running}")
 
@@ -145,6 +149,7 @@ class TestDaemonStop:
             pytest.fail("Expected process not to exist")
         except ProcessLookupError:
             pass  # Expected - process doesn't exist
+        assert pid_file.exists()
 
         # Clean up
         pid_file.unlink()
@@ -193,9 +198,11 @@ class TestDaemonRestart:
             # Stop first daemon
             os.kill(process1.pid, signal.SIGTERM)
             process1.wait(timeout=25)
-
-            # Wait for port to be released
-            time.sleep(2.0)
+            wait_for_condition(
+                lambda: daemon_health_unavailable(http_port),
+                timeout=5.0,
+                description="first daemon shutdown",
+            )
 
             # Start second daemon on same ports
             with open(log_file, "a") as log_f, open(error_log_file, "a") as err_f:
@@ -267,7 +274,11 @@ class TestDaemonRestart:
             # Stop and restart
             os.kill(process1.pid, signal.SIGTERM)
             process1.wait(timeout=25)
-            time.sleep(2.0)
+            wait_for_condition(
+                lambda: daemon_health_unavailable(http_port),
+                timeout=5.0,
+                description="first daemon shutdown",
+            )
 
             with open(log_file, "a") as log_f, open(error_log_file, "a") as err_f:
                 process2 = subprocess.Popen(
@@ -331,8 +342,14 @@ class TestDaemonMultipleInstances:
                 start_new_session=True,
             )
 
-        # Wait a bit for the second process to fail
-        time.sleep(3.0)
+        try:
+            wait_for_condition(
+                lambda: process2.poll() is not None,
+                timeout=3.0,
+                description="second daemon process exit",
+            )
+        except AssertionError:
+            pass
 
         # Second process should have exited (port conflict)
         # Or be killed if it somehow managed to start

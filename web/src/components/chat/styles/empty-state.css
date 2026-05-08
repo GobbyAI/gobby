@@ -5,33 +5,49 @@
   height: 100%;
   color: var(--text-muted);
 }
-.chat-scope-empty {
-  padding: 0.5rem;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  text-align: center;
-}
   .mobile-chat-drawer-empty {
     padding: 0.75rem 1rem;
     color: var(--text-muted);
-    font-size: calc(var(--font-size-base) * 0.85);
+    font-size: var(--text-sm);
   }
 .command-palette-empty {
   padding: 1.5rem;
   text-align: center;
   color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-sm);
 }
 .activity-tab-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 0.75rem;
   height: 100%;
   color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-normal);
   padding: 2rem;
   text-align: center;
+}
+
+.activity-tab-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.35;
+}
+
+.activity-tab-empty__heading {
+  font-size: var(--text-xl);
+  font-weight: var(--font-weight-normal);
+  color: var(--text-secondary);
+}
+
+.activity-tab-empty__body {
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-normal);
+  color: var(--text-muted);
+  max-width: 26rem;
 }
 
 .chat-empty-state {
@@ -51,12 +67,12 @@
 }
 
 .chat-empty-state__title {
-  font-size: 1.125rem;
+  font-size: var(--text-xl);
   color: var(--text-secondary);
 }
 
 .chat-empty-state__copy {
   max-width: 26rem;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   color: var(--text-muted);
 }

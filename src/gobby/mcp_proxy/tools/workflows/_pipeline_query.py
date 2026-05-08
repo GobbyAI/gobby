@@ -66,10 +66,11 @@ def list_pipeline_executions(
     session_id: str | None = None,
     parent_execution_id: str | None = None,
     limit: int = 50,
+    offset: int = 0,
     brief: bool = True,
     include_steps: bool = False,
 ) -> dict[str, Any]:
-    """List pipeline executions with optional filters.
+    """List pipeline executions with optional filters and offset pagination.
 
     Args:
         execution_manager: LocalPipelineExecutionManager instance
@@ -77,22 +78,49 @@ def list_pipeline_executions(
         pipeline_name: Filter by pipeline name
         session_id: Filter by triggering session
         parent_execution_id: Filter by parent execution
-        limit: Maximum results
+        limit: Maximum results per page
+        offset: Number of leading rows to skip
         brief: Use compact format (default True)
         include_steps: Include step details per execution
+
+    Returns:
+        On success: {success, executions, total, limit, offset, status_summary}
+        On error: {success: False, error: str}. Error envelope is used for
+            invalid status strings and invalid pagination (limit <= 0,
+            offset < 0).
+
+    The ``total`` and ``status_summary`` keys are filter-scoped — they
+    reflect counts within the currently active filter (status_summary
+    drops only the ``status`` predicate so callers can render
+    "X running / Y completed" alongside a status-filtered page).
     """
     try:
         status_enum = _validate_status(status)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    executions = execution_manager.list_executions(
-        status=status_enum,
-        pipeline_name=pipeline_name,
-        session_id=session_id,
-        parent_execution_id=parent_execution_id,
-        limit=limit,
-    )
+    try:
+        executions = execution_manager.list_executions(
+            status=status_enum,
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+            limit=limit,
+            offset=offset,
+        )
+        total = execution_manager.count_executions(
+            status=status_enum,
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+        )
+        status_summary = execution_manager.status_summary_for_executions(
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+        )
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid pagination: {e}"}
 
     formatter = _execution_brief if brief else _execution_summary
     results = [formatter(ex) for ex in executions]
@@ -102,14 +130,13 @@ def list_pipeline_executions(
         for entry, ex in zip(results, executions, strict=True):
             entry["steps"] = [_step_summary(s) for s in steps_by_exec.get(ex.id, [])]
 
-    # Add status distribution summary
-    status_counts = execution_manager.count_by_status()
-
     return {
         "success": True,
         "executions": results,
-        "count": len(results),
-        "status_summary": status_counts,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "status_summary": status_summary,
     }
 
 
@@ -120,9 +147,10 @@ def search_pipeline_executions(
     search_outputs: bool = False,
     status: str | None = None,
     limit: int = 20,
+    offset: int = 0,
     include_steps: bool = False,
 ) -> dict[str, Any]:
-    """Search pipeline executions by text.
+    """Search pipeline executions by text with offset pagination.
 
     Args:
         execution_manager: LocalPipelineExecutionManager instance
@@ -130,8 +158,14 @@ def search_pipeline_executions(
         search_errors: Search step error text
         search_outputs: Search step output JSON
         status: Filter by status string
-        limit: Maximum results
+        limit: Maximum results per page
+        offset: Number of leading rows to skip
         include_steps: Include step details per execution
+
+    Returns:
+        On success: {success, executions, total, limit, offset, query}
+        On error: {success: False, error: str}. Error envelope is used for
+            empty queries, invalid status strings, and invalid pagination.
     """
     if not query or not query.strip():
         return {"success": False, "error": "Query must not be empty"}
@@ -141,13 +175,23 @@ def search_pipeline_executions(
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    executions = execution_manager.search_executions(
-        query=query.strip(),
-        search_errors=search_errors,
-        search_outputs=search_outputs,
-        status=status_enum,
-        limit=limit,
-    )
+    try:
+        executions = execution_manager.search_executions(
+            query=query.strip(),
+            search_errors=search_errors,
+            search_outputs=search_outputs,
+            status=status_enum,
+            limit=limit,
+            offset=offset,
+        )
+        total = execution_manager.count_search_executions(
+            query=query.strip(),
+            search_errors=search_errors,
+            search_outputs=search_outputs,
+            status=status_enum,
+        )
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid pagination: {e}"}
 
     results = [_execution_summary(ex) for ex in executions]
 
@@ -159,6 +203,8 @@ def search_pipeline_executions(
     return {
         "success": True,
         "executions": results,
-        "count": len(results),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
         "query": query.strip(),
     }

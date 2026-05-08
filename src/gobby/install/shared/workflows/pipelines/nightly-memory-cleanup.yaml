@@ -16,7 +16,30 @@ inputs:
   max_stale_age_days:
     type: integer
     default: 30
-    description: "Memories older than this with 0 access_count are considered stale"
+    description: "Memories inactive longer than this are considered stale candidates"
+  max_stale_access_count:
+    type: integer
+    default: 1
+    description: "Maximum access_count still considered low-access for stale cleanup"
+  stale_confidence_threshold:
+    type: number
+    default: 0.85
+    description: "Minimum stale classifier confidence required before deletion"
+  limit_per_category:
+    type: integer
+    default: 500
+    description: "Maximum memories to scan per cleanup category"
+  use_stale_classifier:
+    type: boolean
+    default: true
+    description: "Require LLM classification for stale-memory deletion"
+
+outputs:
+  total_found: "${{ steps.audit.output.total_found }}"
+  total_deleted: "${{ steps.cleanup.output.total_deleted if steps.cleanup.output else 0 }}"
+  total_review: "${{ steps.audit.output.total_review }}"
+  stale_delete_candidates: "${{ steps.audit.output.stale.delete_candidates }}"
+  stale_review: "${{ steps.audit.output.stale.review }}"
 
 steps:
   # --- RE-ENTRANCY GUARD ---
@@ -43,17 +66,21 @@ steps:
       tool: audit_memories
       arguments:
         max_stale_age_days: "${{ inputs.max_stale_age_days }}"
-
-  # --- SKIP IF NOTHING TO CLEAN ---
-  - id: nothing_to_clean
-    condition: "${{ steps.audit.output.total_found == 0 }}"
-    prompt: "No memories to clean up — all clean. Nothing to do."
+        max_stale_access_count: "${{ inputs.max_stale_access_count }}"
+        stale_confidence_threshold: "${{ inputs.stale_confidence_threshold }}"
+        limit_per_category: "${{ inputs.limit_per_category }}"
+        use_stale_classifier: "${{ inputs.use_stale_classifier }}"
 
   # --- CLEANUP PHASE ---
   - id: cleanup
+    condition: "${{ steps.audit.output.total_found > 0 and not inputs.dry_run }}"
     mcp:
       server: gobby-memory
       tool: cleanup_memories
       arguments:
         dry_run: "${{ inputs.dry_run }}"
         max_stale_age_days: "${{ inputs.max_stale_age_days }}"
+        max_stale_access_count: "${{ inputs.max_stale_access_count }}"
+        stale_confidence_threshold: "${{ inputs.stale_confidence_threshold }}"
+        limit_per_category: "${{ inputs.limit_per_category }}"
+        use_stale_classifier: "${{ inputs.use_stale_classifier }}"

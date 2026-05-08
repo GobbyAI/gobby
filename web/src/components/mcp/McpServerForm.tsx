@@ -1,4 +1,32 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import { cn } from '../../lib/utils'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
+
+const MODAL_OVERLAY_CLS =
+  'fixed inset-0 z-[1000] flex items-center justify-center bg-[var(--surface-scrim)]'
+const MODAL_CLS =
+  'max-h-[80vh] w-[480px] max-w-[90vw] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] p-5'
+const MODAL_TITLE_CLS = 'mb-4 text-[length:var(--font-size-base)] font-semibold'
+
+const FORM_GROUP_CLS = 'mb-3'
+const FORM_LABEL_CLS =
+  'mb-1 block text-[length:var(--text-sm)] font-medium text-[var(--text-secondary)]'
+const FORM_INPUT_CLS =
+  'box-border w-full rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
+const FORM_ROW_CLS = 'flex gap-2 [&>*]:flex-1'
+const FORM_ERROR_CLS = 'mt-1 text-[length:var(--text-sm)] text-[var(--color-error)]'
+const FORM_LABEL_INLINE_CLS = 'flex items-center gap-2 text-[length:var(--text-sm)] font-medium text-[var(--text-secondary)]'
+
+const MODAL_ACTIONS_CLS = 'mt-4 flex justify-end gap-2'
+const MODAL_BTN_CLS =
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+const MODAL_BTN_PRIMARY_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:opacity-90'
+
+const IMPORT_TABS_CLS = 'mb-4 flex border-b border-[var(--border)]'
+const IMPORT_TAB_CLS =
+  'cursor-pointer border-0 border-b-2 border-transparent bg-transparent px-4 py-2 text-[length:var(--text-sm)] font-medium text-[var(--text-secondary)] [margin-bottom:-1px] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const IMPORT_TAB_ACTIVE_CLS = 'border-[var(--accent)] text-[var(--accent)]'
 
 interface McpAddServerModalProps {
   onAdd: (params: {
@@ -13,6 +41,8 @@ interface McpAddServerModalProps {
 }
 
 export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
+  const dialogRef = useRef<HTMLFormElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose })
   const [name, setName] = useState('')
   const [transport, setTransport] = useState('http')
   const [url, setUrl] = useState('')
@@ -51,26 +81,26 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
   }
 
   return (
-    <div className="mcp-modal-overlay" onClick={onClose}>
-      <form className="mcp-modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h3>Add MCP Server</h3>
+    <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
+      <form ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="mcp-add-server-title" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+        <h2 id="mcp-add-server-title" className={MODAL_TITLE_CLS}>Add MCP Server</h2>
 
-        {error && <div className="mcp-form-error">{error}</div>}
+        {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
-        <div className="mcp-form-row">
-          <div className="mcp-form-group">
-            <label className="mcp-form-label">Name</label>
+        <div className={FORM_ROW_CLS}>
+          <div className={FORM_GROUP_CLS}>
+            <label className={FORM_LABEL_CLS}>Name</label>
             <input
-              className="mcp-form-input"
+              className={FORM_INPUT_CLS}
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="my-server"
               autoFocus
             />
           </div>
-          <div className="mcp-form-group">
-            <label className="mcp-form-label">Transport</label>
-            <select className="mcp-form-select" value={transport} onChange={e => setTransport(e.target.value)}>
+          <div className={FORM_GROUP_CLS}>
+            <label className={FORM_LABEL_CLS}>Transport</label>
+            <select className={FORM_INPUT_CLS} value={transport} onChange={e => setTransport(e.target.value)}>
               <option value="http">HTTP</option>
               <option value="stdio">Stdio</option>
               <option value="websocket">WebSocket</option>
@@ -80,10 +110,10 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
         </div>
 
         {needsUrl && (
-          <div className="mcp-form-group">
-            <label className="mcp-form-label">URL</label>
+          <div className={FORM_GROUP_CLS}>
+            <label className={FORM_LABEL_CLS}>URL</label>
             <input
-              className="mcp-form-input"
+              className={FORM_INPUT_CLS}
               value={url}
               onChange={e => setUrl(e.target.value)}
               placeholder="http://localhost:8080"
@@ -93,19 +123,19 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
 
         {needsCommand && (
           <>
-            <div className="mcp-form-group">
-              <label className="mcp-form-label">Command</label>
+            <div className={FORM_GROUP_CLS}>
+              <label className={FORM_LABEL_CLS}>Command</label>
               <input
-                className="mcp-form-input"
+                className={FORM_INPUT_CLS}
                 value={command}
                 onChange={e => setCommand(e.target.value)}
                 placeholder="npx"
               />
             </div>
-            <div className="mcp-form-group">
-              <label className="mcp-form-label">Arguments (space-separated)</label>
+            <div className={FORM_GROUP_CLS}>
+              <label className={FORM_LABEL_CLS}>Arguments (space-separated)</label>
               <input
-                className="mcp-form-input"
+                className={FORM_INPUT_CLS}
                 value={args}
                 onChange={e => setArgs(e.target.value)}
                 placeholder="-y @modelcontextprotocol/server-x"
@@ -114,8 +144,8 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
           </>
         )}
 
-        <div className="mcp-form-group">
-          <label className="mcp-form-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className={FORM_GROUP_CLS}>
+          <label className={FORM_LABEL_INLINE_CLS}>
             <input
               type="checkbox"
               checked={enabled}
@@ -125,9 +155,9 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
           </label>
         </div>
 
-        <div className="mcp-modal-actions">
-          <button type="button" className="mcp-modal-btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="mcp-modal-btn mcp-modal-btn--primary" disabled={saving}>
+        <div className={MODAL_ACTIONS_CLS}>
+          <button type="button" className={MODAL_BTN_CLS} onClick={onClose}>Cancel</button>
+          <button type="submit" className={cn(MODAL_BTN_CLS, MODAL_BTN_PRIMARY_CLS)} disabled={saving}>
             {saving ? 'Adding...' : 'Add Server'}
           </button>
         </div>
@@ -146,6 +176,8 @@ interface McpImportModalProps {
 }
 
 export function McpImportModal({ onImport, onClose }: McpImportModalProps) {
+  const dialogRef = useRef<HTMLFormElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose })
   const [activeTab, setActiveTab] = useState<'project' | 'github' | 'search'>('github')
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -175,42 +207,42 @@ export function McpImportModal({ onImport, onClose }: McpImportModalProps) {
   }
 
   return (
-    <div className="mcp-modal-overlay" onClick={onClose}>
-      <form className="mcp-modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h3>Import MCP Server</h3>
+    <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
+      <form ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="mcp-import-server-title" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+        <h2 id="mcp-import-server-title" className={MODAL_TITLE_CLS}>Import MCP Server</h2>
 
-        <div className="mcp-import-tabs">
+        <div className={IMPORT_TABS_CLS}>
           <button
             type="button"
-            className={`mcp-import-tab ${activeTab === 'project' ? 'mcp-import-tab--active' : ''}`}
+            className={cn(IMPORT_TAB_CLS, activeTab === 'project' && IMPORT_TAB_ACTIVE_CLS)}
             onClick={() => { setActiveTab('project'); setValue(''); setError(null) }}
           >
             From Project
           </button>
           <button
             type="button"
-            className={`mcp-import-tab ${activeTab === 'github' ? 'mcp-import-tab--active' : ''}`}
+            className={cn(IMPORT_TAB_CLS, activeTab === 'github' && IMPORT_TAB_ACTIVE_CLS)}
             onClick={() => { setActiveTab('github'); setValue(''); setError(null) }}
           >
             GitHub URL
           </button>
           <button
             type="button"
-            className={`mcp-import-tab ${activeTab === 'search' ? 'mcp-import-tab--active' : ''}`}
+            className={cn(IMPORT_TAB_CLS, activeTab === 'search' && IMPORT_TAB_ACTIVE_CLS)}
             onClick={() => { setActiveTab('search'); setValue(''); setError(null) }}
           >
             Search
           </button>
         </div>
 
-        {error && <div className="mcp-form-error">{error}</div>}
+        {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
-        <div className="mcp-form-group">
-          <label className="mcp-form-label">
+        <div className={FORM_GROUP_CLS}>
+          <label className={FORM_LABEL_CLS}>
             {activeTab === 'project' ? 'Project Name' : activeTab === 'github' ? 'GitHub URL' : 'Search Query'}
           </label>
           <input
-            className="mcp-form-input"
+            className={FORM_INPUT_CLS}
             value={value}
             onChange={e => setValue(e.target.value)}
             placeholder={placeholder}
@@ -218,9 +250,9 @@ export function McpImportModal({ onImport, onClose }: McpImportModalProps) {
           />
         </div>
 
-        <div className="mcp-modal-actions">
-          <button type="button" className="mcp-modal-btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="mcp-modal-btn mcp-modal-btn--primary" disabled={importing}>
+        <div className={MODAL_ACTIONS_CLS}>
+          <button type="button" className={MODAL_BTN_CLS} onClick={onClose}>Cancel</button>
+          <button type="submit" className={cn(MODAL_BTN_CLS, MODAL_BTN_PRIMARY_CLS)} disabled={importing}>
             {importing ? 'Importing...' : 'Import'}
           </button>
         </div>

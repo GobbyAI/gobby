@@ -26,6 +26,20 @@ async function loadModule() {
   useChat = await loadUseChatModule();
 }
 
+function jsonResponse(data: unknown): Response {
+  return new Response(JSON.stringify(data), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  return typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+}
+
 describe("useChat viewed session state", () => {
   it("restores a watched session on mount without hydrating the parked main chat over it", async () => {
     localStorage.setItem("gobby-viewing-session-id", "sess-view");
@@ -353,6 +367,234 @@ describe("useChat viewed session state", () => {
 
     expect(result.current.sessionInteractionMode).toBe("proxy");
     expect(result.current.attachedSessionId).toBe("sess-view");
+  });
+
+  it("force-refreshes an already observed session when swapping it back", async () => {
+    await loadModule();
+    let messageFetchCount = 0;
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = requestUrl(input);
+      if (url.includes("/api/sessions/sess-swap/messages?limit=100&offset=0")) {
+        messageFetchCount += 1;
+        return jsonResponse({
+          messages:
+            messageFetchCount === 1
+              ? [
+                  {
+                    id: "summary-msg",
+                    role: "assistant",
+                    content: "Summary pane stale content",
+                    timestamp: "2026-04-09T00:00:00Z",
+                    content_blocks: [
+                      { type: "text", content: "Summary pane stale content" },
+                    ],
+                  },
+                ]
+              : [
+                  {
+                    id: "full-user",
+                    role: "user",
+                    content: "Run the checks",
+                    timestamp: "2026-04-09T00:00:01Z",
+                    content_blocks: [{ type: "text", content: "Run the checks" }],
+                  },
+                  {
+                    id: "full-assistant",
+                    role: "assistant",
+                    content: "Full REST transcript",
+                    timestamp: "2026-04-09T00:00:02Z",
+                    content_blocks: [
+                      { type: "text", content: "Full REST transcript" },
+                    ],
+                  },
+                ],
+        });
+      }
+      if (url.includes("/api/sessions/sess-swap")) {
+        return jsonResponse({
+          session: {
+            id: "sess-swap",
+            seq_num: 2312,
+            source: "codex",
+            title: "Swap Terminal",
+            status: "active",
+            model: "gpt-5.4",
+            external_id: "codex-ext-swap",
+            chat_mode: "bypass",
+            git_branch: "main",
+            context_window: 200000,
+            usage_input_tokens: 0,
+            usage_output_tokens: 0,
+            usage_cache_read_tokens: 0,
+            usage_cache_creation_tokens: 0,
+            session_type: "terminal",
+          },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-swap");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.messages.map((message) => message.content)).toEqual([
+      "Summary pane stale content",
+    ]);
+
+    act(() => {
+      result.current.observeSession?.("sess-swap", "observe");
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-swap",
+        external_id: "codex-ext-swap",
+        source: "codex",
+        title: "Swap Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#2312",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    await act(async () => {
+      result.current.viewSession("sess-swap", { forceRefresh: true });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.map((message) => message.content)).toEqual([
+        "Run the checks",
+        "Full REST transcript",
+      ]);
+    });
+    expect(messageFetchCount).toBe(2);
+  });
+
+  it("does not let clearViewingSession restore overwrite a later conversation switch", async () => {
+    localStorage.setItem("gobby-conversation-id", "main-old");
+    localStorage.setItem("gobby-db-session-id", "main-old");
+    localStorage.setItem("gobby-viewing-session-id", "terminal-old");
+    await loadModule();
+
+    let resolveOldMessages: ((response: Response) => void) | null = null;
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = requestUrl(input);
+      if (url.includes("/api/sessions/terminal-old/messages?limit=100&offset=0")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "terminal-msg",
+              role: "assistant",
+              content: "Terminal transcript",
+              timestamp: "2026-04-09T00:00:00Z",
+              content_blocks: [{ type: "text", content: "Terminal transcript" }],
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/sessions/terminal-old")) {
+        return jsonResponse({
+          session: {
+            id: "terminal-old",
+            seq_num: 2412,
+            source: "codex",
+            title: "Old Terminal",
+            status: "active",
+            model: "gpt-5.4",
+            external_id: "terminal-ext-old",
+            session_type: "terminal",
+          },
+        });
+      }
+      if (url.includes("/api/chat/main-old/messages?limit=100&after_seq=0")) {
+        return new Promise<Response>((resolve) => {
+          resolveOldMessages = resolve;
+        });
+      }
+      if (url.includes("/api/chat/main-new/messages?limit=100&after_seq=0")) {
+        return jsonResponse({
+          messages: [
+            {
+              id: "new-main-msg",
+              role: "assistant",
+              content: "New conversation transcript",
+              timestamp: "2026-04-09T00:00:01Z",
+            },
+          ],
+          max_seq: 7,
+        });
+      }
+      if (url.includes("/api/sessions/main-old")) {
+        return jsonResponse({
+          session: { id: "main-old", source: "claude", chat_mode: "plan" },
+        });
+      }
+      if (url.includes("/api/sessions/main-new")) {
+        return jsonResponse({
+          session: {
+            id: "main-new",
+            seq_num: 2501,
+            source: "claude",
+            title: "New Main",
+            status: "active",
+            model: "sonnet",
+            external_id: "main-new-ext",
+            session_type: "web_chat",
+            chat_mode: "plan",
+          },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await waitFor(() => {
+      expect(result.current.messages[0]?.content).toBe("Terminal transcript");
+    });
+
+    act(() => {
+      result.current.clearViewingSession?.();
+      result.current.switchConversation("main-new");
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages[0]?.content).toBe("New conversation transcript");
+    });
+
+    await act(async () => {
+      resolveOldMessages?.(
+        jsonResponse({
+          messages: [
+            {
+              id: "old-main-msg",
+              role: "assistant",
+              content: "Old restored transcript",
+              timestamp: "2026-04-09T00:00:02Z",
+            },
+          ],
+          max_seq: 3,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(result.current.messages[0]?.content).toBe("New conversation transcript");
   });
 
   it("ignores stale detach acknowledgements after swapping watched terminal sessions", async () => {

@@ -388,8 +388,12 @@ Content here.
 
         # Verify provider was fetched for correct hub
         mock_hub_manager.get_provider.assert_called_with("clawdhub")
+        assert mock_hub_manager.get_provider.call_count >= 1
+        assert mock_hub_manager.get_provider.call_args is not None
         # Verify download_skill was called
         mock_provider.download_skill.assert_called_once()
+        assert mock_provider.download_skill.call_count == 1
+        assert mock_provider.download_skill.call_args is not None
 
     @pytest.mark.asyncio
     async def test_install_skill_hub_unknown_hub(self, db, mock_hub_manager):

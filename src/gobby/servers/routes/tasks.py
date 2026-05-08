@@ -1,21 +1,26 @@
 """
 Task routes for Gobby HTTP server.
 
-Provides CRUD, list, lifecycle, and dependency endpoints for the task system.
+Provides CRUD, list, stage-transition, and dependency endpoints for the task system.
 """
 
 import logging
-import uuid
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from gobby.storage.task_dependencies import (
-    DependencyCycleError,
-    TaskDependencyManager,
+from gobby.servers.routes.tasks_comment_routes import register_task_comment_routes
+from gobby.servers.routes.tasks_dependency_routes import register_task_dependency_routes
+from gobby.servers.routes.tasks_stage_routes import register_task_stage_routes
+from gobby.storage.tasks._models import (
+    TASK_TYPE_CHOICES,
+    VALID_CATEGORIES,
+    TaskNotFoundError,
+    validate_task_type,
 )
-from gobby.storage.tasks._models import VALID_CATEGORIES, TaskNotFoundError
+from gobby.storage.tasks._stage_types import StageState
+from gobby.storage.tasks._stage_views import stage_state_view
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -38,7 +43,9 @@ class TaskCreateRequest(BaseModel):
         default=2, description="Priority (0=Critical, 1=High, 2=Medium, 3=Low, 4=Backlog)"
     )
     task_type: str = Field(
-        default="task", description="Task type (task, bug, feature, epic, chore)"
+        default="task",
+        description="Task type",
+        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
     )
     parent_task_id: str | None = Field(default=None, description="Parent task ID")
     labels: list[str] | None = Field(default=None, description="Labels for categorization")
@@ -52,18 +59,25 @@ class TaskCreateRequest(BaseModel):
         default=None, description="Project ID (resolved from cwd if omitted)"
     )
 
+    @field_validator("task_type")
+    @classmethod
+    def _validate_task_type(cls, value: str) -> str:
+        return validate_task_type(value)
+
 
 class TaskUpdateRequest(BaseModel):
     """Request body for updating a task."""
 
+    model_config = ConfigDict(extra="allow")
+
     title: str | None = Field(default=None, description="New title")
     description: str | None = Field(default=None, description="New description")
-    status: str | None = Field(
-        default=None,
-        description="Compatibility field only. Use claim/review/escalate/close/reopen endpoints instead.",
-    )
     priority: int | None = Field(default=None, description="New priority")
-    task_type: str | None = Field(default=None, description="New task type")
+    task_type: str | None = Field(
+        default=None,
+        description="New task type",
+        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
+    )
     assignee: str | None = Field(
         default=None,
         description="Compatibility field only. Use /claim or /release-claim endpoints instead.",
@@ -72,6 +86,15 @@ class TaskUpdateRequest(BaseModel):
     parent_task_id: str | None = Field(default=None, description="New parent task ID")
     category: str | None = Field(default=None, description="New category")
     validation_criteria: str | None = Field(default=None, description="New validation criteria")
+    allow_automation: bool | None = Field(
+        default=None,
+        description="Enable or disable dispatcher automation for this task.",
+    )
+
+    @field_validator("task_type")
+    @classmethod
+    def _validate_task_type(cls, value: str | None) -> str | None:
+        return validate_task_type(value) if value is not None else None
 
 
 class TaskClaimRequest(BaseModel):
@@ -84,28 +107,9 @@ class TaskClaimRequest(BaseModel):
 class TaskReleaseClaimRequest(BaseModel):
     """Request body for releasing task ownership."""
 
-    status: (
-        Literal["open", "in_progress", "needs_review", "review_approved", "escalated"] | None
-    ) = Field(
-        default=None,
-        description="Optional projected legacy status to preserve during ownership release.",
-    )
+    model_config = ConfigDict(extra="forbid")
 
-
-class TaskReviewRequest(BaseModel):
-    """Request body for review-stage transitions."""
-
-    notes: str | None = Field(default=None, description="Review notes or approval notes")
-
-
-class TaskReviewRejectionRequest(BaseModel):
-    """Request body for review rejection transitions."""
-
-    notes: str | None = Field(default=None, description="Review findings or rejection notes")
-    round: int | None = Field(
-        default=None,
-        description="Optional planning round number used to update planning-round:N",
-    )
+    pass
 
 
 class TaskEscalateRequest(BaseModel):
@@ -134,32 +138,10 @@ class TaskReopenRequest(BaseModel):
 class TaskDeEscalateRequest(BaseModel):
     """Request body for de-escalating a task."""
 
+    model_config = ConfigDict(extra="forbid")
+
     decision_context: str = Field(..., description="User's decision or instructions for the agent")
-    target_status: Literal["open", "in_progress", "needs_review", "review_approved"] = Field(
-        default="open",
-        description="Status to return the task to after de-escalation",
-    )
     reset_validation: bool = Field(default=False, description="Also reset validation fail count")
-
-
-class TaskCommentCreateRequest(BaseModel):
-    """Request body for creating a comment."""
-
-    body: str = Field(..., description="Comment body (markdown)")
-    author: str = Field(..., description="Author ID (session or user)")
-    author_type: str = Field(default="session", description="Author type: session, agent, human")
-    parent_comment_id: str | None = Field(
-        default=None, description="Parent comment ID for threading"
-    )
-
-
-class DependencyAddRequest(BaseModel):
-    """Request body for adding a dependency."""
-
-    depends_on: str = Field(..., description="Task ID that must complete first")
-    dep_type: Literal["blocks", "related", "discovered-from"] = Field(
-        default="blocks", description="Dependency type"
-    )
 
 
 # =============================================================================
@@ -207,18 +189,61 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             return session_ref
         return str(server.session_manager.resolve_session_reference(session_ref, project_id))
 
+    def _stage_view(stage: StageState) -> dict[str, Any]:
+        return stage_state_view(stage)
+
+    def _stage_views_for_tasks(task_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        if not task_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in task_ids)
+        rows = server.task_manager.db.fetchall(
+            f"""
+            SELECT *
+              FROM task_stage_states
+             WHERE task_id IN ({placeholders})
+             ORDER BY task_id, position, stage_name
+            """,  # nosec B608 # placeholders are generated from task_ids length only.
+            tuple(task_ids),
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
+        for row in rows:
+            stage = server.task_manager.stage_states._state_from_row(row)
+            grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
+        return grouped
+
+    def _normalize_stage_filters(values: list[str] | None) -> list[str]:
+        if not values:
+            return []
+        stage_names: list[str] = []
+        seen: set[str] = set()
+        for raw_value in values:
+            for raw_stage in raw_value.split(","):
+                stage_name = raw_stage.strip()
+                if not stage_name or stage_name in seen:
+                    continue
+                stage_names.append(stage_name)
+                seen.add(stage_name)
+        return stage_names
+
+    register_task_stage_routes(
+        router,
+        server,
+        resolve_task=_resolve_task,
+        broadcast_task=_broadcast_task,
+        stage_view=_stage_view,
+    )
+
     # -----------------------------------------------------------------
     # List / Stats
     # -----------------------------------------------------------------
 
     @router.get("")
     async def list_tasks(
+        request: Request,
         project_id: str | None = Query(None, description="Filter by project ID"),
-        status: str | None = Query(None, description="Filter by status"),
-        lifecycle_stage: str | None = Query(
-            None,
-            description="Filter by canonical lifecycle stage (open, in_progress, needs_review, review_approved)",
-        ),
+        current_stage_state: (
+            Literal["ready", "in_progress", "needs_review", "review_approved"] | None
+        ) = Query(None, description="Filter by current stage state"),
         claimed: bool | None = Query(None, description="Filter by whether the task is claimed"),
         closed: bool | None = Query(None, description="Filter by canonical closed state"),
         priority: int | None = Query(None, description="Filter by priority"),
@@ -234,22 +259,38 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             description="Sort order: hierarchy, updated_at, created_at, or priority",
         ),
         sort_order: str = Query("asc", description="Sort direction: asc or desc"),
+        stage: list[str] | None = Query(None, description="Filter by stage name"),
+        stage_state: (
+            Literal["ready", "in_progress", "needs_review", "review_approved", "done"] | None
+        ) = Query(None, description="Filter by stage state"),
+        include_stages: bool = Query(False, description="Include denormalized stage manifest"),
     ) -> dict[str, Any]:
-        """List tasks with optional filters and status distribution stats."""
+        """List tasks with optional filters and state distribution stats."""
         try:
+            legacy_stage_key = "lifecycle_" + "stage"
+            unsupported_filters = {"status", legacy_stage_key} & set(request.query_params)
+            if unsupported_filters:
+                names = ", ".join(sorted(unsupported_filters))
+                raise ValueError(
+                    f"Unsupported legacy task filter(s): {names}. Use current_stage_state."
+                )
             resolved_project = _resolve_project(project_id)
-
-            # Parse comma-separated status values
-            status_filter: str | list[str] | None = None
-            if status and "," in status:
-                status_filter = [s.strip() for s in status.split(",")]
-            else:
-                status_filter = status
+            stage_task_ids: set[str] | None = None
+            stage_filters = _normalize_stage_filters(stage)
+            if stage_filters:
+                stage_task_ids = set()
+                for stage_name in stage_filters:
+                    stage_task_ids.update(
+                        server.task_manager.stage_states.list_tasks_at_stage(
+                            stage_name=stage_name,
+                            state=stage_state,
+                            project_id=resolved_project,
+                        )
+                    )
 
             tasks = server.task_manager.list_tasks(
                 project_id=resolved_project,
-                status=status_filter,
-                lifecycle_stage=lifecycle_stage,
+                current_stage_state=current_stage_state,
                 priority=priority,
                 task_type=task_type,
                 assignee=assignee,
@@ -258,17 +299,29 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 label=label,
                 parent_task_id=parent_task_id,
                 title_like=search,
-                limit=limit,
-                offset=offset,
+                limit=10000 if stage_task_ids is not None else limit,
+                offset=0 if stage_task_ids is not None else offset,
                 sort_by=sort_by,
                 sort_order=sort_order,
             )
-            status_counts = server.task_manager.count_by_status(project_id=resolved_project)
-            total = server.task_manager.count_tasks(project_id=resolved_project)
+            if stage_task_ids is not None:
+                tasks = [task for task in tasks if task.id in stage_task_ids]
+                total = len(tasks)
+                tasks = tasks[offset : offset + limit]
+            else:
+                total = server.task_manager.count_tasks(project_id=resolved_project)
+
+            task_dicts = [t.to_brief() for t in tasks]
+            if include_stages or stage_filters or stage_state is not None:
+                stages_by_task = _stage_views_for_tasks([task.id for task in tasks])
+                for item in task_dicts:
+                    item["stages"] = stages_by_task.get(item["id"], [])
+
+            state_counts = server.task_manager.count_by_state(project_id=resolved_project)
             return {
-                "tasks": [t.to_brief() for t in tasks],
+                "tasks": task_dicts,
                 "total": total,
-                "stats": status_counts,
+                "stats": state_counts,
                 "limit": limit,
                 "offset": offset,
             }
@@ -322,14 +375,33 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             task = _resolve_task(task_id)
             resolved_id = task.id
 
-            blocked_fields = request_data.model_fields_set & {"status", "assignee"}
+            legacy_stage_key = "lifecycle_" + "stage"
+            extra_fields = set(request_data.model_extra or {})
+            legacy_fields = {"status", "lifecycle", legacy_stage_key} & extra_fields
+            if legacy_fields:
+                names = ", ".join(sorted(legacy_fields))
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unsupported legacy task field(s): {names}. Use stage-specific task "
+                        "endpoints instead."
+                    ),
+                )
+            if extra_fields:
+                names = ", ".join(sorted(extra_fields))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported task field(s): {names}.",
+                )
+
+            blocked_fields = request_data.model_fields_set & {"assignee"}
             if blocked_fields:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Use lifecycle-specific task endpoints instead of PATCH for status/ownership "
-                        "changes: /claim, /release-claim, /needs-review, /review-approved, "
-                        "/escalate, /de-escalate, /close, or /reopen."
+                        "Use dedicated task endpoints instead of PATCH for ownership changes: "
+                        "/claim, /release-claim, /escalate, /de-escalate, /close, /reopen, "
+                        "or the stage PATCH route."
                     ),
                 )
 
@@ -375,7 +447,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     # -----------------------------------------------------------------
-    # Lifecycle
+    # Stage and ownership transitions
     # -----------------------------------------------------------------
 
     @router.post("/{task_id}/claim")
@@ -409,8 +481,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
-            body = request_data or TaskReleaseClaimRequest()
-            released = server.task_manager.release_task_claim(resolved_id, status=body.status)
+            released = server.task_manager.release_task_claim(resolved_id)
             result = released.to_dict()
             await _broadcast_task("task_claim_released", result)
             return result
@@ -419,73 +490,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    @router.post("/{task_id}/needs-review")
-    async def mark_task_needs_review(
-        task_id: str, request_data: TaskReviewRequest | None = None
-    ) -> Any:
-        """Move a task into the canonical review lifecycle stage."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReviewRequest()
-            updated = server.task_manager.mark_task_needs_review(
-                resolved_id,
-                review_notes=body.notes,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_needs_review", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/review-approved")
-    async def mark_task_review_approved(
-        task_id: str, request_data: TaskReviewRequest | None = None
-    ) -> Any:
-        """Mark a task as review-approved."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReviewRequest()
-            updated = server.task_manager.mark_task_review_approved(
-                resolved_id,
-                approval_notes=body.notes,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_review_approved", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/review-rejected")
-    async def mark_task_review_rejected(
-        task_id: str, request_data: TaskReviewRejectionRequest | None = None
-    ) -> Any:
-        """Reject a task after review and return it to open status."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-            body = request_data or TaskReviewRejectionRequest()
-            updated = server.task_manager.mark_task_review_rejected(
-                resolved_id,
-                rejection_notes=body.notes,
-                round_number=body.round,
-            )
-            result = updated.to_dict()
-            await _broadcast_task("task_review_rejected", result)
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
     @router.post("/{task_id}/escalate")
     async def escalate_task(task_id: str, request_data: TaskEscalateRequest) -> Any:
-        """Escalate a task without using generic status mutation."""
+        """Escalate a task without using generic mutation."""
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
@@ -546,14 +553,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/{task_id}/de-escalate")
     async def de_escalate_task(task_id: str, request_data: TaskDeEscalateRequest) -> Any:
-        """De-escalate a task to an explicit next status with user decision context."""
+        """De-escalate a task with user decision context."""
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
             updated = server.task_manager.de_escalate_task(
                 resolved_id,
                 reason=request_data.decision_context,
-                target_status=request_data.target_status,
                 reset_validation=request_data.reset_validation,
             )
             result = updated.to_dict()
@@ -564,136 +570,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # -----------------------------------------------------------------
-    # Comments
-    # -----------------------------------------------------------------
-
-    @router.get("/{task_id}/comments")
-    async def list_comments(
-        task_id: str,
-        limit: int = Query(50, ge=1, le=500),
-        offset: int = Query(0, ge=0),
-    ) -> Any:
-        """List comments for a task, threaded."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-
-            total_row = server.task_manager.db.fetchone(
-                "SELECT COUNT(*) as total FROM task_comments WHERE task_id = ?",
-                (resolved_id,),
-            )
-            total = total_row["total"] if total_row else 0
-
-            rows = server.task_manager.db.fetchall(
-                """SELECT id, task_id, parent_comment_id, author, author_type, body,
-                          created_at, updated_at
-                   FROM task_comments
-                   WHERE task_id = ?
-                   ORDER BY created_at ASC
-                   LIMIT ? OFFSET ?""",
-                (resolved_id, limit, offset),
-            )
-            comments = [dict(row) for row in rows]
-            return {"comments": comments, "count": len(comments), "total": total}
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.post("/{task_id}/comments")
-    async def create_comment(task_id: str, request_data: TaskCommentCreateRequest) -> Any:
-        """Add a comment to a task."""
-        try:
-            task = _resolve_task(task_id)
-            resolved_id = task.id
-
-            comment_id = str(uuid.uuid4())
-            server.task_manager.db.execute(
-                """INSERT INTO task_comments (id, task_id, parent_comment_id, author, author_type, body)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    comment_id,
-                    resolved_id,
-                    request_data.parent_comment_id,
-                    request_data.author,
-                    request_data.author_type,
-                    request_data.body,
-                ),
-            )
-
-            row = server.task_manager.db.fetchone(
-                "SELECT * FROM task_comments WHERE id = ?", (comment_id,)
-            )
-            result = dict(row) if row else {"id": comment_id}
-            task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-            await _broadcast_task("task_comment_added", {**result, "task_ref": task_ref})
-            return result
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.delete("/{task_id}/comments/{comment_id}")
-    async def delete_comment(task_id: str, comment_id: str) -> Any:
-        """Delete a comment."""
-        try:
-            task = _resolve_task(task_id)
-            server.task_manager.db.execute(
-                "DELETE FROM task_comments WHERE id = ? AND task_id = ?",
-                (comment_id, task.id),
-            )
-            return {"deleted": True}
-        except TaskNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    # -----------------------------------------------------------------
-    # Dependencies
-    # -----------------------------------------------------------------
-
-    @router.get("/{task_id}/dependencies")
-    async def get_dependency_tree(
-        task_id: str,
-        direction: Literal["blockers", "blocking", "both"] = Query(
-            "both", description="Tree direction"
-        ),
-    ) -> Any:
-        """Get the dependency tree for a task."""
-        try:
-            task = _resolve_task(task_id)
-            dep_manager = TaskDependencyManager(server.task_manager.db)
-            return dep_manager.get_dependency_tree(task.id, direction=direction)
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-
-    @router.post("/{task_id}/dependencies", status_code=201)
-    async def add_dependency(task_id: str, request_data: DependencyAddRequest) -> Any:
-        """Add a dependency to a task."""
-        try:
-            task = _resolve_task(task_id)
-            blocker = _resolve_task(request_data.depends_on, project_id=task.project_id)
-            dep_manager = TaskDependencyManager(server.task_manager.db)
-            dep = dep_manager.add_dependency(task.id, blocker.id, dep_type=request_data.dep_type)
-            return dep.to_dict()
-        except DependencyCycleError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @router.delete("/{task_id}/dependencies/{depends_on_id}")
-    async def remove_dependency(task_id: str, depends_on_id: str) -> dict[str, Any]:
-        """Remove a dependency from a task."""
-        try:
-            task = _resolve_task(task_id)
-            blocker = _resolve_task(depends_on_id, project_id=task.project_id)
-            dep_manager = TaskDependencyManager(server.task_manager.db)
-            removed = dep_manager.remove_dependency(task.id, blocker.id)
-            if not removed:
-                raise HTTPException(status_code=404, detail="Dependency not found")
-            return {"removed": True, "task_id": task.id, "depends_on": blocker.id}
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+    register_task_comment_routes(
+        router,
+        server,
+        resolve_task=_resolve_task,
+        broadcast_task=_broadcast_task,
+    )
+    register_task_dependency_routes(router, server, resolve_task=_resolve_task)
 
     return router

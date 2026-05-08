@@ -87,6 +87,8 @@ async def test_broadcaster_skips_disabled_events():
 
     # Should NOT have been called since session-start is not enabled
     mock_ws.broadcast.assert_not_called()
+    assert mock_ws.broadcast.call_count == 0
+    assert not mock_ws.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -111,5 +113,6 @@ async def test_broadcaster_handles_no_websocket_server():
         data={},
     )
 
-    # Should not raise
-    await broadcaster.broadcast_event(event)
+    result = await broadcaster.broadcast_event(event)
+    assert result is None
+    assert broadcaster.websocket_server is None

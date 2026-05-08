@@ -40,6 +40,7 @@ class Worktree:
     merged_at: str | None
     merge_state: str | None = None  # "pending", "resolved", or None
     cleanup_after: str | None = None  # ISO timestamp for auto-cleanup after merge
+    workspace_role: str = "task"
 
     @classmethod
     def from_row(cls, row: Any) -> Worktree:
@@ -68,6 +69,7 @@ class Worktree:
             merged_at=row["merged_at"],
             merge_state=_safe_get("merge_state"),
             cleanup_after=_safe_get("cleanup_after"),
+            workspace_role=_safe_get("workspace_role") or "task",
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,6 +88,7 @@ class Worktree:
             "merged_at": self.merged_at,
             "merge_state": self.merge_state,
             "cleanup_after": self.cleanup_after,
+            "workspace_role": self.workspace_role,
         }
 
 
@@ -104,6 +107,7 @@ class LocalWorktreeManager:
         base_branch: str = "main",
         task_id: str | None = None,
         agent_session_id: str | None = None,
+        workspace_role: str = "task",
     ) -> Worktree:
         """
         Create a new worktree record.
@@ -126,9 +130,10 @@ class LocalWorktreeManager:
             """
             INSERT INTO worktrees (
                 id, project_id, task_id, branch_name, worktree_path,
-                base_branch, agent_session_id, status, created_at, updated_at
+                base_branch, agent_session_id, status, created_at, updated_at,
+                workspace_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 worktree_id,
@@ -141,6 +146,7 @@ class LocalWorktreeManager:
                 WorktreeStatus.ACTIVE.value,
                 now,
                 now,
+                workspace_role,
             ),
         )
 
@@ -156,6 +162,7 @@ class LocalWorktreeManager:
             created_at=now,
             updated_at=now,
             merged_at=None,
+            workspace_role=workspace_role,
         )
 
     def get(self, worktree_id: str) -> Worktree | None:
@@ -241,6 +248,7 @@ class LocalWorktreeManager:
             "merged_at",
             "merge_state",
             "cleanup_after",
+            "workspace_role",
         }
     )
 

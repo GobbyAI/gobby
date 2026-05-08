@@ -24,6 +24,8 @@ const PROTOCOL_TOOL_TAGS = [
   'system_instructions',
   'instructions',
   'skills_instructions',
+  'plugins_instructions',
+  'plugin_instructions',
 ] as const
 
 const INLINE_WRAPPER_PROTOCOL_TAGS = [
@@ -34,8 +36,16 @@ const INLINE_WRAPPER_PROTOCOL_TAGS = [
 
 const PROTOCOL_CHILD_RE = /\s*<(?<tag>[\w:-]+)>(?<body>.*?)<\/\k<tag>\s*>/sy
 const PROTOCOL_ATTR_RE = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+const PROTOCOL_CODE_SPAN_RE = /```[\s\S]*?```|`[^`\n]*(?:`|$)/g
 const MAX_PROTOCOL_PARSE_DEPTH = 10
 const MAX_PROTOCOL_CONTENT_LENGTH = 200_000
+const SYSTEM_BOOTSTRAP_PREFIX_RE =
+  /^\s*(?:#\s*)?(?:AGENTS\.md instructions for\b|System(?: instructions|:)|Gobby Session ID:)/i
+
+interface TextRange {
+  start: number
+  end: number
+}
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -48,10 +58,12 @@ function buildTagPattern(tags: readonly string[]): string {
 const protocolToolTagPattern = buildTagPattern(PROTOCOL_TOOL_TAGS)
 const inlineWrapperTagPattern = buildTagPattern(INLINE_WRAPPER_PROTOCOL_TAGS)
 
-const protocolToolRe = new RegExp(
-  `<(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>(?<body>(?:[^<]|<(?!\\/\\k<tag>\\s*>))*)<\\/\\k<tag>\\s*>`,
-  'gi',
-)
+function makeProtocolTagRe(): RegExp {
+  return new RegExp(
+    `<(?<closing>\\/)?(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>`,
+    'gi',
+  )
+}
 
 const inlineWrapperProtocolTagRe = new RegExp(
   `</?(?:${inlineWrapperTagPattern})(?=[\\s>])[^>]*>`,
@@ -61,6 +73,14 @@ const inlineWrapperProtocolTagRe = new RegExp(
 export type ProtocolContentSegment =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; call: ToolCall }
+
+interface ProtocolToolMatch {
+  index: number
+  end: number
+  tag: string
+  attrs: string
+  body: string
+}
 
 function sanitizeVisibleProtocolText(content: string): string {
   if (!content.includes('<')) {
@@ -72,7 +92,45 @@ function sanitizeVisibleProtocolText(content: string): string {
 }
 
 function shouldParseProtocolContent(content: string): boolean {
-  return content.includes('<') && content.length <= MAX_PROTOCOL_CONTENT_LENGTH
+  return (
+    content.length <= MAX_PROTOCOL_CONTENT_LENGTH &&
+    (content.includes('<') || looksLikeSystemBootstrapText(content))
+  )
+}
+
+function looksLikeSystemBootstrapText(content: string): boolean {
+  const stripped = content.trim()
+  if (!stripped) {
+    return false
+  }
+
+  return SYSTEM_BOOTSTRAP_PREFIX_RE.test(stripped)
+}
+
+function findProtocolProtectedRanges(content: string): TextRange[] {
+  const ranges: TextRange[] = []
+  PROTOCOL_CODE_SPAN_RE.lastIndex = 0
+
+  let match = PROTOCOL_CODE_SPAN_RE.exec(content)
+  while (match) {
+    ranges.push({ start: match.index, end: PROTOCOL_CODE_SPAN_RE.lastIndex })
+    match = PROTOCOL_CODE_SPAN_RE.exec(content)
+  }
+
+  return ranges
+}
+
+function isProtectedProtocolIndex(index: number, ranges: TextRange[]): boolean {
+  for (const range of ranges) {
+    if (index < range.start) {
+      return false
+    }
+    if (index < range.end) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function parseProtocolAttributes(attrText: string): Record<string, string> | undefined {
@@ -123,6 +181,92 @@ function parseProtocolPayload(content: string, depth = 0): unknown {
   return trimmed
 }
 
+function findMatchingProtocolClose(
+  content: string,
+  startIndex: number,
+  normalizedTag: string,
+  protectedRanges: TextRange[],
+): RegExpExecArray | null {
+  const protocolTagRe = makeProtocolTagRe()
+  let depth = 1
+  protocolTagRe.lastIndex = startIndex
+
+  let match = protocolTagRe.exec(content)
+  while (match) {
+    if (!match.groups) {
+      match = protocolTagRe.exec(content)
+      continue
+    }
+    if (isProtectedProtocolIndex(match.index, protectedRanges)) {
+      match = protocolTagRe.exec(content)
+      continue
+    }
+    if (match.groups.tag.toLowerCase() !== normalizedTag) {
+      match = protocolTagRe.exec(content)
+      continue
+    }
+
+    if (match.groups.closing) {
+      depth -= 1
+      if (depth === 0) {
+        return match
+      }
+    } else {
+      depth += 1
+    }
+    match = protocolTagRe.exec(content)
+  }
+
+  return null
+}
+
+function findProtocolToolMatches(content: string): ProtocolToolMatch[] {
+  const protocolTagRe = makeProtocolTagRe()
+  const matches: ProtocolToolMatch[] = []
+  const protectedRanges = findProtocolProtectedRanges(content)
+  protocolTagRe.lastIndex = 0
+
+  let match = protocolTagRe.exec(content)
+  while (match) {
+    if (
+      !match.groups ||
+      match.groups.closing ||
+      match.index === undefined ||
+      isProtectedProtocolIndex(match.index, protectedRanges)
+    ) {
+      match = protocolTagRe.exec(content)
+      continue
+    }
+
+    const openEnd = match.index + match[0].length
+    const normalizedTag = match.groups.tag.toLowerCase()
+    const closingMatch = findMatchingProtocolClose(
+      content,
+      openEnd,
+      normalizedTag,
+      protectedRanges,
+    )
+    if (!closingMatch?.groups || closingMatch.index === undefined) {
+      protocolTagRe.lastIndex = openEnd
+      match = protocolTagRe.exec(content)
+      continue
+    }
+
+    const end = closingMatch.index + closingMatch[0].length
+    matches.push({
+      index: match.index,
+      end,
+      tag: match.groups.tag,
+      attrs: match.groups.attrs,
+      body: content.slice(openEnd, closingMatch.index),
+    })
+    protocolTagRe.lastIndex = end
+    match = protocolTagRe.exec(content)
+  }
+
+  return matches
+}
+
 function makeProtocolToolCall(
   tag: string,
   body: string,
@@ -143,11 +287,40 @@ function makeProtocolToolCall(
     arguments: attributes ? { tag: normalizedTag, attributes } : { tag: normalizedTag },
     result: {
       content: resultContent,
-      content_type: typeof resultContent === 'object' && resultContent !== null ? 'json' : 'text',
+      kind: typeof resultContent === 'object' && resultContent !== null ? 'json' : 'text',
       truncated: false,
       metadata: { protocol_tag: normalizedTag },
     },
   }
+}
+
+function appendVisibleProtocolContent(
+  segments: ProtocolContentSegment[],
+  content: string,
+  idPrefix: string,
+  ordinal: number,
+): number {
+  if (!content.trim()) {
+    return ordinal
+  }
+
+  if (looksLikeSystemBootstrapText(content)) {
+    const nextOrdinal = ordinal + 1
+    segments.push({
+      type: 'tool_call',
+      call: makeProtocolToolCall(
+        'system_instructions',
+        content.trim(),
+        '',
+        idPrefix,
+        nextOrdinal,
+      ),
+    })
+    return nextOrdinal
+  }
+
+  segments.push({ type: 'text', content })
+  return ordinal
 }
 
 export function splitProtocolContent(
@@ -162,41 +335,35 @@ export function splitProtocolContent(
   let lastIndex = 0
   let ordinal = 0
 
-  for (const match of content.matchAll(protocolToolRe)) {
-    if (!match.groups || match.index === undefined) {
-      continue
-    }
-
+  for (const match of findProtocolToolMatches(content)) {
     const visibleText = sanitizeVisibleProtocolText(content.slice(lastIndex, match.index)).trimEnd()
-    if (visibleText.trim()) {
-      segments.push({ type: 'text', content: visibleText })
-    }
+    ordinal = appendVisibleProtocolContent(segments, visibleText, idPrefix, ordinal)
 
     ordinal += 1
     segments.push({
       type: 'tool_call',
       call: makeProtocolToolCall(
-        match.groups.tag,
-        match.groups.body,
-        match.groups.attrs,
+        match.tag,
+        match.body,
+        match.attrs,
         idPrefix,
         ordinal,
       ),
     })
-    lastIndex = match.index + match[0].length
+    lastIndex = match.end
   }
 
   const trailingText = sanitizeVisibleProtocolText(content.slice(lastIndex)).trimStart()
-  if (trailingText.trim()) {
-    segments.push({ type: 'text', content: trailingText })
-  }
+  appendVisibleProtocolContent(segments, trailingText, idPrefix, ordinal)
 
   if (segments.length > 0) {
     return segments
   }
 
   const sanitized = sanitizeVisibleProtocolText(content)
-  return sanitized.trim() ? [{ type: 'text', content: sanitized }] : []
+  const fallbackSegments: ProtocolContentSegment[] = []
+  appendVisibleProtocolContent(fallbackSegments, sanitized, idPrefix, 0)
+  return fallbackSegments
 }
 
 export function hasProtocolToolContent(content: string): boolean {
@@ -204,6 +371,5 @@ export function hasProtocolToolContent(content: string): boolean {
     return false
   }
 
-  protocolToolRe.lastIndex = 0
-  return protocolToolRe.test(content)
+  return findProtocolToolMatches(content).length > 0 || looksLikeSystemBootstrapText(content)
 }

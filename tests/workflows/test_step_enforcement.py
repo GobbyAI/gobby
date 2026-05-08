@@ -92,14 +92,14 @@ _DEVELOPER_WORKFLOW = {
             "allowed_tools": "all",
             "blocked_mcp_tools": [
                 "gobby-tasks:close_task",
-                "gobby-tasks:mark_task_review_approved",
+                "gobby-tasks-ops:approve_review",
                 "gobby-agents:spawn_agent",
                 "gobby-agents:kill_agent",
             ],
             "on_mcp_success": [
                 {
-                    "server": "gobby-tasks",
-                    "tool": "mark_task_needs_review",
+                    "server": "gobby-tasks-ops",
+                    "tool": "submit_for_review",
                     "action": "set_variable",
                     "variable": "review_submitted",
                     "value": True,
@@ -447,15 +447,15 @@ class TestStepTransitions:
     async def test_implement_to_terminate_transition(
         self, db, manager, engine, instance_mgr
     ) -> None:
-        """mark_task_needs_review in implement step should transition to terminate."""
+        """submit_for_review in implement step should transition to terminate."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
         event = _make_event(
             event_type=HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "mark_task_needs_review",
+                    "server_name": "gobby-tasks-ops",
+                    "tool_name": "submit_for_review",
                 },
             },
         )
@@ -534,8 +534,8 @@ class TestStepTransitions:
                     "allowed_tools": "all",
                     "on_mcp_success": [
                         {
-                            "server": "gobby-tasks",
-                            "tool": "mark_task_needs_review",
+                            "server": "gobby-tasks-ops",
+                            "tool": "submit_for_review",
                             "action": "set_variable",
                             "variable": "done",
                             "value": True,
@@ -559,8 +559,8 @@ class TestStepTransitions:
             data={
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "mark_task_needs_review",
+                    "server_name": "gobby-tasks-ops",
+                    "tool_name": "submit_for_review",
                 },
             },
         )
@@ -1211,3 +1211,73 @@ class TestStepEnforcementAfterTransition:
 
         response = await engine.evaluate(event, session_id="test-session", variables=variables)
         assert response.decision == "allow"
+
+
+@pytest.mark.unit
+class TestStepBeforeMcpHandlers:
+    """Test step handlers that run before allowed MCP tools execute."""
+
+    @pytest.mark.asyncio
+    async def test_on_mcp_before_enforces_retry_counter(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        workflow = {
+            "name": "merge-retry-test",
+            "version": "1.0",
+            "variables": {"merge_retry_count": 0},
+            "steps": [
+                {
+                    "name": "merge",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": ["gobby-merge:merge_resolve"],
+                    "on_mcp_before": [
+                        {
+                            "server": "gobby-merge",
+                            "tool": "merge_resolve",
+                            "action": "block",
+                            "when": "vars.get('merge_retry_count', 0) >= 3",
+                            "reason": "retry cap reached",
+                        },
+                        {
+                            "server": "gobby-merge",
+                            "tool": "merge_resolve",
+                            "action": "set_variable",
+                            "variable": "merge_retry_count",
+                            "value": "vars.get('merge_retry_count', 0) + 1",
+                        },
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(
+            db,
+            manager,
+            instance_mgr,
+            current_step="merge",
+            workflow_data=workflow,
+        )
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-merge",
+                    "tool_name": "merge_resolve",
+                },
+            }
+        )
+        variables: dict[str, Any] = {}
+
+        for expected_count in (1, 2, 3):
+            response = await engine.evaluate(event, session_id="test-session", variables=variables)
+            assert response.decision == "allow"
+            instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+            assert instance is not None
+            assert instance.variables["merge_retry_count"] == expected_count
+
+        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        assert response.decision == "block"
+        assert "retry cap reached" in response.reason
+        instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+        assert instance is not None
+        assert instance.variables["merge_retry_count"] == 3

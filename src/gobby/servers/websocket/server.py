@@ -23,6 +23,7 @@ from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.auth import AuthMixin
 from gobby.servers.websocket.broadcast import BroadcastMixin
 from gobby.servers.websocket.chat import ChatMixin
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.session_control import SessionControlMixin
@@ -73,6 +74,7 @@ class WebSocketServer(
         session_manager: "SessionManager | None" = None,
         daemon_config: Any = None,
         internal_manager: Any = None,
+        web_chat_session_registry: WebChatSessionRegistry | None = None,
         # Deprecated: kept for backwards-compat callers, ignored
         message_manager: object | None = None,
     ):
@@ -89,6 +91,7 @@ class WebSocketServer(
             message_manager: Deprecated, ignored. Kept for backwards compatibility.
             daemon_config: Optional DaemonConfig for voice and other features.
             internal_manager: Optional InternalRegistryManager for routing to internal MCP servers.
+            web_chat_session_registry: Shared live web-chat session registry.
         """
         self.config = config
         self.mcp_manager = mcp_manager
@@ -107,11 +110,19 @@ class WebSocketServer(
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
 
+        self.web_chat_session_registry = (
+            web_chat_session_registry if web_chat_session_registry else WebChatSessionRegistry()
+        )
+
         # Persistent chat sessions keyed by conversation_id (survive disconnects)
-        self._chat_sessions: dict[str, ChatSessionProtocol] = {}
+        self._chat_sessions: dict[str, ChatSessionProtocol] = (
+            self.web_chat_session_registry.sessions
+        )
 
         # Active chat streaming tasks per conversation_id (for cancellation)
-        self._active_chat_tasks: dict[str, asyncio.Task[None]] = {}
+        self._active_chat_tasks: dict[str, asyncio.Task[None]] = (
+            self.web_chat_session_registry.active_tasks
+        )
 
         # Pending chat modes queued before session creation
         self._pending_modes: dict[str, str] = {}
@@ -362,6 +373,7 @@ class WebSocketServer(
             await self._cancel_active_chat(conv_id)
             await session.stop()
         self._chat_sessions.clear()
+        self.web_chat_session_registry.clear()
         if hasattr(self, "_session_create_locks"):
             self._session_create_locks.clear()
 

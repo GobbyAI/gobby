@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import asyncio
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Query
 
-from gobby.storage.token_events import TokenEventStore
+from gobby.storage.token_events import (
+    VALID_GRANULARITIES,
+    TimeSeriesGranularity,
+    TokenEventStore,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 
-def _bucket_expression(column: str, granularity: str) -> str:
+def _coerce_granularity(value: str) -> TimeSeriesGranularity:
+    if value not in VALID_GRANULARITIES:
+        raise ValueError(f"Unsupported granularity: {value}")
+    return cast(TimeSeriesGranularity, value)
+
+
+def _bucket_expression(column: str, granularity: TimeSeriesGranularity) -> str:
     if granularity == "30m":
         return (
             "CASE "
@@ -36,10 +47,12 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
         """Return event-time buckets of tokens spent and tokens saved."""
         db = server.services.database
         store = TokenEventStore(db)
-        spent_rows = store.get_timeseries(
+        bucket_granularity = _coerce_granularity(granularity)
+        spent_rows = await asyncio.to_thread(
+            store.get_timeseries,
             hours=hours,
             project_id=project_id,
-            granularity=granularity,  # type: ignore[arg-type]
+            granularity=bucket_granularity,
         )
         spent_by_bucket = {row["timestamp"]: row["tokens_spent"] for row in spent_rows}
 
@@ -55,8 +68,9 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
         where = " ".join(clauses)
         # _bucket_expression() is safe to interpolate here because FastAPI validates
         # granularity against ^(30m|1h|1d)$ before this query reaches db.fetchall().
-        bucket_expr = _bucket_expression("created_at", granularity)
-        rows = db.fetchall(
+        bucket_expr = _bucket_expression("created_at", bucket_granularity)
+        rows = await asyncio.to_thread(
+            db.fetchall,
             f"""
             SELECT
                 {bucket_expr} AS bucket,
@@ -86,6 +100,6 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
 
         return {
             "hours": hours,
-            "granularity": granularity,
+            "granularity": bucket_granularity,
             "buckets": buckets,
         }

@@ -38,12 +38,35 @@ vi.mock('../TaskStatusStrip', () => ({
 // Import after mocks
 import { TaskTree } from '../TaskTree'
 
+const readyState = {
+  current_stage: null,
+  owner_session_id: null,
+  is_claimed: false,
+  is_closed: false,
+  is_escalated: false,
+  is_blocked: false,
+  is_merge_ready: false,
+  closed_at: null,
+  closed_reason: null,
+  closed_in_session_id: null,
+  closed_commit_sha: null,
+  escalated_at: null,
+  escalation_reason: null,
+}
+
+const closedState = {
+  ...readyState,
+  is_closed: true,
+  closed_at: '2026-03-01T12:00:00Z',
+}
+
 const SAMPLE_TASKS: GobbyTask[] = [
   {
     id: 'task-1',
     ref: '#100',
     title: 'Parent task',
-    status: 'open',
+    status: 'ready',
+    state: readyState,
     priority: 1,
     task_type: 'task',
     parent_task_id: null,
@@ -58,12 +81,15 @@ const SAMPLE_TASKS: GobbyTask[] = [
     start_date: null,
     due_date: null,
     project_id: 'proj-1',
+    current_stage: null,
+    stages: [],
   },
   {
     id: 'task-2',
     ref: '#101',
     title: 'Child task',
-    status: 'open',
+    status: 'ready',
+    state: readyState,
     priority: 2,
     task_type: 'task',
     parent_task_id: 'task-1',
@@ -78,12 +104,16 @@ const SAMPLE_TASKS: GobbyTask[] = [
     start_date: null,
     due_date: null,
     project_id: 'proj-1',
+    current_stage: null,
+    stages: [],
   },
   {
     id: 'task-3',
     ref: '#102',
     title: 'Closed task',
     status: 'closed',
+    state: closedState,
+    closed_at: '2026-03-01T12:00:00Z',
     priority: 3,
     task_type: 'task',
     parent_task_id: null,
@@ -98,6 +128,8 @@ const SAMPLE_TASKS: GobbyTask[] = [
     start_date: null,
     due_date: null,
     project_id: 'proj-1',
+    current_stage: null,
+    stages: [],
   },
 ]
 

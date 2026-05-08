@@ -9,44 +9,48 @@ import {
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
-import "../tasks/task-execution.css";
-import type { GobbyTask } from "../../hooks/useTasks";
-import { PriorityBadge, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
+import { useStagesRegistry } from "../../hooks/useStagesRegistry";
+import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
+import { PriorityBadge, StatusDot, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
-  getTaskBucket,
-  TASK_BUCKET_COLORS,
-  TASK_BUCKET_LABELS,
-  type TaskBucket,
+  getTaskDisplayState,
+  getTaskStateSummary,
 } from "../../lib/taskState";
+import {
+  normalizeTaskPayload,
+  normalizeTaskPayloads,
+  type RawTaskPayload,
+} from "../../lib/taskNormalization";
+import {
+  buildTree,
+  collectExpandableNodeIds,
+  collectVisibleTaskRows,
+  compareTasksForDisplay,
+  DEFAULT_FILTERS,
+  filterTreeBySearch,
+  getStageStateColor,
+  matchesTaskFilter,
+  PRIORITY_TEXT_COLORS,
+  PRIORITY_TEXT_WEIGHTS,
+  RECENT_CLOSED_TASK_LIMIT,
+  type TaskFilterKey,
+  type VisibleTaskRow,
+} from "./TasksTabModel";
+import { TasksTabFilters } from "./TasksTabFilters";
 import {
   TasksTabDetailPanel,
   type GobbyTaskDetail,
+  type ParentTaskRef,
 } from "./TasksTabDetailPanel";
+import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
+import { ActivityPanelSearch } from "./ActivityPanelSearch";
 
 interface TasksTabProps {
   projectId?: string | null;
   chatSessionId?: string | null;
 }
-
-// =============================================================================
-// Tree node type (mirrors TaskTree.tsx)
-// =============================================================================
-
-interface TreeNode {
-  id: string;
-  task: GobbyTask;
-  children: TreeNode[];
-}
-
-interface VisibleTaskRow {
-  node: TreeNode;
-  depth: number;
-  isInternal: boolean;
-  isOpen: boolean;
-}
-
-type TaskFilterKey = TaskBucket | "escalated";
 
 interface TaskContextMenu {
   x: number;
@@ -54,261 +58,73 @@ interface TaskContextMenu {
   task: GobbyTask;
 }
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-const LIFECYCLE_BUCKETS: TaskBucket[] = [
-  "ready",
-  "in_progress",
-  "review",
-  "merge_ready",
-];
-const STATUS_FILTERS: TaskFilterKey[] = ["blocked", "escalated", "closed"];
-const DEFAULT_FILTERS = new Set<TaskFilterKey>([
-  ...LIFECYCLE_BUCKETS,
-  "blocked",
-  "escalated",
-]);
-const RECENT_CLOSED_TASK_LIMIT = 20;
-
-const STATUS_DOT_COLORS = TASK_BUCKET_COLORS;
-
-const PRIORITY_TEXT_COLORS: Record<number, string> = {
-  0: "var(--status-escalated, #ef4444)",
-  1: "var(--status-escalated, #ef4444)",
-  2: "var(--status-progress, #f59e0b)",
-  3: "var(--text-secondary, #a3a3a3)",
-  4: "var(--text-muted, #737373)",
-};
-
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
-function compareTasksForDisplay(a: GobbyTask, b: GobbyTask): number {
-  const priorityDiff = (a.priority ?? 4) - (b.priority ?? 4);
-  if (priorityDiff !== 0) {
-    return priorityDiff;
+function extractTaskPayload(data: unknown): RawTaskPayload | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as { id?: unknown; task?: unknown };
+  if (typeof record.id === "string") return record as RawTaskPayload;
+  if (record.task && typeof record.task === "object") {
+    return record.task as RawTaskPayload;
   }
-
-  const seqA = a.seq_num ?? Number.MAX_SAFE_INTEGER;
-  const seqB = b.seq_num ?? Number.MAX_SAFE_INTEGER;
-  if (seqA !== seqB) {
-    return seqA - seqB;
-  }
-
-  const createdAtDiff = (a.created_at ?? "").localeCompare(b.created_at ?? "");
-  if (createdAtDiff !== 0) {
-    return createdAtDiff;
-  }
-
-  return (a.updated_at ?? "").localeCompare(b.updated_at ?? "");
+  return null;
 }
 
-// =============================================================================
-// Build tree from flat task list (same logic as TaskTree.tsx)
-// =============================================================================
-
-function buildTree(tasks: GobbyTask[]): TreeNode[] {
-  const nodeMap = new Map<string, TreeNode>();
-  const roots: TreeNode[] = [];
-
-  for (const task of tasks) {
-    nodeMap.set(task.id, { id: task.id, task, children: [] });
-  }
-
-  for (const task of tasks) {
-    const node = nodeMap.get(task.id)!;
-    if (task.parent_task_id && nodeMap.has(task.parent_task_id)) {
-      nodeMap.get(task.parent_task_id)!.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  for (const node of nodeMap.values()) {
-    node.children.sort((left, right) =>
-      compareTasksForDisplay(left.task, right.task),
-    );
-  }
-  roots.sort((left, right) => compareTasksForDisplay(left.task, right.task));
-
-  return roots;
+function normalizeActivityTask(raw: RawTaskPayload, fallback?: GobbyTask | null): GobbyTask {
+  return normalizeTaskPayload({
+    ...fallback,
+    ...raw,
+    stages: raw.stages ?? fallback?.stages ?? [],
+    current_stage:
+      raw.current_stage ??
+      raw.state?.current_stage ??
+      fallback?.current_stage ??
+      fallback?.state?.current_stage ??
+      null,
+  }) as GobbyTask;
 }
-
-function taskMatchesSearch(task: GobbyTask, term: string): boolean {
-  const lower = term.toLowerCase();
-  return (
-    task.title.toLowerCase().includes(lower) ||
-    task.ref.toLowerCase().includes(lower)
-  );
-}
-
-function filterTreeBySearch(nodes: TreeNode[], term: string): TreeNode[] {
-  const trimmed = term.trim();
-  if (!trimmed) {
-    return nodes;
-  }
-
-  const visit = (node: TreeNode): TreeNode | null => {
-    const children = node.children
-      .map(visit)
-      .filter((child): child is TreeNode => child !== null);
-
-    if (!taskMatchesSearch(node.task, trimmed) && children.length === 0) {
-      return null;
-    }
-
-    return {
-      ...node,
-      children,
-    };
-  };
-
-  return nodes
-    .map(visit)
-    .filter((node): node is TreeNode => node !== null);
-}
-
-function collectExpandableNodeIds(
-  nodes: TreeNode[],
-  ids: Set<string> = new Set(),
-): Set<string> {
-  for (const node of nodes) {
-    if (node.children.length > 0) {
-      ids.add(node.id);
-      collectExpandableNodeIds(node.children, ids);
-    }
-  }
-  return ids;
-}
-
-function collectVisibleTaskRows(
-  nodes: TreeNode[],
-  collapsedIds: Set<string>,
-  depth = 0,
-  forceOpen = false,
-): VisibleTaskRow[] {
-  return nodes.flatMap((node) => {
-    const isInternal = node.children.length > 0;
-    const isOpen = forceOpen || !collapsedIds.has(node.id);
-    const row: VisibleTaskRow = {
-      node,
-      depth,
-      isInternal,
-      isOpen,
-    };
-
-    if (!isInternal || !isOpen) {
-      return [row];
-    }
-
-    return [
-      row,
-      ...collectVisibleTaskRows(node.children, collapsedIds, depth + 1, forceOpen),
-    ];
-  });
-}
-
-function getTaskFilterLabel(filter: TaskFilterKey): string {
-  if (filter === "escalated") {
-    return "Escalated";
-  }
-  return TASK_BUCKET_LABELS[filter];
-}
-
-function getTaskFilterColor(filter: TaskFilterKey): string {
-  if (filter === "escalated") {
-    return "var(--status-escalated, #ef4444)";
-  }
-  return STATUS_DOT_COLORS[filter] ?? "#737373";
-}
-
-function matchesTaskFilter(task: GobbyTask, filters: Set<TaskFilterKey>): boolean {
-  const state = getCanonicalTaskState(task);
-  if (state.is_closed) return filters.has("closed");
-  if (state.is_escalated) return filters.has("escalated");
-  const bucket = getTaskBucket(task);
-  return filters.has(bucket);
-}
-
-// =============================================================================
-// Filter dropdown
-// =============================================================================
-
-function FilterDropdown({
-  filters,
-  onToggle,
-  onClose,
-}: {
-  filters: Set<TaskFilterKey>;
-  onToggle: (status: TaskFilterKey) => void;
-  onClose: () => void;
-}) {
-  const filterGroups: Array<{ label: string; buckets: TaskFilterKey[] }> = [
-    { label: "Lifecycle", buckets: LIFECYCLE_BUCKETS },
-    { label: "Status", buckets: STATUS_FILTERS },
-  ];
-
-  return (
-    <>
-      <div className="fixed inset-0 z-[99]" onClick={onClose} />
-      <div
-        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl p-1.5 flex flex-col gap-0.5 min-w-[10rem]"
-        style={{ background: "var(--bg-secondary)" }}
-      >
-        {filterGroups.map((group) => (
-          <div key={group.label} className="flex flex-col gap-0.5 py-0.5">
-            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
-              {group.label}
-            </div>
-            {group.buckets.map((status) => (
-              <label
-                key={status}
-                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50"
-              >
-                <input
-                  type="checkbox"
-                  className="w-3 h-3"
-                  checked={filters.has(status)}
-                  onChange={() => onToggle(status)}
-                />
-                <span
-                  className="w-1.5 h-1.5 rounded-full shrink-0"
-                  style={{
-                    backgroundColor: getTaskFilterColor(status),
-                  }}
-                />
-                <span>{getTaskFilterLabel(status)}</span>
-              </label>
-            ))}
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-// =============================================================================
-// TasksTab
-// =============================================================================
 
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
 }: TasksTabProps) {
+  const { registry: stagesRegistry } = useStagesRegistry();
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [statusFilters, setStatusFilters] = useState<Set<TaskFilterKey>>(
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const [topHeight, setTopHeight] = useState(50);
+  const stageQueryKey = useMemo(
+    () =>
+      selectedStageFilters.size > 0
+        ? [...selectedStageFilters].sort().join("\u0000")
+        : "",
+    [selectedStageFilters],
+  );
+  const stageQueryList = useMemo(
+    () => (stageQueryKey ? stageQueryKey.split("\u0000") : []),
+    [stageQueryKey],
+  );
+  const activeFilterCount = useMemo(() => {
+    const symmetricDifference = new Set([...DEFAULT_FILTERS, ...statusFilters]);
+    const statusFilterCount = [...symmetricDifference].filter(
+      (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
+    ).length;
+    return statusFilterCount + selectedStageFilters.size;
+  }, [selectedStageFilters, statusFilters]);
+  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);
+  const [taskSubtasks, setTaskSubtasks] = useState<GobbyTask[]>([]);
   const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [taskMenu, setTaskMenu] = useState<TaskContextMenu | null>(null);
@@ -316,7 +132,7 @@ export const TasksTab = memo(function TasksTab({
     () => new Set(),
   );
 
-  // Fetch tasks, then apply canonical bucket filters client-side.
+  // Fetch tasks, then apply canonical state filters client-side.
   const abortRef = useRef<AbortController | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
   const selectedTaskIdRef = useRef<string | null>(null);
@@ -336,16 +152,20 @@ export const TasksTab = memo(function TasksTab({
     params.set("limit", "500");
     params.set("sort_by", "updated_at");
     params.set("sort_order", "desc");
+    params.set("include_stages", "1");
+    if (stageQueryList.length > 0) {
+      stageQueryList.forEach((stageName) => params.append("stage", stageName));
+    }
     fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : { tasks: [] }))
-      .then((data) => setTasks(data.tasks ?? []))
+      .then((data) => setTasks(normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[]))
       .catch((err) => {
         if (err.name !== "AbortError") setTasks([]);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-  }, [projectId]);
+  }, [projectId, stageQueryList]);
 
   useEffect(() => {
     fetchTasks();
@@ -377,16 +197,17 @@ export const TasksTab = memo(function TasksTab({
           setSelectedTaskId(null);
         }
       } else if (event === "task_created") {
-        const newTask = taskData as unknown as GobbyTask;
+        const newTask = normalizeActivityTask(taskData as RawTaskPayload);
         setTasks((prev) => {
           if (prev.some((t) => t.id === taskId)) return prev;
           return [...prev, newTask];
         });
       } else {
         // task_updated, task_closed, task_reopened, task_de_escalated
-        const updated = taskData as unknown as GobbyTask;
         setTasks((prev) =>
-          prev.map((t) => (t.id === taskId ? { ...t, ...updated } : t)),
+          prev.map((t) =>
+            t.id === taskId ? normalizeActivityTask(taskData as RawTaskPayload, t) : t,
+          ),
         );
       }
 
@@ -403,7 +224,9 @@ export const TasksTab = memo(function TasksTab({
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (controller.signal.aborted) return;
-            setTaskDetail(data?.id ? data : (data?.task ?? null));
+            const raw = extractTaskPayload(data);
+            const cached = tasks.find((task) => task.id === taskId) ?? null;
+            setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
           })
           .catch((err) => {
             if (err?.name !== "AbortError") {
@@ -421,7 +244,7 @@ export const TasksTab = memo(function TasksTab({
         window.clearTimeout(debouncedRefetchRef.current);
       debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500);
     },
-    [fetchTasks, projectId, selectedTaskId],
+    [fetchTasks, projectId, selectedTaskId, tasks],
   );
 
   useEffect(() => {
@@ -453,7 +276,11 @@ export const TasksTab = memo(function TasksTab({
       signal: controller.signal,
     })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setTaskDetail(data?.id ? data : (data?.task ?? null)))
+      .then((data) => {
+        const raw = extractTaskPayload(data);
+        const cached = tasks.find((task) => task.id === selectedTaskId) ?? null;
+        setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
+      })
       .catch((err) => {
         if (err.name !== "AbortError") setTaskDetail(null);
       })
@@ -461,6 +288,44 @@ export const TasksTab = memo(function TasksTab({
         if (!controller.signal.aborted) setDetailLoading(false);
       });
     return () => controller.abort();
+  }, [selectedTaskId, tasks]);
+
+  // Fetch dependencies + subtasks alongside the detail. Each call uses its own
+  // controller so a stale response from a previous selection can't overwrite
+  // the current panel.
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setTaskDependencies(null);
+      setTaskSubtasks([]);
+      return;
+    }
+    const controllerDeps = new AbortController();
+    const controllerSubtasks = new AbortController();
+    const baseUrl = getBaseUrl();
+    fetch(
+      `${baseUrl}/api/tasks/${selectedTaskId}/dependencies?direction=both`,
+      { signal: controllerDeps.signal },
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setTaskDependencies(data ?? null))
+      .catch((err) => {
+        if (err.name !== "AbortError") setTaskDependencies(null);
+      });
+    fetch(
+      `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200&include_stages=1`,
+      { signal: controllerSubtasks.signal },
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) =>
+        setTaskSubtasks(normalizeTaskPayloads(data?.tasks ?? []) as GobbyTask[]),
+      )
+      .catch((err) => {
+        if (err.name !== "AbortError") setTaskSubtasks([]);
+      });
+    return () => {
+      controllerDeps.abort();
+      controllerSubtasks.abort();
+    };
   }, [selectedTaskId]);
 
   const toggleFilter = useCallback((status: TaskFilterKey) => {
@@ -468,6 +333,15 @@ export const TasksTab = memo(function TasksTab({
       const next = new Set(prev);
       if (next.has(status)) next.delete(status);
       else next.add(status);
+      return next;
+    });
+  }, []);
+
+  const toggleStageFilter = useCallback((stageName: string) => {
+    setSelectedStageFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(stageName)) next.delete(stageName);
+      else next.add(stageName);
       return next;
     });
   }, []);
@@ -480,7 +354,7 @@ export const TasksTab = memo(function TasksTab({
     );
     const recentClosedIds = new Set(
       matchingTasks
-        .filter((task) => getTaskBucket(task) === "closed")
+        .filter((task) => getTaskDisplayState(task) === "closed")
         .sort((a, b) => {
           const closedAtA = getCanonicalTaskState(a).closed_at ?? a.updated_at ?? "";
           const closedAtB = getCanonicalTaskState(b).closed_at ?? b.updated_at ?? "";
@@ -492,7 +366,7 @@ export const TasksTab = memo(function TasksTab({
 
     return matchingTasks
       .filter((task) => {
-        if (getTaskBucket(task) !== "closed") {
+        if (getTaskDisplayState(task) !== "closed") {
           return true;
         }
         return recentClosedIds.has(task.id);
@@ -562,6 +436,13 @@ export const TasksTab = memo(function TasksTab({
   );
   const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
   const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
+  let parentTask: ParentTaskRef | null = null;
+  if (taskDetail?.parent_task_id) {
+    const parent = tasks.find((t) => t.id === taskDetail.parent_task_id);
+    if (parent) {
+      parentTask = { id: parent.id, ref: parent.ref, title: parent.title };
+    }
+  }
 
   useEffect(() => {
     selectedTaskIdRef.current = selectedTaskId;
@@ -635,13 +516,18 @@ export const TasksTab = memo(function TasksTab({
         throw new Error(`Failed to claim task (${response.status})`);
       }
       const claimedTask = await response.json();
+      const rawClaimedTask = extractTaskPayload(claimedTask);
       setTasks((prev) =>
         prev.map((task) =>
-          task.id === taskId ? { ...task, ...(claimedTask?.task ?? claimedTask) } : task,
+          task.id === taskId && rawClaimedTask
+            ? normalizeActivityTask(rawClaimedTask, task)
+            : task,
         ),
       );
-      if (selectedTaskId === taskId) {
-        setTaskDetail((claimedTask?.task ?? claimedTask) as GobbyTaskDetail);
+      if (selectedTaskId === taskId && rawClaimedTask) {
+        setTaskDetail((prev) =>
+          normalizeActivityTask(rawClaimedTask, prev ?? undefined) as GobbyTaskDetail,
+        );
       }
     } catch (error) {
       setClaimError(
@@ -670,11 +556,12 @@ export const TasksTab = memo(function TasksTab({
     (row: VisibleTaskRow) => {
       const task = row.node.task;
       const taskState = getCanonicalTaskState(task);
-      const dotColor = taskState.is_escalated
-        ? getTaskFilterColor("escalated")
-        : STATUS_DOT_COLORS[getTaskBucket(task)] ?? "#737373";
+      const currentStage = taskState.current_stage;
+      const stateSummary = getTaskStateSummary(task);
       const textColor =
         PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
+      const textWeight =
+        PRIORITY_TEXT_WEIGHTS[task.priority ?? 3] ?? "var(--font-weight-normal)";
       const ref = task.seq_num != null ? `#${task.seq_num}` : null;
       const isAssigning = assigningTaskId === task.id;
       const isSelected = selectedTaskId === task.id;
@@ -682,7 +569,7 @@ export const TasksTab = memo(function TasksTab({
       const taskRowClass = [
         "activity-task-row",
         isSelected && "activity-task-row--selected",
-        getTaskBucket(task) === "closed" && "activity-task-row--closed",
+        getTaskDisplayState(task) === "closed" && "activity-task-row--closed",
       ]
         .filter(Boolean)
         .join(" ");
@@ -693,12 +580,23 @@ export const TasksTab = memo(function TasksTab({
           style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
           className={taskRowClass}
           role="treeitem"
+          tabIndex={0}
           aria-level={row.depth + 1}
           aria-expanded={row.isInternal ? row.isOpen : undefined}
+          aria-label={`${ref ?? task.ref} ${task.title}: ${stateSummary}`}
+          title={stateSummary}
           onClick={() => {
             userSelectedRef.current = true;
             setClaimError(null);
             setSelectedTaskId(task.id);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              userSelectedRef.current = true;
+              setClaimError(null);
+              setSelectedTaskId(task.id);
+            }
           }}
         >
           {row.isInternal ? (
@@ -733,19 +631,28 @@ export const TasksTab = memo(function TasksTab({
           ) : (
             <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
           )}
-          <span
-            className="activity-task-row-dot"
-            style={{ backgroundColor: dotColor }}
-          />
+          <StatusDot task={task} />
           {ref && (
             <span className="activity-task-row-ref">{ref}</span>
           )}
           <span
             className="activity-task-row-title"
-            style={{ color: textColor }}
+            style={{ color: textColor, fontWeight: textWeight }}
           >
             {task.title}
           </span>
+          {currentStage && (
+            <span className="activity-task-row-stage" title={stateSummary}>
+              <span
+                className="activity-task-row-stage-pip"
+                style={{ backgroundColor: getStageStateColor(currentStage.state) }}
+                aria-hidden="true"
+              />
+              <span className="activity-task-row-stage-label">
+                {currentStage.display_name}
+              </span>
+            </span>
+          )}
           <button
             type="button"
             className="session-more-btn"
@@ -777,29 +684,25 @@ export const TasksTab = memo(function TasksTab({
   );
 
   if (loading) {
-    return (
-      <div className="activity-tab-empty">
-        <p>Loading tasks...</p>
-      </div>
-    );
+    return <ActivityPanelEmpty body="Loading tasks…" />;
   }
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
-      <div className="activity-task-pane-bar activity-task-pane-bar--toolbar relative">
-        <input
-          type="text"
-          className="activity-task-search"
-          placeholder="Search..."
+      <div className="activity-panel-toolbar">
+        <ActivityPanelSearch
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
+          placeholder="Search"
         />
         <button
           type="button"
-          className="activity-task-filter-button"
+          className="activity-filter-button"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by task state"
+          aria-label="Filter tasks"
+          aria-expanded={showFilterDropdown}
         >
           <svg
             width="14"
@@ -810,14 +713,21 @@ export const TasksTab = memo(function TasksTab({
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
+            aria-hidden="true"
           >
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
           </svg>
+          {activeFilterCount > 0 && (
+            <span className="activity-filter-badge">{activeFilterCount}</span>
+          )}
         </button>
         {showFilterDropdown && (
-          <FilterDropdown
+          <TasksTabFilters
             filters={statusFilters}
+            stages={stagesRegistry}
+            selectedStages={selectedStageFilters}
             onToggle={toggleFilter}
+            onToggleStage={toggleStageFilter}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}
@@ -826,7 +736,7 @@ export const TasksTab = memo(function TasksTab({
         <div
           className="px-2.5 py-1.5 border-b border-border text-xs"
           role="alert"
-          style={{ color: "var(--status-escalated, #ef4444)" }}
+          style={{ color: "var(--color-error)" }}
         >
           {claimError}
         </div>
@@ -841,14 +751,15 @@ export const TasksTab = memo(function TasksTab({
         data-testid={filtered.length > 0 ? "task-tree" : undefined}
       >
         {filtered.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>No tasks match filters</p>
-            {tasks.length > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Tasks exist, but none match the current task-state filters.
-              </p>
-            )}
-          </div>
+          <ActivityPanelEmpty
+            icon={<TasksEmptyIcon />}
+            heading="Tasks"
+            body={
+              tasks.length > 0
+                ? "Tasks exist, but none match the current filters"
+                : "Tasks appear here as they are created"
+            }
+          />
         ) : (
           <>
             {visibleRows.map((row) => renderTaskRow(row))}
@@ -888,7 +799,13 @@ export const TasksTab = memo(function TasksTab({
               Loading...
             </p>
           ) : taskDetail ? (
-            <TasksTabDetailPanel task={taskDetail} />
+            <TasksTabDetailPanel
+              task={taskDetail}
+              parentTask={parentTask}
+              onSelectTask={setSelectedTaskId}
+              dependencies={taskDependencies}
+              subtasks={taskSubtasks}
+            />
           ) : (
             <p className="activity-task-detail-empty">
               Task not found

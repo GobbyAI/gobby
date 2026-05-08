@@ -10,10 +10,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def notify_parent_on_status_change(
+def notify_parent_on_task_state_change(
     db: "DatabaseProtocol",
     task_id: str,
-    new_status: str,
+    new_state: str,
     task_ref: str | None = None,
 ) -> None:
     """Fire-and-forget: broadcast task progress to parent session via WebSocket.
@@ -23,7 +23,7 @@ def notify_parent_on_status_change(
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_notify(db, task_id, new_status, task_ref))
+        loop.create_task(_notify(db, task_id, new_state, task_ref))
     except RuntimeError:
         pass
 
@@ -31,7 +31,7 @@ def notify_parent_on_status_change(
 async def _notify(
     db: "DatabaseProtocol",
     task_id: str,
-    new_status: str,
+    new_state: str,
     task_ref: str | None,
 ) -> None:
     try:
@@ -52,7 +52,7 @@ async def _notify(
             await app_ctx.websocket_server.broadcast_task_event(
                 event="task_progress",
                 task_id=task_id,
-                status=new_status,
+                state=new_state,
                 ref=task_ref or task_id,
                 parent_session_id=row["parent_session_id"],
                 run_id=row["id"],

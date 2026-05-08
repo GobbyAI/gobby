@@ -24,6 +24,7 @@ class CloneStatus(str, Enum):
     ACTIVE = "active"
     SYNCING = "syncing"
     STALE = "stale"
+    MERGED = "merged"
     CLEANUP = "cleanup"
 
 
@@ -44,10 +45,20 @@ class Clone:
     cleanup_after: str | None
     created_at: str
     updated_at: str
+    workspace_role: str = "task"
 
     @classmethod
     def from_row(cls, row: Any) -> Clone:
         """Create Clone from database row."""
+
+        def _safe_get(field: str) -> Any:
+            if hasattr(row, "get"):
+                return row.get(field)
+            try:
+                return row[field]
+            except (KeyError, IndexError, TypeError):
+                return None
+
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -62,6 +73,7 @@ class Clone:
             cleanup_after=row["cleanup_after"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            workspace_role=_safe_get("workspace_role") or "task",
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,6 +92,7 @@ class Clone:
             "cleanup_after": self.cleanup_after,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "workspace_role": self.workspace_role,
         }
 
     def to_brief(self) -> dict[str, Any]:
@@ -93,6 +106,7 @@ class Clone:
             "agent_session_id": self.agent_session_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "workspace_role": self.workspace_role,
         }
 
 
@@ -113,6 +127,7 @@ class LocalCloneManager:
         agent_session_id: str | None = None,
         remote_url: str | None = None,
         cleanup_after: str | None = None,
+        workspace_role: str = "task",
     ) -> Clone:
         """
         Create a new clone record.
@@ -138,9 +153,10 @@ class LocalCloneManager:
             INSERT INTO clones (
                 id, project_id, branch_name, clone_path, base_branch,
                 task_id, agent_session_id, status, remote_url,
-                last_sync_at, cleanup_after, created_at, updated_at
+                last_sync_at, cleanup_after, created_at, updated_at,
+                workspace_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clone_id,
@@ -156,6 +172,7 @@ class LocalCloneManager:
                 cleanup_after,
                 now,
                 now,
+                workspace_role,
             ),
         )
 
@@ -173,6 +190,7 @@ class LocalCloneManager:
             cleanup_after=cleanup_after,
             created_at=now,
             updated_at=now,
+            workspace_role=workspace_role,
         )
 
     def get(self, clone_id: str) -> Clone | None:
@@ -256,6 +274,7 @@ class LocalCloneManager:
             "remote_url",
             "last_sync_at",
             "cleanup_after",
+            "workspace_role",
             "updated_at",
         }
     )
@@ -345,6 +364,14 @@ class LocalCloneManager:
             Updated Clone or None if not found
         """
         return self.update(clone_id, status=CloneStatus.CLEANUP.value)
+
+    def mark_merged(self, clone_id: str, cleanup_after: str | None = None) -> Clone | None:
+        """Mark clone as merged and optionally schedule cleanup."""
+        return self.update(
+            clone_id,
+            status=CloneStatus.MERGED.value,
+            cleanup_after=cleanup_after,
+        )
 
     def record_sync(self, clone_id: str) -> Clone | None:
         """

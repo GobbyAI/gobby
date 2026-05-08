@@ -254,6 +254,8 @@ class TestDaemonClientCallMcpTool:
             json_data={"schemas": ["public"]},
             timeout=None,
         )
+        assert mock_call.call_count == 1
+        assert mock_call.call_args is not None
 
 
 class TestDaemonClientStatusCache:

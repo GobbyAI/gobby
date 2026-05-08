@@ -1,5 +1,18 @@
 import type { ProjectWithStats } from '../../hooks/useProjects'
 
+const CARD_CLS =
+  'flex w-full cursor-pointer flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors duration-150 hover:border-[var(--accent)] hover:bg-[var(--bg-tertiary)]'
+const HEADER_CLS = 'flex items-center justify-between gap-2'
+const NAME_CLS = 'text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
+const BADGES_CLS = 'flex gap-1'
+const BADGE_CLS = 'flex items-center text-[var(--text-muted)] opacity-70'
+const PATH_CLS =
+  'overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-sm)] text-[var(--text-muted)]'
+const STATS_CLS = 'mt-1 flex items-center gap-3'
+const STAT_CLS =
+  'flex items-center gap-1 text-[length:var(--text-sm)] text-[var(--text-muted)] [font-variant-numeric:tabular-nums]'
+const ACTIVITY_CLS = 'ml-auto text-[length:var(--text-xs)] text-[var(--text-muted)]'
+
 interface ProjectCardProps {
   project: ProjectWithStats
   onClick: () => void
@@ -20,17 +33,17 @@ function formatRelativeTime(dateStr: string | null): string {
 
 export function ProjectCard({ project, onClick }: ProjectCardProps) {
   return (
-    <button className="projects-card" onClick={onClick}>
-      <div className="projects-card-header">
-        <span className="projects-card-name">{project.display_name}</span>
-        <div className="projects-card-badges">
+    <button className={CARD_CLS} onClick={onClick}>
+      <div className={HEADER_CLS}>
+        <span className={NAME_CLS}>{project.display_name}</span>
+        <div className={BADGES_CLS}>
           {project.github_repo && (
-            <span className="projects-card-badge projects-card-badge--github" title={project.github_repo}>
+            <span className={BADGE_CLS} title={project.github_repo}>
               <GithubIcon />
             </span>
           )}
           {project.linear_team_id && (
-            <span className="projects-card-badge projects-card-badge--linear" title="Linear linked">
+            <span className={BADGE_CLS} title="Linear linked">
               <LinearIcon />
             </span>
           )}
@@ -38,21 +51,21 @@ export function ProjectCard({ project, onClick }: ProjectCardProps) {
       </div>
 
       {project.repo_path && (
-        <div className="projects-card-path" title={project.repo_path}>
+        <div className={PATH_CLS} title={project.repo_path}>
           {project.repo_path.replace(/^\/Users\/[^/]+\//, '~/')}
         </div>
       )}
 
-      <div className="projects-card-stats">
-        <span className="projects-card-stat">
+      <div className={STATS_CLS}>
+        <span className={STAT_CLS}>
           <SessionIcon />
           {project.session_count}
         </span>
-        <span className="projects-card-stat">
+        <span className={STAT_CLS}>
           <TaskIcon />
           {project.open_task_count}
         </span>
-        <span className="projects-card-activity">
+        <span className={ACTIVITY_CLS}>
           {formatRelativeTime(project.last_activity_at)}
         </span>
       </div>

@@ -21,13 +21,50 @@ from .loader_validation import (
     _validate_pipeline_references,
 )
 
-__all__ = ["WorkflowLoader"]
+__all__ = ["WorkflowLoader", "detect_override_conflict"]
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 logger = logging.getLogger(__name__)
+
+
+def _row_tags(row: Any) -> set[str]:
+    tags = getattr(row, "tags", None) or []
+    return {str(tag).lower() for tag in tags}
+
+
+def _definition_has_override_label(row: Any) -> bool:
+    tags = _row_tags(row)
+    if "override" in tags or "override:true" in tags:
+        return True
+
+    try:
+        data = json.loads(row.definition_json)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return data.get("override") is True
+
+
+def _is_bundled_template(row: Any) -> bool:
+    tags = _row_tags(row)
+    source = str(getattr(row, "source", "")).lower()
+    return "gobby" in tags or source in {"gobby", "template"}
+
+
+def detect_override_conflict(user_row: Any, bundled_row: Any | None) -> None:
+    """Fail when a user definition shadows a bundled template without an override label."""
+    if bundled_row is None or not _is_bundled_template(bundled_row):
+        return
+    if _definition_has_override_label(user_row):
+        return
+
+    name = getattr(user_row, "name", "<unknown>")
+    raise ValueError(
+        f"Project workflow definition '{name}' conflicts with a bundled Gobby template. "
+        "Add `override: true` to the project-local copy to make the override explicit."
+    )
 
 
 class WorkflowLoader(WorkflowLoaderSyncMixin):
@@ -91,6 +128,9 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         row = mgr.get_by_name(name, project_id=project_id)
         if row is None:
             return None
+        if project_id is not None and row.project_id is not None:
+            bundled_row = mgr.get_by_name(name, project_id=None)
+            detect_override_conflict(row, bundled_row)
         try:
             data = json.loads(row.definition_json)
 

@@ -1,0 +1,170 @@
+name: tech-writer
+description: |
+  Documentation implementation agent for docs-category lifecycle development
+  leaves. Owns docs changes and release-note style writing work.
+
+version: "1.0"
+enabled: true
+priority: 30
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.5
+reasoning_effort: high
+isolation: inherit
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+skills:
+  baseline:
+    - technical writing
+    - documentation structure and style
+    - markdown, docs sites, changelogs, and release notes
+    - task-focused validation
+  tool_allowlist:
+    - pytest
+    - ruff
+    - uv
+    - markdown tools
+
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - Docs leaf work may run inside the parent epic's isolation context.
+  - Agent termination is separate and still requires `end_agent_run`.
+
+  You are the tech-writer for an automated docs-category development task.
+  Your task ID is in assigned_task_id.
+
+  METHODOLOGY:
+  After claiming the task, load all required session skills: `tech-writer`,
+  `task-transitions`, and `verification-before-completion`. Call get_skill on
+  gobby-skills for each, then continue. Follow the tech-writer documentation
+  workflow before editing docs.
+
+  HANDOFF:
+  Inspect the assigned task's stage manifest. If the current development row has
+  no review gate, commit the documentation changes and self-close with
+  close_task using the commit_sha. If review is enabled, commit the changes and
+  call submit_for_review with `stage_name="development"` so rule_qa can dispatch
+  a reviewer.
+
+  CRITICAL RULES:
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT spawn other agents.
+  - Do NOT terminate without calling end_agent_run.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+      - "tag:task-skill-gates"
+
+step_variables:
+  task_claimed: false
+  required_skills:
+    - tech-writer
+    - task-transitions
+    - verification-before-completion
+  required_skills_loaded: false
+  implementation_complete: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned docs leaf"
+    status_message: |
+      Claim assigned_task_id with claim_task, then read it with get_task.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: load_skills
+        when: "vars.task_claimed"
+
+  - name: load_skills
+    description: "Load required docs implementation session skills"
+    status_message: |
+      Load skills now before implementation:
+      1. get_skill(name="tech-writer") on gobby-skills
+      2. get_skill(name="task-transitions") on gobby-skills
+      3. get_skill(name="verification-before-completion") on gobby-skills
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: required_skills_loaded
+        value: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    transitions:
+      - to: implement
+        when: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+
+  - name: implement
+    description: "Implement, validate, and hand off or close"
+    status_message: |
+      Implement the docs leaf. Commit changes, then inspect the assigned task
+      manifest. If development review is disabled, close_task with commit_sha;
+      otherwise submit_for_review(stage_name="development") for QA.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:reopen_task"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: close_task
+        action: set_variable
+        variable: implementation_complete
+        value: true
+      - server: gobby-tasks-ops
+        tool: submit_for_review
+        action: set_variable
+        variable: implementation_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: implementation_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.implementation_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call end_agent_run to finish this agent run."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:end_agent_run"
+
+exit_condition: "current_step == 'terminate'"

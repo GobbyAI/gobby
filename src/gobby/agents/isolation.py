@@ -13,15 +13,33 @@ Each handler implements the IsolationHandler ABC to provide:
 """
 
 import asyncio
+import json
 import logging
+import os
 import subprocess  # nosec B404 # needed for git error handling
 import time
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.storage.tasks import TaskArtifactManager
+
 logger = logging.getLogger(__name__)
+
+
+def _capture_base_commit_sha(isolation_path: str) -> str:
+    result = subprocess.run(  # nosec B603 B607 # fixed git argv on local isolation path.
+        ["git", "-C", isolation_path, "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "git rev-parse HEAD failed"
+        raise RuntimeError(f"Failed to capture base_commit_sha for {isolation_path}: {detail}")
+    return result.stdout.strip()
 
 
 @dataclass
@@ -193,6 +211,11 @@ class WorktreeIsolationHandler(IsolationHandler):
         existing = self._worktree_storage.get_by_branch(config.project_id, branch_name)
         if existing:
             if Path(existing.worktree_path).is_dir():
+                await repair_isolation_environment(
+                    main_repo_path=str(self._git_manager.repo_path),
+                    isolated_path=existing.worktree_path,
+                    provider=config.provider,
+                )
                 # Use existing worktree
                 return IsolationContext(
                     cwd=existing.worktree_path,
@@ -261,24 +284,17 @@ class WorktreeIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         self._created_worktree_id = worktree.id
 
-        # Copy CLI hooks to worktree so hooks fire correctly
-        await _copy_cli_hooks(
-            source_path=str(self._git_manager.repo_path),
-            target_path=worktree_path,
-            provider=config.provider,
-        )
+        if config.task_id is not None:
+            base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, worktree_path)
+            await asyncio.to_thread(
+                TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,
+                config.task_id,
+                worktree_path=worktree_path,
+                worktree_id=worktree.id,
+                base_commit_sha=base_commit_sha,
+            )
 
-        # Ensure project.json has parent_project_path for workflow discovery
-        from gobby.utils.project_context import ensure_project_json_for_isolation
-
-        await asyncio.to_thread(
-            ensure_project_json_for_isolation,
-            str(self._git_manager.repo_path),
-            worktree_path,
-        )
-
-        # Patch MCP config so agents use the main repo's gobby code
-        await _patch_mcp_config_for_isolation(
+        await repair_isolation_environment(
             main_repo_path=str(self._git_manager.repo_path),
             isolated_path=worktree_path,
             provider=config.provider,
@@ -400,6 +416,11 @@ class CloneIsolationHandler(IsolationHandler):
         existing = self._clone_storage.get_by_branch(config.project_id, branch_name)
         if existing:
             if Path(existing.clone_path).is_dir():
+                await repair_isolation_environment(
+                    main_repo_path=config.project_path,
+                    isolated_path=existing.clone_path,
+                    provider=config.provider,
+                )
                 # Use existing clone
                 return IsolationContext(
                     cwd=existing.clone_path,
@@ -475,24 +496,17 @@ class CloneIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         self._created_clone_id = clone.id
 
-        # Copy CLI hooks to clone so hooks fire correctly
-        await _copy_cli_hooks(
-            source_path=config.project_path,
-            target_path=clone_path,
-            provider=config.provider,
-        )
+        if config.task_id is not None:
+            base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, clone_path)
+            await asyncio.to_thread(
+                TaskArtifactManager(self._clone_storage.db).set_artifacts_atomic,
+                config.task_id,
+                clone_path=clone_path,
+                clone_id=clone.id,
+                base_commit_sha=base_commit_sha,
+            )
 
-        # Ensure project.json has parent_project_path for workflow discovery
-        from gobby.utils.project_context import ensure_project_json_for_isolation
-
-        await asyncio.to_thread(
-            ensure_project_json_for_isolation,
-            config.project_path,
-            clone_path,
-        )
-
-        # Patch MCP config so agents use the main repo's gobby code
-        await _patch_mcp_config_for_isolation(
+        await repair_isolation_environment(
             main_repo_path=config.project_path,
             isolated_path=clone_path,
             provider=config.provider,
@@ -562,6 +576,76 @@ Push your changes when ready to share with the original.
         return str(Path.home() / ".gobby" / "clones" / project_name / safe_branch)
 
 
+async def repair_isolation_environment(
+    *,
+    main_repo_path: str,
+    isolated_path: str,
+    provider: str,
+) -> None:
+    """Repair hooks, project metadata, and MCP config for an isolated workspace."""
+    await _copy_cli_hooks(
+        source_path=main_repo_path,
+        target_path=isolated_path,
+        provider=provider,
+    )
+
+    from gobby.utils.project_context import ensure_project_json_for_isolation
+
+    await asyncio.to_thread(
+        ensure_project_json_for_isolation,
+        main_repo_path,
+        isolated_path,
+    )
+    await _patch_mcp_config_for_isolation(
+        main_repo_path=main_repo_path,
+        isolated_path=isolated_path,
+        provider=provider,
+    )
+
+
+async def ensure_isolation_code_index(
+    isolated_path: str,
+    *,
+    timeout: float = 120.0,
+) -> None:
+    """Run gcode indexing inside an isolated workspace before spawning an agent."""
+    workspace = Path(isolated_path)
+    if not workspace.is_dir():
+        raise RuntimeError(f"gcode_index_workspace_missing:{isolated_path}")
+
+    from gobby.utils.native_bin import resolve_native_bin
+
+    gcode_bin = resolve_native_bin("gcode")
+    if gcode_bin is None:
+        raise RuntimeError("gcode_not_installed")
+
+    proc: asyncio.subprocess.Process | None = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            gcode_bin,
+            "index",
+            "--quiet",
+            cwd=str(workspace),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError as exc:
+        if proc is not None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+        raise RuntimeError(f"gcode_index_timeout:{timeout:g}s") from exc
+    except OSError as exc:
+        raise RuntimeError(f"gcode_index_failed:{exc}") from exc
+
+    if proc.returncode != 0:
+        detail = stderr.decode(errors="replace").strip() if stderr else "<no stderr>"
+        raise RuntimeError(f"gcode_index_failed:{proc.returncode}:{detail}")
+
+
 async def _copy_cli_hooks(
     source_path: str,
     target_path: str,
@@ -575,9 +659,13 @@ async def _copy_cli_hooks(
     Args:
         source_path: Path to the source repository
         target_path: Path to the isolated environment (worktree or clone)
-        provider: CLI provider (gemini, claude, codex)
+        provider: CLI provider (gemini, claude, codex, droid)
     """
     import shutil
+
+    if provider == "droid":
+        await _copy_droid_hooks_for_isolation(target_path)
+        return
 
     cli_dirs = {
         "gemini": ".gemini",
@@ -610,6 +698,96 @@ async def _copy_cli_hooks(
             f"Filesystem error copying CLI hooks: provider={provider}, src={src_path}, dst={dst_path}",
             exc_info=True,
         )
+
+
+async def _copy_droid_hooks_for_isolation(target_path: str) -> None:
+    """Ensure isolated Droid sessions have Gobby hooks.
+
+    Droid normally reads user-global ``~/.factory/hooks/hooks.json`` regardless
+    of ``--cwd``, but project-local Factory config can shadow that file and
+    global inheritance is hard to prove in automated isolation tests. Writing
+    Gobby-owned hook entries into the isolated worktree or clone gives spawned
+    Droid agents deterministic lifecycle hooks while preserving user entries.
+    """
+    hooks_path = Path(target_path) / ".factory" / "hooks" / "hooks.json"
+    try:
+        await asyncio.to_thread(_write_droid_isolation_hooks, hooks_path)
+        logger.info(f"Wrote Droid isolation hooks to {hooks_path}")
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
+        logger.warning(
+            f"Failed to write Droid isolation hooks: target={hooks_path}",
+            exc_info=True,
+        )
+
+
+def _write_droid_isolation_hooks(hooks_path: Path) -> None:
+    existing_settings = _load_json_object(hooks_path)
+    gobby_settings = _load_droid_isolation_hooks_template()
+    updated_settings = _merge_droid_isolation_hooks(existing_settings, gobby_settings)
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(updated_settings, indent=2) + "\n")
+
+
+def _load_droid_isolation_hooks_template() -> dict[str, Any]:
+    from gobby.cli.installers.hook_commands import rewrite_hook_template_commands
+    from gobby.paths import get_install_dir
+
+    template_path = get_install_dir() / "droid" / "hooks-template.json"
+    if not template_path.exists():
+        raise FileNotFoundError(f"Missing Droid hooks template: {template_path}")
+
+    template = _load_json_object(template_path)
+    hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks")))
+    rewrite_hook_template_commands(
+        template,
+        cli_name="droid",
+        hooks_dir=hooks_dir.expanduser(),
+    )
+    return template
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+
+    with path.open() as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return data
+
+
+def _merge_droid_isolation_hooks(
+    existing_settings: dict[str, Any],
+    gobby_settings: dict[str, Any],
+) -> dict[str, Any]:
+    from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
+    from gobby.cli.installers.hook_commands import config_contains_gobby_hook
+
+    updated = deepcopy(existing_settings)
+    hooks = updated.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        updated["hooks"] = hooks
+
+    gobby_hooks = gobby_settings.get("hooks")
+    if not isinstance(gobby_hooks, dict):
+        raise ValueError("Droid hooks template does not contain a hooks object")
+
+    for hook_type in DROID_PASCAL_HOOK_NAMES:
+        hook_config = gobby_hooks.get(hook_type)
+        if not isinstance(hook_config, list) or not hook_config:
+            raise ValueError(f"Droid hooks template missing hook type: {hook_type}")
+
+        current_config = hooks.get(hook_type)
+        preserved: list[Any] = []
+        if isinstance(current_config, list):
+            preserved = [
+                deepcopy(entry) for entry in current_config if not config_contains_gobby_hook(entry)
+            ]
+        hooks[hook_type] = preserved + deepcopy(hook_config)
+
+    return updated
 
 
 async def _patch_mcp_config_for_isolation(
@@ -695,6 +873,45 @@ async def _patch_mcp_config_for_isolation(
             logger.info(f"Registered isolated path in ~/.claude.json: {isolated_path}")
         except Exception as e:
             logger.warning(f"Failed to patch ~/.claude.json for {isolated_path}: {e}")
+
+
+def provider_mcp_config_error(isolated_path: str, provider: str) -> str | None:
+    """Return a compact preflight error if isolated MCP config is missing."""
+    if provider == "droid":
+        return None
+
+    isolated = Path(isolated_path)
+    mcp_json_path = isolated / ".mcp.json"
+    if not mcp_json_path.exists():
+        return f"provider_mcp_config_missing:{mcp_json_path}"
+    try:
+        data = json.loads(mcp_json_path.read_text())
+        gobby_server = data["mcpServers"]["gobby"]
+        args = gobby_server.get("args", [])
+    except (OSError, KeyError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        return f"provider_mcp_config_invalid:{mcp_json_path}:{exc}"
+    if gobby_server.get("command") != "uv" or "mcp-server" not in args:
+        return f"provider_mcp_config_invalid:{mcp_json_path}:gobby server not configured"
+
+    if provider != "claude":
+        return None
+
+    claude_json_path = Path.home() / ".claude.json"
+    if not claude_json_path.exists():
+        return f"provider_mcp_config_missing:{claude_json_path}"
+    try:
+        claude_data = json.loads(claude_json_path.read_text())
+        projects = claude_data.get("projects", {})
+        keys = {str(isolated), str(isolated.resolve())}
+        project_config = next(
+            (projects[key] for key in keys if isinstance(projects.get(key), dict)),
+            None,
+        )
+        if not project_config or "gobby" not in project_config.get("mcpServers", {}):
+            return f"provider_mcp_config_missing:{claude_json_path}:projects[{isolated}]"
+    except (OSError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        return f"provider_mcp_config_invalid:{claude_json_path}:{exc}"
+    return None
 
 
 def get_isolation_handler(

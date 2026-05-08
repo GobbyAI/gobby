@@ -15,7 +15,7 @@ metadata:
 This skill covers commit message format and the release PR process.
 
 Use the `task-transitions` skill for task lifecycle transitions such as `close_task`,
-`mark_task_needs_review`, validation gates, and commit SHA requirements.
+`submit_for_review`, validation gates, and commit SHA requirements.
 
 ---
 
@@ -40,7 +40,7 @@ Use the `project-#N` format (e.g., `[gobby-#123]`) — the hyphen before `#` is 
 ### Step 3: Task Transitions (close_task, review, validation)
 
 After committing, follow the `task-transitions` skill for the correct task lifecycle
-action (`close_task`, `mark_task_needs_review`, review approval, validation gates, and
+action (`close_task`, `submit_for_review`, review approval, validation gates, and
 memory review).
 
 ## Commit Message Format

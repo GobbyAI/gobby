@@ -1,5 +1,6 @@
 """Tests for sync_bundled_agents."""
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -109,6 +110,179 @@ class TestSyncBundledAgents:
         assert body.description == "Updated description"
 
     @pytest.mark.unit
+    def test_sync_enables_legacy_discovery_placeholder(self, tmp_path: Path) -> None:
+        """Old disabled discovery placeholders should become enabled real agents on upgrade."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        yaml_file = agents_dir / "analyst.yaml"
+        yaml_file.write_text(
+            "name: analyst\n"
+            "description: PLACEHOLDER ideation agent\n"
+            "enabled: false\n"
+            "provider: claude\n"
+            "model: haiku\n"
+            "instructions: |\n"
+            "  PLACEHOLDER\n"
+            "  placeholder_agent:analyst:not_implemented\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+
+            yaml_file.write_text(
+                "name: analyst\n"
+                "description: Discovery analyst\n"
+                "enabled: true\n"
+                "provider: codex\n"
+                "model: gpt-5.5\n"
+                "reasoning_effort: high\n"
+                "instructions: Real ideation agent\n"
+            )
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        mgr = LocalWorkflowDefinitionManager(db)
+        row = mgr.get_by_name("analyst")
+        assert row is not None
+        assert row.enabled is True
+        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+        assert body.enabled is True
+        assert body.provider == "codex"
+
+    @pytest.mark.unit
+    def test_sync_preserves_user_disabled_non_placeholder_agent(self, tmp_path: Path) -> None:
+        """Template updates should not re-enable unrelated user-disabled bundled agents."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        yaml_file = agents_dir / "test-agent.yaml"
+        yaml_file.write_text(
+            "name: test-agent\n"
+            "description: A test agent\n"
+            "enabled: true\n"
+            "provider: claude\n"
+            "mode: interactive\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            mgr = LocalWorkflowDefinitionManager(db)
+            row = mgr.get_by_name("test-agent")
+            assert row is not None
+            mgr.update(row.id, enabled=False)
+
+            yaml_file.write_text(
+                "name: test-agent\n"
+                "description: Updated description\n"
+                "enabled: true\n"
+                "provider: claude\n"
+                "mode: interactive\n"
+            )
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        row = LocalWorkflowDefinitionManager(db).get_by_name("test-agent")
+        assert row is not None
+        assert row.enabled is False
+
+    @pytest.mark.unit
+    def test_sync_updates_legacy_template_agent_row(self, tmp_path: Path) -> None:
+        """Old gobby template rows should become installed bundled rows."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "developer.yaml").write_text(
+            "name: developer\n"
+            "description: Active developer\n"
+            "enabled: true\n"
+            "provider: codex\n"
+            "mode: interactive\n"
+            "instructions: Build features\n"
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        mgr.create(
+            name="developer",
+            definition_json=json.dumps(
+                {
+                    "name": "developer",
+                    "description": "Deprecated developer",
+                    "enabled": False,
+                    "deprecated": True,
+                    "provider": "codex",
+                    "mode": "interactive",
+                    "instructions": "Deprecated",
+                }
+            ),
+            workflow_type="agent",
+            source="template",
+            enabled=False,
+            tags=["gobby"],
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        row = mgr.get_by_name("developer")
+        assert row is not None
+        assert row.source == "installed"
+        assert row.enabled is True
+        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+        assert body.enabled is True
+
+    @pytest.mark.unit
+    def test_sync_restores_reintroduced_bundled_agent(self, tmp_path: Path) -> None:
+        """A changed bundled agent can return after a prior bundled orphan delete."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "developer.yaml").write_text(
+            "name: developer\n"
+            "description: Active developer\n"
+            "enabled: true\n"
+            "provider: codex\n"
+            "mode: interactive\n"
+            "instructions: Build features\n"
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        row = mgr.create(
+            name="developer",
+            definition_json=json.dumps(
+                {
+                    "name": "developer",
+                    "description": "Deprecated developer",
+                    "enabled": False,
+                    "deprecated": True,
+                    "provider": "codex",
+                    "mode": "interactive",
+                    "instructions": "Deprecated",
+                }
+            ),
+            workflow_type="agent",
+            source="installed",
+            enabled=False,
+            tags=["gobby"],
+        )
+        mgr.delete(row.id)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        restored = mgr.get_by_name("developer")
+        assert restored is not None
+        assert restored.enabled is True
+        body = AgentDefinitionBody.model_validate_json(restored.definition_json)
+        assert body.description == "Active developer"
+
+    @pytest.mark.unit
     def test_sync_multiple_agents(self, tmp_path: Path) -> None:
         """Test syncing multiple agent files."""
         db = _setup_db(tmp_path)
@@ -142,6 +316,31 @@ class TestSyncBundledAgents:
         assert result["success"] is True
         assert result["synced"] == 0
         assert len(result["errors"]) == 1
+
+    @pytest.mark.unit
+    def test_sync_ignores_deprecated_directory(self, tmp_path: Path) -> None:
+        """Deprecated bundled agents are archival and not active install inputs."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        deprecated_dir = agents_dir / "deprecated"
+        deprecated_dir.mkdir(parents=True)
+        (deprecated_dir / "old-agent.yaml").write_text(
+            "name: old-agent\ndescription: Deprecated agent\nmode: interactive\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["success"] is True
+        assert result["synced"] == 0
+        assert result["updated"] == 0
+        assert result["skipped"] == 0
+        assert result["errors"] == []
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        rows = mgr.list_all(workflow_type="agent")
+        assert rows == []
 
     @pytest.mark.unit
     def test_sync_invalid_yaml(self, tmp_path: Path) -> None:
@@ -185,6 +384,26 @@ class TestSyncBundledAgents:
             assert result["skipped"] == 1
             assert result["synced"] == 0
 
+    @pytest.mark.unit
+    def test_sync_soft_deletes_removed_bundled_agents(self, tmp_path: Path) -> None:
+        """Bundled agent rows disappear when their YAML is removed from disk."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_yaml = agents_dir / "test-agent.yaml"
+        agent_yaml.write_text(
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: interactive\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            agent_yaml.unlink()
+            result = sync_bundled_agents(db)
+
+        assert result["orphaned"] == 1
+        assert LocalWorkflowDefinitionManager(db).get_by_name("test-agent") is None
+
     @pytest.mark.integration
     def test_sync_with_real_bundled_agents(self, tmp_path: Path) -> None:
         """Test that sync works with the actual bundled agents directory."""
@@ -204,13 +423,24 @@ class TestSyncBundledAgents:
         assert len(rows) > 0
         names = [r.name for r in rows]
         # Check for agents from the new-format bundled definitions
-        assert any(n in names for n in ("default", "developer", "qa-reviewer"))
+        assert "default" in names
+        assert "backend-developer" in names
+        assert "frontend-developer" in names
+        assert "qa-reviewer" in names
+        assert "doc-reviewer" in names
         assert all(
             n in names
             for n in (
-                "requirements-analyst",
+                "analyst",
+                "researcher",
+                "architect",
+                "product-manager",
                 "planner",
                 "plan-adversary",
-                "test-architect",
             )
         )
+        assert "test-architect" not in names
+        assert "requirements-analyst" not in names
+        assert "conductor" not in names
+        assert "developer" not in names
+        assert "pipeline-worker" not in names

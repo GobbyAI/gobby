@@ -113,6 +113,7 @@ class TestCreateWorktreeErrors:
         mock_post.return_value = resp
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["create", "feat/x"])
+        assert result.exit_code == 0
         assert "Failed to create worktree" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -124,6 +125,7 @@ class TestCreateWorktreeErrors:
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["create", "feat/x", "--task", "#999"])
         assert result.exit_code == 0  # early return, no error exit
+        assert mock_resolve.call_count == 1
 
 
 # =============================================================================
@@ -228,6 +230,7 @@ class TestDeleteWorktreeErrors:
         runner: CliRunner,
     ) -> None:
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
+        assert result.exit_code == 0
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -250,6 +253,7 @@ class TestDeleteWorktreeErrors:
         )
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
+        assert result.exit_code == 0
         assert "HTTP Error 404" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -269,6 +273,7 @@ class TestDeleteWorktreeErrors:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
+        assert result.exit_code == 0
         assert "Failed to delete worktree" in result.output
 
     @patch("gobby.cli.worktrees.resolve_worktree_id", side_effect=click.ClickException("not found"))
@@ -353,6 +358,7 @@ class TestSyncWorktree:
         runner: CliRunner,
     ) -> None:
         result = runner.invoke(worktrees, ["sync", "wt-123"])
+        assert result.exit_code == 0
         assert "Cannot connect to Gobby daemon" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -393,6 +399,7 @@ class TestSyncWorktree:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["sync", "wt-123"])
+        assert result.exit_code == 0
         assert "Failed to sync worktree" in result.output
 
     @patch("gobby.cli.worktrees.resolve_worktree_id", side_effect=click.ClickException("bad"))
@@ -495,6 +502,7 @@ class TestDetectStale:
         )
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["stale"])
+        assert result.exit_code == 0
         assert "HTTP Error 500" in result.output
 
 
@@ -558,6 +566,7 @@ class TestCleanupWorktrees:
         )
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["cleanup", "--yes"])
+        assert result.exit_code == 0
         assert "HTTP Error 500" in result.output
 
 
@@ -622,6 +631,7 @@ class TestWorktreeStats:
         mock_post.return_value = resp
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["stats"])
+        assert result.exit_code == 0
         assert "HTTP Error 500" in result.output
 
 

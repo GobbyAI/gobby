@@ -93,7 +93,7 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
           <div className="p-3 border-b border-border shrink-0">
             <Input
               type="text"
-              placeholder="Search skills..."
+              placeholder="Search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="bg-muted/50"
@@ -116,7 +116,7 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
                   className={cn(
                     'w-full text-left px-3 py-2.5 text-sm transition-colors border-b border-border/30',
                     selectedSkillId === skill.id
-                      ? 'bg-accent/15 text-foreground border-l-2 border-l-accent'
+                      ? 'bg-accent/15 text-foreground'
                       : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                   )}
                   onClick={() => setSelectedSkillId(skill.id)}

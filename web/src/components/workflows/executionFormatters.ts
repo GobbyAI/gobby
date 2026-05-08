@@ -1,6 +1,6 @@
 export function formatTime(iso: string): string {
   const d = new Date(iso)
-  if (isNaN(d.getTime())) return ''
+  if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -10,7 +10,7 @@ export function formatTime(iso: string): string {
 
 export function formatDateTime(iso: string): string {
   const d = new Date(iso)
-  if (isNaN(d.getTime())) return ''
+  if (Number.isNaN(d.getTime())) return iso
   return (
     d.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
     ', ' +
@@ -20,7 +20,7 @@ export function formatDateTime(iso: string): string {
 
 export function formatDuration(startIso: string, endIso: string): string {
   const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
-  if (isNaN(ms) || ms < 0) return ''
+  if (Number.isNaN(ms) || ms < 0) return ''
   const seconds = Math.floor(ms / 1000)
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)

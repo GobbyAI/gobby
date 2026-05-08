@@ -3,13 +3,38 @@ import type { GobbySession } from '../../types/sessions'
 import { SourceIcon } from '../shared/SourceIcon'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { getSessionDisplayTitle } from '../../lib/sessionTitle'
+import { cn } from '../../lib/utils'
+
+const SECTION_CLS =
+  'mb-4 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4'
+const HEADING_CLS =
+  'mb-3 text-[length:var(--text-base)] font-semibold uppercase tracking-[0.03em] text-[var(--text-secondary)]'
+const TREE_CLS = 'text-[length:var(--text-base)]'
+
+const NODE_CLS =
+  'mb-0.5 cursor-pointer rounded border border-transparent px-2 py-1.5 transition-[background-color,border-color] duration-150 hover:border-[var(--border)] hover:bg-[var(--bg-tertiary)]'
+const NODE_CURRENT_CLS = 'border-[var(--accent)] bg-[var(--bg-tertiary)]'
+
+const NODE_HEADER_CLS = 'flex items-center gap-1.5'
+const NODE_TOGGLE_CLS = 'w-3 cursor-pointer text-center text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const NODE_LEAF_CLS = 'w-3 text-center text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const NODE_TITLE_CLS =
+  'max-w-[250px] overflow-hidden text-ellipsis whitespace-nowrap font-medium text-[var(--text-primary)]'
+const NODE_DEPTH_CLS =
+  'rounded-sm bg-[var(--bg-primary)] px-1 font-[inherit] text-[length:var(--text-xs)] text-[var(--text-muted)]'
+
+const NODE_META_CLS = 'ml-[1.125rem] mt-0.5 flex items-center gap-2'
+const NODE_STATUS_CLS = 'text-[length:var(--text-xs)] font-medium capitalize'
+const NODE_STATUS_BG: Record<string, string> = {
+  active: 'text-[var(--color-success-foreground)]',
+  archived: 'text-[var(--text-muted)]',
+  expired: 'text-[var(--color-error)]',
+}
+const NODE_TIME_CLS = 'text-[length:var(--text-xs)] text-[var(--text-muted)]'
 
 interface SessionLineageProps {
-  /** The currently selected session. */
   session: GobbySession
-  /** All available sessions to search for relatives. */
   allSessions: GobbySession[]
-  /** Callback when a session node is clicked. */
   onSelectSession: (sessionId: string) => void
 }
 
@@ -18,12 +43,10 @@ interface TreeNode {
   children: TreeNode[]
 }
 
-/** Walk up to find the root ancestor of a session. */
 function findRoot(sessionId: string, lookup: Map<string, GobbySession>): GobbySession | null {
   let current = lookup.get(sessionId)
   if (!current) return null
 
-  // Guard against cycles with a visited set
   const visited = new Set<string>()
   while (current.parent_session_id) {
     if (visited.has(current.id)) break
@@ -36,7 +59,6 @@ function findRoot(sessionId: string, lookup: Map<string, GobbySession>): GobbySe
   return current
 }
 
-/** Build a tree from a root session. */
 function buildTree(root: GobbySession, childrenMap: Map<string, GobbySession[]>, visited = new Set<string>()): TreeNode {
   visited.add(root.id)
   const children = (childrenMap.get(root.id) || [])
@@ -46,7 +68,6 @@ function buildTree(root: GobbySession, childrenMap: Map<string, GobbySession[]>,
   return { session: root, children }
 }
 
-/** Count total nodes in a tree. */
 function countNodes(node: TreeNode): number {
   return 1 + node.children.reduce((sum, child) => sum + countNodes(child), 0)
 }
@@ -68,39 +89,39 @@ function TreeNodeView({
   const s = node.session
 
   return (
-    <div className="lineage-node-wrapper">
+    <div>
       <div
-        className={`lineage-node${isCurrent ? ' lineage-node-current' : ''}`}
+        className={cn(NODE_CLS, isCurrent && NODE_CURRENT_CLS)}
         style={{ marginLeft: depth * 20 }}
         onClick={() => onSelect(s.id)}
       >
-        <div className="lineage-node-header">
+        <div className={NODE_HEADER_CLS}>
           {hasChildren && (
             <span
-              className="lineage-node-toggle"
+              className={NODE_TOGGLE_CLS}
               onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
             >
-              {expanded ? '\u25bc' : '\u25b6'}
+              {expanded ? '▼' : '▶'}
             </span>
           )}
-          {!hasChildren && <span className="lineage-node-leaf">{'\u2022'}</span>}
+          {!hasChildren && <span className={NODE_LEAF_CLS}>•</span>}
           <SourceIcon source={s.source} size={12} />
-          <span className="lineage-node-title">
+          <span className={NODE_TITLE_CLS}>
             {getSessionDisplayTitle(s)}
           </span>
           {s.agent_depth > 0 && (
-            <span className="lineage-node-depth">L{s.agent_depth}</span>
+            <span className={NODE_DEPTH_CLS}>L{s.agent_depth}</span>
           )}
         </div>
-        <div className="lineage-node-meta">
-          <span className={`lineage-node-status lineage-node-status-${s.status}`}>
+        <div className={NODE_META_CLS}>
+          <span className={cn(NODE_STATUS_CLS, NODE_STATUS_BG[s.status] ?? '')}>
             {s.status}
           </span>
-          <span className="lineage-node-time">{formatRelativeTime(s.created_at)}</span>
+          <span className={NODE_TIME_CLS}>{formatRelativeTime(s.created_at)}</span>
         </div>
       </div>
       {expanded && hasChildren && (
-        <div className="lineage-children">
+        <div>
           {node.children.map((child) => (
             <TreeNodeView
               key={child.session.id}
@@ -124,7 +145,6 @@ export function SessionLineage({ session, allSessions, onSelectSession }: Sessio
     const root = findRoot(session.id, lookup)
     if (!root) return null
 
-    // Build children map
     const childrenMap = new Map<string, GobbySession[]>()
     for (const s of allSessions) {
       if (s.parent_session_id) {
@@ -135,16 +155,15 @@ export function SessionLineage({ session, allSessions, onSelectSession }: Sessio
     }
 
     const treeRoot = buildTree(root, childrenMap)
-    // Only show lineage if there's more than one node (i.e., actual relationships)
     return countNodes(treeRoot) > 1 ? treeRoot : null
   }, [session.id, allSessions])
 
   if (!tree) return null
 
   return (
-    <div className="session-lineage">
-      <h3>Session Lineage</h3>
-      <div className="lineage-tree">
+    <div className={SECTION_CLS}>
+      <h3 className={HEADING_CLS}>Session Lineage</h3>
+      <div className={TREE_CLS}>
         <TreeNodeView
           node={tree}
           currentSessionId={session.id}

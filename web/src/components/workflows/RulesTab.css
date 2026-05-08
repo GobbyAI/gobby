@@ -1,0 +1,118 @@
+/* =============================================================================
+   Rules tab
+   ============================================================================= */
+
+.rules-tab {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Rule cards (flat grid) */
+.rules-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  transition: border-color 0.15s;
+}
+
+.rules-card:hover {
+  border-color: var(--text-muted);
+}
+
+.rules-card--deleted {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.rules-card--deleted:hover {
+  opacity: 0.7;
+}
+
+.rules-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.rules-card-name {
+  font-size: calc(var(--font-size-base) * 0.875);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rules-card-event {
+  font-size: calc(var(--font-size-base) * 0.625);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
+.rules-card-priority {
+  font-size: calc(var(--font-size-base) * 0.625);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
+}
+
+.rules-card-desc {
+  font-size: calc(var(--font-size-base) * 0.75);
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.rules-enforcement-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: calc(var(--font-size-base) * 0.625);
+  color: var(--text-secondary);
+  margin-left: auto;
+  padding: 0 8px;
+  user-select: none;
+}
+
+.rules-card-tag {
+  font-size: calc(var(--font-size-base) * 0.625);
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.rules-card-effect {
+  font-size: calc(var(--font-size-base) * 0.625);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+  text-transform: lowercase;
+}
+
+.rules-card-effect--block {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+.rules-card-effect--set_variable {
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
+}
+
+.rules-card-effect--inject_context {
+  background: var(--color-success-soft);
+  color: var(--color-success-foreground);
+}
+
+.rules-card-effect--mcp_call {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+

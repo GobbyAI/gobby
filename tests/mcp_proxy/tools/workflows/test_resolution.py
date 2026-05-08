@@ -262,6 +262,7 @@ class TestResolveSessionTaskValueErrors:
         ):
             result = resolve_session_task_value("#999", "sess-id", mock_sm, mock_db)
             assert result == "#999"
+            assert mock_sm.get.call_args.args == ("sess-id",)
 
     def test_unexpected_error_returns_original(self) -> None:
         mock_sm = MagicMock()
@@ -277,6 +278,7 @@ class TestResolveSessionTaskValueErrors:
         ):
             result = resolve_session_task_value("#42", "sess-id", mock_sm, mock_db)
             assert result == "#42"
+            assert mock_sm.get.call_args.args == ("sess-id",)
 
     def test_type_error_returns_original(self) -> None:
         mock_sm = MagicMock()
@@ -292,6 +294,7 @@ class TestResolveSessionTaskValueErrors:
         ):
             result = resolve_session_task_value("#42", "sess-id", mock_sm, mock_db)
             assert result == "#42"
+            assert mock_sm.get.call_args.args == ("sess-id",)
 
 
 class TestResolveSessionTaskValueNumericRef:
@@ -311,6 +314,7 @@ class TestResolveSessionTaskValueNumericRef:
             result = resolve_session_task_value("0", "sess-id", mock_sm, MagicMock())
             # Returns original on not found
             assert result == "0"
+            assert mock_sm.get.call_args.args == ("sess-id",)
 
     def test_hash_only_is_treated_as_seq_ref(self) -> None:
         """'#' starts with # so is_seq_ref is True."""
@@ -325,3 +329,4 @@ class TestResolveSessionTaskValueNumericRef:
         ):
             result = resolve_session_task_value("#", "sess-id", mock_sm, MagicMock())
             assert result == "#"
+            assert mock_sm.get.call_args.args == ("sess-id",)

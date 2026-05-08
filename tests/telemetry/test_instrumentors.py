@@ -65,6 +65,8 @@ def test_capture_content_flag_propagation():
         enrich_token_usage=True,
         capture_content=True,
     )
+    assert mock_instrumentor.instrument.call_count == 1
+    assert mock_instrumentor.instrument.call_args is not None
 
 
 def test_idempotent_instrumentation():

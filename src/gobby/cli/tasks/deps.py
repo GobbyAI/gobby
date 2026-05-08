@@ -7,6 +7,7 @@ from typing import Literal
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
+from gobby.tasks.state_semantics import projected_task_state
 
 
 @click.group("dep")
@@ -103,7 +104,7 @@ def dep_tree(task_id: str) -> None:
     if tree.get("blockers"):
         click.echo("Blocked by:")
         for b in tree["blockers"]:
-            status_icon = "✓" if b.get("status") == "closed" else "○"
+            status_icon = "✓" if projected_task_state(b) == "closed" else "○"
             click.echo(f"  {status_icon} {b['id'][:8]}: {b.get('title', 'Unknown')}")
     else:
         click.echo("Blocked by: (none)")
@@ -112,7 +113,7 @@ def dep_tree(task_id: str) -> None:
     if tree.get("blocking"):
         click.echo("\nBlocking:")
         for b in tree["blocking"]:
-            status_icon = "✓" if b.get("status") == "closed" else "○"
+            status_icon = "✓" if projected_task_state(b) == "closed" else "○"
             click.echo(f"  {status_icon} {b['id'][:8]}: {b.get('title', 'Unknown')}")
     else:
         click.echo("\nBlocking: (none)")

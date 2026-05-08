@@ -77,7 +77,12 @@ def _register_agent_step_workflow(
 
     existing = def_manager.get_by_name(step_workflow_name)
     if existing:
-        def_manager.update(existing.id, definition_json=definition_json)
+        def_manager.update(
+            existing.id,
+            definition_json=definition_json,
+            workflow_type="workflow",
+            source="agent",
+        )
     else:
         def_manager.create(
             name=step_workflow_name,
@@ -101,6 +106,7 @@ def create_spawn_agent_registry(
     db: DatabaseProtocol | None = None,
     completion_registry: Any | None = None,
     daemon_config: Any | None = None,
+    code_index: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create a spawn_agent tool registry with the unified spawn_agent tool.
@@ -174,7 +180,7 @@ def create_spawn_agent_registry(
             clone_id: Existing clone ID to reuse
             worktree_id: Existing worktree ID to reuse
             workflow: Workflow/pipeline to use
-            provider: AI provider (claude/gemini/qwen/codex)
+            provider: AI provider (claude/gemini/qwen/codex/droid)
             model: Model to use
             reasoning_effort: Optional reasoning override for supported providers/models
             reasoning_required: Fail instead of warning when the requested reasoning is unsupported
@@ -320,6 +326,7 @@ def create_spawn_agent_registry(
             session_manager=session_manager,
             db=db,
             daemon_config=daemon_config,
+            code_index=code_index,
         )
 
         # Auto-subscribe parent session + lineage to agent completion events
@@ -345,7 +352,7 @@ def create_spawn_agent_registry(
     )
     async def dispatch_batch(
         suggestions: list[dict[str, Any]],
-        agent: str = "developer",
+        agent: str = "backend-developer",
         worktree_id: str | None = None,
         clone_id: str | None = None,
         isolation: Literal["none", "worktree", "clone"] | None = None,
@@ -362,7 +369,7 @@ def create_spawn_agent_registry(
 
         Args:
             suggestions: Task briefs from suggest_next_task output
-            agent: Agent definition name (default: "developer")
+            agent: Agent definition name (default: "backend-developer")
             worktree_id: Shared worktree ID for all agents
             clone_id: Existing clone ID for all agents
             isolation: Isolation mode (none/worktree/clone)

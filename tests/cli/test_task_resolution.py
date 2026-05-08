@@ -33,7 +33,7 @@ def test_resolve_numeric_string_fails_if_no_project() -> None:
     mock_manager.get_task.side_effect = ValueError("Invalid UUID")
 
     # Should return None if no project context and no project_id passed
-    with patch("gobby.cli.tasks._utils.get_project_context", return_value=None):
+    with patch("gobby.cli.tasks._utils.resolution.get_project_context", return_value=None):
         result = resolve_task_id(mock_manager, "123", project_id=None)
 
     assert result is None

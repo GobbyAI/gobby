@@ -8,6 +8,7 @@ from gobby.config.app import load_config
 
 from .agents import agents
 from .auth import auth
+from .build import build_command
 from .clones import clones
 from .communications import comms
 from .cron import cron
@@ -24,6 +25,8 @@ from .memory import memory
 from .merge import merge
 from .pack import pack, unpack
 from .pipelines import pipelines
+from .plan import plan
+from .plans import plans
 from .projects import projects
 from .qdrant import qdrant
 from .rules import rules
@@ -34,6 +37,7 @@ from .setup import setup
 from .skills import skills
 from .sync import sync
 from .tasks import tasks
+from .test_quality import test_quality
 from .tokens import tokens
 from .ui import ui
 from .workflows import workflows
@@ -66,6 +70,7 @@ cli.add_command(setup)
 cli.add_command(install)
 cli.add_command(uninstall)
 cli.add_command(tasks)
+cli.add_command(test_quality)
 cli.add_command(tokens)
 cli.add_command(memory)
 cli.add_command(sessions)
@@ -96,3 +101,6 @@ cli.add_command(qdrant)
 cli.add_command(pack)
 cli.add_command(unpack)
 cli.add_command(comms)
+cli.add_command(build_command)
+cli.add_command(plan)
+cli.add_command(plans)

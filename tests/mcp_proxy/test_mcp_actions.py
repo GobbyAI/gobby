@@ -148,6 +148,8 @@ class TestAddMcpServer:
 
         # Description generation should be attempted
         mock_gen.assert_called_once()
+        assert mock_gen.call_count == 1
+        assert mock_gen.call_args is not None
 
     @pytest.mark.asyncio
     async def test_add_server_with_custom_description(self):
@@ -175,6 +177,8 @@ class TestAddMcpServer:
 
         # Should not generate description since one was provided
         mock_gen.assert_not_called()
+        assert mock_gen.call_count == 0
+        assert not mock_gen.called
 
 
 class TestRemoveMcpServer:

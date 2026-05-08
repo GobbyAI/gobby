@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 from collections.abc import Awaitable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -30,6 +31,7 @@ from gobby.mcp_proxy.daemon_control import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.mcp_proxy.server_list import compact_mcp_server_list
 
 
 def _strip_none(obj: Any) -> Any:
@@ -62,6 +64,9 @@ WAIT_TOOL_NAMES = (
 )
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
+DAEMON_HEALTH_ATTEMPTS = 30
+DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
+DAEMON_HEALTH_RETRY_DELAY_SECONDS = 1.0
 
 
 __all__ = [
@@ -145,20 +150,29 @@ class DaemonProxy:
 
     @staticmethod
     def _read_project_id() -> str | None:
-        """Read project_id from .gobby/project.json in CWD.
+        """Read project_id from the environment or nearest .gobby/project.json.
 
-        The stdio process runs in the PROJECT directory (spawned by the CLI).
-        Its os.getcwd() is the correct project, unlike the daemon's CWD.
+        The stdio process should run under the project, but different MCP
+        clients do not agree on the exact CWD. Walk upward so subdirectory
+        launches still send the project header required for #N session refs.
         """
         import json as _json
 
-        try:
-            with open(".gobby/project.json") as f:
-                data = _json.load(f)
+        env_project_id = os.environ.get("GOBBY_PROJECT_ID")
+        if env_project_id:
+            return env_project_id
+
+        for root in [Path.cwd(), *Path.cwd().parents]:
+            project_file = root / ".gobby" / "project.json"
+            if not project_file.exists():
+                continue
+            try:
+                data = _json.loads(project_file.read_text())
+            except (PermissionError, _json.JSONDecodeError, OSError):
+                return None
             pid = data.get("id")
             return pid if isinstance(pid, str) else None
-        except (FileNotFoundError, PermissionError, _json.JSONDecodeError, OSError):
-            return None
+        return None
 
     async def _request(
         self,
@@ -167,21 +181,20 @@ class DaemonProxy:
         json: dict[str, Any] | None = None,
         timeout: float = 30.0,
         project_id: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Make HTTP request to daemon."""
-        # Learn session_id from tool arguments (sticky — first one wins)
-        if self._session_id is None and isinstance(json, dict):
-            sid = json.get("session_id")
-            if isinstance(sid, str) and sid:
-                self._session_id = sid
+        if session_id:
+            self._session_id = session_id
 
         # Build context headers so the daemon resolves the correct project
         headers: dict[str, str] = {}
         effective_project_id = project_id or self._project_id
+        effective_session_id = session_id or self._session_id
         if effective_project_id:
             headers["X-Gobby-Project-Id"] = effective_project_id
-        if self._session_id:
-            headers["X-Gobby-Session-Id"] = self._session_id
+        if effective_session_id:
+            headers["X-Gobby-Session-Id"] = effective_session_id
 
         try:
             async with httpx.AsyncClient() as client:
@@ -204,22 +217,34 @@ class DaemonProxy:
             error_msg = str(e) or f"{type(e).__name__}: (no message)"
             return {"success": False, "error": error_msg}
 
-    async def get_status(self) -> dict[str, Any]:
+    async def get_status(self, session_id: str | None = None) -> dict[str, Any]:
         """Get daemon status."""
-        return await self._request("GET", "/api/admin/status")
+        return await self._request("GET", "/api/admin/status", session_id=session_id)
 
-    async def list_tools(self, server_name: str | None = None) -> dict[str, Any]:
+    async def list_tools(
+        self,
+        server_name: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """List tools from MCP servers."""
         if server_name:
-            return await self._request("GET", f"/api/mcp/{server_name}/tools")
+            return await self._request(
+                "GET",
+                f"/api/mcp/{server_name}/tools",
+                session_id=session_id,
+            )
         # List all - need to get server list first
-        status = await self.get_status()
+        status = await self.get_status(session_id=session_id)
         if status.get("success") is False:
             return status
         servers = status.get("mcp_servers", {})
         all_tools: dict[str, list[dict[str, Any]]] = {}
         for srv_name in servers:
-            result = await self._request("GET", f"/api/mcp/{srv_name}/tools")
+            result = await self._request(
+                "GET",
+                f"/api/mcp/{srv_name}/tools",
+                session_id=session_id,
+            )
             if result.get("success"):
                 all_tools[srv_name] = result.get("tools", [])
         return {
@@ -233,6 +258,7 @@ class DaemonProxy:
         tool_name: str,
         arguments: str | dict[str, Any] | None = None,
         project_id: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
@@ -263,18 +289,26 @@ class DaemonProxy:
         }
         if project_id:
             request_kwargs["project_id"] = project_id
+        if session_id:
+            request_kwargs["session_id"] = session_id
         return await self._request(
             "POST",
             f"/api/mcp/{server_name}/tools/{tool_name}",
             **request_kwargs,
         )
 
-    async def get_tool_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
+    async def get_tool_schema(
+        self,
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Get schema for a specific tool."""
         result = await self._request(
             "POST",
             "/api/mcp/tools/schema",
             json={"server_name": server_name, "tool_name": tool_name},
+            session_id=session_id,
         )
         if "error" in result:
             return {"success": False, "error": result["error"]}
@@ -287,9 +321,10 @@ class DaemonProxy:
             },
         }
 
-    async def list_mcp_servers(self) -> dict[str, Any]:
+    async def list_mcp_servers(self, session_id: str | None = None) -> dict[str, Any]:
         """List configured MCP servers (includes internal gobby-* servers)."""
-        return await self._request("GET", "/api/mcp/servers")
+        result = await self._request("GET", "/api/mcp/servers", session_id=session_id)
+        return compact_mcp_server_list(result)
 
     async def recommend_tools(
         self,
@@ -398,6 +433,7 @@ class DaemonProxy:
             "POST",
             "/api/workflows/variables/set",
             json={"name": name, "value": value, "session_id": session_id},
+            session_id=session_id,
         )
 
     async def get_variable(
@@ -411,6 +447,7 @@ class DaemonProxy:
             "POST",
             "/api/workflows/variables/get",
             json={"name": name, "session_id": session_id},
+            session_id=session_id,
         )
 
     async def init_project(self, name: str, project_path: str | None = None) -> dict[str, Any]:
@@ -471,8 +508,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with servers list, total count, and connected count
         """
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
+        if session_id:
+            return await proxy.list_mcp_servers(session_id=session_id)
         return await proxy.list_mcp_servers()
 
     @mcp.tool()
@@ -489,8 +526,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool listings
         """
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
+        if session_id:
+            return await proxy.list_tools(server_name, session_id=session_id)
         return await proxy.list_tools(server_name)
 
     @mcp.tool()
@@ -512,8 +549,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool name, description, and full inputSchema
         """
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
+        if session_id:
+            return await proxy.get_tool_schema(server_name, tool_name, session_id=session_id)
         return await proxy.get_tool_schema(server_name, tool_name)
 
     @mcp.tool()
@@ -571,28 +608,20 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
                 "error": "Missing required parameters: server_name, tool_name",
             }
 
-        # Set session_id on proxy directly so _request() sends it via
-        # X-Gobby-Session-Id header. Don't inject into tool arguments —
-        # that collides with tools that accept session_id as a parameter
-        # (get_session, get_handoff_context, etc.).
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
-
         requested_timeout = None
         if tool_name in WAIT_TOOL_NAMES:
             raw_timeout = final_args.get("timeout") if isinstance(final_args, dict) else None
             if isinstance(raw_timeout, int | float):
                 requested_timeout = float(raw_timeout)
 
+        call_kwargs: dict[str, Any] = {}
         if project_id:
-            return await _call_with_wait_heartbeat(
-                proxy.call_tool(server_name, tool_name, final_args, project_id=project_id),
-                ctx=ctx,
-                tool_name=tool_name,
-                timeout=requested_timeout,
-            )
+            call_kwargs["project_id"] = project_id
+        if session_id:
+            call_kwargs["session_id"] = session_id
+
         return await _call_with_wait_heartbeat(
-            proxy.call_tool(server_name, tool_name, final_args),
+            proxy.call_tool(server_name, tool_name, final_args, **call_kwargs),
             ctx=ctx,
             tool_name=tool_name,
             timeout=requested_timeout,
@@ -806,21 +835,33 @@ async def ensure_daemon_running() -> None:
 
     # Check if running
     if is_daemon_running():
-        # 3 attempts before concluding unhealthy (5s timeout each)
-        for attempt in range(3):
-            if await check_daemon_http_health(port):
+        for attempt in range(DAEMON_HEALTH_ATTEMPTS):
+            if await check_daemon_http_health(port, timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS):
                 return
-            if attempt < 2:
+            if attempt < DAEMON_HEALTH_ATTEMPTS - 1:
                 logger.warning(
-                    f"Daemon health check failed (attempt {attempt + 1}/3), retrying in 5s...",
+                    "Daemon health check failed "
+                    f"(attempt {attempt + 1}/{DAEMON_HEALTH_ATTEMPTS}), "
+                    f"retrying in {DAEMON_HEALTH_RETRY_DELAY_SECONDS:.1f}s...",
                 )
-                await asyncio.sleep(5)
+                await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
 
-        # 3 consecutive failures → restart
-        logger.warning("Daemon running but unhealthy after 3 checks, restarting...")
         pid = get_daemon_pid()
-        await restart_daemon_process(pid, port, ws_port)
+        logger.error(
+            "Daemon is running but did not become healthy "
+            f"(pid={pid}, port={port}) after {DAEMON_HEALTH_ATTEMPTS} attempts. "
+            "Refusing to restart it from a stdio MCP client because that can interrupt "
+            "active dispatch agents.",
+        )
+        sys.exit(1)
     else:
+        if os.environ.get("GOBBY_AGENT_RUN_ID"):
+            logger.error(
+                "Daemon is not running for managed agent MCP client; refusing to auto-start "
+                "from an agent process.",
+            )
+            sys.exit(1)
+
         # Start
         result = await start_daemon_process(port, ws_port)
         if not result.get("success"):
@@ -831,16 +872,21 @@ async def ensure_daemon_running() -> None:
 
     # Wait for health
     last_health_response = None
-    for _i in range(10):
-        last_health_response = await check_daemon_http_health(port)
+    for _i in range(DAEMON_HEALTH_ATTEMPTS):
+        last_health_response = await check_daemon_http_health(
+            port,
+            timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+        )
         if last_health_response:
             return
-        await asyncio.sleep(1)
+        await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
 
     # Health check timed out
     pid = get_daemon_pid()
     logger.error(
-        f"Daemon failed to become healthy after 10 attempts (pid={pid}, port={port}, ws_port={ws_port}, last_health={last_health_response})",
+        "Daemon failed to become healthy after "
+        f"{DAEMON_HEALTH_ATTEMPTS} attempts "
+        f"(pid={pid}, port={port}, ws_port={ws_port}, last_health={last_health_response})",
     )
     sys.exit(1)
 

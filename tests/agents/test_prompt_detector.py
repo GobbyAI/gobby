@@ -179,7 +179,9 @@ class TestDismissedTracking:
     def test_clear_nonexistent_is_noop(self) -> None:
         """Clearing a run_id that was never tracked doesn't raise."""
         detector = PromptDetector()
-        detector.clear("run-never-seen")  # Should not raise
+        result = detector.clear("run-never-seen")
+        assert result is None
+        assert detector.was_dismissed("run-never-seen") is False
 
     def test_independent_tracking(self) -> None:
         """Dismissed state is per-agent, not global."""

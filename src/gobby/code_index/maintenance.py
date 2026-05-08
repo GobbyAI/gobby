@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SUMMARY_DB_WRITE_CONCURRENCY = 4
+
 
 async def code_index_maintenance_loop(
     context: CodeIndexContext,
@@ -67,14 +69,19 @@ async def _run_maintenance(
     summary_batch_size: int = 20,
 ) -> None:
     """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
-    projects = context.storage.list_indexed_projects()
-    gcode_bin = resolve_native_bin("gcode")
+    projects = await asyncio.to_thread(context.storage.list_indexed_projects)
+    gcode_bin = await asyncio.to_thread(resolve_native_bin, "gcode")
 
     if gcode_bin is None:
         logger.warning("gcode not installed — skipping maintenance index. Run `gobby install`.")
 
     for project in projects:
         if not project.root_path:
+            continue
+
+        root = Path(project.root_path).expanduser()
+        if not await asyncio.to_thread(root.is_dir):
+            await _purge_missing_project(context, project)
             continue
 
         if gcode_bin is not None:
@@ -84,7 +91,7 @@ async def _run_maintenance(
                     gcode_bin,
                     "index",
                     "--project",
-                    str(project.root_path),
+                    str(root),
                     "--quiet",
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.PIPE,
@@ -120,6 +127,31 @@ async def _run_maintenance(
             await _summarize_unsummarized(context, project, summarizer, summary_batch_size)
 
 
+async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
+    """Remove index data for a project whose root directory is gone."""
+    counts = await asyncio.to_thread(context.storage.delete_project_index, project.id)
+
+    if context.graph is not None:
+        try:
+            await context.graph.clear_project(project.id)
+        except Exception as e:
+            logger.warning(f"Graph cleanup failed for missing code index project {project.id}: {e}")
+
+    if context.vector_store is not None:
+        collection = f"{context.config.qdrant_collection_prefix}{project.id}"
+        try:
+            await context.vector_store.delete_collection(collection)
+        except Exception as e:
+            logger.warning(
+                f"Vector cleanup failed for missing code index project {project.id}: {e}"
+            )
+
+    logger.info(
+        f"Purged stale code index project {project.id} at {project.root_path}: "
+        f"{counts.get('files', 0)} files, {counts.get('symbols', 0)} symbols"
+    )
+
+
 async def _summarize_unsummarized(
     context: CodeIndexContext,
     project: Any,
@@ -127,33 +159,70 @@ async def _summarize_unsummarized(
     batch_size: int,
 ) -> None:
     """Generate summaries for symbols that don't have one yet."""
-    symbols = context.storage.get_unsummarized_symbols(project.id, limit=batch_size)
+    symbols = await asyncio.to_thread(
+        context.storage.get_unsummarized_symbols,
+        project.id,
+        limit=batch_size,
+    )
     if not symbols:
         return
 
     root = Path(project.root_path)
+    source_by_symbol_id = await asyncio.to_thread(_read_symbol_sources, root, symbols)
 
     def read_source(symbol: Any) -> str | None:
-        """Read symbol source from disk."""
-        full_path = root / symbol.file_path
-        if not full_path.exists():
-            return None
-        try:
-            lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            # line_start/line_end are 1-indexed
-            start = max(0, symbol.line_start - 1)
-            end = symbol.line_end
-            return "\n".join(lines[start:end])
-        except Exception:
-            return None
+        return source_by_symbol_id.get(symbol.id)
 
     results = await summarizer.summarize_batch(symbols, read_source)
 
-    for symbol_id, summary in results.items():
-        context.storage.update_symbol_summary(symbol_id, summary)
+    await _update_symbol_summaries(context, results)
 
     if results:
         logger.info(
             f"Generated {len(results)} summaries for {project.id} "
             f"({len(symbols) - len(results)} skipped/failed)"
         )
+
+
+def _read_symbol_sources(root: Path, symbols: list[Any]) -> dict[str, str | None]:
+    return {symbol.id: _read_symbol_source(root, symbol) for symbol in symbols}
+
+
+async def _update_symbol_summaries(
+    context: CodeIndexContext,
+    results: dict[str, str],
+    *,
+    concurrency: int = _SUMMARY_DB_WRITE_CONCURRENCY,
+) -> None:
+    """Persist generated summaries with bounded DB write concurrency."""
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def update_one(symbol_id: str, summary: str) -> None:
+        async with semaphore:
+            await asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
+
+    items = list(results.items())
+    write_results = await asyncio.gather(
+        *(update_one(symbol_id, summary) for symbol_id, summary in items),
+        return_exceptions=True,
+    )
+    for (symbol_id, _summary), result in zip(items, write_results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, BaseException):
+            logger.warning("Failed to persist summary for symbol %s: %s", symbol_id, result)
+
+
+def _read_symbol_source(root: Path, symbol: Any) -> str | None:
+    """Read symbol source from disk."""
+    full_path = root / symbol.file_path
+    if not full_path.exists():
+        return None
+    try:
+        lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        # line_start/line_end are 1-indexed
+        start = max(0, symbol.line_start - 1)
+        end = symbol.line_end
+        return "\n".join(lines[start:end])
+    except OSError:
+        return None

@@ -1,7 +1,7 @@
 """CLI command building for agent spawning.
 
-Provides functions to construct CLI commands for Claude, Gemini, Qwen, and Codex
-with proper flags for prompts, permissions, and session management.
+Provides functions to construct CLI commands for Claude, Gemini, Qwen, Codex,
+and Droid with proper flags for prompts, permissions, and session management.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ def build_cli_command(
     mode: str = "agent",
     output_format: str | None = None,
     env_overrides: dict[str, str] | None = None,
+    config_overrides: list[str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """
     Build the CLI command and env for any provider.
@@ -36,22 +37,30 @@ def build_cli_command(
     Gemini CLI:
     - gemini --approval-mode yolo "prompt" (one-shot)
     - gemini --acp (interactive ACP mode)
+    - reasoning effort is resolved before command construction; current Gemini
+      terminal mode relies on the selected model/settings rather than a stable flag
 
     Codex CLI:
     - codex --ask-for-approval never --disable guardian_approval -C <dir> [PROMPT]
 
+    Droid CLI:
+    - droid exec --input-format stream-json --cwd <dir> [--model <id>]
+      [--reasoning-effort <level>] --auto <low|high> [PROMPT]
+
     Args:
-        cli: CLI name (claude, gemini, qwen, codex)
+        cli: CLI name (claude, gemini, qwen, codex, droid)
         prompt: Optional prompt to pass (agent mode)
         session_id: Optional session ID
         auto_approve: If True, add flags to auto-approve actions/permissions
-        working_directory: Optional working directory (used by Codex -C flag)
+        working_directory: Optional working directory (used by Codex -C and Droid --cwd)
         sandbox_args: Optional list of CLI args for sandbox configuration
         model: Optional model name
         mode: "agent" (default), "interactive", or "headless"
         output_format: Output format override (e.g., "stream-json")
         env_overrides: Environment variable overrides. Callers are responsible
             for merging inherited environment variables if needed.
+        config_overrides: CLI configuration overrides for providers that
+            support `-c key=value` flags. Currently used by Codex.
 
     Returns:
         Tuple of (command list, env dict) for subprocess execution
@@ -96,6 +105,19 @@ def build_cli_command(
             command.extend(["--ask-for-approval", "never", "--disable", "guardian_approval"])
         if working_directory:
             command.extend(["-C", working_directory])
+        for override in config_overrides or []:
+            command.extend(["-c", override])
+
+    elif cli == "droid":
+        # Droid exec flags, verified against `droid exec --help` on v0.106.0.
+        command.extend(["exec", "--input-format", "stream-json"])
+        if working_directory:
+            command.extend(["--cwd", working_directory])
+        if model:
+            command.extend(["--model", model])
+        if reasoning_effort:
+            command.extend(["--reasoning-effort", reasoning_effort])
+        command.extend(["--auto", "high" if auto_approve else "low"])
 
     # Add sandbox args before prompt (prompt must be last)
     if sandbox_args:

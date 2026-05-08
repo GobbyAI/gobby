@@ -1,0 +1,77 @@
+tags: [task-enforcement, enforcement, lifecycle, verification-before-completion, gobby, default]
+
+rules:
+  require-verification-before-completion-on-schema:
+    description: "Require verification-before-completion before completion schema lookup"
+    event: before_tool
+    enabled: true
+    priority: 23
+    when: >
+      (
+        event.data.get('mcp_tool') == 'get_tool_schema'
+        or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema')
+      )
+      and (
+        (
+          (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) in ('close_task',)
+        )
+        or (
+          (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks-ops'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) in (
+            'complete_stage', 'submit_for_review', 'approve_review', 'record_pr_opened',
+            'record_pr_verdict', 'record_merge_result', 'close_linked_github_issue')
+        )
+        or (
+          (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-merge'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) in ('merge_apply',)
+        )
+      )
+      and not skill_loaded('verification-before-completion')
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'
+
+  require-verification-before-completion-on-lifecycle-call:
+    description: "Require verification-before-completion before lifecycle success transitions"
+    event: before_tool
+    enabled: true
+    priority: 23
+    when: >
+      (
+        (
+          event.data.get('mcp_server') == 'gobby-tasks'
+          and event.data.get('mcp_tool') in ('close_task',)
+        )
+        or (
+          event.data.get('mcp_server') == 'gobby-tasks-ops'
+          and event.data.get('mcp_tool') in (
+            'complete_stage', 'submit_for_review', 'approve_review', 'record_pr_opened',
+            'record_pr_verdict', 'record_merge_result', 'close_linked_github_issue')
+        )
+        or (
+          event.data.get('mcp_server') == 'gobby-merge'
+          and event.data.get('mcp_tool') in ('merge_apply',)
+        )
+        or (
+          event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+          and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) in ('close_task',)
+        )
+        or (
+          event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+          and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks-ops'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) in (
+            'complete_stage', 'submit_for_review', 'approve_review', 'record_pr_opened',
+            'record_pr_verdict', 'record_merge_result', 'close_linked_github_issue')
+        )
+        or (
+          event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+          and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-merge'
+          and (tool_input.get('tool_name') or tool_input.get('tool')) in ('merge_apply',)
+        )
+      )
+      and not skill_loaded('verification-before-completion')
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="verification-before-completion") on gobby-skills, then continue.'

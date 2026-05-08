@@ -7,10 +7,11 @@ They run BEFORE rule evaluation in the hook handler's _evaluate_rules path.
 
 import logging
 import re
+from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
-from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES, is_task_actively_claimed
+from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES, is_task_actively_claimed
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -18,6 +19,23 @@ if TYPE_CHECKING:
     from gobby.tasks.session_tasks import SessionTaskManager
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert observer-tracked values into JSON-safe session-variable data."""
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_json_safe(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_safe(asdict(value))
+    if hasattr(value, "model_dump"):
+        return _json_safe(value.model_dump(mode="json"))
+    if hasattr(value, "to_dict"):
+        return _json_safe(value.to_dict())
+    return str(value)
 
 
 _MODE_LEVEL_MAP = {"plan": 0, "accept_edits": 1, "normal": 1, "bypass": 2}
@@ -66,7 +84,7 @@ def _looks_like_commit_success(output: str) -> bool:
 def compute_mode_level(chat_mode: str) -> int:
     """Derive numeric mode_level from chat_mode.
 
-    Returns 0 (Plan), 1 (Act), or 2 (Full Auto).
+    Returns 0 (Plan), 1 (Act), or 2 (YOLO).
     """
     return _MODE_LEVEL_MAP.get(chat_mode, 2)
 
@@ -87,7 +105,7 @@ def detect_task_claim(
     """Detect gobby-tasks calls that claim or release a task for this session.
 
     Sets ``task_claimed: true`` in variables when the agent successfully
-    creates a task or updates a task to in_progress status.
+    creates or claims a task.
 
     Clears ``task_claimed: false`` when the agent closes a task, requiring
     them to claim another task before making further file modifications.
@@ -153,14 +171,8 @@ def detect_task_claim(
             )
         return
 
-    if inner_tool_name not in ("create_task", "update_task", "claim_task"):
+    if inner_tool_name not in ("create_task", "claim_task", "update_task"):
         return
-
-    # For update_task, only count if status is being set to in_progress
-    if inner_tool_name == "update_task":
-        arguments = tool_input.get("arguments", {}) or {}
-        if arguments.get("status") != "in_progress":
-            return
 
     # Check if the call succeeded
     if isinstance(tool_output, dict):
@@ -174,7 +186,7 @@ def detect_task_claim(
     arguments = tool_input.get("arguments", {}) or {}
     task_id: str | None = None
 
-    if inner_tool_name in ("update_task", "claim_task"):
+    if inner_tool_name == "claim_task":
         raw_task_id = arguments.get("task_id")
         if raw_task_id and task_manager:
             try:
@@ -197,6 +209,18 @@ def detect_task_claim(
         task_id = result.get("id") if isinstance(result, dict) else None
         if not task_id:
             return
+    elif inner_tool_name == "update_task":
+        update_args = tool_input.get("arguments", {}) or {}
+        if update_args.get("status") != "in_progress":
+            return
+        raw_task_id = update_args.get("task_id")
+        if raw_task_id and task_manager:
+            try:
+                task = task_manager.get_task(raw_task_id, project_id=project_id)
+                if task:
+                    task_id = task.id
+            except Exception as e:
+                logger.warning(f"Cannot resolve task ref '{raw_task_id}' to UUID: {e}")
 
     if not task_id:
         logger.debug(f"Skipping task claim state update - no valid UUID for {inner_tool_name}")
@@ -219,7 +243,7 @@ def detect_task_claim(
     logger.info(f"Session {session_id}: added {task_id} to claimed_tasks (via {inner_tool_name})")
 
     # Auto-link task to session
-    if inner_tool_name in ("update_task", "claim_task"):
+    if inner_tool_name == "claim_task":
         if task_id and session_task_manager:
             try:
                 session_task_manager.link_task(session_id, task_id, "worked_on")
@@ -357,6 +381,17 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
     system_reminders = re.findall(r"<system-reminder>(.*?)</system-reminder>", cleaned, re.DOTALL)
     reminder_text = " ".join(system_reminders)
 
+    def set_mode(chat_mode: str, reason: str) -> None:
+        variables["chat_mode"] = chat_mode
+        level = compute_mode_level(chat_mode)
+        if variables.get("mode_level") != level:
+            variables["mode_level"] = level
+            logger.info(f"Session {session_id}: mode_level={level} ({reason})")
+        if level != 0 and (variables.get("plan_mode") or variables.get("plan_skill_loaded")):
+            variables["plan_mode"] = False
+            variables["plan_skill_loaded"] = False
+            logger.info(f"Session {session_id}: plan_mode=False")
+
     plan_mode_indicators = [
         "Plan mode is active",
         "Plan mode still active",
@@ -375,6 +410,37 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
                 variables["plan_mode"] = True
                 logger.info(f"Session {session_id}: plan_mode=True")
             return
+
+    reminder_lower = reminder_text.lower()
+    mode_indicators = [
+        (
+            "bypass",
+            [
+                "auto mode is active",
+                "you are in auto mode",
+                "yolo mode is active",
+                "you are in yolo mode",
+                "bypasspermissions",
+                "permission mode is bypasspermissions",
+            ],
+        ),
+        (
+            "normal",
+            [
+                "act mode is active",
+                "you are in act mode",
+                "normal execution mode",
+                "acceptedits",
+                "permission mode is default",
+            ],
+        ),
+    ]
+
+    for chat_mode, indicators in mode_indicators:
+        for indicator in indicators:
+            if indicator in reminder_lower:
+                set_mode(chat_mode, f"detected from system reminder: '{indicator}'")
+                return
 
     exit_indicators = [
         "Exited Plan Mode",
@@ -448,6 +514,18 @@ def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], sessio
             )
         return
 
+    if '<chat-mode status="yolo">' in cleaned:
+        set_mode("bypass", 'detected from <chat-mode status="yolo">')
+        return
+
+    if '<chat-mode status="auto">' in cleaned:
+        set_mode("bypass", 'detected from legacy <chat-mode status="auto">')
+        return
+
+    if '<chat-mode status="act">' in cleaned:
+        set_mode("normal", 'detected from <chat-mode status="act">')
+        return
+
     # --- No plan-mode markers found: heal stale state ---
     # If mode_level is 0 (plan) but no CLI injected plan-mode indicators,
     # the value is stale from a previous session (survived clear/compact).
@@ -513,7 +591,7 @@ def reconcile_claimed_tasks(
         try:
             db_tasks = task_manager.list_tasks(
                 claimed_by_session_id=session_id,
-                status=list(ACTIVE_CLAIM_STATUSES),
+                current_stage_state=list(ACTIVE_STAGE_STATES),
             )
         except Exception as e:
             logger.warning(f"Session {session_id}: failed to list claimed tasks: {e}")
@@ -634,14 +712,36 @@ def _track_mcp_call(
     if is_error:
         return False
 
-    mcp_calls = variables.setdefault("mcp_calls", {})
-    server_calls = mcp_calls.setdefault(server_name, [])
+    mcp_calls_value = variables.get("mcp_calls")
+    if not isinstance(mcp_calls_value, dict):
+        mcp_calls: dict[str, Any] = {}
+        variables["mcp_calls"] = mcp_calls
+    else:
+        mcp_calls = mcp_calls_value
+
+    server_calls_value = mcp_calls.get(server_name)
+    if not isinstance(server_calls_value, list):
+        server_calls: list[Any] = []
+        mcp_calls[server_name] = server_calls
+    else:
+        server_calls = server_calls_value
     if inner_tool not in server_calls:
         server_calls.append(inner_tool)
 
-    mcp_results = variables.setdefault("mcp_results", {})
-    server_results = mcp_results.setdefault(server_name, {})
-    server_results[inner_tool] = result
+    mcp_results_value = variables.get("mcp_results")
+    if not isinstance(mcp_results_value, dict):
+        mcp_results: dict[str, Any] = {}
+        variables["mcp_results"] = mcp_results
+    else:
+        mcp_results = mcp_results_value
+
+    server_results_value = mcp_results.get(server_name)
+    if not isinstance(server_results_value, dict):
+        server_results: dict[str, Any] = {}
+        mcp_results[server_name] = server_results
+    else:
+        server_results = server_results_value
+    server_results[inner_tool] = _json_safe(result)
 
     logger.debug(
         f"Session {session_id}: MCP call tracked {server_name}/{inner_tool} "

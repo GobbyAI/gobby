@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.tasks.state_semantics import (
-    ACTIVE_CLAIM_STATUSES,
+    ACTIVE_STAGE_STATES,
     get_claimed_session_id,
     is_task_actively_claimed,
 )
@@ -27,6 +27,31 @@ if TYPE_CHECKING:
     from gobby.storage.tasks._manager import LocalTaskManager
 
 logger = logging.getLogger(__name__)
+
+
+def _submit_current_stage_for_review(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    stage_name: str,
+) -> None:
+    task_manager.stage_states.submit_for_review(
+        task_id,
+        stage_name,
+        by_session_id=None,
+    )
+
+
+def _fail_current_stage(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    stage_name: str,
+) -> None:
+    task_manager.stage_states.fail_stage(
+        task_id,
+        stage_name,
+        reason="stale_task_recovery",
+        by_session_id=None,
+    )
 
 
 class PipelineHeartbeat:
@@ -153,20 +178,22 @@ class PipelineHeartbeat:
         For each actively claimed task that has an owning session:
         1. Check if there's an active agent run (pending/running) for the task
         2. If not, check if the owning session is still alive
-        3. If neither, recover the task based on its current lifecycle status
+        3. If neither, recover the task based on its current stage
 
         Returns:
             Number of recovered tasks.
         """
         import asyncio
 
-        if not self._task_manager or not self._agent_run_manager:
+        task_manager = self._task_manager
+        agent_run_manager = self._agent_run_manager
+        if not task_manager or not agent_run_manager:
             return 0
 
         try:
             active_claims = await asyncio.to_thread(
-                self._task_manager.list_tasks,
-                status=list(ACTIVE_CLAIM_STATUSES),
+                task_manager.list_tasks,
+                current_stage_state=list(ACTIVE_STAGE_STATES),
                 closed=False,
                 limit=100,
             )
@@ -183,7 +210,7 @@ class PipelineHeartbeat:
                 continue
             try:
                 has_active = await asyncio.to_thread(
-                    self._agent_run_manager.has_active_run_for_task, task.id
+                    agent_run_manager.has_active_run_for_task, task.id
                 )
                 if has_active:
                     continue
@@ -195,42 +222,46 @@ class PipelineHeartbeat:
                     continue
 
                 # No active agent run and no live session — task ownership is orphaned.
-                # Preserve non-implementation lifecycle states instead of forcing
-                # them back through in_progress/open.
                 has_commits = bool(getattr(task, "commits", None))
-                raw_stage = getattr(task, "lifecycle_stage", None)
-                raw_status = getattr(task, "status", None)
-                lifecycle_stage = raw_stage if isinstance(raw_stage, str) and raw_stage else None
-                if lifecycle_stage is None and isinstance(raw_status, str) and raw_status:
-                    lifecycle_stage = raw_status
-                if lifecycle_stage == "in_progress" and has_commits:
+                current_stage = await asyncio.to_thread(
+                    task_manager.stage_states.current_stage,
+                    task.id,
+                )
+                if current_stage and current_stage.state == "in_progress" and has_commits:
                     await asyncio.to_thread(
-                        self._task_manager.release_task_claim,
+                        _submit_current_stage_for_review,
+                        task_manager,
                         task.id,
-                        status="needs_review",
+                        current_stage.stage_name,
                     )
+                    await asyncio.to_thread(task_manager.release_task_claim, task.id)
                     logger.info(
-                        f"Heartbeat: promoted stale task {task.id} (#{task.seq_num}) to needs_review (has commits, no active agent run)",
-                    )
-                elif lifecycle_stage == "in_progress":
-                    await asyncio.to_thread(
-                        self._task_manager.release_task_claim,
+                        "Heartbeat: submitted stale task %s (#%s) for review",
                         task.id,
-                        status="open",
+                        task.seq_num,
                     )
+                elif current_stage and current_stage.state == "in_progress":
+                    await asyncio.to_thread(
+                        _fail_current_stage,
+                        task_manager,
+                        task.id,
+                        current_stage.stage_name,
+                    )
+                    await asyncio.to_thread(task_manager.release_task_claim, task.id)
                     logger.warning(
-                        f"Heartbeat: recovered stale task {task.id} (#{task.seq_num}) - reset to open (no active agent run, no commits)",
+                        "Heartbeat: failed stale task %s (#%s) for retry",
+                        task.id,
+                        task.seq_num,
                     )
                 else:
                     await asyncio.to_thread(
-                        self._task_manager.release_task_claim,
+                        task_manager.release_task_claim,
                         task.id,
                     )
                     logger.info(
-                        "Heartbeat: released stale claim on task %s (#%s) in status %s",
+                        "Heartbeat: released stale claim on task %s (#%s)",
                         task.id,
                         task.seq_num,
-                        task.status,
                     )
                 recovered += 1
             except Exception:

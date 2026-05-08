@@ -11,49 +11,112 @@ from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
-from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
-from gobby.storage.tasks._state_sql import is_ready_sql, status_filter_sql
-from gobby.tasks.state_semantics import normalize_lifecycle_stage
+from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
 
-def _lifecycle_stage_filter_sql(
-    lifecycle_stage: str | list[str] | None,
+def _current_stage_state_filter_sql(
+    current_stage_state: str | list[str] | None,
 ) -> tuple[str | None, list[Any]]:
-    """Build a canonical lifecycle-stage filter clause and params."""
-    if not lifecycle_stage:
+    """Build a current-stage-state filter clause and params."""
+    if not current_stage_state:
         return None, []
 
-    raw_values = [lifecycle_stage] if isinstance(lifecycle_stage, str) else list(lifecycle_stage)
-    include_open = False
-    normalized_values: list[str] = []
-
-    for raw_value in raw_values:
-        normalized = normalize_lifecycle_stage(raw_value)
-        if normalized is None:
-            include_open = True
-        elif normalized not in normalized_values:
-            normalized_values.append(normalized)
-
-    clauses: list[str] = []
-    params: list[Any] = []
-    if normalized_values:
-        placeholders = ", ".join("?" for _ in normalized_values)
-        clauses.append(f"lifecycle_stage IN ({placeholders})")
-        params.extend(normalized_values)
-    if include_open:
-        clauses.append("lifecycle_stage IS NULL")
-
-    if not clauses:
+    raw_values = (
+        [current_stage_state] if isinstance(current_stage_state, str) else list(current_stage_state)
+    )
+    normalized_values = [
+        str(value).strip().lower().replace("-", "_") for value in raw_values if str(value).strip()
+    ]
+    if not normalized_values:
         return None, []
-    return "(" + " OR ".join(clauses) + ")", params
+
+    placeholders = ", ".join("?" for _ in normalized_values)
+    clauses = [
+        f"""
+        EXISTS (
+            SELECT 1
+              FROM task_stage_states current_stage_filter
+             WHERE current_stage_filter.task_id = tasks.id
+               AND current_stage_filter.state != 'done'
+               AND current_stage_filter.position = (
+                   SELECT MIN(stage_scan.position)
+                     FROM task_stage_states stage_scan
+                    WHERE stage_scan.task_id = tasks.id
+                      AND stage_scan.state != 'done'
+               )
+               AND current_stage_filter.state IN ({placeholders})
+        )
+        """
+    ]
+    params = list(normalized_values)
+    if "ready" in normalized_values:
+        clauses.append(
+            """
+            NOT EXISTS (
+                SELECT 1
+                  FROM task_stage_states stage_any
+                 WHERE stage_any.task_id = tasks.id
+            )
+            """
+        )
+    return f"({' OR '.join(clauses)})", params
+
+
+def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
+    return f"""
+    {join_type} task_stage_states current_stage
+      ON current_stage.task_id = {task_alias}.id
+     AND current_stage.state != 'done'
+     AND current_stage.position = (
+         SELECT MIN(stage_scan.position)
+           FROM task_stage_states stage_scan
+          WHERE stage_scan.task_id = {task_alias}.id
+            AND stage_scan.state != 'done'
+     )
+    """
+
+
+def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
+    return (
+        f"{task_alias}.closed_at IS NULL "
+        f"AND {task_alias}.escalated_at IS NULL "
+        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+    )
+
+
+def _external_blocker_exists_sql(task_alias: str = "t") -> str:
+    return f"""
+    EXISTS (
+        SELECT 1 FROM task_dependencies d
+        JOIN tasks blocker ON d.depends_on = blocker.id
+        WHERE d.task_id = {task_alias}.id
+          AND d.dep_type = 'blocks'
+          AND blocker.closed_at IS NULL
+          AND NOT EXISTS (
+              WITH RECURSIVE ancestors AS (
+                  SELECT blocker.parent_task_id AS ancestor_id
+                  UNION ALL
+                  SELECT p.parent_task_id
+                  FROM tasks p
+                  JOIN ancestors a ON p.id = a.ancestor_id
+                  WHERE p.parent_task_id IS NOT NULL
+              )
+              SELECT 1 FROM ancestors WHERE ancestor_id = {task_alias}.id
+          )
+    )
+    """
+
+
+def _no_external_blocker_sql(task_alias: str = "t") -> str:
+    return f"NOT {_external_blocker_exists_sql(task_alias)}"
 
 
 def list_tasks(
     db: DatabaseProtocol,
     project_id: str | None = None,
-    status: str | list[str] | None = None,
-    lifecycle_stage: str | list[str] | None = None,
+    current_stage_state: str | list[str] | None = None,
     priority: int | None = None,
     assignee: str | None = None,
     claimed_by_session_id: str | None = None,
@@ -73,10 +136,7 @@ def list_tasks(
     Args:
         db: Database protocol instance
         project_id: Filter by project
-        status: Filter by status. Can be a single status string, a list of statuses,
-            or None to include all statuses.
-        lifecycle_stage: Filter by canonical lifecycle stage (`open`, `in_progress`,
-            `needs_review`, `review_approved`) independent of closed/escalated state.
+        current_stage_state: Filter by the task's current stage state.
         priority: Filter by priority
         assignee: Filter by assignee
         claimed_by_session_id: Filter by canonical owning session
@@ -102,16 +162,13 @@ def list_tasks(
     if project_id:
         query += " AND project_id = ?"
         params.append(project_id)
-    if status:
-        clause, clause_params = status_filter_sql(status)
+    if current_stage_state:
+        clause, clause_params = _current_stage_state_filter_sql(current_stage_state)
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
-    if lifecycle_stage:
-        clause, clause_params = _lifecycle_stage_filter_sql(lifecycle_stage)
-        if clause:
-            query += f" AND {clause}"
-            params.extend(clause_params)
+            if closed is None:
+                query += " AND closed_at IS NULL"
     if priority:
         query += " AND priority = ?"
         params.append(priority)
@@ -130,8 +187,10 @@ def list_tasks(
     elif closed is False:
         query += " AND closed_at IS NULL"
     if task_type:
-        query += " AND task_type = ?"
-        params.append(task_type)
+        task_type_values = task_type_filter_values(task_type)
+        placeholders = ", ".join("?" for _ in task_type_values)
+        query += f" AND task_type IN ({placeholders})"
+        params.extend(task_type_values)
     if label:
         # tasks.labels is a JSON list. We use json_each to find if the label is in the list.
         query += " AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value = ?)"
@@ -161,6 +220,7 @@ def list_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
 
     if sort_by == "hierarchy":
@@ -200,53 +260,31 @@ def list_ready_tasks(
     WITH RECURSIVE ready_tasks AS (
         -- Base case: open/in_progress tasks with no parent and no external blocking deps
         SELECT t.id FROM tasks t
-        WHERE {is_ready_sql("t")}
-        AND t.parent_task_id IS NULL
-        AND NOT EXISTS (
-            SELECT 1 FROM task_dependencies d
-            JOIN tasks blocker ON d.depends_on = blocker.id
-            WHERE d.task_id = t.id
-              AND d.dep_type = 'blocks'
-              AND blocker.closed_at IS NULL
-              -- Exclude ancestor blocked by any descendant (completion block, not work block)
-              AND NOT EXISTS (
-                  WITH RECURSIVE ancestors AS (
-                      SELECT blocker.parent_task_id AS ancestor_id
-                      UNION ALL
-                      SELECT p.parent_task_id
-                      FROM tasks p
-                      JOIN ancestors a ON p.id = a.ancestor_id
-                      WHERE p.parent_task_id IS NOT NULL
-                  )
-                  SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-              )
+        {_current_stage_join_sql("t")}
+        WHERE {_not_closed_or_escalated_sql("t")}
+        AND (
+            current_stage.state IN ('ready', 'in_progress')
+            OR NOT EXISTS (
+                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+            )
         )
+        AND t.parent_task_id IS NULL
+        AND {_no_external_blocker_sql("t")}
 
         UNION ALL
 
         -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
         SELECT t.id FROM tasks t
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
-        WHERE {is_ready_sql("t")}
-        AND NOT EXISTS (
-            SELECT 1 FROM task_dependencies d
-            JOIN tasks blocker ON d.depends_on = blocker.id
-            WHERE d.task_id = t.id
-              AND d.dep_type = 'blocks'
-              AND blocker.closed_at IS NULL
-              -- Exclude ancestor blocked by any descendant (completion block, not work block)
-              AND NOT EXISTS (
-                  WITH RECURSIVE ancestors AS (
-                      SELECT blocker.parent_task_id AS ancestor_id
-                      UNION ALL
-                      SELECT p.parent_task_id
-                      FROM tasks p
-                      JOIN ancestors a ON p.id = a.ancestor_id
-                      WHERE p.parent_task_id IS NOT NULL
-                  )
-                  SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-              )
+        {_current_stage_join_sql("t")}
+        WHERE {_not_closed_or_escalated_sql("t")}
+        AND (
+            current_stage.state IN ('ready', 'in_progress')
+            OR NOT EXISTS (
+                SELECT 1 FROM task_stage_states stage_any WHERE stage_any.task_id = t.id
+            )
         )
+        AND {_no_external_blocker_sql("t")}
     )
     SELECT t.* FROM tasks t
     JOIN ready_tasks rt ON t.id = rt.id
@@ -277,6 +315,7 @@ def list_ready_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
 
     # Order hierarchically, then apply user's limit/offset
@@ -302,27 +341,13 @@ def list_blocked_tasks(
     Note: The limit is applied AFTER hierarchical ordering to ensure coherent
     tree structures.
     """
-    query = """
+    query = f"""
     SELECT t.* FROM tasks t
     WHERE t.closed_at IS NULL
-    AND EXISTS (
-        SELECT 1 FROM task_dependencies d
-        JOIN tasks blocker ON d.depends_on = blocker.id
-        WHERE d.task_id = t.id
-          AND d.dep_type = 'blocks'
-          AND blocker.closed_at IS NULL
-          -- Exclude ancestor blocked by any descendant (completion block, not work block)
-          AND NOT EXISTS (
-              WITH RECURSIVE ancestors AS (
-                  SELECT blocker.parent_task_id AS ancestor_id
-                  UNION ALL
-                  SELECT p.parent_task_id
-                  FROM tasks p
-                  JOIN ancestors a ON p.id = a.ancestor_id
-                  WHERE p.parent_task_id IS NOT NULL
-              )
-              SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-          )
+    AND (
+        t.escalated_at IS NOT NULL
+        OR COALESCE(t.is_escalated, 0) = 1
+        OR {_external_blocker_exists_sql("t")}
     )
     """
     params: list[Any] = []
@@ -341,6 +366,7 @@ def list_blocked_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
 
     # Order hierarchically, then apply user's limit/offset

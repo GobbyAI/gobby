@@ -223,7 +223,12 @@ def remove_project_mcp_server(project_path: Path, server_name: str = "gobby") ->
     return result
 
 
-def configure_mcp_server_json(settings_path: Path, server_name: str = "gobby") -> dict[str, Any]:
+def configure_mcp_server_json(
+    settings_path: Path,
+    server_name: str = "gobby",
+    *,
+    extra_server_fields: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Add Gobby MCP server to a JSON settings file (Claude, Gemini, Codex).
 
     Merges the gobby MCP server config into the existing mcpServers section,
@@ -232,6 +237,7 @@ def configure_mcp_server_json(settings_path: Path, server_name: str = "gobby") -
     Args:
         settings_path: Path to the settings.json file (e.g., ~/.claude/settings.json)
         server_name: Name for the MCP server entry (default: "gobby")
+        extra_server_fields: Optional fields to merge into the server entry.
 
     Returns:
         Dict with 'success', 'added', 'backup_path', and 'error' keys
@@ -242,6 +248,7 @@ def configure_mcp_server_json(settings_path: Path, server_name: str = "gobby") -
         "already_configured": False,
         "backup_path": None,
         "error": None,
+        "updated": False,
     }
 
     # Ensure parent directory exists
@@ -260,8 +267,40 @@ def configure_mcp_server_json(settings_path: Path, server_name: str = "gobby") -
             result["error"] = f"Failed to read {settings_path}: {e}"
             return result
 
-    # Check if already configured
+    # Check if already configured. Existing callers preserve the historical
+    # "presence means configured" behavior; callers that pass extra fields can
+    # ask us to merge those fields into an existing server.
     if "mcpServers" in existing_settings and server_name in existing_settings["mcpServers"]:
+        server_config = existing_settings["mcpServers"][server_name]
+        if extra_server_fields and isinstance(server_config, dict):
+            missing_or_different = {
+                key: value
+                for key, value in extra_server_fields.items()
+                if server_config.get(key) != value
+            }
+            if missing_or_different:
+                if settings_path.exists():
+                    timestamp = int(time.time())
+                    backup_path = settings_path.parent / f"{settings_path.name}.{timestamp}.backup"
+                    try:
+                        copy2(settings_path, backup_path)
+                        result["backup_path"] = str(backup_path)
+                    except OSError as e:
+                        result["error"] = f"Failed to create backup: {e}"
+                        return result
+
+                server_config.update(missing_or_different)
+                try:
+                    with open(settings_path, "w") as f:
+                        json.dump(existing_settings, f, indent=2)
+                except OSError as e:
+                    result["error"] = f"Failed to write {settings_path}: {e}"
+                    return result
+
+                result["success"] = True
+                result["updated"] = True
+                return result
+
         result["success"] = True
         result["already_configured"] = True
         return result
@@ -286,15 +325,21 @@ def configure_mcp_server_json(settings_path: Path, server_name: str = "gobby") -
     # so the MCP config survives uv tool reinstalls and PATH changes.
     gobby_bin = str(Path(sys.executable).parent / "gobby")
     if Path(gobby_bin).exists():
-        existing_settings["mcpServers"][server_name] = {
+        server_config = {
             "command": gobby_bin,
             "args": ["mcp-server"],
         }
+        if extra_server_fields:
+            server_config.update(extra_server_fields)
+        existing_settings["mcpServers"][server_name] = server_config
     else:
-        existing_settings["mcpServers"][server_name] = {
+        server_config = {
             "command": "gobby",
             "args": ["mcp-server"],
         }
+        if extra_server_fields:
+            server_config.update(extra_server_fields)
+        existing_settings["mcpServers"][server_name] = server_config
 
     # Write updated settings
     try:

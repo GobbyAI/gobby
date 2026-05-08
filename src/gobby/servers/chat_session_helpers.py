@@ -161,8 +161,6 @@ def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOut
         if resp.get("reason"):
             blocked_specific["permissionDecisionReason"] = resp["reason"]
         output["hookSpecificOutput"] = blocked_specific
-        if resp.get("reason"):
-            output["reason"] = resp["reason"]
     else:
         specific: PreToolUseHookSpecificOutput | None = None
         if (

@@ -31,7 +31,7 @@ class AgentConfig:
     """Machine identifier. Defaults to hostname if not provided."""
 
     source: str = "claude"
-    """CLI source (claude, gemini, qwen, codex)."""
+    """CLI source (claude, gemini, qwen, codex, droid)."""
 
     # New spec-aligned parameters
     workflow: str | None = None

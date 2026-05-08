@@ -7,6 +7,7 @@ import pytest
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
+from tests._timing import drain_asyncio_tasks, wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -25,7 +26,9 @@ class TestProcessShutdown:
         )
         server = HTTPServer(services=services, port=8000, test_mode=True)
 
-        await server._terminate_streamable_http_sessions()
+        result = await server._terminate_streamable_http_sessions()
+        assert result is None
+        assert server._mcp_server is None
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_terminates_all_transports(self) -> None:
@@ -55,7 +58,11 @@ class TestProcessShutdown:
         await server._terminate_streamable_http_sessions()
 
         transport_one.terminate.assert_awaited_once()
+        assert transport_one.terminate.await_count == 1
+        assert transport_one.terminate.await_args is not None
         transport_two.terminate.assert_awaited_once()
+        assert transport_two.terminate.await_count == 1
+        assert transport_two.terminate.await_args is not None
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_logs_and_continues_on_error(
@@ -90,6 +97,8 @@ class TestProcessShutdown:
             await server._terminate_streamable_http_sessions()
 
         healthy_transport.terminate.assert_awaited_once()
+        assert healthy_transport.terminate.await_count == 1
+        assert healthy_transport.terminate.await_args is not None
         assert "Failed to terminate Streamable HTTP session sess-fail" in caplog.text
 
     @pytest.mark.asyncio
@@ -106,6 +115,7 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         assert len(server._background_tasks) == 0
+        assert server._background_tasks == set()
 
     @pytest.mark.asyncio
     async def test_shutdown_waits_for_pending_tasks(self) -> None:
@@ -119,7 +129,7 @@ class TestProcessShutdown:
         server = HTTPServer(services=services, port=8000, test_mode=True)
 
         async def quick_task() -> None:
-            await asyncio.sleep(0.1)
+            await drain_asyncio_tasks()
 
         task = asyncio.create_task(quick_task())
         server._background_tasks.add(task)
@@ -128,6 +138,7 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         assert len(server._background_tasks) == 0
+        assert task.done()
 
     @pytest.mark.asyncio
     async def test_shutdown_timeout_with_slow_tasks(self) -> None:
@@ -141,7 +152,7 @@ class TestProcessShutdown:
         server = HTTPServer(services=services, port=8000, test_mode=True)
 
         async def slow_task() -> None:
-            await asyncio.sleep(100)
+            await wait_forever()
 
         task = asyncio.create_task(slow_task())
         server._background_tasks.add(task)
@@ -152,11 +163,13 @@ class TestProcessShutdown:
             start = time.perf_counter()
             max_wait = 0.1
             while len(server._background_tasks) > 0 and (time.perf_counter() - start) < max_wait:
-                await asyncio.sleep(0.01)
+                await drain_asyncio_tasks()
+                break
 
         with patch.object(server, "_process_shutdown", fast_shutdown):
             await server._process_shutdown()
             assert not task.done()
+            assert task in server._background_tasks
 
         task.cancel()
         try:
@@ -185,7 +198,11 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         server._terminate_streamable_http_sessions.assert_awaited_once()
+        assert server._terminate_streamable_http_sessions.await_count == 1
+        assert server._terminate_streamable_http_sessions.await_args is not None
         mock_mcp_manager.disconnect_all.assert_called_once()
+        assert mock_mcp_manager.disconnect_all.call_count == 1
+        assert mock_mcp_manager.disconnect_all.call_args is not None
 
     @pytest.mark.asyncio
     async def test_shutdown_terminates_streamable_http_sessions_before_disconnect(self) -> None:
@@ -220,6 +237,7 @@ class TestProcessShutdown:
         await server._process_shutdown()
 
         assert events == ["terminate", "disconnect"]
+        assert len(events) == 2
 
     @pytest.mark.asyncio
     async def test_shutdown_continues_when_http_session_termination_fails(
@@ -245,10 +263,47 @@ class TestProcessShutdown:
             await server._process_shutdown()
 
         mock_mcp_manager.disconnect_all.assert_called_once()
+        assert mock_mcp_manager.disconnect_all.call_count == 1
+        assert mock_mcp_manager.disconnect_all.call_args is not None
         assert "Error terminating Streamable HTTP sessions during shutdown: boom" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_shutdown_handles_mcp_disconnect_error(self) -> None:
+    async def test_shutdown_treats_mcp_disconnect_cancellation_as_expected(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Lifespan cancellation during MCP disconnect should not escape shutdown."""
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.disconnect_all.side_effect = asyncio.CancelledError
+
+        services = ServiceContainer(
+            config=MagicMock(),
+            database=MagicMock(),
+            session_manager=MagicMock(),
+            task_manager=MagicMock(),
+            mcp_manager=mock_mcp_manager,
+        )
+        server = HTTPServer(
+            services=services,
+            port=8000,
+            test_mode=True,
+        )
+        server._terminate_streamable_http_sessions = AsyncMock()
+
+        with (
+            caplog.at_level("INFO"),
+            patch("gobby.servers.http.inc_counter") as mock_inc,
+        ):
+            await server._process_shutdown()
+
+        server._terminate_streamable_http_sessions.assert_awaited_once()
+        mock_mcp_manager.disconnect_all.assert_awaited_once()
+        assert "Shutdown processing cancelled during graceful shutdown" in caplog.text
+        assert all(call.args != ("shutdown_failed_total",) for call in mock_inc.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_mcp_disconnect_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Test shutdown handles MCP disconnect error gracefully."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.disconnect_all.side_effect = RuntimeError("Disconnect failed")
@@ -266,7 +321,12 @@ class TestProcessShutdown:
             test_mode=True,
         )
 
-        await server._process_shutdown()
+        with caplog.at_level("WARNING"):
+            await server._process_shutdown()
+        mock_mcp_manager.disconnect_all.assert_awaited_once()
+        assert mock_mcp_manager.disconnect_all.await_count == 1
+        assert mock_mcp_manager.disconnect_all.await_args is not None
+        assert "Error disconnecting MCP servers: Disconnect failed" in caplog.text
 
     @pytest.mark.asyncio
     async def test_shutdown_increments_success_metric(self) -> None:
@@ -282,3 +342,5 @@ class TestProcessShutdown:
         with patch("gobby.servers.http.inc_counter") as mock_inc:
             await server._process_shutdown()
             mock_inc.assert_called_with("shutdown_succeeded_total")
+            assert mock_inc.call_count >= 1
+            assert mock_inc.call_args is not None

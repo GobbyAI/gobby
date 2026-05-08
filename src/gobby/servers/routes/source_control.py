@@ -58,6 +58,12 @@ def _set_cached(key: str, value: Any) -> None:
         _cache[key] = (time.time(), value)
 
 
+def _delete_cached(key: str) -> None:
+    """Delete cache entry if present."""
+    with _cache_lock:
+        _cache.pop(key, None)
+
+
 async def _run_git(
     args: list[str], cwd: str, timeout: int = 10
 ) -> subprocess.CompletedProcess[str]:
@@ -65,7 +71,7 @@ async def _run_git(
     import asyncio
 
     return await asyncio.to_thread(
-        subprocess.run,  # nosec B603, B607
+        subprocess.run,  # nosec B603 B607
         ["git", *args],
         cwd=cwd,
         capture_output=True,
@@ -299,6 +305,52 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         result = {"branches": branches, "current_branch": current_branch}
         _set_cached(cache_key, result)
         return result
+
+    @router.post("/branches/checkout")
+    async def checkout_branch(
+        payload: dict[str, str],
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Checkout an existing local branch in the main project repository."""
+        branch_name = payload.get("branch_name", "")
+        _validate_git_ref(branch_name, "branch_name")
+
+        repo_path, _ = _resolve_project(server, project_id)
+        if not repo_path:
+            raise HTTPException(400, "No repository path for project")
+
+        try:
+            exists = await _run_git(
+                ["show-ref", "--verify", f"refs/heads/{branch_name}"],
+                repo_path,
+            )
+            if exists.returncode != 0:
+                raise HTTPException(404, f"Local branch not found: {branch_name}")
+
+            switched = await _run_git(["switch", branch_name], repo_path, timeout=30)
+            if switched.returncode != 0:
+                detail = (
+                    switched.stderr.strip()
+                    or switched.stdout.strip()
+                    or f"Failed to switch branch: {branch_name}"
+                )
+                raise HTTPException(409, detail)
+
+            current = await _run_git(["branch", "--show-current"], repo_path)
+            current_branch = current.stdout.strip() if current.returncode == 0 else branch_name
+        except HTTPException:
+            raise
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, "Branch checkout timed out") from None
+        except Exception as e:
+            raise HTTPException(500, f"Failed to checkout branch: {e}") from e
+
+        _delete_cached(f"branches:{project_id or 'default'}")
+        return {
+            "success": True,
+            "current_branch": current_branch,
+            "repo_path": repo_path,
+        }
 
     @router.get("/branches/{branch_name:path}/commits")
     async def list_branch_commits(

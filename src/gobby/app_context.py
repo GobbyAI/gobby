@@ -90,6 +90,7 @@ class ServiceContainer:
     config_store: Any | None = None  # ConfigStore
     provider_model_catalog: Any | None = None  # ProviderModelCatalog
     web_chat_runtime_manager: Any | None = None  # WebChatRuntimeManager
+    web_chat_session_registry: Any | None = None  # WebChatSessionRegistry
 
     # Caches (lazily populated by savings, etc.)
     _savings_tracker: Any | None = None  # SavingsTracker
@@ -104,6 +105,8 @@ class ServiceContainer:
     # Context
     project_id: str | None = None
     websocket_server: Any | None = None  # GobbyWebSocketServer
+    startup_ready: bool = False
+    shutdown_in_progress: bool = False
 
     # Lazy wiring for per-project executors
     tool_proxy_getter: Any | None = None  # Callable[[], ToolProxyService]

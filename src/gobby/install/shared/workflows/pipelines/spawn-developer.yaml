@@ -15,12 +15,16 @@ inputs:
     description: "Task ID to assign to the developer agent"
   provider:
     type: string
-    default: "claude"
-    description: "LLM provider (claude, gemini, etc.)"
+    default: "codex"
+    description: "LLM provider (claude, gemini, qwen, codex, droid, etc.)"
   model:
     type: string
     default: ""
     description: "Model override (empty = provider default)"
+  agent:
+    type: string
+    default: "backend-developer"
+    description: "Enabled developer agent slug to dispatch"
   worktree_id:
     type: string
     default: ""
@@ -33,7 +37,7 @@ steps:
       tool: spawn_agent
       arguments:
         prompt: "Work on task ${{ inputs.task_id }}. Claim it, implement, test, commit, and submit for review."
-        agent: developer
+        agent: "${{ inputs.agent }}"
         task_id: "${{ inputs.task_id }}"
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"

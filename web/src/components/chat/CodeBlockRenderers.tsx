@@ -1,24 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { CodeBlock } from '../shared/CodeBlock'
 import { cn } from '../../lib/utils'
 import { useArtifactContext } from './artifacts/ArtifactContext'
-
-const customTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: '#0d0d0d',
-    margin: '0',
-    padding: '1rem',
-    fontSize: '0.9em',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-  },
-}
+import { PanelIcon } from './icons/PanelIcon'
 
 const MIN_ARTIFACT_LINES = 15
 
@@ -26,59 +10,6 @@ export interface CodeProps {
   children?: React.ReactNode
   className?: string
   node?: unknown
-}
-
-export function LazyHighlighter({
-  language,
-  children,
-  ...props
-}: React.ComponentProps<typeof SyntaxHighlighter>) {
-  const [isVisible, setIsVisible] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true)
-          observer.disconnect()
-        }
-      },
-      { rootMargin: '200px' },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
-
-  if (!isVisible) {
-    return (
-      <div ref={containerRef}>
-        <pre
-          style={{
-            background: '#0d0d0d',
-            margin: 0,
-            padding: '1rem',
-            fontSize: '0.9em',
-            fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-            color: '#abb2bf',
-            overflow: 'auto',
-            borderRadius: 0,
-            ...((props.customStyle as React.CSSProperties) || {}),
-          }}
-        >
-          <code>{children}</code>
-        </pre>
-      </div>
-    )
-  }
-
-  return (
-    <SyntaxHighlighter language={language} {...props}>
-      {children}
-    </SyntaxHighlighter>
-  )
 }
 
 export function CodeBlockInner({ children, className }: CodeProps) {
@@ -141,7 +72,7 @@ export function CodeBlockInner({ children, className }: CodeProps) {
               onClick={handleOpenArtifact}
               title="Open in panel"
             >
-              <PanelIcon />
+              <PanelIcon size={14} />
             </button>
           )}
           <button
@@ -153,22 +84,13 @@ export function CodeBlockInner({ children, className }: CodeProps) {
           </button>
         </div>
       </div>
-      <LazyHighlighter
-        style={customTheme}
+      <CodeBlock
         language={language || 'text'}
-        PreTag="div"
-        showLineNumbers
-        lineNumberStyle={{
-          minWidth: '2.5em',
-          paddingRight: '1em',
-          textAlign: 'right',
-          userSelect: 'none',
-          color: '#555',
-        }}
+        lazy
         customStyle={{ margin: 0, borderRadius: 0 }}
       >
         {codeString}
-      </LazyHighlighter>
+      </CodeBlock>
     </div>
   )
 }
@@ -246,24 +168,6 @@ function CheckIcon() {
       strokeLinejoin="round"
     >
       <polyline points="20 6 9 17 4 12" />
-    </svg>
-  )
-}
-
-function PanelIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-      <line x1="12" y1="3" x2="12" y2="21" />
     </svg>
   )
 }

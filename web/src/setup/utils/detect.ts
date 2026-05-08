@@ -10,6 +10,7 @@ const VERSION_CMDS: Record<string, string[]> = {
   gemini: ["gemini", "--version"],
   qwen: ["qwen", "--version"],
   codex: ["codex", "--version"],
+  droid: ["droid", "--version"],
   clawhub: ["clawhub", "--cli-version"],
 };
 
@@ -21,6 +22,7 @@ export const OPTIONAL_TOOLS = [
   "gemini",
   "qwen",
   "codex",
+  "droid",
   "clawhub",
 ];
 

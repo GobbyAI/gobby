@@ -1,4 +1,4 @@
-tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-injection]
+tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-gates]
 
 rules:
   require-task-creation-skill-loaded:
@@ -21,6 +21,4 @@ rules:
       and not skill_loaded('task-creation')
     effects:
       - type: block
-        reason: |
-          Load the task-creation workflow before creating tasks.
-          Call get_skill(name="task-creation") on gobby-skills, then continue.
+        reason: 'Call get_skill(name="task-creation") on gobby-skills, then continue.'

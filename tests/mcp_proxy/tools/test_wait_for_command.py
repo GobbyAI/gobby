@@ -312,6 +312,8 @@ class TestWaitForCommandPollInterval:
             )
 
         mock_sleep.assert_called_once_with(5)
+        assert mock_sleep.call_count == 1
+        assert mock_sleep.call_args is not None
 
     @pytest.mark.asyncio
     async def test_zero_poll_interval_defaults(
@@ -328,6 +330,8 @@ class TestWaitForCommandPollInterval:
             )
 
         mock_sleep.assert_called_once_with(5)
+        assert mock_sleep.call_count == 1
+        assert mock_sleep.call_args is not None
 
 
 class TestWaitForCommandRegistration:

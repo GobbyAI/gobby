@@ -2,18 +2,23 @@ import { describe, it, expect } from 'vitest'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
 import {
-  buildChainSummary,
   computeLineDiff,
+  defaultExpandedForCall,
   extractResultContent,
   extractResultMetadata,
   formatToolName,
   getToolDisplayName,
   getLanguageFromPath,
   getToolSummary,
+  groupToolCalls,
+  isReadOnlyBash,
+  isReadOnlyMcp,
   parseGrepOutput,
+  parseGsqzWrapper,
   parseReadOutput,
   pathBasename,
   truncStr,
+  unwrapMcpResultEnvelope,
 } from '../ToolCallCard.helpers'
 
 function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string }): ToolCall {
@@ -289,7 +294,7 @@ describe('extractResultContent', () => {
         result: { success: true },
         response_time_ms: 42,
       },
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 
@@ -302,7 +307,7 @@ describe('extractResultContent', () => {
   it('parses and flattens stringified MCP proxy envelopes', () => {
     const result = {
       content: '{"success":true,"result":{"task_id":"#11820"},"response_time_ms":42}',
-      content_type: 'text',
+      kind: 'text',
       truncated: false,
       metadata: { source: 'mcp' },
     }
@@ -326,7 +331,7 @@ describe('extractResultContent', () => {
           response_time_ms: 42,
         },
       },
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 
@@ -349,7 +354,7 @@ describe('extractResultContent', () => {
           response_time_ms: 1.59,
         },
       },
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 
@@ -365,7 +370,7 @@ describe('extractResultContent', () => {
     const payload = { success: true, result: { success: true } }
     const result = {
       content: payload,
-      content_type: 'json',
+      kind: 'json',
       truncated: false,
     }
 
@@ -561,63 +566,6 @@ describe('computeLineDiff', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// buildChainSummary
-// ---------------------------------------------------------------------------
-describe('buildChainSummary', () => {
-  it('returns empty string for no calls', () => {
-    expect(buildChainSummary([])).toBe('')
-  })
-
-  it('returns single tool name', () => {
-    const calls = [makeCall({ id: '1', tool_name: 'Read' })]
-    expect(buildChainSummary(calls)).toBe('Read')
-  })
-
-  it('counts multiple calls of same type', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'Read' }),
-      makeCall({ id: '2', tool_name: 'Read' }),
-      makeCall({ id: '3', tool_name: 'Read' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('3 Read')
-  })
-
-  it('lists different tools separated by commas', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'Read' }),
-      makeCall({ id: '2', tool_name: 'Bash' }),
-      makeCall({ id: '3', tool_name: 'Edit' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('Read, Bash, Edit')
-  })
-
-  it('mixes counted and single tools', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'Read' }),
-      makeCall({ id: '2', tool_name: 'Read' }),
-      makeCall({ id: '3', tool_name: 'Bash' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('2 Read, Bash')
-  })
-
-  it('formats MCP proxy tool names', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'mcp__gobby__list_tools' }),
-      makeCall({ id: '2', tool_name: 'mcp__gobby__call_tool' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('list_tools, call_tool')
-  })
-
-  it('canonicalizes exec_command groups as Bash', () => {
-    const calls = [
-      makeCall({ id: '1', tool_name: 'exec_command' }),
-      makeCall({ id: '2', tool_name: 'exec_command' }),
-    ]
-    expect(buildChainSummary(calls)).toBe('2 Bash')
-  })
-})
-
 describe('getToolDisplayName', () => {
   it('canonicalizes exec_command to Bash', () => {
     const call = makeCall({ id: '1', tool_name: 'exec_command' })
@@ -627,5 +575,308 @@ describe('getToolDisplayName', () => {
   it('preserves non-shell tool names', () => {
     const call = makeCall({ id: '1', tool_name: 'Read' })
     expect(getToolDisplayName(call)).toBe('Read')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseGsqzWrapper
+// ---------------------------------------------------------------------------
+describe('parseGsqzWrapper', () => {
+  it('returns null when no wrapper header is present', () => {
+    expect(parseGsqzWrapper('hello world\nline two')).toBeNull()
+  })
+
+  it('parses the gsqz fallback header', () => {
+    const text = '[Output compressed by gsqz — fallback, 99% reduction]\n[gsqz:passthrough]\nbody line 1\nbody line 2'
+    const result = parseGsqzWrapper(text)
+    expect(result).not.toBeNull()
+    expect(result!.metadata.strategy).toBe('fallback')
+    expect(result!.metadata.reduction).toBe('99% reduction')
+    expect(result!.body).toBe('body line 1\nbody line 2')
+  })
+
+  it('parses the chunked-output header with full metadata', () => {
+    const text =
+      'Chunk ID: beae62\nWall time: 0.0123 seconds\nProcess exited with code 0\nOriginal token count: 2174\nOutput:\nfrom __future__ import annotations\n'
+    const result = parseGsqzWrapper(text)
+    expect(result).not.toBeNull()
+    expect(result!.metadata.chunkId).toBe('beae62')
+    expect(result!.metadata.wallTimeSeconds).toBeCloseTo(0.0123)
+    expect(result!.metadata.exitCode).toBe(0)
+    expect(result!.metadata.tokenCount).toBe(2174)
+    expect(result!.body).toBe('from __future__ import annotations\n')
+  })
+
+  it('parses the short chunked header (no exit code or token count)', () => {
+    const text = 'Chunk ID: 21a8f9\nWall time: 0.1813 seconds\nOutput:\nhash ok? True\n'
+    const result = parseGsqzWrapper(text)
+    expect(result).not.toBeNull()
+    expect(result!.metadata.chunkId).toBe('21a8f9')
+    expect(result!.metadata.wallTimeSeconds).toBeCloseTo(0.1813)
+    expect(result!.metadata.exitCode).toBeUndefined()
+    expect(result!.metadata.tokenCount).toBeUndefined()
+    expect(result!.body).toBe('hash ok? True\n')
+  })
+
+  it('returns null for empty or non-string input', () => {
+    expect(parseGsqzWrapper('')).toBeNull()
+    expect(parseGsqzWrapper(null as unknown as string)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// unwrapMcpResultEnvelope
+// ---------------------------------------------------------------------------
+describe('unwrapMcpResultEnvelope', () => {
+  it('returns null for primitives and arrays', () => {
+    expect(unwrapMcpResultEnvelope('plain string')).toBeNull()
+    expect(unwrapMcpResultEnvelope(42)).toBeNull()
+    expect(unwrapMcpResultEnvelope(null)).toBeNull()
+    expect(unwrapMcpResultEnvelope([1, 2, 3])).toBeNull()
+  })
+
+  it('extracts the output field as primary and surfaces the rest as meta', () => {
+    const envelope = {
+      output: 'tool stdout',
+      session_id: 12345,
+      project_id: 'abc-123',
+    }
+    const result = unwrapMcpResultEnvelope(envelope)
+    expect(result).not.toBeNull()
+    expect(result!.primary).toBe('tool stdout')
+    expect(result!.meta).toEqual({ session_id: 12345, project_id: 'abc-123' })
+  })
+
+  it('extracts the content field for tool-result-style envelopes', () => {
+    const envelope = { content: 'diff --git a/x.py b/x.py\n@@', is_error: false }
+    const result = unwrapMcpResultEnvelope(envelope)
+    expect(result).not.toBeNull()
+    expect(result!.primary).toBe('diff --git a/x.py b/x.py\n@@')
+    expect(result!.meta).toEqual({ is_error: false })
+  })
+
+  it('unwraps MCP content arrays with text blocks', () => {
+    const envelope = {
+      content: [{ type: 'text', text: 'hello\nworld' }],
+      is_error: false,
+    }
+    const result = unwrapMcpResultEnvelope(envelope)
+    expect(result).not.toBeNull()
+    expect(result!.primary).toBe('hello\nworld')
+    expect(result!.meta).toEqual({ is_error: false })
+  })
+
+  it('parses JSON strings and unwraps when they look like envelopes', () => {
+    const stringified = JSON.stringify({ output: 'ok', session_id: 7 })
+    const result = unwrapMcpResultEnvelope(stringified)
+    expect(result).not.toBeNull()
+    expect(result!.primary).toBe('ok')
+    expect(result!.meta).toEqual({ session_id: 7 })
+  })
+
+  it('returns null for objects with no recognized primary field', () => {
+    expect(unwrapMcpResultEnvelope({ status: 'ok', count: 3 })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isReadOnlyBash
+// ---------------------------------------------------------------------------
+describe('isReadOnlyBash', () => {
+  it('treats null/undefined/empty as not-read-only', () => {
+    expect(isReadOnlyBash(null)).toBe(false)
+    expect(isReadOnlyBash(undefined)).toBe(false)
+    expect(isReadOnlyBash('')).toBe(false)
+    expect(isReadOnlyBash('   ')).toBe(false)
+  })
+
+  it('matches single-word read verbs', () => {
+    expect(isReadOnlyBash('ls -la')).toBe(true)
+    expect(isReadOnlyBash('cat file.txt')).toBe(true)
+    expect(isReadOnlyBash('grep pattern file')).toBe(true)
+    expect(isReadOnlyBash('gcode outline foo.py')).toBe(true)
+    expect(isReadOnlyBash('jq .')).toBe(true)
+    expect(isReadOnlyBash('which gsqz')).toBe(true)
+  })
+
+  it('matches two-word read prefixes', () => {
+    expect(isReadOnlyBash('git status')).toBe(true)
+    expect(isReadOnlyBash('git diff src/foo.py')).toBe(true)
+    expect(isReadOnlyBash('sed -n 1,120p file.py')).toBe(true)
+    expect(isReadOnlyBash('gh pr view 42')).toBe(true)
+  })
+
+  it('treats mutating commands as not-read-only', () => {
+    expect(isReadOnlyBash('git commit -m hi')).toBe(false)
+    expect(isReadOnlyBash('rm -rf /tmp/foo')).toBe(false)
+    expect(isReadOnlyBash('mv a b')).toBe(false)
+    expect(isReadOnlyBash('cp a b')).toBe(false)
+    expect(isReadOnlyBash('mkdir x')).toBe(false)
+    expect(isReadOnlyBash('npm install foo')).toBe(false)
+  })
+
+  it('rejects shell redirects', () => {
+    expect(isReadOnlyBash('cat file > out')).toBe(false)
+    expect(isReadOnlyBash('echo hi >> log')).toBe(false)
+  })
+
+  it('accepts pipelines whose every segment is read-only', () => {
+    expect(isReadOnlyBash('nl -ba foo.py | sed -n 1,120p')).toBe(true)
+    expect(isReadOnlyBash('gcode search foo | jq .')).toBe(true)
+  })
+
+  it('rejects pipelines with any mutating segment', () => {
+    expect(isReadOnlyBash('gcode search foo | xargs rm')).toBe(false)
+    expect(isReadOnlyBash('cat foo && rm bar')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isReadOnlyMcp
+// ---------------------------------------------------------------------------
+describe('isReadOnlyMcp', () => {
+  it('matches list_/get_/search_ prefixes on the tail of mcp__server__name', () => {
+    expect(isReadOnlyMcp('mcp__gobby__list_tools')).toBe(true)
+    expect(isReadOnlyMcp('mcp__gobby__list_mcp_servers')).toBe(true)
+    expect(isReadOnlyMcp('mcp__gobby__get_skill')).toBe(true)
+    expect(isReadOnlyMcp('mcp__gobby__search_skills')).toBe(true)
+    expect(isReadOnlyMcp('mcp__gobby__read_mcp_resource')).toBe(true)
+  })
+
+  it('matches exact read-only MCP names', () => {
+    expect(isReadOnlyMcp('mcp__gobby__outline')).toBe(true)
+    expect(isReadOnlyMcp('mcp__gobby__symbol')).toBe(true)
+    expect(isReadOnlyMcp('mcp__gobby__usages')).toBe(true)
+  })
+
+  it('treats mutating MCP names as not-read-only', () => {
+    expect(isReadOnlyMcp('mcp__gobby__set_variable')).toBe(false)
+    expect(isReadOnlyMcp('mcp__gobby__add_mcp_server')).toBe(false)
+    expect(isReadOnlyMcp('mcp__gobby__init_project')).toBe(false)
+    expect(isReadOnlyMcp('mcp__gobby__remove_mcp_server')).toBe(false)
+    expect(isReadOnlyMcp('mcp__gobby__import_mcp_server')).toBe(false)
+    expect(isReadOnlyMcp('mcp__gobby__call_tool')).toBe(false)
+  })
+
+  it('treats null/empty as not-read-only', () => {
+    expect(isReadOnlyMcp(null)).toBe(false)
+    expect(isReadOnlyMcp(undefined)).toBe(false)
+    expect(isReadOnlyMcp('')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// defaultExpandedForCall
+// ---------------------------------------------------------------------------
+describe('defaultExpandedForCall', () => {
+  it('expands pending_approval regardless of tool type', () => {
+    const call = makeCall({
+      id: '1',
+      tool_name: 'Read',
+      status: 'pending_approval',
+    })
+    expect(defaultExpandedForCall(call)).toBe(true)
+  })
+
+  it('expands edit/write tools', () => {
+    expect(defaultExpandedForCall(makeCall({ id: '1', tool_name: 'Edit' }))).toBe(true)
+    expect(defaultExpandedForCall(makeCall({ id: '2', tool_name: 'Write' }))).toBe(true)
+    expect(defaultExpandedForCall(makeCall({ id: '3', tool_name: 'multiedit' }))).toBe(true)
+  })
+
+  it('collapses read/grep/glob/protocol tools', () => {
+    expect(defaultExpandedForCall(makeCall({ id: '1', tool_name: 'Read' }))).toBe(false)
+    expect(defaultExpandedForCall(makeCall({ id: '2', tool_name: 'Grep' }))).toBe(false)
+    expect(defaultExpandedForCall(makeCall({ id: '3', tool_name: 'Glob' }))).toBe(false)
+    expect(
+      defaultExpandedForCall(makeCall({ id: '4', tool_name: 'protocol_context' })),
+    ).toBe(false)
+  })
+
+  it('routes bash by command verb', () => {
+    const readBash = makeCall({
+      id: '1',
+      tool_name: 'Bash',
+      arguments: { command: 'gcode outline foo.py' },
+    })
+    expect(defaultExpandedForCall(readBash)).toBe(false)
+
+    const writeBash = makeCall({
+      id: '2',
+      tool_name: 'Bash',
+      arguments: { command: 'git commit -m wip' },
+    })
+    expect(defaultExpandedForCall(writeBash)).toBe(true)
+
+    const noCmd = makeCall({ id: '3', tool_name: 'Bash', arguments: {} })
+    expect(defaultExpandedForCall(noCmd)).toBe(true)
+  })
+
+  it('routes MCP by tool name', () => {
+    const readMcp = makeCall({ id: '1', tool_name: 'mcp__gobby__list_tools' })
+    expect(defaultExpandedForCall(readMcp)).toBe(false)
+
+    const writeMcp = makeCall({ id: '2', tool_name: 'mcp__gobby__set_variable' })
+    expect(defaultExpandedForCall(writeMcp)).toBe(true)
+  })
+
+  it('collapses unknown tool types so the header is sufficient', () => {
+    const unknown = makeCall({ id: '1', tool_name: 'totally-not-a-thing', tool_type: '' })
+    expect(defaultExpandedForCall(unknown)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// groupToolCalls — regression: only consecutive same-type runs group
+// ---------------------------------------------------------------------------
+describe('groupToolCalls regression', () => {
+  it('groups consecutive same-tool runs of 3+ and keeps shorter runs flat', () => {
+    // [Bash, Read, Read, Read, Bash, Bash, Bash, Read]
+    // Threshold is 3: Read run (3) groups, Bash run (3) groups, single Bash + trailing Read stay flat.
+    const calls = [
+      makeCall({ id: '1', tool_name: 'Bash' }),
+      makeCall({ id: '2', tool_name: 'Read' }),
+      makeCall({ id: '3', tool_name: 'Read' }),
+      makeCall({ id: '4', tool_name: 'Read' }),
+      makeCall({ id: '5', tool_name: 'Bash' }),
+      makeCall({ id: '6', tool_name: 'Bash' }),
+      makeCall({ id: '7', tool_name: 'Bash' }),
+      makeCall({ id: '8', tool_name: 'Read' }),
+    ]
+    const segments = groupToolCalls(calls)
+    expect(segments).toHaveLength(4)
+
+    expect(segments[0].kind).toBe('single')
+    if (segments[0].kind === 'single') {
+      expect(segments[0].call.id).toBe('1')
+    }
+
+    expect(segments[1].kind).toBe('group')
+    if (segments[1].kind === 'group') {
+      expect(segments[1].toolName).toBe('Read')
+      expect(segments[1].tool_calls.map((c) => c.id)).toEqual(['2', '3', '4'])
+    }
+
+    expect(segments[2].kind).toBe('group')
+    if (segments[2].kind === 'group') {
+      expect(segments[2].toolName).toBe('Bash')
+      expect(segments[2].tool_calls.map((c) => c.id)).toEqual(['5', '6', '7'])
+    }
+
+    expect(segments[3].kind).toBe('single')
+    if (segments[3].kind === 'single') {
+      expect(segments[3].call.id).toBe('8')
+    }
+  })
+
+  it('never collapses calls with different tool_name into the same group', () => {
+    const calls = [
+      makeCall({ id: '1', tool_name: 'Bash' }),
+      makeCall({ id: '2', tool_name: 'Read' }),
+      makeCall({ id: '3', tool_name: 'Edit' }),
+    ]
+    const segments = groupToolCalls(calls)
+    expect(segments).toHaveLength(3)
+    expect(segments.every((s) => s.kind === 'single')).toBe(true)
   })
 })

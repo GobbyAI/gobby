@@ -87,6 +87,8 @@ class TestKillTerminalSession:
 
         assert result is True
         mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+        assert mock_kill.call_count == 1
+        assert mock_kill.call_args is not None
 
     @pytest.mark.asyncio
     async def test_pid_kill_only_when_no_tmux(self) -> None:
@@ -166,6 +168,8 @@ class TestKillTerminalSession:
 
         assert result is True
         mock_kill.assert_not_called()
+        assert mock_kill.call_count == 0
+        assert not mock_kill.called
 
     @pytest.mark.asyncio
     async def test_both_methods_fail(self) -> None:
@@ -178,11 +182,13 @@ class TestKillTerminalSession:
 
         with (
             patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-            patch("os.kill", side_effect=ProcessLookupError),
+            patch("os.kill", side_effect=ProcessLookupError) as mock_kill,
         ):
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is False
+        mock_kill.assert_called_once_with(5678, signal.SIGTERM)
+        assert mock_kill.call_args.args == (5678, signal.SIGTERM)
 
 
 class TestContinueInChatTerminalKill:
@@ -282,7 +288,11 @@ class TestContinueInChatTerminalKill:
             {"tmux_pane": "%5", "parent_pid": "999"},
             "source-uuid",
         )
+        assert mock_kill.call_count == 1
+        assert mock_kill.call_args is not None
         session_manager.update_status.assert_not_called()
+        assert session_manager.update_status.call_count == 0
+        assert not session_manager.update_status.called
         session_manager.update.assert_any_call(
             "source-uuid",
             source="claude",
@@ -296,7 +306,11 @@ class TestContinueInChatTerminalKill:
             sandbox_enabled=True,
             sandbox_policy_hash=ANY,
         )
+        assert session_manager.update.call_count >= 1
+        assert session_manager.update.call_args is not None
         session_manager.update_parent_session_id.assert_not_called()
+        assert session_manager.update_parent_session_id.call_count == 0
+        assert not session_manager.update_parent_session_id.called
 
     @pytest.mark.asyncio
     async def test_skips_terminal_kill_when_agent_found(self) -> None:
@@ -377,8 +391,14 @@ class TestContinueInChatTerminalKill:
 
         # DB-driven kill_agent should have been used instead of terminal kill
         mock_kill_agent.assert_called_once()
+        assert mock_kill_agent.call_count == 1
+        assert mock_kill_agent.call_args is not None
         mock_kill_terminal.assert_not_called()
+        assert mock_kill_terminal.call_count == 0
+        assert not mock_kill_terminal.called
         session_manager.update_parent_session_id.assert_not_called()
+        assert session_manager.update_parent_session_id.call_count == 0
+        assert not session_manager.update_parent_session_id.called
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_defaults_to_source_provider_and_normalizes_target_row(
@@ -472,10 +492,14 @@ class TestContinueInChatTerminalKill:
             title=None,
             chat_mode=None,
         )
+        assert session_manager.update.call_count >= 1
+        assert session_manager.update.call_args is not None
         session_manager.update_parent_session_id.assert_called_once_with(
             "new-db-id",
             "source-uuid",
         )
+        assert session_manager.update_parent_session_id.call_count == 1
+        assert session_manager.update_parent_session_id.call_args is not None
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_reuses_terminal_session_identity(self) -> None:
@@ -845,6 +869,9 @@ class TestContinueInChatTerminalKill:
             )
 
         assert host._pending_inject_contexts["source-uuid"] == "## Summary fallback"
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["conversation_id"] == "source-uuid"
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_queues_digest_fallback_when_summary_missing(self) -> None:
@@ -920,6 +947,9 @@ class TestContinueInChatTerminalKill:
             )
 
         assert host._pending_inject_contexts["source-uuid"] == "## Digest fallback"
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["conversation_id"] == "source-uuid"
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_prefers_native_resume_over_fallback_context(self) -> None:
@@ -1070,6 +1100,9 @@ class TestContinueInChatTerminalKill:
             )
 
         assert host._pending_inject_contexts == {}
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["conversation_id"] == "source-uuid"
 
     @pytest.mark.asyncio
     async def test_attach_to_session_returns_extended_metadata(self) -> None:
@@ -1201,7 +1234,11 @@ class TestContinueInChatTerminalKill:
             "attach_to_session only supports terminal sessions",
             code="UNSUPPORTED_SESSION_TYPE",
         )
+        assert host._send_error.await_count == 1
+        assert host._send_error.await_args is not None
         ws.send.assert_not_awaited()
+        assert ws.send.await_count == 0
+        assert ws.send.await_args is None
 
     @pytest.mark.asyncio
     async def test_send_to_cli_session_rejects_web_chat_sessions(self) -> None:
@@ -1234,7 +1271,11 @@ class TestContinueInChatTerminalKill:
             "send_to_cli_session only supports terminal sessions",
             code="UNSUPPORTED_SESSION_TYPE",
         )
+        assert host._send_error.await_count == 1
+        assert host._send_error.await_args is not None
         ws.send.assert_not_awaited()
+        assert ws.send.await_count == 0
+        assert ws.send.await_args is None
 
     @pytest.mark.asyncio
     async def test_send_to_cli_session_uses_recorded_tmux_socket(self) -> None:

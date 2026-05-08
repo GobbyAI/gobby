@@ -7,7 +7,7 @@ Provides endpoints for running, approving, and monitoring pipelines.
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -92,13 +92,17 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         status: str | None = None,
         pipeline_name: str | None = None,
         project_id: str | None = None,
-        limit: int = 50,
+        session_id: str | None = None,
+        parent_execution_id: str | None = None,
+        limit: int = Query(50, gt=0, le=200, description="Maximum results per page"),
+        offset: int = Query(0, ge=0, description="Number of leading rows to skip"),
     ) -> dict[str, Any]:
         """
-        List pipeline executions with optional filters.
+        List pipeline executions with optional filters and offset pagination.
 
         Returns:
-            200: List of executions with steps
+            200: Page of executions with filter-scoped total + status_summary
+            422: Invalid pagination (limit out of range, negative offset)
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ExecutionStatus
@@ -117,7 +121,16 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         executions = execution_manager.list_executions(
             status=status_filter,
             pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
             limit=limit,
+            offset=offset,
+        )
+        total, status_summary = execution_manager.execution_metrics(
+            status=status_filter,
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
         )
 
         # Batch-load steps for all executions in one query
@@ -161,7 +174,13 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 entry["cron_expr"] = cron["cron_expr"]
             result.append(entry)
 
-        return {"executions": result, "count": len(result)}
+        return {
+            "executions": result,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "status_summary": status_summary,
+        }
 
     @router.get("/executions/search")
     async def search_executions(
@@ -170,14 +189,16 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         search_errors: bool = True,
         search_outputs: bool = False,
         project_id: str | None = None,
-        limit: int = 20,
+        limit: int = Query(20, gt=0, le=200, description="Maximum results per page"),
+        offset: int = Query(0, ge=0, description="Number of leading rows to skip"),
     ) -> dict[str, Any]:
         """
         Search pipeline executions by text across pipeline names and step errors.
 
         Returns:
-            200: Matching executions
-            400: Invalid parameters
+            200: Page of matching executions with filter-scoped total
+            400: Missing query
+            422: Invalid pagination (limit out of range, negative offset)
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ExecutionStatus
@@ -202,6 +223,13 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             search_outputs=search_outputs,
             status=status_filter,
             limit=limit,
+            offset=offset,
+        )
+        total = execution_manager.count_search_executions(
+            query=q.strip(),
+            search_errors=search_errors,
+            search_outputs=search_outputs,
+            status=status_filter,
         )
 
         result = []
@@ -218,7 +246,13 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
                 }
             )
 
-        return {"executions": result, "count": len(result), "query": q.strip()}
+        return {
+            "executions": result,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "query": q.strip(),
+        }
 
     @router.post("/run", response_model=None)
     async def run_pipeline(request: PipelineRunRequest) -> dict[str, Any] | JSONResponse:

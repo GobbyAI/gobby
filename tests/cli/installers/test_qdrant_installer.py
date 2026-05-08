@@ -177,6 +177,7 @@ class TestInstallQdrant:
             result = install_qdrant(gobby_home=tmp_path, port=6333)
 
         assert result["qdrant_url"] == "http://localhost:6333"
+        assert result["success"] is True
 
     def test_install_health_check_failure(self, tmp_path: Path) -> None:
         """install_qdrant returns error when health check fails."""

@@ -67,6 +67,7 @@ class TestStreamableHttpShutdown:
             "Timed out terminating Streamable HTTP session sess-timeout" in record.message
             for record in caplog.records
         )
+        assert transport.terminate.await_count == 1
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_uses_wait_for(

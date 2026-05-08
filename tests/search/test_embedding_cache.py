@@ -79,6 +79,34 @@ async def test_cache_hit_avoids_api_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_client_closed_after_success() -> None:
+    """The embeddings client should be closed after a successful fetch."""
+    mock_client = _make_mock_client()
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        await generate_embedding("close-success", model="close-success-model")
+
+    mock_client.close.assert_awaited_once()
+    assert mock_client.close.await_count == 1
+    assert mock_client.close.await_args is not None
+
+
+@pytest.mark.asyncio
+async def test_openai_client_closed_after_failure() -> None:
+    """The embeddings client should be closed when a fetch raises."""
+    mock_client = AsyncMock()
+    mock_client.embeddings.create.side_effect = ValueError("boom")
+
+    with (
+        patch("openai.AsyncOpenAI", return_value=mock_client),
+        pytest.raises(RuntimeError, match="Embedding generation failed: boom"),
+    ):
+        await generate_embedding("close-failure", model="close-failure-model")
+
+    mock_client.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_cache_miss_on_different_text() -> None:
     """Different texts should both call the API."""
     mock_client = _make_mock_client()

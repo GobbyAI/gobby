@@ -29,6 +29,7 @@ class TestSessionSource:
     def test_enum_values(self) -> None:
         """Test that source values exist."""
         assert SessionSource.CLAUDE == "claude"
+        assert SessionSource.DROID == "droid"
         assert SessionSource.GEMINI == "gemini"
 
 

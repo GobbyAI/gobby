@@ -1,9 +1,17 @@
 import { expect, test } from "@playwright/test";
 
-const CURRENT_DB_SESSION_ID = "web-main-current";
-const CURRENT_REF = "#202";
-const OTHER_DB_SESSION_ID = "web-other";
-const STALE_TERMINAL_SESSION_ID = "terminal-stale";
+import {
+  CLAIMED_TASK_ID,
+  CLAIMED_TASK_REF,
+  CURRENT_DB_SESSION_ID,
+  CURRENT_REF,
+  OTHER_DB_SESSION_ID,
+  STALE_TERMINAL_SESSION_ID,
+  TASK_LINKED_DB_SESSION_ID,
+  createClaimedTask,
+} from "./fixtures/webChatRestorePlan";
+
+const claimedTask = createClaimedTask();
 
 const webChatSessions = [
   {
@@ -31,6 +39,44 @@ const webChatSessions = [
     terminal_context: null,
     sandbox_enabled: true,
     sandbox_policy_hash: "policy-web",
+    transcript_path: null,
+    digest_markdown: null,
+    agent_run_id: null,
+    claimed_task_refs: [CLAIMED_TASK_REF],
+    created_task_refs: [14420],
+    closed_task_refs: [],
+  },
+  {
+    id: TASK_LINKED_DB_SESSION_ID,
+    ref: "#204",
+    external_id: TASK_LINKED_DB_SESSION_ID,
+    source: "codex",
+    project_id: "proj-1",
+    title: "Task Linked Web Chat",
+    status: "active",
+    model: "gpt-5.4",
+    message_count: 2,
+    created_at: "2026-04-19T18:27:00Z",
+    updated_at: "2026-04-19T18:32:00Z",
+    seq_num: 204,
+    summary_markdown: null,
+    digest_markdown: null,
+    git_branch: "feature/mobile-refresh",
+    usage_input_tokens: 0,
+    usage_output_tokens: 0,
+    had_edits: false,
+    agent_depth: 0,
+    chat_mode: "plan",
+    parent_session_id: null,
+    session_type: "web_chat",
+    terminal_context: null,
+    sandbox_enabled: true,
+    sandbox_policy_hash: "policy-web",
+    transcript_path: "/tmp/task-linked-transcript.jsonl",
+    agent_run_id: null,
+    claimed_task_refs: [CLAIMED_TASK_REF],
+    created_task_refs: [],
+    closed_task_refs: [14410],
   },
   {
     id: OTHER_DB_SESSION_ID,
@@ -57,8 +103,26 @@ const webChatSessions = [
     terminal_context: null,
     sandbox_enabled: true,
     sandbox_policy_hash: "policy-web",
+    transcript_path: null,
+    digest_markdown: null,
+    agent_run_id: null,
+    claimed_task_refs: [],
+    created_task_refs: [14001],
+    closed_task_refs: [14002],
   },
 ];
+
+type MockApiCounters = {
+  currentMessageFetches?: number;
+  otherMessageFetches?: number;
+  otherSessionDetailFetches?: number;
+  taskLinkedSessionDetailFetches?: number;
+};
+
+function bumpCounter(counters: MockApiCounters | undefined, key: keyof MockApiCounters) {
+  if (!counters) return;
+  counters[key] = (counters[key] ?? 0) + 1;
+}
 
 async function seedLocalState(page: Parameters<typeof test>[0]["page"]) {
   await page.addInitScript(
@@ -82,7 +146,7 @@ async function seedLocalState(page: Parameters<typeof test>[0]["page"]) {
 
 async function mockApi(
   page: Parameters<typeof test>[0]["page"],
-  counters?: { currentMessageFetches: number; otherMessageFetches: number },
+  counters?: MockApiCounters,
 ) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -192,11 +256,82 @@ async function mockApi(
       return;
     }
 
-    if (path === "/api/sessions") {
+    if (path === "/api/stages/registry") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ sessions: webChatSessions, total: webChatSessions.length }),
+        body: JSON.stringify({
+          stages: [
+            {
+              name: "planning",
+              display_name: "Planning",
+              category: "development",
+              state: "ready",
+              review_policy: "none",
+              position: 0,
+              sequence_order: 0,
+            },
+            {
+              name: "development",
+              display_name: "Development",
+              category: "development",
+              state: "ready",
+              review_policy: "none",
+              position: 1,
+              sequence_order: 1,
+            },
+          ],
+        }),
+      });
+      return;
+    }
+
+    if (path === "/api/tasks") {
+      const parentTaskId = url.searchParams.get("parent_task_id");
+      const body =
+        parentTaskId === CLAIMED_TASK_ID
+          ? { tasks: [], total: 0, stats: {}, limit: 200, offset: 0 }
+          : { tasks: [claimedTask], total: 1, stats: {}, limit: 500, offset: 0 };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+      return;
+    }
+
+    if (path === `/api/tasks/${CLAIMED_TASK_ID}`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ task: claimedTask }),
+      });
+      return;
+    }
+
+    if (path === `/api/tasks/${CLAIMED_TASK_ID}/dependencies`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: CLAIMED_TASK_ID, blockers: [], blocking: [] }),
+      });
+      return;
+    }
+
+    if (path === "/api/sessions") {
+      const hasClaimedTaskFilter =
+        url.searchParams.get("task_ref_min") === String(CLAIMED_TASK_REF) &&
+        url.searchParams.get("task_ref_max") === String(CLAIMED_TASK_REF) &&
+        url.searchParams.getAll("task_ref_role").includes("claimed");
+      const sessions = hasClaimedTaskFilter
+        ? webChatSessions.filter((session) =>
+            session.claimed_task_refs.includes(CLAIMED_TASK_REF),
+          )
+        : webChatSessions;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ sessions, total: sessions.length }),
       });
       return;
     }
@@ -212,10 +347,52 @@ async function mockApi(
       return;
     }
 
+    if (path === `/api/sessions/${TASK_LINKED_DB_SESSION_ID}`) {
+      bumpCounter(counters, "taskLinkedSessionDetailFetches");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: webChatSessions.find((session) => session.id === TASK_LINKED_DB_SESSION_ID),
+        }),
+      });
+      return;
+    }
+
+    if (path === `/api/sessions/${TASK_LINKED_DB_SESSION_ID}/messages`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          messages: [
+            {
+              id: "task-linked-msg-1",
+              role: "assistant",
+              content: "Task-linked session transcript",
+              timestamp: "2026-04-19T18:31:00Z",
+              content_blocks: [{ type: "text", content: "Task-linked session transcript" }],
+            },
+          ],
+          total_count: 1,
+        }),
+      });
+      return;
+    }
+
+    if (path === `/api/sessions/${OTHER_DB_SESSION_ID}`) {
+      bumpCounter(counters, "otherSessionDetailFetches");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: webChatSessions.find((session) => session.id === OTHER_DB_SESSION_ID),
+        }),
+      });
+      return;
+    }
+
     if (path.startsWith(`/api/chat/${CURRENT_DB_SESSION_ID}/messages`)) {
-      if (counters) {
-        counters.currentMessageFetches += 1;
-      }
+      bumpCounter(counters, "currentMessageFetches");
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -237,9 +414,7 @@ async function mockApi(
     }
 
     if (path.startsWith(`/api/chat/${OTHER_DB_SESSION_ID}/messages`)) {
-      if (counters) {
-        counters.otherMessageFetches += 1;
-      }
+      bumpCounter(counters, "otherMessageFetches");
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -312,6 +487,129 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     await expect(page.getByText("Other session message")).toHaveCount(0);
     expect(counters.currentMessageFetches).toBeGreaterThanOrEqual(2);
     expect(counters.otherMessageFetches).toBe(0);
+  });
+
+  test("refresh restores task-linked session filters and claimed task state", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.addInitScript(
+      ({
+        sessionId,
+        taskRef,
+      }: {
+        sessionId: string;
+        taskRef: number;
+      }) => {
+        localStorage.setItem("gobby-conversation-id", sessionId);
+        localStorage.setItem("gobby-db-session-id", sessionId);
+        localStorage.setItem("gobby-activity-panel-pinned", "true");
+        if (!localStorage.getItem("gobby-activity-panel-tab-v2")) {
+          localStorage.setItem("gobby-activity-panel-tab-v2", "sessions");
+        }
+        localStorage.setItem(
+          "gobby-sessions-filters",
+          JSON.stringify({
+            modes: [],
+            providers: [],
+            models: [],
+            sessionRefMin: null,
+            sessionRefMax: null,
+            taskRefMin: taskRef,
+            taskRefMax: taskRef,
+            taskRefRoles: ["claimed"],
+            datePreset: "all",
+            dateCustomFrom: null,
+            dateCustomTo: null,
+            statuses: ["active", "paused"],
+          }),
+        );
+        localStorage.setItem(
+          "gobby-settings",
+          JSON.stringify({
+            model: "gpt-5.4",
+            fontSize: 16,
+            theme: "dark",
+            defaultChatMode: "plan",
+            postPlanChatMode: "bypass",
+          }),
+        );
+      },
+      { sessionId: CURRENT_DB_SESSION_ID, taskRef: CLAIMED_TASK_REF },
+    );
+    const counters = {
+      currentMessageFetches: 0,
+      otherMessageFetches: 0,
+      otherSessionDetailFetches: 0,
+      taskLinkedSessionDetailFetches: 0,
+    };
+    await mockApi(page, counters);
+
+    await page.routeWebSocket("**/ws", (ws) => {
+      ws.onMessage((raw) => {
+        const message = JSON.parse(String(raw));
+        if (message.type === "subscribe") {
+          ws.send(
+            JSON.stringify({
+              type: "connection_established",
+              conversation_ids: [CURRENT_DB_SESSION_ID],
+            }),
+          );
+          ws.send(
+            JSON.stringify({
+              type: "subscribe_success",
+              events: message.events ?? [],
+            }),
+          );
+        }
+      });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByText("Persisted main chat message")).toBeVisible();
+    await expect(page.getByText("Other session message")).toHaveCount(0);
+    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Sessions");
+    await expect(page.locator(".session-entry")).toHaveCount(1);
+    await expect(page.locator(".activity-panel-content")).toContainText(
+      "#204: Task Linked Web Chat",
+    );
+    await expect(page.locator(".activity-panel-content")).not.toContainText(
+      "Other Web Chat",
+    );
+    await expect(page.locator(".activity-panel-content")).not.toContainText(
+      "Current Main Chat",
+    );
+
+    await page.locator(".activity-panel-mobile-trigger").click();
+    await page.getByRole("menuitemradio", { name: "Tasks" }).click();
+
+    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Tasks");
+    const taskTree = page.getByTestId("task-tree");
+    const claimedTaskRow = taskTree.getByRole("treeitem", {
+      name: /#14425 Verify web chat task state survives refresh: Development: In Progress.*Claimed/,
+    });
+    await expect(claimedTaskRow).toBeVisible();
+    await expect(claimedTaskRow).toContainText("#14425");
+    await expect(claimedTaskRow).toContainText("Development");
+    const detail = page.locator(".activity-task-detail-shell");
+    await expect(detail).toContainText("Task #14425");
+    await expect(detail).toContainText("Claimed by");
+    await expect(detail).toContainText(CURRENT_DB_SESSION_ID);
+    await expect(detail).toContainText(/Development: In Progress.*Claimed/);
+
+    await page.reload();
+
+    await expect(page.getByText("Persisted main chat message")).toBeVisible();
+    await expect(page.getByText("Other session message")).toHaveCount(0);
+    await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Tasks");
+    await expect(claimedTaskRow).toBeVisible();
+    await expect(detail).toContainText(CURRENT_DB_SESSION_ID);
+    await expect(detail).toContainText(/Development: In Progress.*Claimed/);
+    expect(counters.currentMessageFetches).toBeGreaterThanOrEqual(2);
+    expect(counters.otherMessageFetches).toBe(0);
+    expect(counters.otherSessionDetailFetches).toBe(0);
+    expect(counters.taskLinkedSessionDetailFetches).toBe(1);
   });
 
   test("stale terminal restore state fails clear instead of restoring the wrong main chat", async ({
@@ -470,7 +768,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     ).toBeVisible();
     await page.getByRole("button", { name: "Approve & Execute" }).click();
 
-    await expect(page.getByRole("radio", { name: "Auto", exact: true })).toHaveAttribute(
+    await expect(page.getByRole("radio", { name: "YOLO", exact: true })).toHaveAttribute(
       "aria-checked",
       "true",
     );

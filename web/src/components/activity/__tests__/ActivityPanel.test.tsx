@@ -12,6 +12,17 @@ vi.mock('../PlansTab', () => ({
   PlansTab: () => <div>Plans Tab</div>,
 }))
 
+vi.mock('../ArtifactsTab', () => ({
+  ArtifactsTab: ({ artifacts }: { artifacts: Map<string, { id: string; title: string }> }) => (
+    <div>
+      <div>Artifacts Tab</div>
+      {Array.from(artifacts.values()).map((artifact) => (
+        <span key={artifact.id}>{artifact.title}</span>
+      ))}
+    </div>
+  ),
+}))
+
 vi.mock('../FileChangesTab', () => ({
   FileChangesTab: () => <div>Changes Tab</div>,
 }))
@@ -34,6 +45,14 @@ vi.mock('../TasksTab', () => ({
 
 vi.mock('../FilesTab', () => ({
   FilesTab: () => <div>Files Tab</div>,
+}))
+
+vi.mock('../CronTab', () => ({
+  CronTab: () => <div>Cron Tab</div>,
+}))
+
+vi.mock('../TracesTab', () => ({
+  TracesTab: () => <div>Traces Tab</div>,
 }))
 
 describe('ActivityPanel', () => {
@@ -99,5 +118,65 @@ describe('ActivityPanel', () => {
     await userEvent.click(screen.getByRole('menuitemradio', { name: /tasks/i }))
 
     expect(onTabChange).toHaveBeenCalledWith('tasks')
+  })
+
+  it('renders generated artifacts under the Artifacts tab', () => {
+    render(
+      <ActivityPanel
+        isPinned={true}
+        onPinnedChange={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="artifacts"
+        onTabChange={vi.fn()}
+        artifacts={new Map([
+          [
+            'artifact-1',
+            {
+              id: 'artifact-1',
+              type: 'image',
+              title: 'logo.png',
+              language: 'png',
+              versions: [{ content: 'data:image/png;base64,abc', timestamp: new Date() }],
+              currentVersionIndex: 0,
+            },
+          ],
+        ])}
+        activeArtifact={null}
+        onOpenArtifact={vi.fn()}
+        onCloseArtifact={vi.fn()}
+        onSetArtifactVersion={vi.fn()}
+        canvasState={null}
+        onCloseCanvas={vi.fn()}
+        isMobile={false}
+      />,
+    )
+
+    expect(screen.getByText('Artifacts Tab')).toBeInTheDocument()
+    expect(screen.getByText('logo.png')).toBeInTheDocument()
+  })
+
+  it('renders file diffs under the Changes tab', () => {
+    render(
+      <ActivityPanel
+        isPinned={true}
+        onPinnedChange={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="changes"
+        onTabChange={vi.fn()}
+        artifacts={new Map()}
+        activeArtifact={null}
+        onOpenArtifact={vi.fn()}
+        onCloseArtifact={vi.fn()}
+        onSetArtifactVersion={vi.fn()}
+        canvasState={null}
+        onCloseCanvas={vi.fn()}
+        changedFiles={[{ path: 'src/example.ts', status: 'M' }]}
+        isMobile={false}
+      />,
+    )
+
+    expect(screen.getByText('Changes Tab')).toBeInTheDocument()
   })
 })

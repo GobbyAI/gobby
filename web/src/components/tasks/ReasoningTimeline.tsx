@@ -1,11 +1,7 @@
 import { useState } from 'react'
 import type { GobbyTaskDetail } from '../../hooks/useTasks'
 import { relativeTime } from '../../utils/formatTime'
-import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
-
-// =============================================================================
-// Phase derivation from task lifecycle
-// =============================================================================
+import { getCanonicalTaskState, getTaskDisplayState, type TaskDisplayState } from '../../lib/taskState'
 
 interface TimelinePhase {
   key: string
@@ -16,33 +12,75 @@ interface TimelinePhase {
   summary: string | null
 }
 
-const TIMELINE_BUCKET_ORDER = ['ready', 'in_progress', 'review', 'merge_ready', 'closed'] as const
+const ROOT_CLS = 'flex flex-col'
+const PHASE_CLS = 'flex min-h-9 gap-2.5'
+const LINE_CLS = 'flex w-4 shrink-0 flex-col items-center'
+const DOT_CLS =
+  'relative mt-1 h-2.5 w-2.5 shrink-0 rounded-full border-2 border-[var(--border)] bg-[var(--bg-primary)]'
+const DOT_COMPLETE_CLS = 'border-[var(--accent)] bg-[var(--accent)]'
+const DOT_ACTIVE_CLS = 'border-[var(--accent)] bg-[var(--accent)]'
+const DOT_PENDING_CLS = 'border-[var(--border)] bg-[var(--bg-tertiary)]'
+const DOT_PULSE_CLS =
+  'absolute -inset-1 rounded-full border-2 border-[var(--accent)] [animation:reasoning-pulse_2s_ease-in-out_infinite]'
+const CONNECTOR_CLS = 'min-h-3 w-0.5 flex-1 bg-[var(--border)]'
+const CONNECTOR_COMPLETE_CLS = 'bg-[var(--accent)]'
+const CONTENT_CLS = 'min-w-0 flex-1 pb-2'
+const HEADER_CLS =
+  'flex w-full cursor-pointer items-center gap-1.5 border-none bg-transparent py-0.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] disabled:cursor-default'
+const HEADER_PENDING_CLS = 'text-[var(--text-muted)]'
+const PHASE_ICON_CLS = 'text-[length:var(--text-base)] leading-none'
+const LABEL_CLS = 'font-medium'
+const TIME_CLS =
+  'ml-auto font-[inherit] text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const CHEVRON_CLS = 'w-3 text-center text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const DETAIL_CLS = 'pb-0.5 pl-5 pt-1 text-[length:var(--text-sm)] leading-[1.4] text-[var(--text-secondary)]'
+const INTERVENTIONS_CLS = 'mt-2 flex flex-wrap gap-1.5'
+const BTN_CLS =
+  'inline-flex cursor-pointer items-center gap-1 rounded border px-2.5 py-[3px] font-[var(--font-sans)] text-[length:var(--text-xs)] transition-colors duration-150'
+const BTN_DEFAULT_CLS =
+  'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+const BTN_PRIMARY_CLS =
+  'border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[var(--color-info-soft)] text-[var(--color-info)] hover:bg-[color-mix(in_srgb,var(--color-info)_22%,transparent)]'
+const BTN_DANGER_CLS =
+  'border-[color-mix(in_srgb,var(--color-error)_25%,transparent)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)]'
+const BTN_ICON_CLS = 'text-[length:var(--text-sm)]'
 
-function getTimelineBucketIndex(task: GobbyTaskDetail): number {
+const TIMELINE_STATE_ORDER: TaskDisplayState[] = [
+  'ready',
+  'in_progress',
+  'needs_review',
+  'review_approved',
+  'closed',
+]
+
+function getTimelineStateIndex(task: GobbyTaskDetail): number {
   const state = getCanonicalTaskState(task)
-  const bucket = getTaskBucket(task)
+  const displayState = getTaskDisplayState(task)
 
-  if (bucket !== 'blocked') {
-    return TIMELINE_BUCKET_ORDER.indexOf(bucket)
+  if (displayState !== 'blocked') {
+    return TIMELINE_STATE_ORDER.indexOf(displayState)
   }
 
-  if (state.is_merge_ready) return TIMELINE_BUCKET_ORDER.indexOf('merge_ready')
-  if (state.lifecycle_stage === 'needs_review') return TIMELINE_BUCKET_ORDER.indexOf('review')
-  if (state.is_claimed || state.lifecycle_stage === 'in_progress') {
-    return TIMELINE_BUCKET_ORDER.indexOf('in_progress')
+  if (state.is_merge_ready || state.current_stage?.state === 'review_approved') {
+    return TIMELINE_STATE_ORDER.indexOf('review_approved')
+  }
+  if (state.current_stage?.state === 'needs_review') {
+    return TIMELINE_STATE_ORDER.indexOf('needs_review')
+  }
+  if (state.is_claimed || state.current_stage?.state === 'in_progress') {
+    return TIMELINE_STATE_ORDER.indexOf('in_progress')
   }
 
-  return TIMELINE_BUCKET_ORDER.indexOf('ready')
+  return TIMELINE_STATE_ORDER.indexOf('ready')
 }
 
 function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
   const state = getCanonicalTaskState(task)
-  const bucketIdx = getTimelineBucketIndex(task)
+  const stateIdx = getTimelineStateIndex(task)
   const isFailed = state.is_escalated
 
   const phases: TimelinePhase[] = []
 
-  // Plan: task was created
   phases.push({
     key: 'plan',
     icon: '\u{1F4CB}',
@@ -52,14 +90,13 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
     summary: `Task created: ${task.title}`,
   })
 
-  // Investigate: work started (in_progress or beyond)
-  const investigateReached = bucketIdx >= 1 || isFailed
+  const investigateReached = stateIdx >= 1 || isFailed
   phases.push({
     key: 'investigate',
     icon: '\u{1F50D}',
     label: 'Investigate',
     status: investigateReached
-      ? (bucketIdx === 1 && !isFailed ? 'active' : 'complete')
+      ? (stateIdx === 1 && !isFailed ? 'active' : 'complete')
       : 'pending',
     timestamp: investigateReached ? task.updated_at : null,
     summary: state.owner_session_id
@@ -67,14 +104,13 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
       : investigateReached ? 'Work started' : null,
   })
 
-  // Act: commits linked or review stage
-  const actReached = bucketIdx >= 2 || (task.commits && task.commits.length > 0) || isFailed
+  const actReached = stateIdx >= 2 || (task.commits && task.commits.length > 0) || isFailed
   phases.push({
     key: 'act',
     icon: '\u{2699}\u{FE0F}',
     label: 'Act',
     status: actReached
-      ? (bucketIdx === 2 && !isFailed ? 'active' : 'complete')
+      ? (stateIdx === 2 && !isFailed ? 'active' : 'complete')
       : 'pending',
     timestamp: actReached ? task.updated_at : null,
     summary: task.commits && task.commits.length > 0
@@ -82,8 +118,7 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
       : actReached ? 'Changes submitted' : null,
   })
 
-  // Verify: validation or close
-  const verifyReached = bucketIdx >= 3 || task.validation_status !== 'pending' || isFailed
+  const verifyReached = stateIdx >= 3 || task.validation_status !== 'pending' || isFailed
   let verifySummary: string | null = null
   if (isFailed) {
     verifySummary = `Escalated: ${task.escalation_reason || 'needs attention'}`
@@ -113,14 +148,6 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
   return phases
 }
 
-// =============================================================================
-// ReasoningTimeline
-// =============================================================================
-
-// =============================================================================
-// Intervention buttons per phase
-// =============================================================================
-
 type InterventionAction = 'retry' | 'edit_and_run' | 'rollback' | 'mark_resolved'
 
 interface InterventionButton {
@@ -140,31 +167,38 @@ function getInterventionsForPhase(
 
   if (phase.status === 'active') {
     const buttons: InterventionButton[] = [
-      { action: 'mark_resolved', label: 'Mark Resolved', icon: '\u2714', variant: 'primary' },
+      { action: 'mark_resolved', label: 'Mark Resolved', icon: '✔', variant: 'primary' },
     ]
     if (phase.key !== 'plan') {
-      buttons.push({ action: 'retry', label: 'Retry', icon: '\u21BB', variant: 'default' })
+      buttons.push({ action: 'retry', label: 'Retry', icon: '↻', variant: 'default' })
     }
     return buttons
   }
 
-  // complete
   const buttons: InterventionButton[] = []
 
   if (isFailed && phase.key === 'verify') {
-    buttons.push({ action: 'retry', label: 'Retry', icon: '\u21BB', variant: 'primary' })
-    buttons.push({ action: 'mark_resolved', label: 'Mark Resolved', icon: '\u2714', variant: 'default' })
+    buttons.push({ action: 'retry', label: 'Retry', icon: '↻', variant: 'primary' })
+    buttons.push({ action: 'mark_resolved', label: 'Mark Resolved', icon: '✔', variant: 'default' })
   } else if (phase.key !== 'plan') {
-    buttons.push({ action: 'rollback', label: 'Roll Back', icon: '\u21A9', variant: 'danger' })
-    buttons.push({ action: 'retry', label: 'Retry', icon: '\u21BB', variant: 'default' })
+    buttons.push({ action: 'rollback', label: 'Roll Back', icon: '↩', variant: 'danger' })
+    buttons.push({ action: 'retry', label: 'Retry', icon: '↻', variant: 'default' })
   }
 
   return buttons
 }
 
-// =============================================================================
-// ReasoningTimeline
-// =============================================================================
+const DOT_VARIANT: Record<TimelinePhase['status'], string> = {
+  complete: DOT_COMPLETE_CLS,
+  active: DOT_ACTIVE_CLS,
+  pending: DOT_PENDING_CLS,
+}
+
+const BTN_VARIANT: Record<InterventionButton['variant'], string> = {
+  default: BTN_DEFAULT_CLS,
+  primary: BTN_PRIMARY_CLS,
+  danger: BTN_DANGER_CLS,
+}
 
 interface ReasoningTimelineProps {
   task: GobbyTaskDetail
@@ -185,52 +219,60 @@ export function ReasoningTimeline({ task, onIntervene }: ReasoningTimelineProps)
   }
 
   return (
-    <div className="reasoning-timeline">
+    <div className={ROOT_CLS}>
       {phases.map((phase, i) => {
         const isExpanded = expanded.has(phase.key)
         const isLast = i === phases.length - 1
 
         return (
-          <div key={phase.key} className={`reasoning-phase reasoning-phase--${phase.status}`}>
-            <div className="reasoning-phase-line">
-              <span className={`reasoning-phase-dot reasoning-phase-dot--${phase.status}`}>
-                {phase.status === 'active' && <span className="reasoning-phase-dot-pulse" />}
+          <div key={phase.key} className={PHASE_CLS}>
+            <div className={LINE_CLS}>
+              <span className={`${DOT_CLS} ${DOT_VARIANT[phase.status]}`}>
+                {phase.status === 'active' && <span className={DOT_PULSE_CLS} />}
               </span>
-              {!isLast && <span className={`reasoning-phase-connector reasoning-phase-connector--${phase.status}`} />}
+              {!isLast && (
+                <span
+                  className={
+                    phase.status === 'complete'
+                      ? `${CONNECTOR_CLS} ${CONNECTOR_COMPLETE_CLS}`
+                      : CONNECTOR_CLS
+                  }
+                />
+              )}
             </div>
-            <div className="reasoning-phase-content">
+            <div className={CONTENT_CLS}>
               <button
-                className="reasoning-phase-header"
+                className={phase.status === 'pending' ? `${HEADER_CLS} ${HEADER_PENDING_CLS}` : HEADER_CLS}
                 onClick={() => phase.summary && toggle(phase.key)}
                 disabled={!phase.summary}
               >
-                <span className="reasoning-phase-icon">{phase.icon}</span>
-                <span className="reasoning-phase-label">{phase.label}</span>
+                <span className={PHASE_ICON_CLS}>{phase.icon}</span>
+                <span className={LABEL_CLS}>{phase.label}</span>
                 {phase.timestamp && (
-                  <span className="reasoning-phase-time">{relativeTime(phase.timestamp)}</span>
+                  <span className={TIME_CLS}>{relativeTime(phase.timestamp)}</span>
                 )}
                 {phase.summary && (
-                  <span className="reasoning-phase-chevron">{isExpanded ? '\u25BE' : '\u25B8'}</span>
+                  <span className={CHEVRON_CLS}>{isExpanded ? '▾' : '▸'}</span>
                 )}
               </button>
               {isExpanded && phase.summary && (
-                <div className="reasoning-phase-detail">
+                <div className={DETAIL_CLS}>
                   {phase.summary}
                   {onIntervene && (() => {
                     const buttons = getInterventionsForPhase(phase, task)
                     if (buttons.length === 0) return null
                     return (
-                      <div className="reasoning-phase-interventions">
+                      <div className={INTERVENTIONS_CLS}>
                         {buttons.map(btn => (
                           <button
                             key={btn.action}
-                            className={`reasoning-intervention-btn reasoning-intervention-btn--${btn.variant}`}
+                            className={`${BTN_CLS} ${BTN_VARIANT[btn.variant]}`}
                             onClick={(e) => {
                               e.stopPropagation()
                               onIntervene(phase.key, btn.action)
                             }}
                           >
-                            <span className="reasoning-intervention-icon">{btn.icon}</span>
+                            <span className={BTN_ICON_CLS}>{btn.icon}</span>
                             {btn.label}
                           </button>
                         ))}

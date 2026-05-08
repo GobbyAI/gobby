@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"serverInfo":{"name":"qwen","version":"0.15.6"},"capabilities":{"session":true}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"qwen-new-session"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"qwen-new-session","update":{"sessionUpdate":"agent_thought_chunk","messageId":"qwen-new-thought-1","content":{"text":"Thinking through the Qwen fixture."}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"qwen-new-session","update":{"sessionUpdate":"agent_message_chunk","messageId":"qwen-new-message-1","content":[{"type":"text","text":"Qwen fixture response."}]}}}
+{"jsonrpc":"2.0","id":3,"result":{"stats":{"inputTokens":11,"outputTokens":8}}}

@@ -18,6 +18,18 @@ The **drafting methodology** (phase structure, task format, TDD rules, categorie
 
 The **review methodology** for the adversarial loop lives in the `plan-review` skill — the spawned `plan-adversary` agent loads it; you do not need to load it in this skill.
 
+## Plan-Coverage Contract Grammar
+
+The Plan-Coverage Contract is the authoring contract for new epic plans. The
+canonical grammar, kind enum, acceptance-item shape, typed deferral object,
+structured `covers:<plan-id>:<section-id>:<item-id>` record, and table-row
+decomposition rule live in `plan-draft/SKILL.md`. The full reference page is
+`docs/contracts/plan-coverage.md`.
+
+When drafting or revising a plan, load `plan-draft` and follow its typed
+grammar before presenting the artifact. Free-form `plan-ref:` labels are not
+honored; expansion coverage comes only from structured `covers:` records.
+
 ## Workflow Overview
 
 | # | Name | Notes |
@@ -30,7 +42,7 @@ The **review methodology** for the adversarial loop lives in the `plan-review` s
 | 5 | Plan Verification | Run `plan-draft`'s verification checklist. |
 | 6 | First-Draft Approval | Route through real `ExitPlanMode`; branch on opt-in. |
 | 6b | Adversary Mode Selection | I/D + `max_rounds`, only if Step 1a opted in. |
-| 7 | Adversarial Review Loop | Spawn `plan-adversary`; wait; revise; re-approve. |
+| 7 | Adversarial Review Loop | Pre-flight fact-check; spawn `plan-adversary`; wait; revise; re-approve. |
 | 8 | Approval Handoff / Expansion | Run `expand-task` pipeline with retry/escalate. |
 | 9 | Round-budget Exhausted / Abort | Bypass / abort / restart with cleanup. |
 
@@ -104,9 +116,9 @@ Attach this plan to an existing task #N, or create a new planning root?
 
 ### 1c. Attach guard (HARD BLOCK)
 
-Two-sided mutual exclusion with the autonomous front-half orchestrator:
+Legacy autonomous planning marker checks:
 
-**Active-front-half check.**
+**Legacy front-half marker check.**
 
 ```text
 active_fh = "conductor:front-half" in labels and "conductor:front-half-complete" not in labels
@@ -119,7 +131,6 @@ STAGE_LABELS = [
     "conductor-stage:requirements",
     "conductor-stage:planning",
     "conductor-stage:expansion",
-    "conductor-stage:test-architecture",
 ]
 has_live_stage_child = False
 for stage in STAGE_LABELS:
@@ -131,9 +142,9 @@ for stage in STAGE_LABELS:
 
 If `active_fh` **or** `has_live_stage_child` is true, error out:
 
-> Parent #N is under active autonomous front-half management. Wait for that flow to complete, detach it, or start a new planning root.
+> Parent #N still carries active legacy planning markers. Wait for that flow to complete, detach it, or start a new planning root.
 
-Skill exits. A parent that previously went through autonomous planning **and completed cleanly** (both `conductor:front-half` AND `conductor:front-half-complete` present, no live stage children) is allowed.
+Skill exits. A parent that previously went through the legacy autonomous planning flow **and completed cleanly** (both `conductor:front-half` AND `conductor:front-half-complete` present, no live stage children) is allowed.
 
 **Concurrent interactive-session lock check.** Enumerate **all** labels on the parent matching the prefix `interactive:planning-in-progress:` (labels accumulate — `add_label` only dedupes exact strings and `remove_label` only removes exact strings). For each such label, extract the session suffix and classify:
 
@@ -168,8 +179,6 @@ with the I/D choice, since both are part of the same deferred review-mode
 decision.
 
 Persisting the **exact** label string is load-bearing. `remove_label` is exact-match only; terminal cleanup must pass the same string back.
-
-The companion rule `block-front-half-on-interactive-lock` blocks autonomous `front_half_tick` on this parent until the label is removed (belt-and-suspenders; the guard above is the authoritative protection).
 
 ### 1e. Resume detection
 
@@ -263,6 +272,68 @@ Report the verification output in the exact format `plan-draft` specifies.
 
 ---
 
+## Step 5.5: Mechanical Structural Validation
+
+Step 5 is a narrative review. Step 5.5 is a mechanical CLI check that
+catches structural drift the narrative pass cannot reliably enumerate
+(missing `kind:` annotations, malformed acceptance items, dropped phase
+headings whose IDs do not match the contract regex, malformed deferral
+objects, target-inventory drift, conservative table-row decomposition, and
+index-proven missing direct consumers when code-index context exists). It is
+fast and deterministic — always run it, never skip it.
+
+```text
+uv run gobby plans validate <artifact_path from Step 4>
+```
+
+If the current working directory is not the project root, add an explicit
+project context:
+
+```text
+uv run gobby plans validate <artifact_path from Step 4> --project <project-name-or-id>
+```
+
+Use `gobby tasks expand validate-plan` only from task-expansion workflows or
+when debugging the expansion CLI itself. Plan authoring and adversary
+resubmission checks use `gobby plans validate`.
+
+Branch on the command result:
+
+- **Exit code 0** — record the reported phase list for the user-facing
+  report (Step 5 already showed the narrative checks; mention the mechanical
+  pass alongside as a single combined report). Proceed to Step 6.
+- **Nonzero exit** — display the validator errors **verbatim** to the user.
+  Then attempt an in-place fix:
+  - If the error names a class already taught by `plan-draft` (e.g.
+    `phases missing` → fix phase headings to `## P<N>: Name`; `missing
+    kind` → add `` `kind: ...` `` annotation; `missing acceptance` → add
+    `**Acceptance:**` block; `malformed item ID` → re-number to
+    dotted-prefix-match the section ID), apply the fix, re-run Step 5.5
+    against the same artifact, and repeat until the validator passes.
+  - If the error is structural in a way the skill cannot mechanically
+    repair (corrupted YAML in a deferral object, regex-failing section
+    IDs that require rewriting whole sections), surface the validator
+    output to the user and ask them to confirm the fix before
+    proceeding. Do NOT advance to Step 6 with a failing validator.
+
+Step 5.5 catches the false-negative class the narrative checklist misses:
+a plan can pass all five Step 5 checks (no test tasks, valid deps,
+categories, phase syntax tolerated by the old skill, self-contained
+sections) and still fail the contract because, say, its phase headings
+parse to `section_id: "1"` instead of `section_id: "P1"` and the parser
+silently drops them. The `gobby plans validate` command runs the same
+contract validation used by expansion, plus deterministic plan lints; the
+plan-adversary spawn gate runs the same validation again before review.
+Failing fast here saves an entire adversary round and the LLM call that
+goes with it.
+
+Resume safety: if Step 5.5 returns `valid: False` and the skill is
+interrupted before applying a fix, re-entry from Step 5 (via the resume
+path or a fresh user run) repeats the validator call against the
+current artifact — no separate state machine is needed.
+
+---
+
 ## Step 6: First-Draft Approval
 
 Present the plan to the user and route the decision through the real native **`ExitPlanMode`** / `provide_plan_decision` boundary — do **not** synthesize a "user approved?" prompt. The native boundary is the only place `chat_session_permissions` records a real approval.
@@ -320,6 +391,20 @@ Then proceed to Step 7.
 
 ## Step 7: Review Loop (adversarial/delegated modes only)
 
+### 7.0a. Anchor-task contract (load-bearing)
+
+The parent session **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (see `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so plan-mode + plan-file editing alone do not require a claim. The parent's role from Step 7 onward is pure orchestration.
+
+Each adversary round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: review_anchor`, `category: planning`). The anchor exists **only for verdict capture**: the coordinator starts the anchor's `planning` stage, submits that stage for review, and the spawned adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `approve_review(stage_name="planning")` (clean) / `reject_review(stage_name="planning")` (with findings) / `escalate_task` on the anchor.
+
+**Coordinator owns plan revision between rounds.** The coordinator (this chat session) acts as the planner for all revision rounds in both interactive and delegated modes — there is no separate `planner` agent spawn. The compact-self call after each adversary spawn (Step 7.4) summarizes the coordinator's context so the next round's revision starts fresh, replacing the prior fresh-context guarantee that a planner-agent spawn provided.
+
+The parent **fires-and-forgets**: spawn the agent, end the turn cleanly. No claim, no `ScheduleWakeup`, no `Monitor`. The daemon's task-completion notification (P2P signoff message from the agent's session) wakes the parent when the agent terminates. On wake, the parent reads the anchor's terminal state via `get_task` and routes per Step 7.6.
+
+Anchor lifecycle: each anchor closes when its round terminates (verdict captured). Cleanup at loop end (approval, exhaustion, abort, restart) closes any still-open anchors. The planning epic itself stays open until Step 8 expansion handoff completes.
+
+This contract is mode-agnostic. Interactive and delegated share the same fire-and-forget orchestration; the only mode-specific behavior is the user-confirmation gate after a rejected round (Step 7.6).
+
 ### 7.0. Artifact precondition
 
 Before entering Step 7, verify `artifact_path` is still present:
@@ -342,12 +427,12 @@ planning = create_task(
     task_type="epic",
     title=f"Interactive plan for {parent_ref}",
     category="planning",
-    labels=["interactive:planning", "planning-round:0"],
+    labels=["interactive:planning"],
 )
 set_variable(name="planning_task_id", value=planning.id, session_id="#<self>")
 ```
 
-Task type is **epic** so `close_task` does not require `changes_summary` (leaf-close requirement doesn't apply to orchestration containers). **Do NOT** apply `conductor:front-half` — that label is reserved for autonomous flows.
+Task type is **epic** so `close_task` does not require `changes_summary` (leaf-close requirement doesn't apply to orchestration containers). **Do NOT** apply `conductor:front-half` — that legacy label is only interpreted by compatibility guards.
 
 The parent lock was already acquired in Step 1; do not re-acquire here.
 
@@ -357,30 +442,159 @@ If the plan file is not already at `.gobby/plans/task-<parent_seq>-<slug>.md` (t
 
 ### 7.3. Round accounting
 
-Read `current_round` from the `planning-round:N` label on the planning epic (default `0`). **Internal state is 0-indexed** (matches autonomous front-half convention); **all user-visible and adversary-facing surfaces use `current_round + 1`**. First round is `planning-round:0` internally but "Round 1" in every message.
+Read `current_round` from the planning epic's current stage
+`review_round_count` (default `0`). **Internal state is 0-indexed** (matches
+the existing review-round convention); **all user-visible and adversary-facing
+surfaces use `current_round + 1`**. First round is stored as `0` internally but
+"Round 1" in every message.
 
 Surface: `Round {current_round + 1} of {max_rounds}`.
 
-### 7.4. Spawn the adversary
+### 7.3a. Pre-flight fact-check
 
-Mirror the autonomous front-half's prompt shape (`_front_half.py::_adversary_prompt`):
+Before creating the round's anchor and spawning the adversary, dispatch a
+**mid-tier subagent** (one tier below the planner agent's own model — fast and
+cost-optimized for read-and-verify, not strategy) to mechanically verify every
+concrete claim in the plan against the actual codebase. Iterate until clean,
+then proceed to Step 7.4.
+
+**Why**: adversary rounds are expensive. A non-trivial share of rejection
+rounds fire on factual drift the planner introduced during revision — wrong
+line numbers, nonexistent symbols, miscounted fixtures, wrong field names —
+that a cheap mechanical check catches in seconds. Burning an adversary round
+on drift is wasteful. The pre-flight stays focused on existence-and-accuracy
+checks, leaving architecture and contract-level critique to the adversary.
+
+**What to verify** (read-only — the subagent must NOT modify any file):
+
+- Every line number cited in the plan (allow ±5 lines before flagging drift).
+- Every symbol/function/class/method name referenced (must exist in the cited
+  module).
+- Every file path mentioned (must exist on disk; for new files, mark as
+  "to-be-created" and skip).
+- Every field/key/attribute name claimed (must match actual schema or
+  dataclass).
+- Every cited count (deliverables, sections, tests, fixture inventory,
+  acceptance items, dependency annotations).
+- Every regex/format claim (must match the actual pattern, not a paraphrase).
+
+**Dispatch** (CLI-agnostic — adapt to the host CLI's subagent dispatch
+mechanism; the schema below is the contract, not a literal call):
 
 ```text
+factcheck_run = spawn_agent(
+    description="Plan fact-check pre-flight",
+    subagent_type=<host-CLI's lightweight code-reading agent>,
+    model=<a mid-tier model: cheaper than the planner's own model>,
+    prompt=f"""
+        Pre-adversary fact-check of `{artifact_path}`. Read-only verification
+        of every concrete claim against the actual codebase. Report drift
+        only — every claim that doesn't match reality, with the actual value.
+        Do NOT modify any file.
+
+        Categories to check:
+          1. Line numbers cited in the plan (±5 acceptable).
+          2. Symbols/functions/classes named (must exist where claimed).
+          3. File paths (must exist on disk; new files marked separately).
+          4. Field/key/attribute names (must match actual schema).
+          5. Counts (deliverables, sections, tests, fixture inventory).
+          6. Regex/format claims (must match actual pattern verbatim).
+
+        Report format: one line per drift, `CLAIM: <plan claim> | ACTUAL: <code reality>`.
+        If no drift found, say so explicitly.
+    """,
+    isolation="none",
+)
+```
+
+**Iteration loop**:
+
+1. Receive the drift report.
+2. If drift is reported: apply each fix in-place to `artifact_path`. Do NOT
+   modify the source code being verified. Re-run Step 7.3a against the
+   revised plan.
+3. When the report says "no drift," continue to Step 7.4.
+
+The loop converges quickly — each pass only fixes drift; it never introduces
+new claims. Typical run: 1-2 passes.
+
+**Mode behavior**:
+
+- Both `interactive` and `delegated` modes run this step every round.
+- `delegated` mode applies drift fixes silently and proceeds; do not
+  interrupt the user for mechanical fact-check fixes.
+- `interactive` mode applies drift fixes silently as well — the pre-flight
+  is mechanical, not a design decision; surface only if a fix would alter
+  the plan's intent (rare).
+- If the pre-flight subagent fails to dispatch (host CLI does not expose
+  subagent spawning, or the subagent crashes), log the limitation and
+  proceed directly to Step 7.4. The adversary round will still run; the
+  user just loses the pre-flight benefit for that round.
+
+### 7.4. Create the per-round anchor and spawn the adversary
+
+Create a fresh anchor task scoped to this round, then spawn against it. Never
+reuse an anchor between rounds.
+
+```text
+old_anchor_id = get_variable(name="active_anchor_id", session_id="#<self>")
+if old_anchor_id:
+    old_anchor = get_task(old_anchor_id)
+    if old_anchor.state not in ("closed", "escalated"):
+        close_task(task_id=old_anchor_id, reason="superseded by new adversary round")
+    set_variable(name="active_anchor_id", value=None, session_id="#<self>")
+
+anchor = create_task(
+    parent_task_id=planning_task_id,
+    task_type="review_anchor",
+    category="planning",
+    title=f"Plan-adversary review — round {current_round + 1}",
+)
+initialize_task_manifest(
+    task_id=anchor.id,
+    stage_names=["planning"],
+    stage_caps=[{"stage_name": "planning", "max_review_rounds": max_rounds + 1}],
+)
+set_variable(name="active_anchor_id", value=anchor.id, session_id="#<self>")
+
+start_stage(task_id=anchor.id, stage_name="planning")
+submit_for_review(task_id=anchor.id, stage_name="planning")
+
 run = spawn_agent(
     agent="plan-adversary",
-    task_id=planning_task_id,
+    task_id=anchor.id,                    # NOT planning_task_id
     parent_session_id=<self>,
     prompt=(
         f"Plan artifact: {artifact_path}\n"
         f"Parent task: {plan_parent_ref}\n"
+        f"Planning epic: {planning_task_id}\n"
         f"Display round: {current_round + 1}\n"
+        f"Anchor task (mark verdict on this): {anchor.id}\n"
         f"... (any docs the parent references)"
     ),
 )
 set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 ```
 
-The spawn path auto-injects `assigned_task_id` and auto-claims the task for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here.
+The spawn path auto-injects `assigned_task_id` and auto-claims the anchor for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here. The anchor (not the planning epic) is what the adversary marks at terminal.
+
+Immediately after the spawn, trigger a self-compaction:
+
+```text
+call_tool(
+    server_name="gobby-sessions",
+    tool_name="compact_self",
+    arguments={"session_id": "#<self>"},
+)
+```
+
+This frees the coordinator's context (which by this point is loaded with
+requirements gathering, plan drafting, and exploration agent results) while
+the sub-agent runs. The verdict landing via daemon wake (Step 7.5) re-enters
+with a fresh, summarized context. Terminal sessions fire the right slash
+command per CLI (claude/codex `/compact`, gemini/qwen/droid `/compress`);
+web_chat sessions return `compacted: False` with a follow-up note today and
+are no-op'd until #13684 lands the daemon-level ChatSession registry.
 
 ### 7.5. Yield until the adversary wake
 
@@ -398,31 +612,39 @@ early-completion race.
 
 ### 7.6. Interpret the result
 
-On wake/resume, `get_task(planning_task_id)` and branch on status. If raw run
-details are needed for diagnostics, call `get_agent_result(run_id=adversary_run_id)`.
+On wake/resume, read the **anchor's** terminal state (NOT the planning epic):
 
-- **`review_approved`** → go to Step 8.
-- **`open`** after `mark_task_review_rejected`
-  1. Extract the section `## Adversary Findings — Round {current_round + 1}` from the planning task description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
-  2. If `plan_review_mode == "adversarial"`, present it verbatim to the user.
+```text
+anchor_id = get_variable(name="active_anchor_id", session_id="#<self>")
+anchor = get_task(anchor_id)
+```
+
+The adversary's findings live in `anchor.description` under the heading `## Adversary Findings — Round {current_round + 1}`. If raw run details are needed for diagnostics, call `get_agent_result(run_id=adversary_run_id)`.
+
+After reading the verdict, **close the anchor** so it does not linger. Whenever
+an anchor is closed below, immediately
+`set_variable(name="active_anchor_id", value=None, session_id="#<self>")` so
+the next round must create a fresh anchor. Then branch:
+
+- **`review_approved`** → close the anchor with reason "round approved"; go to Step 8.
+- **current stage `ready`** after `reject_review`
+  1. Extract `## Adversary Findings — Round {current_round + 1}` from the anchor description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
+  2. Close the anchor with reason "round rejected; findings captured".
   3. If `current_round + 1 >= max_rounds` → go to Step 9.
   4. If `plan_review_mode == "adversarial"`:
-     Re-enter plan mode, revise the plan file with the user, route the revised
-     plan through the real `ExitPlanMode` approval boundary again, then loop
-     back to 7.4.
+     Present the findings verbatim to the user via `ExitPlanMode` or `AskUserQuestion`. End the current turn after presenting; the user's reply triggers the next turn. On the next turn, if the user approved continuing, re-enter plan mode, revise the plan file with the user, route the revised plan through `ExitPlanMode` again, then loop back to **Step 7.3a** (pre-flight fact-check the revised plan, then spawn the next round).
   5. If `plan_review_mode == "delegated"`:
-     Revise the plan file in place using the adversary findings, run the same
-     verification checklist from Step 5, keep edits scoped to `artifact_path`
-     only, and loop back to 7.4 without re-entering plan mode. Do not interrupt
-     the user for non-terminal review rejections.
+     Revise the plan file in place using the adversary findings, run the same verification checklist from Step 5, keep edits scoped to `artifact_path` only, and loop back to **Step 7.3a** (pre-flight fact-check, then spawn the next round) without re-entering plan mode. Do not interrupt the user for non-terminal review rejections.
 
-- **`escalated`** with `escalation_reason` starting `needs_requirements:`
-  1. Surface the questions to the user.
-  2. This is terminal for delegated mode and an interrupt for interactive mode.
-  3. Go to Step 9.
+- **`escalated`** with `escalation_reason` starting `needs_requirements:` or `needs_human:`
+  1. Close the anchor with reason "round escalated".
+  2. Surface the escalation reason verbatim to the user.
+  3. This is terminal for delegated mode and an interrupt for interactive mode.
+  4. Go to Step 9.
 
-- **Any other terminal state** → treat as adversary crash. Surface the state,
-  `adversary_run_id`, and any available `get_agent_result` details. Go to Step 9.
+- **Any other terminal state** → treat as adversary crash. Close the anchor with reason "round crashed". Surface the state, `adversary_run_id`, and any available `get_agent_result` details. Go to Step 9.
+
+**Why the anchor pattern**: capturing the verdict on a per-round anchor (rather than directly on the planning epic) keeps the planning epic's lifecycle clean — the epic stays open until Step 8 expansion handoff, regardless of how many adversary rounds run. It also avoids stop-hook collisions: the parent never claims any task; the adversary owns its anchor for the lifetime of its run; the parent reads anchor state on wake and closes it. No long-lived shared task state, no parent-claim/release dance.
 
 **Why only interactive mode re-enters plan mode each round:** the user's native
 approval boundary runs through `ExitPlanMode` / `provide_plan_decision`
@@ -468,9 +690,11 @@ On wake/resume, read `expansion_execution_id` and call
   2. **Retry with overrides** — ask for `provider`/`model` overrides; loop to 8.1 with those added to `inputs`.
   3. **Escalate** — `escalate_task(planning_task_id, reason=f"expansion_failed: {error}")`; run terminal cleanup; skill exits. The user can pick the escalated planning epic up later.
 
-### 8.3. Stay out of test-architecture
+### 8.3. Stay out of standalone test architecture
 
-Do **not** advance into the test-architecture stage. That is the autonomous front-half's domain; the interactive skill ends at expansion.
+Do **not** create or advance a standalone test-architecture stage. The architect-owned
+architecture step now carries the test strategy, and the interactive skill ends at
+expansion.
 
 ---
 
@@ -500,6 +724,13 @@ to add for this feature.
 Every exit path from this skill — Step 6 plain-mode exit, Step 8 success, Step 8 failure/Escalate, Step 9 bypass/abort/restart, adversary crash — **must** run the same cleanup:
 
 ```text
+# Close any per-round anchors still open under the planning epic.
+# Each round closes its own anchor on terminal in Step 7.6, but a crash mid-round
+# can leave one orphaned. Sweep here as a safety net.
+open_anchors = list_tasks(parent_task_id=planning_task_id, status="open", limit=200)
+for anchor in open_anchors:
+    close_task(task_id=anchor.id, reason="terminal cleanup: anchor swept")
+
 lock_label = get_variable(name="interactive_lock_label", session_id="#<self>")
 if lock_label:
     remove_label(task_id=plan_parent_ref, label=lock_label)
@@ -513,6 +744,7 @@ for name in (
     "artifact_path",
     "plan_slug",
     "adversary_run_id",
+    "active_anchor_id",
     "expansion_execution_id",
     "current_round",
     "max_rounds",
@@ -562,3 +794,17 @@ The detailed semantics (why phases must be sub-epics, how cross-phase deps wire)
 ## Optional: Workflow-Enforced Planning
 
 The `plan-expansion` workflow template still exists as a stricter alternative (hard step gates, tool restrictions, loop enforcement). It is documented in `docs/guides/workflows-overview.md`. `/gobby plan` does **not** activate it automatically — use whichever activation path you have configured today.
+
+---
+
+## Lifecycle Coordinator Contract
+
+This skill is the coordinator for the lifecycle-dispatch flow.
+
+- The parent chat session never claims implementation or review tasks during Phase 3. It creates a fresh planning anchor for each adversary round, spawns the adversary, records `active_anchor_id`, then ends the turn.
+- Round 1 spawns `plan-adversary` against the user-approved first draft.
+- Round N, where N > 1, the coordinator (this chat session, with context restored fresh by the post-spawn compact-self from Round N-1) revises the plan file in place using the latest `## Adversary Findings — Round N-1`, runs the Step 5 verification checklist, then creates a new adversary anchor and spawns `plan-adversary` for Round N. There is no separate `planner` agent spawn — the coordinator IS the planner for all revision rounds.
+- Wake routing reads the active anchor with `get_task`. `status=review_approved` proceeds only after the plan file contains `## M1 Task Manifest`; `status=open` with remaining budget triggers coordinator revision and the next adversary spawn; `status=open` with exhausted budget surfaces final findings; `status=escalated` surfaces the escalation reason.
+- The daemon's task-completion notification is the wake signal. Do not use `ScheduleWakeup`, `Monitor`, or polling in Phase 3.
+- In delegated mode, load the `build` skill before Phase 3b, ask for build scope, then either trigger `gobby build <plan_file>` with the resolved profile or show the exact CLI command.
+- The coordinator owns surgical plan-file revisions between rounds in both modes. Manifest writes belong to `plan-adversary` (final act of approval); the coordinator must not author the manifest.

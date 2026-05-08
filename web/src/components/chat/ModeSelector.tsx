@@ -1,12 +1,13 @@
 import type { ChatMode, ChatModeInfo } from '../../types/chat'
 import { CHAT_MODES } from '../../types/chat'
-import { cn } from '../../lib/utils'
+import { SegmentedControl } from '../ui/SegmentedControl'
 
 interface ModeSelectorProps {
   mode: ChatMode
   onModeChange: (mode: ChatMode) => void
   disabled?: boolean
   modes?: ChatModeInfo[]
+  size?: 'sm' | 'md'
 }
 
 export function ModeSelector({
@@ -14,29 +15,20 @@ export function ModeSelector({
   onModeChange,
   disabled,
   modes = CHAT_MODES,
+  size = 'md',
 }: ModeSelectorProps) {
   return (
-    <div className="flex rounded-md border border-border text-xs" role="radiogroup" aria-label="Chat mode">
-      {modes.map((m, i) => (
-        <button
-          key={m.id}
-          role="radio"
-          aria-checked={m.id === mode}
-          className={cn(
-            'px-2 py-1 transition-colors',
-            i === 0 && 'rounded-l-md',
-            i === modes.length - 1 && 'rounded-r-md',
-            m.id === mode
-              ? 'bg-accent text-accent-foreground'
-              : 'text-muted-foreground hover:bg-muted'
-          )}
-          onClick={() => onModeChange(m.id)}
-          disabled={disabled}
-          title={m.description}
-        >
-          {m.label}
-        </button>
-      ))}
-    </div>
+    <SegmentedControl<ChatMode>
+      value={mode}
+      onChange={onModeChange}
+      options={modes.map((m) => ({
+        value: m.id,
+        label: m.label,
+        title: m.description,
+      }))}
+      ariaLabel="Chat mode"
+      size={size}
+      disabled={disabled}
+    />
   )
 }

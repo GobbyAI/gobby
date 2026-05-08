@@ -18,6 +18,7 @@ from gobby.mcp_proxy._call_tool_wrapper import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
@@ -134,19 +135,15 @@ class GobbyDaemonTools:
             server_list = [s for s in server_list if fnmatch.fnmatch(s["name"], name_filter)]
             connected_count = sum(1 for s in server_list if s.get("state") == "connected")
 
-        result = {
-            "success": True,
-            "servers": server_list,
-            "total": len(server_list),
-            "connected": connected_count,
-        }
-        self.tool_proxy.record_servers_listed(session_id)
-        await self.tool_proxy.emit_synthetic_proxy_after_tool(
-            session_id=session_id,
-            tool_name="list_mcp_servers",
-            tool_input={"name_filter": name_filter} if name_filter else {},
-            result=result,
+        result = compact_mcp_server_list(
+            {
+                "success": True,
+                "servers": server_list,
+                "total": len(server_list),
+                "connected": connected_count,
+            }
         )
+        self.tool_proxy.record_servers_listed(session_id)
         return result
 
     # --- Tool Proxying ---
@@ -249,7 +246,7 @@ class GobbyDaemonTools:
                 isError=True,
             )
         # Propagate only the resolved platform UUID. Falling back to the raw
-        # ref would re-poison workflow checks and synthetic after-tool events.
+        # ref would re-poison workflow checks and tool filters.
         effective_session_id = tokens.resolved_session_id
 
         try:
@@ -292,14 +289,7 @@ class GobbyDaemonTools:
 
     async def list_tools(self, server_name: str, session_id: str | None = None) -> dict[str, Any]:
         """List tools for a specific server, optionally filtered by workflow phase restrictions."""
-        result = await self.tool_proxy.list_tools(server_name, session_id=session_id)
-        await self.tool_proxy.emit_synthetic_proxy_after_tool(
-            session_id=session_id,
-            tool_name="list_tools",
-            tool_input={"server_name": server_name},
-            result=result,
-        )
-        return result
+        return await self.tool_proxy.list_tools(server_name, session_id=session_id)
 
     async def get_tool_schema(
         self,
@@ -308,18 +298,11 @@ class GobbyDaemonTools:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Get tool schema."""
-        result = await self.tool_proxy.get_tool_schema(
+        return await self.tool_proxy.get_tool_schema(
             server_name,
             tool_name,
             session_id=session_id,
         )
-        await self.tool_proxy.emit_synthetic_proxy_after_tool(
-            session_id=session_id,
-            tool_name="get_tool_schema",
-            tool_input={"server_name": server_name, "tool_name": tool_name},
-            result=result,
-        )
-        return result
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""

@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","type":"notification","factoryApiVersion":"1.0.0","factoryProtocolVersion":"1.25.0","method":"droid.session_notification","params":{"notification":{"type":"thinking_text_delta","messageId":"msg-1","blockIndex":0,"textDelta":"Planning"}}}
+{"jsonrpc":"2.0","type":"notification","factoryApiVersion":"1.0.0","factoryProtocolVersion":"1.25.0","method":"droid.session_notification","params":{"notification":{"type":"assistant_text_delta","messageId":"msg-1","blockIndex":1,"textDelta":"Done"}}}
+{"jsonrpc":"2.0","type":"notification","factoryApiVersion":"1.0.0","factoryProtocolVersion":"1.25.0","method":"droid.session_notification","params":{"notification":{"type":"droid_working_state_changed","newState":"idle"}}}

@@ -1,0 +1,146 @@
+name: product-manager
+description: |
+  Discovery-stage product manager for lifecycle build PRD. Consolidates
+  upstream discovery into a Product Reference Document before planning begins.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn]
+provider: codex
+model: gpt-5.5
+reasoning_effort: high
+isolation: none
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+skills:
+  methodology:
+    - prd
+
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required discovery work is complete.
+  - Stage completion is recorded by the dispatcher after the marker artifact is verified.
+
+  You are Gobby acting as product manager for the PRD discovery stage.
+  Your assigned task is in your session variables as assigned_task_id.
+
+  METHODOLOGY:
+  After claiming and reading the task, load the `prd` skill. Call
+  get_skill(name="prd") on gobby-skills, then continue. Follow that methodology
+  when drafting the `## Product Reference Document`.
+
+  ARTIFACT CONTRACT:
+  - Read the assigned task description before drafting.
+  - Treat ideation, research, and architecture marker blocks as authoritative
+    upstream context.
+  - Call update_task to update only this marker block in the assigned task
+    description:
+    <!-- gobby:discovery-stage:prd:start -->
+    <!-- gobby:discovery-stage:prd:end -->
+  - Preserve all other task description content byte-for-byte where possible.
+  - The marker content must contain exactly one `## Product Reference Document`
+    section with Goal, Users, Scope, Out of Scope, Acceptance Criteria, and
+    Planning Handoff subsections.
+  - When the marker block is updated and re-read, call
+    gobby-agents:end_agent_run. The dispatcher validates the marker and
+    completes the PRD stage.
+  - If a missing decision blocks a useful PRD, escalate_task with concrete
+    questions instead of guessing.
+
+  CRITICAL RULES:
+  - Do NOT call close_task.
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT call complete_stage.
+  - Do NOT spawn other agents.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+      - "tag:task-skill-gates"
+    exclude:
+      - "tag:sync"
+
+step_variables:
+  task_claimed: false
+  skill_loaded: false
+  handoff_ready: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned PRD task"
+    status_message: |
+      Claim assigned_task_id with claim_task, then read it with get_task.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: load_skill
+        when: "vars.task_claimed"
+
+  - name: load_skill
+    description: "Load the PRD methodology skill"
+    status_message: |
+      Call get_skill(name="prd") on gobby-skills, then continue before drafting.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'prd'"
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: draft
+        when: "vars.skill_loaded"
+
+  - name: draft
+    description: "Draft and persist the Product Reference Document"
+    status_message: |
+      Read assigned_task_id with get_task, update only the PRD marker block
+      with update_task, re-read it, then call end_agent_run. Escalate only for
+      blocking missing decisions.
+    allowed_tools: "all"
+    allowed_mcp_tools:
+      - "gobby-tasks:get_task"
+      - "gobby-tasks:update_task"
+      - "gobby-tasks:escalate_task"
+      - "gobby-agents:end_agent_run"
+    on_mcp_success:
+      - server: gobby-agents
+        tool: end_agent_run
+        action: set_variable
+        variable: handoff_ready
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: handoff_ready
+        value: true
+    transitions: []
+
+exit_condition: "vars.handoff_ready"

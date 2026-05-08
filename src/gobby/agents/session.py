@@ -58,6 +58,9 @@ class ChildSessionConfig:
     sandbox_enabled: bool = False
     """Whether the spawned runtime is expected to run sandboxed."""
 
+    is_local: bool = False
+    """Whether the spawned runtime is expected to use a local model endpoint."""
+
 
 class ChildSessionManager:
     """
@@ -192,6 +195,7 @@ class ChildSessionManager:
             agent_depth=child_depth,
             spawned_by_agent_id=config.agent_id,
             workflow_name=config.workflow_name,
+            is_local=config.is_local,
             sandbox_enabled=config.sandbox_enabled,
         )
 

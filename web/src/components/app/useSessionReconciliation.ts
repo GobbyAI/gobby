@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject } from "react";
+import { useEffect, useState, type MutableRefObject } from "react";
 import type { GobbySession } from "../../types/sessions";
 import {
   loadPersistedConversationId,
@@ -31,6 +31,8 @@ export function useSessionReconciliation({
   switchConversation,
   startNewChat,
 }: UseSessionReconciliationArgs) {
+  const [initialPersistedDbSessionId] = useState(() => loadPersistedDbSessionId());
+
   useEffect(() => {
     if (!projectReady) return;
     if (initialReconciliationDoneRef.current) return;
@@ -43,6 +45,14 @@ export function useSessionReconciliation({
 
     const persistedConversationId = loadPersistedConversationId();
     const persistedDbSessionId = loadPersistedDbSessionId();
+    // rejectedInitialPersistedSession means initialPersistedDbSessionId saw a
+    // persisted session at mount, but persistedDbSessionId, persistedConversationId,
+    // and dbSessionId are now all cleared.
+    const rejectedInitialPersistedSession =
+      typeof initialPersistedDbSessionId === "string" &&
+      persistedDbSessionId === null &&
+      persistedConversationId === null &&
+      dbSessionId === null;
 
     const activeMainChatId = dbSessionId || persistedDbSessionId;
     const match = activeMainChatId
@@ -64,6 +74,9 @@ export function useSessionReconciliation({
     } else if (persistedConversationId && !persistedDbSessionId) {
       initialReconciliationDoneRef.current = true;
       return;
+    } else if (rejectedInitialPersistedSession) {
+      initialReconciliationDoneRef.current = true;
+      return;
     } else if (webChatSessions.length > 0) {
       initialReconciliationDoneRef.current = true;
       const mostRecent = webChatSessions[0];
@@ -82,5 +95,6 @@ export function useSessionReconciliation({
     switchConversation,
     startNewChat,
     initialReconciliationDoneRef,
+    initialPersistedDbSessionId,
   ]);
 }

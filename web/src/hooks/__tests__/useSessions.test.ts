@@ -8,6 +8,11 @@ vi.mock("../useWebSocketEvent", () => ({
 }));
 
 import { useSessionCatalog } from "../useSessionCatalog";
+import { useWebSocketEvent } from "../useWebSocketEvent";
+import {
+  defaultSessionsFilters,
+  matchesSessionsFilters,
+} from "../../components/activity/sessionsFilters";
 
 let mockFetch: MockFetchInstance;
 
@@ -87,14 +92,15 @@ describe("useSessionCatalog", () => {
     expect(result.current.sessions[0].title).toBe("Another Session");
   });
 
-  it("passes the project filter to the sessions API", async () => {
+  it("passes the project filter and page-size limit to the sessions API", async () => {
     renderHook(() => useSessionCatalog("proj-1"));
 
     await waitFor(() => {
       expect(
-        mockFetch.fn.mock.calls.some(([url]) =>
-          String(url).includes("/api/sessions?limit=200&project_id=proj-1"),
-        ),
+        mockFetch.fn.mock.calls.some(([url]) => {
+          const u = String(url);
+          return u.includes("/api/sessions") && u.includes("project_id=proj-1") && u.includes("limit=100");
+        }),
       ).toBe(true);
     });
   });
@@ -108,6 +114,7 @@ describe("useSessionCatalog", () => {
           ...SAMPLE_SESSIONS[0],
           id: "sess-handoff",
           status: "handoff_ready",
+          seq_num: 102,
           updated_at: "2026-03-03T12:00:00Z",
         },
         { ...SAMPLE_SESSIONS[0], id: "sess-deleted", status: "deleted" },
@@ -175,6 +182,128 @@ describe("useSessionCatalog", () => {
     expect(
       result.current.sessions.find((session) => session.id === "sess-1")?.title,
     ).toBe("Renamed");
+  });
+
+  it("hasMore reflects next_cursor on the response", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/sessions", {
+      sessions: SAMPLE_SESSIONS,
+      next_cursor: { updated_at: "2026-03-01T12:00:00Z", id: "sess-1" },
+    });
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.hasMore).toBe(true);
+  });
+
+  it("hasMore is false when next_cursor is null", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/sessions", {
+      sessions: SAMPLE_SESSIONS,
+      next_cursor: null,
+    });
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.hasMore).toBe(false);
+  });
+
+  it("loadMore appends the next page using the cursor", async () => {
+    mockFetch.resetRoutes();
+    let callCount = 0;
+    mockFetch.fn.mockImplementation(async (url) => {
+      callCount += 1;
+      const u = String(url);
+      const isFirstPage = !u.includes("cursor_updated_at");
+      const body = isFirstPage
+        ? {
+            sessions: [SAMPLE_SESSIONS[0]],
+            next_cursor: { updated_at: "2026-03-01T12:00:00Z", id: "sess-1" },
+          }
+        : {
+            sessions: [SAMPLE_SESSIONS[1]],
+            next_cursor: null,
+          };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    expect(result.current.hasMore).toBe(true);
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+
+    expect(result.current.sessions).toHaveLength(2);
+    expect(result.current.hasMore).toBe(false);
+    expect(callCount).toBe(2);
+  });
+
+  it("session_event with event=session_expired patches the catalog and Live filter drops the row", async () => {
+    const mockedUseWS = vi.mocked(useWebSocketEvent);
+    mockedUseWS.mockClear();
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const before = result.current.sessions.find((s) => s.id === "sess-1");
+    expect(before?.status).toBe("active");
+
+    const liveFilter = defaultSessionsFilters();
+    const now = new Date("2026-03-01T13:00:00Z");
+    expect(matchesSessionsFilters(before!, liveFilter, now)).toBe(true);
+
+    const sessionEventRegistration = mockedUseWS.mock.calls.find(
+      ([type]) => type === "session_event",
+    );
+    expect(sessionEventRegistration).toBeDefined();
+    const sessionEventHandler = sessionEventRegistration![1];
+
+    act(() => {
+      sessionEventHandler({
+        type: "session_event",
+        event: "session_expired",
+        session_id: "sess-1",
+      });
+    });
+
+    const after = result.current.sessions.find((s) => s.id === "sess-1");
+    expect(after?.status).toBe("expired");
+    expect(matchesSessionsFilters(after!, liveFilter, now)).toBe(false);
+  });
+
+  it("session_event with event=session_deleted removes the session from the catalog", async () => {
+    const mockedUseWS = vi.mocked(useWebSocketEvent);
+    mockedUseWS.mockClear();
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.sessions.some((s) => s.id === "sess-2")).toBe(true);
+
+    const sessionEventRegistration = mockedUseWS.mock.calls.find(
+      ([type]) => type === "session_event",
+    );
+    const sessionEventHandler = sessionEventRegistration![1];
+
+    act(() => {
+      sessionEventHandler({
+        type: "session_event",
+        event: "session_deleted",
+        session_id: "sess-2",
+      });
+    });
+
+    expect(result.current.sessions.some((s) => s.id === "sess-2")).toBe(false);
   });
 
   it("renameSession restores the previous title when the API call fails", async () => {

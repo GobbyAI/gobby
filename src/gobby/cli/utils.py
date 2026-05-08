@@ -741,7 +741,12 @@ def _stop_step(msg: str, *, error: bool = False) -> None:
         click.echo(f"  + {msg}")
 
 
-def stop_daemon(quiet: bool = False) -> bool:
+def stop_daemon(
+    quiet: bool = False,
+    *,
+    shutdown_intent: str = "stop",
+    shutdown_source: str = "cli_stop",
+) -> bool:
     """Stop the daemon process. Returns True on success, False on failure.
 
     Args:
@@ -816,7 +821,7 @@ def stop_daemon(quiet: bool = False) -> bool:
     try:
         from gobby.runner_maintenance import write_shutdown_source
 
-        write_shutdown_source("cli_stop")
+        write_shutdown_source(shutdown_source, intent=shutdown_intent)
     except Exception as e:
         logger.debug(f"Failed to write shutdown source: {e}")
 
@@ -827,7 +832,10 @@ def stop_daemon(quiet: bool = False) -> bool:
 
     svc = get_service_status()
     if svc.get("installed") and svc.get("running"):
-        result = service_stop()
+        result = service_stop(
+            shutdown_intent=shutdown_intent,
+            shutdown_source=shutdown_source,
+        )
         if result.get("success"):
             pid_file.unlink(missing_ok=True)
             for _ in range(200):  # 20 seconds

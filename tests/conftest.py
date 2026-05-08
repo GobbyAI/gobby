@@ -1,5 +1,6 @@
 """Pytest configuration and shared fixtures for Gobby tests."""
 
+import os
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -49,6 +50,12 @@ def temp_dir() -> Iterator[Path]:
     """Create a temporary directory for test files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
+
+@pytest.fixture(scope="session")
+def repo_root() -> Path:
+    """Return the repository root for tests that inspect checked-in files."""
+    return Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -159,7 +166,7 @@ def mock_config_with_websocket() -> MagicMock:
 
 
 @pytest.fixture
-def sample_project(project_manager: "LocalProjectManager") -> dict:
+def sample_project(project_manager: "LocalProjectManager") -> dict[str, Any]:
     """Create a sample project for testing."""
     project = project_manager.create(
         name="test-project",
@@ -203,8 +210,15 @@ def mock_daemon_config() -> "MagicMock":
     config = MagicMock()
     config.daemon_port = 60887
     config.websocket.port = 60888
-    config.telemetry.log_file = "~/.gobby/logs/client.log"
-    config.telemetry.log_file_error = "~/.gobby/logs/client_error.log"
+    temp_root = Path(tempfile.gettempdir())
+    config.telemetry.log_file = os.environ.get(
+        "GOBBY_LOGGING_CLIENT",
+        str(temp_root / "gobby_test_client.log"),
+    )
+    config.telemetry.log_file_error = os.environ.get(
+        "GOBBY_LOGGING_CLIENT_ERROR",
+        str(temp_root / "gobby_test_client_error.log"),
+    )
     config.ui.enabled = False
     config.databases.neo4j.url = None
     config.databases.neo4j.auth = None

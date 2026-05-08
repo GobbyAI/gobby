@@ -27,6 +27,93 @@ A plan that passes this review is ready for `/gobby expand`.
 
 ---
 
+## Plan-Coverage Contract Gate
+
+Mechanical parser rejection happens upstream of the adversary. Plan-authoring
+sessions run `uv run gobby plans validate <plan-file>` before resubmission;
+the planner/adversary spawn gate also calls the same internal validator before
+every adversary spawn. The validator calls `parse_plan(..., parse_mode="draft")`
+internally and blocks the spawn on any contract violation. By the time the
+adversary is invoked, the typed grammar has already passed the draft-mode
+contract gate — re-running the parser pre-verdict is structural duplication
+that wastes a spawn round on syntax the planner already cleared.
+
+The adversary's only mechanical gate is the post-approval
+`parse_mode="expansion"` self-check on manifest write (see Manifest Emission
+below). It validates a different invariant: the appended `## M1 Task Manifest`
+is present, schema-correct, and covers every acceptance item exactly once.
+
+The rejection-message vocabulary, canonical heading regex, and post-parse
+semantic checks below remain authoritative for qualitative findings. When
+surfacing a contract violation the planner gate missed — or one the parser
+cannot detect mechanically (table-row decomposition, traceability gaps) —
+cite the exact rejection cause from the table.
+
+The planner-side gate and `gobby plans validate` also run deterministic semantic
+lint. `target-coverage`, conservative `table-row-decomposition`, and
+index-proven `consumer-sweep` failures are mechanical validator failures, not
+qualitative review findings. If one appears in your prompt or task history,
+require the planner to sweep the whole plan for that same failure class before
+resubmission.
+
+Canonical heading regex:
+
+```regex
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
+```
+
+The documented rejection message MUST name the failing cause. Reject on these
+nine cases:
+
+| Cause | Rejection message |
+| --- | --- |
+| missing ID | `Plan-Coverage Contract rejection: missing ID` |
+| missing kind | `Plan-Coverage Contract rejection: missing kind` |
+| missing acceptance | `Plan-Coverage Contract rejection: missing acceptance` |
+| ID collision | `Plan-Coverage Contract rejection: ID collision` |
+| malformed item ID | `Plan-Coverage Contract rejection: malformed item ID` |
+| malformed deferral | `Plan-Coverage Contract rejection: malformed deferral` |
+| zero artifact references | `Plan-Coverage Contract rejection: zero artifact references` |
+| phases missing | `Plan-Coverage Contract rejection: phases missing` |
+| table-row decomposition | `Plan-Coverage Contract rejection: table-row decomposition` |
+
+Mechanical parser-level rejection covers the first seven cases:
+
+- A heading at level `##` through `######` does not match the canonical regex
+  in strict implementation-parse mode.
+- A section has no `kind:` front-matter line.
+- A `deliverable` section has no `**Acceptance:**` block.
+- An acceptance item has zero artifact references. At least one of `file:`,
+  `symbol:`, `test:`, or `behavior:` is required.
+- An acceptance item ID does not dotted-prefix-match its section ID.
+- A duplicate section ID appears anywhere in the document.
+- A `deferred` section has a malformed deferral object. Required fields are
+  `task_ref`, `reason`, `owner`, and `original_acceptance_items`; the referenced
+  task must be open and carry `deferred-from:<plan-id>:<section-id>`.
+
+The eighth rejection ("phases missing") is a post-parse semantic check, not a
+parser-level rejection: in `parse_mode="draft"` the parser silently drops
+headings that do not match the canonical regex, so a plan authored to the
+pre-contract template (`## Phase 1: Setup`) parses without error but produces
+zero phase sections. After parsing, count sections whose ID matches the
+contract phase regex `^P\d+$` (`_CONTRACT_PHASE_ID_RE` in
+`src/gobby/tasks/expansion/_common.py`). The expansion compiler cannot anchor
+TDD wrappers without phases, so `validate_plan_file`
+(`src/gobby/tasks/expansion/_compile.py`) blocks adversary spawn for any plan
+with one or more `kind: deliverable` sections but zero phase sections.
+
+The ninth rejection is a conservative semantic-lint check. Any `deliverable`
+section whose body uses a markdown table to enumerate work items MUST emit one
+acceptance item per table data row with stable IDs. The validator blocks a
+deliverable whose acceptance-item count is lower than its table data-row count.
+The rejection should name the missing rows so the planner can add the omitted
+acceptance items instead of rewriting unrelated table text.
+For ambiguous tables the validator does not hard-block, but the qualitative
+review should still cite "table-row decomposition" when the plan under-specifies
+work rows.
+
+---
+
 ## Role & Attitude
 
 You are a rigorous plan reviewer. Your job is to find what the drafter missed —
@@ -104,10 +191,13 @@ Cross-reference the plan against its parent task.
 
 These are contract-level and fail-fast. Flag any of them as `blocking`:
 
-- **No explicit test tasks** — drafts must not contain `[TDD]` / `[IMPL]` /
-  `[REF]` prefixes, "Write tests for…", "Ensure tests pass", etc. Expansion
-  auto-inserts TDD wrappers. Explicit test tasks break the sandwich and
-  duplicate work.
+- **No duplicate/filler TDD-wrapper test tasks** — drafts must not contain
+  `[TDD]` / `[IMPL]` / `[REF]` prefixes, "Write tests for...", "Ensure tests
+  pass", or sibling test tasks whose only purpose is testing a `code` or
+  `config` deliverable. Expansion auto-inserts those wrappers. Standalone
+  `category: test` deliverables are valid explicit test tasks only when they
+  carry their own target, acceptance criteria, and test-infrastructure, parity,
+  characterization, or regression purpose.
 - **Concrete target file paths** — every `code` / `config` task must specify a
   file path (`Target: src/foo/bar.py` or inline). Vague tasks like
   "update the backend" are un-actionable.
@@ -129,6 +219,71 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
 
 ---
 
+## Manifest Emission on Approval
+
+Plan-adversary is the **sole writer** of the `## M1 Task Manifest` section.
+Planners author narrative only; the adversary commits the typed bridge between
+deliverables and expansion leaves on the same call where it approves. The act
+of emitting the manifest is what forces the adversary to confront ambiguity it
+might otherwise wave through — if a manifest entry cannot be written for a
+deliverable, the plan is not ready.
+
+See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the entry schema
+and parser-enforced invariants. This skill covers the adversary's emission
+**responsibility**; the schema lives in the contract.
+
+### Sequence on Clean Review
+
+When no blocking findings remain (zero findings or only nits):
+
+1. Append a `## M1 Task Manifest` section to the end of the plan file with
+   `kind: manifest` and a YAML block carrying one entry per `kind: deliverable`
+   section. The `M1` heading ID is required by the canonical heading regex.
+2. Self-check via `parse_plan(plan_path, parse_mode="expansion")`. Strict
+   expansion validates that the manifest is present, schema-correct, and that
+   every acceptance item is covered by exactly one entry.
+3. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
+   **3 retries**.
+4. After the cap is exhausted, behavior splits by yolo state on the planning
+   anchor task:
+   - **non-yolo**: call
+     `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
+     with the parser error details. Do NOT approve.
+   - **yolo**: do NOT call `escalate_task` — yolo NEVER escalates on this
+     path (top-level invariant). Instead:
+     - Append a `## Yolo Fallbacks` audit section to the planning anchor's
+       description (NOT the plan file) documenting the failure mode.
+     - Fall back to the deterministic stub-manifest path. Direct Python form:
+       `from gobby.plans.manifest_emitter import emit_stub_manifest`, then
+       call `emit_stub_manifest(plan_path)`. If direct imports are unavailable
+       in the current surface, call the MCP/tooling wrapper that exposes
+       `emit_stub_manifest(plan_path)`. Re-run `parse_plan(plan_path,
+       parse_mode="expansion")`.
+     - If the stub also fails (the deliverable schema in the plan is malformed
+       beyond the emitter's reach), append a second `## Yolo Fallbacks` audit
+       marker and force-approve with `approve_review(stage_name="planning")` whose
+       `approval_notes` document that downstream `gobby expand` will reject
+       the plan and require human intervention at expansion time.
+5. On success (any path that yields a parser-clean manifest, or the yolo
+   force-approve path), call `approve_review` with `stage_name="planning"` and `approval_notes`
+   that document the manifest outcome (e.g. "approved with N manifest
+   entries").
+
+### Plan-File Write Scope
+
+`Edit` and `Write` are permitted ONLY for the plan file at
+`task_artifacts.plan_file_path`. Writing to any other path violates the agent
+contract. The only legitimate plan-file write is appending the
+`## M1 Task Manifest` section on approval.
+
+**Rejection rounds MUST NOT edit the plan file.** Plan edits between rounds
+are the planner's responsibility (§2.23). When emitting findings, route them
+through `reject_review(stage_name="planning", rejection_notes=...)` only — the rejection
+tool appends `## Adversary Findings — Round N` to the anchor task description
+without touching the plan.
+
+---
+
 ## Escalation Policy
 
 Findings carry a **severity**:
@@ -136,17 +291,22 @@ Findings carry a **severity**:
 - `blocking` — the plan should not be expanded until this is fixed.
 - `nit` — worth noting, but not a blocker on its own.
 
+**Anchor-task contract**: the spawn prompt names the **per-round anchor task** the parent created for this review (a child of the planning epic). Mark verdict on that anchor — NOT on the planning epic itself, NOT on the parent epic. The parent reads the anchor's terminal state on daemon-wake and routes from there.
+
 Escalate **only when context is insufficient or a true human-intervention blocker exists**.
 For routine revision rounds, reject review instead:
 
 - If ≥1 `blocking` finding after the second pass → call
-  `mark_task_review_rejected(task_id=<planning_task>, rejection_notes="<formatted findings>", round_number=N)`.
+  `reject_review(task_id=<anchor_task_id>, stage_name="planning", rejection_notes="<formatted findings>", round_number=N)`.
   Use the Output Format below for `rejection_notes`; the tool appends the
-  `## Adversary Findings — Round N` section and returns the task to `open`.
+  `## Adversary Findings — Round N` section to the anchor description and
+  returns the anchor to `open`. The parent closes the anchor on next wake.
 - If only `nit` findings remain → record them in the findings section so the
   drafter can see them, but **approve** the plan with
-  `mark_task_review_approved(task_id=<planning_task>, approval_notes="...")`.
-- If zero findings after the second pass → approve cleanly.
+  `approve_review(task_id=<anchor_task_id>, stage_name="planning", approval_notes="...")`.
+- If zero findings after the second pass → approve cleanly on the anchor.
+
+Use the `anchor_task_id` value passed in the spawn prompt; do not infer or fall back to the planning epic.
 
 Non-blocking nits never trigger escalation on their own.
 
@@ -155,7 +315,7 @@ Non-blocking nits never trigger escalation on their own.
 ## Output Format
 
 When rejecting review, pass findings in `rejection_notes` so
-`mark_task_review_rejected` can append them under a **round-scoped** heading:
+`reject_review` can append them under a **round-scoped** heading:
 
 ```text
 ## Adversary Findings — Round N
@@ -221,8 +381,7 @@ when:
   questions you cannot answer and escalate.
 
 The `needs_requirements:` escalation contract matches the one `planner.yaml`
-uses on the drafting side — the interactive planner and autonomous front-half
-both branch on that prefix.
+uses on the drafting side and remains stable for the stage-native planning flow.
 
 Do **not** approve a plan you do not understand. When in doubt, escalate with
 specific questions rather than manufacturing findings or rubber-stamping.
@@ -230,5 +389,5 @@ specific questions rather than manufacturing findings or rubber-stamping.
 ## Autonomous Exit
 
 When running as spawned `plan-adversary`, finish the verdict first
-(`mark_task_review_approved`, `mark_task_review_rejected`, or `escalate_task`), then call
+(`approve_review`, `reject_review`, or `escalate_task`), then call
 `end_agent_run` on `gobby-agents` with **no arguments** to finish the run.

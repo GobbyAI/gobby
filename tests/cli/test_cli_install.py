@@ -15,6 +15,7 @@ from gobby.cli.install import (
     _ensure_daemon_config,
     _is_claude_code_installed,
     _is_codex_cli_installed,
+    _is_droid_cli_installed,
     _is_gemini_cli_installed,
     _is_qwen_cli_installed,
     install,
@@ -42,6 +43,13 @@ def _mock_ext_services_and_prompts():
 def _mock_qwen_detector() -> None:
     """Keep Qwen detection deterministic unless a test overrides it."""
     with patch("gobby.cli.install._is_qwen_cli_installed", return_value=False):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _mock_droid_detector() -> None:
+    """Keep Droid detection deterministic unless a test overrides it."""
+    with patch("gobby.cli.install._is_droid_cli_installed", return_value=False):
         yield
 
 
@@ -167,6 +175,19 @@ class TestCLIDetectionFunctions:
         mock_which.return_value = None
         assert _is_codex_cli_installed() is False
 
+    @patch("shutil.which")
+    def test_is_droid_cli_installed_true(self, mock_which: MagicMock) -> None:
+        """Test Droid CLI detection when installed."""
+        mock_which.return_value = "/usr/local/bin/droid"
+        assert _is_droid_cli_installed() is True
+        mock_which.assert_called_once_with("droid")
+
+    @patch("shutil.which")
+    def test_is_droid_cli_installed_false(self, mock_which: MagicMock) -> None:
+        """Test Droid CLI detection when not installed."""
+        mock_which.return_value = None
+        assert _is_droid_cli_installed() is False
+
 
 class TestInstallCommand:
     """Tests for the install CLI command."""
@@ -185,6 +206,7 @@ class TestInstallCommand:
         assert "--gemini" in result.output
         assert "--qwen" in result.output
         assert "--codex" in result.output
+        assert "--droid" in result.output
         assert "--hooks" in result.output
         assert "--all" in result.output
 
@@ -216,6 +238,7 @@ class TestInstallCommand:
         assert "Gemini CLI" in result.output
         assert "Qwen CLI" in result.output
         assert "Codex CLI" in result.output
+        assert "Droid CLI" in result.output
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_claude")
@@ -333,6 +356,37 @@ class TestInstallCommand:
         mock_install_qwen.assert_called_once()
 
     @patch("gobby.cli.install._ensure_daemon_config")
+    @patch("gobby.cli.install.install_droid")
+    @patch("gobby.cli.load_config")
+    def test_install_droid_only_flag(
+        self,
+        mock_load_config: MagicMock,
+        mock_install_droid: MagicMock,
+        mock_ensure_config: MagicMock,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Test install with --droid flag only."""
+        mock_load_config.return_value = MagicMock()
+        mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
+        mock_install_droid.return_value = {
+            "success": True,
+            "hooks_installed": ["SessionStart"],
+            "workflows_installed": [],
+            "commands_installed": [],
+            "plugins_installed": [],
+            "mcp_configured": True,
+        }
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            result = runner.invoke(cli, ["install", "--droid"])
+
+        assert result.exit_code == 0
+        assert "Droid CLI" in result.output
+        assert "Installed 1 hooks" in result.output
+        mock_install_droid.assert_called_once()
+
+    @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_codex")
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
@@ -410,6 +464,46 @@ class TestInstallCommand:
         assert result.exit_code == 0
         assert "Codex" in result.output
         mock_install_codex.assert_called_once()
+
+    def test_codex_install_skips_embedding(
+        self,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Targeted Codex install does not run embedding or Docker setup."""
+        codex_result = {
+            "success": True,
+            "hooks_installed": [],
+            "files_installed": ["/home/user/.gobby/hooks/codex/hook_dispatcher.py"],
+            "workflows_installed": [],
+            "commands_installed": [],
+            "plugins_installed": [],
+            "config_updated": True,
+            "mcp_configured": True,
+        }
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/test/config.yaml"},
+            ),
+            patch("gobby.cli.install.load_full_config_from_db", side_effect=FileNotFoundError),
+            patch("gobby.cli.install.install_codex", return_value=codex_result) as mock_codex,
+            patch("gobby.cli.install._run_embedding_install") as mock_embedding,
+            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
+            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+        ):
+            with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+                result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
+
+        assert result.exit_code == 0
+        assert "Codex" in result.output
+        assert "Embedding Provider" not in result.output
+        mock_codex.assert_called_once()
+        mock_embedding.assert_not_called()
+        mock_qdrant.assert_not_called()
+        mock_neo4j.assert_not_called()
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_git_hooks")
@@ -612,6 +706,8 @@ class TestInstallCommand:
 
         assert result.exit_code == 0
         mock_install_claude.assert_called_once()
+        assert mock_install_claude.call_count == 1
+        assert mock_install_claude.call_args is not None
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_claude")
@@ -916,6 +1012,31 @@ class TestUninstallCommand:
         assert "Removed 1 hooks" in result.output
         mock_uninstall_qwen.assert_called_once()
 
+    @patch("gobby.cli.install.uninstall_droid")
+    @patch("gobby.cli.load_config")
+    def test_uninstall_droid_only_flag(
+        self,
+        mock_load_config: MagicMock,
+        mock_uninstall_droid: MagicMock,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Test uninstall with --droid flag only."""
+        mock_load_config.return_value = MagicMock()
+        mock_uninstall_droid.return_value = {
+            "success": True,
+            "hooks_removed": ["SessionStart"],
+            "files_removed": [],
+        }
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            result = runner.invoke(cli, ["uninstall", "--droid", "--yes"])
+
+        assert result.exit_code == 0
+        assert "Droid CLI" in result.output
+        assert "Removed 1 hooks" in result.output
+        mock_uninstall_droid.assert_called_once()
+
     @patch("gobby.cli.install.uninstall_claude")
     @patch("gobby.cli.load_config")
     def test_uninstall_claude_failure(
@@ -1139,7 +1260,11 @@ class TestUninstallCommand:
 
         assert result.exit_code == 0
         mock_uninstall_claude.assert_called_once()
+        assert mock_uninstall_claude.call_count == 1
+        assert mock_uninstall_claude.call_args is not None
         mock_uninstall_gemini.assert_called_once()
+        assert mock_uninstall_gemini.call_count == 1
+        assert mock_uninstall_gemini.call_args is not None
 
 
 class TestInstallCommandDirectInvocation:
@@ -1183,6 +1308,7 @@ class TestInstallCommandDirectInvocation:
             result = runner.invoke(install, ["--claude"])
 
         assert result.exit_code == 0
+        assert mock_install_claude.call_count == 1
 
     @patch("gobby.cli.install.uninstall_claude")
     def test_invoke_uninstall_directly(

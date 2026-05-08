@@ -39,24 +39,26 @@ class TestToolHandlers:
         response = event_handlers.handle_after_tool(event)
         assert response.decision == "allow"
 
-    def test_before_tool_blocks_gobby_tasks_cli_dict_input(
+    def test_before_tool_allows_gobby_tasks_cli_dict_input(
         self, event_handlers: EventHandlers
     ) -> None:
-        """Native Bash access to `gobby tasks` should be blocked."""
+        """Task CLI policy is enforced by rules, not hardcoded hook logic."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Bash", "tool_input": {"command": "uv run gobby tasks --help"}},
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "uv run gobby tasks list --ready"},
+            },
             metadata={"_platform_session_id": "plat-123"},
         )
         response = event_handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "gobby-tasks MCP server" in response.reason
+        assert response.decision == "allow"
 
-    def test_before_tool_blocks_gobby_tasks_cli_string_input(
+    def test_before_tool_allows_gobby_tasks_cli_string_input(
         self, event_handlers: EventHandlers
     ) -> None:
-        """String shell payloads from app-server adapters are blocked too."""
+        """String shell payloads from app-server adapters are allowed by the hook."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Bash", "tool_input": "gobby tasks list --limit 1"},
@@ -64,13 +66,12 @@ class TestToolHandlers:
         )
         response = event_handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "create_task" in response.context
+        assert response.decision == "allow"
 
-    def test_before_tool_blocks_gobby_tasks_cli_exec_command_alias(
+    def test_before_tool_allows_gobby_tasks_cli_exec_command_alias(
         self, event_handlers: EventHandlers
     ) -> None:
-        """Shell aliases should hit the same gobby-tasks block."""
+        """Shell aliases are left to the rules engine."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "exec_command", "tool_input": {"command": "gobby tasks list"}},
@@ -78,13 +79,12 @@ class TestToolHandlers:
         )
         response = event_handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "gobby-tasks MCP server" in response.reason
+        assert response.decision == "allow"
 
     def test_before_tool_allows_other_gobby_cli_commands(
         self, event_handlers: EventHandlers
     ) -> None:
-        """Only `gobby tasks` is blocked by the native guard."""
+        """Other gobby CLI commands remain allowed."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Bash", "tool_input": {"command": "uv run gobby status"}},
@@ -155,6 +155,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
+        assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
 
     def test_after_tool_edit_marks_had_edits_for_in_repo_path(
         self, mock_dependencies: dict
@@ -176,6 +178,48 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
+        assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
+
+    def test_after_tool_notifies_code_index_with_project_root_path(
+        self, mock_dependencies: dict, tmp_path: Path
+    ) -> None:
+        """Test code index notification uses project root even when cwd is nested."""
+        repo_root = tmp_path / "project"
+        deep_cwd = repo_root / "src" / "pkg"
+        (repo_root / ".gobby").mkdir(parents=True)
+        (repo_root / ".gobby" / "project.json").write_text('{"id": "proj-1"}')
+        deep_cwd.mkdir(parents=True)
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        code_index_trigger = MagicMock()
+        resolve_project_id = MagicMock(return_value="proj-1")
+        handlers = EventHandlers(
+            **mock_dependencies,
+            code_index_trigger=code_index_trigger,
+            resolve_project_id=resolve_project_id,
+        )
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": "edited.py"},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(deep_cwd)
+
+        handlers.handle_after_tool(event)
+
+        resolve_project_id.assert_called_once_with(None, str(repo_root.resolve()))
+        assert resolve_project_id.call_count == 1
+        assert resolve_project_id.call_args is not None
+        code_index_trigger.notify_file_changed.assert_called_once_with(
+            file_path="src/pkg/edited.py",
+            project_id="proj-1",
+            root_path=str(repo_root.resolve()),
+        )
+        assert code_index_trigger.notify_file_changed.call_count == 1
+        assert code_index_trigger.notify_file_changed.call_args is not None
 
     def test_after_tool_edit_skips_gobby_internal_files(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for .gobby/ internal files."""
@@ -195,6 +239,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
+        assert not mock_dependencies["session_storage"].mark_had_edits.called
 
     def test_after_tool_edit_skips_out_of_repo_paths(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for edits outside cwd."""
@@ -214,6 +260,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
+        assert not mock_dependencies["session_storage"].mark_had_edits.called
 
     def test_after_tool_edit_skips_relative_gobby_path(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for relative .gobby/ paths."""
@@ -233,6 +281,8 @@ class TestToolHandlerEdgeCases:
         handlers.handle_after_tool(event)
 
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+        assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
+        assert not mock_dependencies["session_storage"].mark_had_edits.called
 
 
 class TestSkillToolInterception:
@@ -244,14 +294,14 @@ class TestSkillToolInterception:
         from gobby.skills.parser import ParsedSkill
 
         return ParsedSkill(
-            name="test-battery",
-            description="Fire-and-forget orchestrator test battery.",
-            content="# Test Battery\nRun all orchestrator tests.",
+            name="agent-monitoring",
+            description="Inspect Gobby agent progress through supported MCP tools.",
+            content="# Agent Monitoring\nInspect agent progress.",
         )
 
     @pytest.fixture
     def skill_manager(self, parsed_skill: Any) -> MagicMock:
-        """Create a mock skill manager that resolves test-battery."""
+        """Create a mock skill manager that resolves agent-monitoring."""
         manager = MagicMock()
         manager.resolve_skill_name.return_value = parsed_skill
         return manager
@@ -270,17 +320,17 @@ class TestSkillToolInterception:
         """Skill tool call with a gobby skill name blocks with fetch directive."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "test-battery"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
         )
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="test-battery") on gobby-skills, then continue.' in (
+        assert 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.' in (
             response.context or ""
         )
-        assert "# Test Battery" not in (response.context or "")
+        assert "# Agent Monitoring" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
-        skill_manager.resolve_skill_name.assert_called_once_with("test-battery")
+        skill_manager.resolve_skill_name.assert_called_once_with("agent-monitoring")
 
     def test_skill_tool_with_gobby_prefix(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
@@ -288,15 +338,15 @@ class TestSkillToolInterception:
         """Skill tool call with gobby: prefix strips it before resolving."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "gobby:test-battery"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "gobby:agent-monitoring"}},
         )
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Call get_skill(name="test-battery") on gobby-skills, then continue.' in (
+        assert 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.' in (
             response.context or ""
         )
-        skill_manager.resolve_skill_name.assert_called_once_with("test-battery")
+        skill_manager.resolve_skill_name.assert_called_once_with("agent-monitoring")
 
     def test_skill_tool_with_args(self, handlers_with_skills: EventHandlers) -> None:
         """Skill tool call with args includes them in context."""
@@ -304,13 +354,13 @@ class TestSkillToolInterception:
             HookEventType.BEFORE_TOOL,
             data={
                 "tool_name": "Skill",
-                "tool_input": {"skill": "test-battery", "args": "cleanup"},
+                "tool_input": {"skill": "agent-monitoring", "args": "status"},
             },
         )
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert "User arguments: cleanup" in response.context
+        assert "User arguments: status" in response.context
 
     def test_skill_tool_unknown_blocks_with_error(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
@@ -358,7 +408,7 @@ class TestSkillToolInterception:
         handlers = EventHandlers(**mock_dependencies)  # no skill_manager
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "test-battery"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
         )
         response = handlers.handle_before_tool(event)
 
@@ -371,7 +421,7 @@ class TestSkillToolInterception:
         skill_manager.resolve_skill_name.side_effect = RuntimeError("boom")
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Skill", "tool_input": {"skill": "test-battery"}},
+            data={"tool_name": "Skill", "tool_input": {"skill": "agent-monitoring"}},
         )
         response = handlers_with_skills.handle_before_tool(event)
 

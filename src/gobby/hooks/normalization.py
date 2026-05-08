@@ -488,7 +488,14 @@ def _extract_mcp_content_object(content: Any) -> dict[str, Any] | None:
     return None
 
 
-def _unwrap_mcp_tool_output(tool_output: Any) -> Any:
+def _unwrap_mcp_tool_output(
+    tool_output: Any,
+    *,
+    _depth: int = 0,
+    _max_depth: int = 8,
+) -> Any:
+    if _depth >= _max_depth:
+        return tool_output
     if not isinstance(tool_output, dict):
         return tool_output
 
@@ -510,6 +517,14 @@ def _unwrap_mcp_tool_output(tool_output: Any) -> Any:
         nested_content = _extract_mcp_content_object(result.get("content"))
         if nested_content is not None:
             return nested_content
+
+    parsed_output = _parse_json_object(tool_output.get("output"))
+    if parsed_output is not None:
+        return _unwrap_mcp_tool_output(
+            parsed_output,
+            _depth=_depth + 1,
+            _max_depth=_max_depth,
+        )
 
     return tool_output
 
@@ -649,6 +664,17 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
             data["tool_name"] = canonical
             tool_name = canonical
 
+    # 1a-pre. Normalize triple-underscore MCP prefix (Droid CLI) to canonical
+    # double-underscore form. Droid sends <server>___<tool>; canonical is
+    # mcp__<server>__<tool>. The triple separator is unambiguous even when
+    # server names contain underscores.
+    if not tool_name.startswith("mcp__") and "___" in tool_name:
+        server, _, tool = tool_name.partition("___")
+        if server and tool:
+            canonical = f"mcp__{server}__{tool}"
+            data["tool_name"] = canonical
+            tool_name = canonical
+
     # 1a. Parse mcp__<server>__<tool> prefix for ALL native MCP calls
     if tool_name.startswith("mcp__") and "mcp_tool" not in data:
         parts = tool_name.split("__", 2)  # ["mcp", "server", "tool"]
@@ -701,9 +727,9 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
         if parsed is not None:
             data["tool_output"] = parsed
 
-    # 2d. Unwrap standard MCP result envelopes. Codex transcript synthesis
-    # preserves the outer {content, structuredContent, isError} wrapper, but
-    # rules and step enforcement need the semantic tool payload itself.
+    # 2d. Unwrap standard MCP result envelopes. Native MCP hooks preserve the
+    # outer {content, structuredContent, isError} wrapper, but rules and step
+    # enforcement need the semantic tool payload itself.
     if "tool_output" in data:
         data["tool_output"] = _unwrap_mcp_tool_output(data["tool_output"])
 

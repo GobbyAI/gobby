@@ -7,6 +7,42 @@ import { PipelineEditor } from './PipelineEditor'
 import type { PipelineEditorHandle } from './PipelineEditor'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
 import { SidebarPanel } from '../shared/SidebarPanel'
+import {
+  WORKFLOWS_CONTENT_CLS,
+  WORKFLOWS_LOADING_CLS,
+  WORKFLOWS_EMPTY_CLS,
+  WORKFLOWS_GRID_CLS,
+  WORKFLOWS_CARD_CLS,
+  WORKFLOWS_CARD_TEMPLATE_CLS,
+  WORKFLOWS_CARD_DELETED_CLS,
+  WORKFLOWS_CARD_HEADER_CLS,
+  WORKFLOWS_CARD_HEADER_CLICKABLE_CLS,
+  WORKFLOWS_CARD_NAME_CLS,
+  WORKFLOWS_CARD_NAME_DELETED_CLS,
+  WORKFLOWS_CARD_TYPE_CLS,
+  WORKFLOWS_CARD_TYPE_VARIANT_CLS,
+  WORKFLOWS_CARD_DESC_CLS,
+  WORKFLOWS_CARD_BADGES_CLS,
+  WORKFLOWS_CARD_BADGE_CLS,
+  WORKFLOWS_CARD_BADGE_SOURCE_CLS,
+  WORKFLOWS_CARD_BADGE_PRIORITY_CLS,
+  WORKFLOWS_CARD_BADGE_DRIFT_CLS,
+  WORKFLOWS_CARD_FOOTER_CLS,
+  WORKFLOWS_CARD_ACTIONS_CLS,
+  WORKFLOWS_TOGGLE_CLS,
+  WORKFLOWS_TOGGLE_TRACK_CLS,
+  WORKFLOWS_TOGGLE_TRACK_ON_CLS,
+  WORKFLOWS_TOGGLE_KNOB_CLS,
+  WORKFLOWS_TOGGLE_KNOB_ON_CLS,
+  WORKFLOWS_ACTION_BTN_CLS,
+  WORKFLOWS_ACTION_BTN_DRIFT_CLS,
+  WORKFLOWS_ACTION_BTN_RESTORE_CLS,
+  WORKFLOWS_ACTION_ICON_CLS,
+  WORKFLOWS_ACTION_ICON_DANGER_CLS,
+  PIPELINE_EDIT_YAML_VIEW_CLS,
+  WORKFLOWS_MODAL_CANCEL_CLS,
+  WORKFLOWS_MODAL_SUBMIT_CLS,
+} from './workflows-styles'
 
 interface PipelinesTabProps {
   searchText: string
@@ -268,71 +304,74 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     setSidebarView('form')
     fetchWorkflows({ include_deleted: true })
   }, [fetchWorkflows, sidebarView, confirm])
+  const closeEditor = useCallback(() => {
+    void handleEditorClose()
+  }, [handleEditorClose])
 
   return (
     <>
       {ConfirmDialogElement}
       {/* Card grid */}
-      <div className="workflows-content">
+      <div className={WORKFLOWS_CONTENT_CLS}>
         {isLoading ? (
-          <div className="workflows-loading">Loading...</div>
+          <div className={WORKFLOWS_LOADING_CLS}>Loading...</div>
         ) : filteredWorkflows.length === 0 ? (
-          <div className="workflows-empty">No pipelines match the current filters.</div>
+          <div className={WORKFLOWS_EMPTY_CLS}>No pipelines match the current filters.</div>
         ) : (
-          <div className="workflows-grid">
+          <div className={WORKFLOWS_GRID_CLS}>
             {filteredWorkflows.map(wf => {
               const isTemplate = wf.source === 'template'
               const cardClass = [
-                'workflows-card',
-                wf.deleted_at ? 'workflows-card--deleted' : '',
-                isTemplate ? 'workflows-card--template' : '',
+                WORKFLOWS_CARD_CLS,
+                wf.deleted_at ? WORKFLOWS_CARD_DELETED_CLS : '',
+                isTemplate ? WORKFLOWS_CARD_TEMPLATE_CLS : '',
               ].filter(Boolean).join(' ')
 
               return (
                 <div className={cardClass} key={wf.id}>
                   <button
                     type="button"
-                    className="workflows-card-header workflows-card-header--clickable"
+                    className={`${WORKFLOWS_CARD_HEADER_CLS} ${WORKFLOWS_CARD_HEADER_CLICKABLE_CLS}`}
                     onClick={() => !wf.deleted_at && handleCardClick(wf)}
                     disabled={!!wf.deleted_at}
                   >
-                    <span className={`workflows-card-name${wf.deleted_at ? ' workflows-card-name--deleted' : ''}`}>{wf.name}</span>
+                    <span className={`${WORKFLOWS_CARD_NAME_CLS}${wf.deleted_at ? ' ' + WORKFLOWS_CARD_NAME_DELETED_CLS : ''}`}>{wf.name}</span>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <span className={`workflows-card-type workflows-card-type--${wf.workflow_type}`}>
+                      <span className={`${WORKFLOWS_CARD_TYPE_CLS} ${WORKFLOWS_CARD_TYPE_VARIANT_CLS[wf.workflow_type] ?? ''}`}>
                         {wf.workflow_type}
                       </span>
                     </div>
                   </button>
 
                   {wf.description && (
-                    <div className="workflows-card-desc">{wf.description}</div>
+                    <div className={WORKFLOWS_CARD_DESC_CLS}>{wf.description}</div>
                   )}
 
-                  <div className="workflows-card-badges">
-                    <span className="workflows-card-badge workflows-card-badge--source">
+                  <div className={WORKFLOWS_CARD_BADGES_CLS}>
+                    <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_SOURCE_CLS}`}>
                       {wf.source}
                     </span>
-                    <span className="workflows-card-badge workflows-card-badge--priority">
+                    <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_PRIORITY_CLS}`}>
                       P{wf.priority}
                     </span>
-                    <span className="workflows-card-badge">
+                    <span className={WORKFLOWS_CARD_BADGE_CLS}>
                       {stepCount(wf)} step{stepCount(wf) !== 1 ? 's' : ''}
                     </span>
-                    <span className="workflows-card-badge">v{wf.version}</span>
+                    <span className={WORKFLOWS_CARD_BADGE_CLS}>v{wf.version}</span>
                     {wf.tags && wf.tags.map(tag => (
-                      <span className="workflows-card-badge" key={tag}>{tag}</span>
+                      <span className={WORKFLOWS_CARD_BADGE_CLS} key={tag}>{tag}</span>
                     ))}
                     {wf.has_template_update && (
-                      <span className="workflows-card-badge workflows-card-badge--drift">Template updated</span>
+                      <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_DRIFT_CLS}`}>Template updated</span>
                     )}
                   </div>
 
-                  <div className="workflows-card-footer">
+                  <div className={WORKFLOWS_CARD_FOOTER_CLS}>
                     {wf.deleted_at ? (
-                      <div className="workflows-card-actions">
+                      <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                         <button
                           type="button"
-                          className="workflows-action-btn workflows-action-btn--restore"
+                          className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_RESTORE_CLS}`}
                           onClick={() => handleRestore(wf)}
                           title="Restore this workflow"
                         >
@@ -342,28 +381,28 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
                     ) : isTemplate ? (
                       <>
                         <div />
-                        <div className="workflows-card-actions">
+                        <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                           {devMode ? (
                             <>
                               {installedNames.has(wf.name)
-                                ? <button type="button" className="workflows-action-btn" disabled title="Already installed">Installed</button>
-                                : <button type="button" className="workflows-action-btn" onClick={() => installFromTemplate(wf.id)} title="Create an installed copy">Install</button>}
-                              <button type="button" className="workflows-action-icon" onClick={() => handleDuplicate(wf)} title="Duplicate" aria-label="Duplicate workflow">
+                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
+                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => installFromTemplate(wf.id)} title="Create an installed copy">Install</button>}
+                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDuplicate(wf)} title="Duplicate" aria-label="Duplicate workflow">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
                               </button>
-                              <button type="button" className="workflows-action-icon" onClick={() => handleExport(wf)} title="Download YAML" aria-label="Download workflow as YAML">
+                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleExport(wf)} title="Download YAML" aria-label="Download workflow as YAML">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                               </button>
-                              <button type="button" className="workflows-action-icon workflows-action-icon--danger" onClick={() => handleDelete(wf)} title="Delete" aria-label="Delete workflow">
+                              <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={() => handleDelete(wf)} title="Delete" aria-label="Delete workflow">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
                               </button>
                             </>
                           ) : (
                             <>
                               {installedNames.has(wf.name)
-                                ? <button type="button" className="workflows-action-btn" disabled title="Already installed">Installed</button>
-                                : <button type="button" className="workflows-action-btn" onClick={() => installFromTemplate(wf.id)} title="Create an installed copy">Install</button>}
-                              <button type="button" className="workflows-action-icon" onClick={() => handleExport(wf)} title="Download YAML" aria-label="Download workflow as YAML">
+                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
+                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => installFromTemplate(wf.id)} title="Create an installed copy">Install</button>}
+                              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleExport(wf)} title="Download YAML" aria-label="Download workflow as YAML">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                               </button>
                             </>
@@ -373,32 +412,32 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
                     ) : (
                       <>
                         <div
-                          className="workflows-toggle"
+                          className={WORKFLOWS_TOGGLE_CLS}
                           onClick={() => toggleEnabled(wf.id)}
                         >
-                          <div className={`workflows-toggle-track ${wf.enabled ? 'workflows-toggle-track--on' : ''}`}>
-                            <div className="workflows-toggle-knob" />
+                          <div className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${wf.enabled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ''}`}>
+                            <div className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${wf.enabled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ''}`} />
                           </div>
                           <span>{wf.enabled ? 'On' : 'Off'}</span>
                         </div>
 
-                        <div className="workflows-card-actions">
+                        <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                           {wf.source === 'installed' && projectId && (
-                            <button type="button" className="workflows-action-btn" onClick={() => handleMoveToProject(wf)} title="Move to current project">To Project</button>
+                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleMoveToProject(wf)} title="Move to current project">To Project</button>
                           )}
                           {wf.source === 'project' && (
-                            <button type="button" className="workflows-action-btn" onClick={() => handleMoveToGlobal(wf)} title="Move to global scope">To Global</button>
+                            <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => handleMoveToGlobal(wf)} title="Move to global scope">To Global</button>
                           )}
                           {wf.has_template_update && (
-                            <button type="button" className="workflows-action-btn workflows-action-btn--drift" onClick={() => handleRestoreFromTemplate(wf)} title="Restore to bundled template version">Restore</button>
+                            <button type="button" className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_DRIFT_CLS}`} onClick={() => handleRestoreFromTemplate(wf)} title="Restore to bundled template version">Restore</button>
                           )}
-                          <button type="button" className="workflows-action-icon" onClick={() => handleDuplicate(wf)} title="Duplicate" aria-label="Duplicate workflow">
+                          <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDuplicate(wf)} title="Duplicate" aria-label="Duplicate workflow">
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
                           </button>
-                          <button type="button" className="workflows-action-icon" onClick={() => handleExport(wf)} title="Download YAML" aria-label="Download workflow as YAML">
+                          <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleExport(wf)} title="Download YAML" aria-label="Download workflow as YAML">
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                           </button>
-                          <button type="button" className="workflows-action-icon workflows-action-icon--danger" onClick={() => handleDelete(wf)} title="Delete" aria-label="Delete workflow">
+                          <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={() => handleDelete(wf)} title="Delete" aria-label="Delete workflow">
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
                           </button>
                         </div>
@@ -415,7 +454,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
       {/* Pipeline editor sidebar */}
       <SidebarPanel
         isOpen={!!editingWorkflow}
-        onClose={handleEditorClose}
+        onClose={closeEditor}
         title={editingWorkflow?.name || 'Pipeline'}
         width={560}
         headerContent={
@@ -438,9 +477,9 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
         }
         footer={
           <>
-            <button className="pipeline-editor-btn" onClick={handleEditorClose} type="button">Cancel</button>
+            <button className={WORKFLOWS_MODAL_CANCEL_CLS} onClick={closeEditor} type="button">Cancel</button>
             <button
-              className="pipeline-editor-btn pipeline-editor-btn--primary"
+              className={WORKFLOWS_MODAL_SUBMIT_CLS}
               onClick={sidebarView === 'yaml' ? handleYamlSave : () => editorRef.current?.save()}
               type="button"
             >
@@ -450,7 +489,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
         }
       >
         {editingWorkflow && sidebarView === 'yaml' ? (
-          <div className="pipeline-edit-yaml-view">
+          <div className={PIPELINE_EDIT_YAML_VIEW_CLS}>
             <CodeMirrorEditor
               content={sidebarYaml}
               language="yaml"
@@ -462,7 +501,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
           <PipelineEditor
             ref={editorRef}
             pipeline={editingWorkflow}
-            onBack={handleEditorClose}
+            onBack={closeEditor}
             updateWorkflow={updateWorkflow}
             onExport={() => handleExport(editingWorkflow)}
             inSidebar

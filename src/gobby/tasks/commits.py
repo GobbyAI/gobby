@@ -606,6 +606,29 @@ def _resolve_branch_for_task(
     return None
 
 
+def _resolve_task_filter(
+    task_manager: "LocalTaskManager",
+    task_id: str,
+    project_id: str | None,
+) -> tuple[set[str], str] | None:
+    """Return commit-message refs accepted for a task filter and its DB ID."""
+    resolved_task_id = task_id
+    if project_id and (task_id.startswith("#") or task_id.isdigit()):
+        resolved_task_id = task_manager.resolve_task_reference(task_id, project_id)
+
+    try:
+        task = task_manager.get_task(resolved_task_id)
+    except Exception:
+        return None
+
+    refs = {task_id, task.id}
+    seq_num = getattr(task, "seq_num", None)
+    if isinstance(seq_num, int):
+        refs.add(f"#{seq_num}")
+        refs.add(str(seq_num))
+    return refs, task.id
+
+
 def auto_link_commits(
     task_manager: "LocalTaskManager",
     task_id: str | None = None,
@@ -658,6 +681,12 @@ def auto_link_commits(
         return AutoLinkResult()
 
     result = AutoLinkResult()
+    task_filter_refs: set[str] | None = None
+    task_filter_resolved_id: str | None = None
+    if task_id:
+        task_filter = _resolve_task_filter(task_manager, task_id, project_id)
+        if task_filter is not None:
+            task_filter_refs, task_filter_resolved_id = task_filter
 
     # Parse each commit line
     for line in log_output.strip().split("\n"):
@@ -678,16 +707,18 @@ def auto_link_commits(
 
         # Filter to specific task if requested
         if task_id:
-            if task_id not in found_task_ids:
+            accepted_refs = task_filter_refs or {task_id}
+            matched_ref = next((tid for tid in found_task_ids if tid in accepted_refs), None)
+            if matched_ref is None:
                 continue
-            found_task_ids = [task_id]
+            found_task_ids = [matched_ref]
 
         # Try to link each found task
         for tid in found_task_ids:
             try:
                 # Resolve #N format to UUID for database operations
-                resolved_tid = tid
-                if project_id and (tid.startswith("#") or tid.isdigit()):
+                resolved_tid = (task_filter_resolved_id or tid) if task_id else tid
+                if not task_id and project_id and (tid.startswith("#") or tid.isdigit()):
                     resolved_tid = task_manager.resolve_task_reference(tid, project_id)
 
                 task = task_manager.get_task(resolved_tid)

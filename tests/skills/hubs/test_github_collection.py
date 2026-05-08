@@ -370,6 +370,7 @@ class TestGitHubCollectionProviderFetchSkillList:
             # Should include path in URL
             call_url = mock_client.get.call_args[0][0]
             assert "anthropics/skills/contents/skills" in call_url
+            assert mock_client.get.await_args.kwargs["params"] == {"ref": "main"}
 
     @pytest.mark.asyncio
     async def test_fetch_skill_list_includes_auth_header(self) -> None:
@@ -431,6 +432,7 @@ class TestGitHubCollectionProviderFetchSkillList:
             # Should return empty list on error, not raise
             result = await provider._fetch_skill_list()
             assert result == []
+            assert mock_client.get.await_args.args[0].endswith("/user/nonexistent/contents")
 
 
 class TestGitHubCollectionProviderCloneSkill:
@@ -583,6 +585,7 @@ class TestGitHubCollectionProviderFetchSkillContent:
 
             call_url = mock_client.get.call_args[0][0]
             assert "skills/my-skill/SKILL.md" in call_url
+            assert mock_client.get.await_args.kwargs["params"] == {"ref": "main"}
 
     @pytest.mark.asyncio
     async def test_fetch_skill_content_not_found(self) -> None:
@@ -612,6 +615,9 @@ class TestGitHubCollectionProviderFetchSkillContent:
 
             result = await provider._fetch_skill_content("nonexistent-skill")
             assert result is None
+            assert mock_client.get.await_args.args[0].endswith(
+                "/anthropics/skills/contents/nonexistent-skill/SKILL.md"
+            )
 
     @pytest.mark.asyncio
     async def test_fetch_skill_content_invalid_repo(self) -> None:

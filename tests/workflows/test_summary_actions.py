@@ -315,8 +315,11 @@ class TestRenameTmuxWindow:
 
         session = MagicMock()
         session.terminal_context = None
-        # Should not raise
-        await _rename_tmux_window(session, "Title")
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            result = await _rename_tmux_window(session, "Title")
+
+        assert result is None
+        assert mock_exec.await_count == 0
 
     @pytest.mark.asyncio
     async def test_skips_when_no_tmux_pane(self):
@@ -325,7 +328,11 @@ class TestRenameTmuxWindow:
 
         session = MagicMock()
         session.terminal_context = {"parent_pid": 123}
-        await _rename_tmux_window(session, "Title")
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            result = await _rename_tmux_window(session, "Title")
+
+        assert result is None
+        assert mock_exec.await_count == 0
 
     @pytest.mark.asyncio
     async def test_user_session_renames_on_default_server(self):
@@ -377,6 +384,8 @@ class TestRenameTmuxWindow:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
+            assert mock_exec.call_count == 1
+            assert mock_exec.call_args is not None
 
     @pytest.mark.asyncio
     async def test_spawned_agent_renames_on_gobby_socket(self):
@@ -397,6 +406,8 @@ class TestRenameTmuxWindow:
         ):
             await _rename_tmux_window(session, "Agent Title")
             mock_mgr.rename_window.assert_called_once_with("%0", "#55: Agent Title")
+            assert mock_mgr.rename_window.call_count == 1
+            assert mock_mgr.rename_window.call_args is not None
 
     @pytest.mark.asyncio
     async def test_failure_does_not_propagate(self):
@@ -408,8 +419,9 @@ class TestRenameTmuxWindow:
         session.agent_depth = 0
 
         with patch("asyncio.create_subprocess_exec", side_effect=OSError("no tmux")):
-            # Should not raise
-            await _rename_tmux_window(session, "Title")
+            result = await _rename_tmux_window(session, "Title")
+
+        assert result is None
 
 
 # =============================================================================

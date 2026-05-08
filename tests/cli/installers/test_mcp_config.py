@@ -59,6 +59,23 @@ class TestConfigureMCPServerJSON:
         assert data["mcpServers"]["gobby"]["command"].endswith("gobby")
         assert data["mcpServers"]["gobby"]["args"] == ["mcp-server"]
 
+    def test_creates_new_file_with_extra_server_fields(self, tmp_path: Path) -> None:
+        settings = tmp_path / "settings.json"
+        result = configure_mcp_server_json(settings, extra_server_fields={"type": "stdio"})
+        assert result["success"] is True
+        data = json.loads(settings.read_text())
+        assert data["mcpServers"]["gobby"]["type"] == "stdio"
+        assert data["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+
+    def test_merges_extra_server_fields_into_existing_server(self, tmp_path: Path) -> None:
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"mcpServers": {"gobby": {"command": "gobby"}}}))
+        result = configure_mcp_server_json(settings, extra_server_fields={"type": "stdio"})
+        assert result["success"] is True
+        assert result["updated"] is True
+        data = json.loads(settings.read_text())
+        assert data["mcpServers"]["gobby"] == {"command": "gobby", "type": "stdio"}
+
     def test_adds_to_existing_file(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
         settings.write_text(json.dumps({"mcpServers": {"other": {"command": "node"}}}))
@@ -752,6 +769,8 @@ class TestInstallDefaultMCPServers:
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
             result = install_default_mcp_servers()
         assert result["success"] is True
+        assert len(result["servers_added"]) > 0
+        assert mcp_path.read_text() != ""
 
     def test_repairs_misconfigured_transport(self, tmp_path: Path) -> None:
         mcp_path = tmp_path / ".gobby" / ".mcp.json"

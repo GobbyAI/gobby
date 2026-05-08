@@ -11,10 +11,11 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_dependencies import DependencyCycleError
-from gobby.storage.tasks import VALID_CATEGORIES, TaskNotFoundError
+from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
+TASK_TYPE_ENUM = TASK_TYPE_CHOICES
 
 
 def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -56,14 +57,14 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             title: Task title
             description: Detailed description
             priority: Priority level (1=High, 2=Medium, 3=Low)
-            task_type: Task type (task, bug, feature, epic)
+            task_type: Task type
             parent_task_id: Optional parent task ID
             blocks: List of task IDs that this new task blocks
             depends_on: List of task IDs that this new task depends on (must complete first)
             labels: List of labels
             category: Task domain category (test, code, document, research, config, manual)
             validation_criteria: Acceptance criteria for validating completion.
-            claim: If True, auto-claim the task (set assignee and status to in_progress).
+            claim: If True, auto-claim the task for the current session.
 
         Returns:
             Created task dict with id (minimal) or full task details based on config.
@@ -139,7 +140,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except Exception as e:
             logger.warning(f"Failed to link task {task.id} to session {resolved_session_id}: {e}")
 
-        # Auto-claim if requested: set assignee and status to in_progress
+        # Auto-claim if requested.
         claim_skipped_cross_project = False
         if claim:
             # Block cross-project claiming
@@ -258,7 +259,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "task_type": {
                     "type": "string",
-                    "description": "Task type (task, bug, feature, epic, chore, refactor)",
+                    "description": "Task type",
+                    "enum": list(TASK_TYPE_ENUM),
                     "default": "task",
                 },
                 "parent_task_id": {
@@ -296,7 +298,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "claim": {
                     "type": "boolean",
-                    "description": "If true, auto-claim the task (set assignee to session_id and status to in_progress). Default: false - task is created with status 'open' and no assignee.",
+                    "description": "If true, auto-claim the task for the current session. Default: false.",
                     "default": False,
                 },
                 "project": {
@@ -348,7 +350,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     return {
                         "ref": f"#{linked.seq_num}" if linked.seq_num else linked.id[:8],
                         "title": linked.title,
-                        "status": linked.status,
+                        "state": linked.to_brief().get("state"),
                         "dep_type": dep.dep_type,
                     }
                 return dict(dep.to_dict())
@@ -390,18 +392,22 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         task_id: str,
         title: str | None = None,
         description: str | None = None,
-        status: str | None = None,
         priority: int | None = None,
         assignee: str | None = None,
         labels: list[str] | None = None,
         validation_criteria: str | None = None,
         parent_task_id: str | None = None,
         category: str | None = None,
+        task_type: str | None = None,
+        status: str | None = None,
         workflow_name: str | None = None,
         verification: str | None = None,
         sequence_order: int | None = None,
         start_date: str | None = None,
         due_date: str | None = None,
+        allow_automation: bool | None = None,
+        assigned_agent: str | None = None,
+        additional_skills: list[str] | None = None,
     ) -> dict[str, Any]:
         """Update task fields."""
         # Resolve task reference (supports #N, path, UUID formats)
@@ -412,48 +418,25 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"error": str(e)}
 
-        # Block lifecycle changes via update_task - must use dedicated task tools
-        if status is not None:
-            normalized_status = status.lower().strip().replace("-", "_")
-            if normalized_status == "closed":
-                return {
-                    "error": "Cannot set status to 'closed' via update_task. "
-                    "Use close_task(task_id, commit_sha='...') to properly close tasks with commit linking."
-                }
-            if normalized_status == "in_progress":
-                return {
-                    "error": "Cannot set status to 'in_progress' via update_task. "
-                    "Use claim_task(task_id, session_id='...') to properly claim tasks with session tracking."
-                }
-            if normalized_status == "open":
-                return {
-                    "error": "Cannot set status to 'open' via update_task. "
-                    "Use reopen_task(task_id, reason='...') to properly reopen tasks with metadata cleanup."
-                }
-            if normalized_status in ("review", "needs_review"):
-                return {
-                    "error": "Cannot set status to 'needs_review' via update_task. "
-                    "Use mark_task_needs_review(task_id, session_id='...') to properly route tasks for review."
-                }
-            if normalized_status in ("approved", "review_approved"):
-                return {
-                    "error": "Cannot set status to 'review_approved' via update_task. "
-                    "Use mark_task_review_approved(task_id, session_id='...') to properly approve tasks after QA review."
-                }
-            if normalized_status == "escalated":
-                return {
-                    "error": "Cannot set status to 'escalated' via update_task. "
-                    "Use escalate_task(task_id, reason='...') to properly escalate tasks for human intervention."
-                }
-            return {
-                "error": "Cannot set status via update_task. "
-                "Use lifecycle-specific task tools instead."
-            }
-
         if assignee is not None:
             return {
                 "error": "Cannot set assignee via update_task. "
                 "Use claim_task(task_id, session_id='...') to properly claim tasks with session tracking."
+            }
+        if status is not None:
+            normalized_status = "needs_review" if status == "review" else status
+            transition_tool = {
+                "open": "reopen_task",
+                "in_progress": "claim_task",
+                "needs_review": "submit_for_review",
+                "closed": "close_task",
+                "escalated": "escalate_task",
+            }.get(normalized_status, "dedicated lifecycle tools")
+            return {
+                "error": (
+                    f"Cannot set status to '{normalized_status}' via update_task. "
+                    f"Use {transition_tool} instead."
+                )
             }
 
         # Build kwargs only for non-None values to avoid overwriting with NULL
@@ -482,6 +465,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 kwargs["parent_task_id"] = None
         if category is not None:
             kwargs["category"] = category
+        if task_type is not None:
+            kwargs["task_type"] = task_type
         if workflow_name is not None:
             kwargs["workflow_name"] = workflow_name
         if verification is not None:
@@ -492,6 +477,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["start_date"] = start_date
         if due_date is not None:
             kwargs["due_date"] = due_date
+        if allow_automation is not None:
+            kwargs["allow_automation"] = allow_automation
+        if assigned_agent is not None:
+            kwargs["assigned_agent"] = assigned_agent
+        if additional_skills is not None:
+            kwargs["additional_skills"] = additional_skills
 
         task = ctx.task_manager.update_task(resolved_id, **kwargs)
         if not task:
@@ -512,11 +503,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "description": {
                     "type": "string",
                     "description": "New description",
-                    "default": None,
-                },
-                "status": {
-                    "type": "string",
-                    "description": "BLOCKED: Use claim_task (in_progress), close_task (closed), reopen_task (open), or mark_task_needs_review (needs_review) instead.",
                     "default": None,
                 },
                 "priority": {"type": "integer", "description": "New priority", "default": None},
@@ -541,6 +527,17 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Task domain: 'code' (implementation — requires validation_criteria), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification).",
                     "enum": list(TASK_CATEGORY_ENUM),
+                    "default": None,
+                },
+                "task_type": {
+                    "type": "string",
+                    "description": "Task type",
+                    "enum": list(TASK_TYPE_ENUM),
+                    "default": None,
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Legacy status field. Rejected; use lifecycle tools.",
                     "default": None,
                 },
                 "workflow_name": {
@@ -568,6 +565,22 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "description": "Expected completion date (ISO 8601, e.g. '2025-03-15'). Optional.",
                     "default": None,
                 },
+                "allow_automation": {
+                    "type": "boolean",
+                    "description": "Enable or disable dispatcher automation for this task.",
+                    "default": None,
+                },
+                "assigned_agent": {
+                    "type": "string",
+                    "description": "Agent name to assign this task to (e.g. 'backend-developer'). Routes leaf work in dispatch.",
+                    "default": None,
+                },
+                "additional_skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['tech-writer']).",
+                    "default": None,
+                },
             },
             "required": ["task_id"],
         },
@@ -575,7 +588,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     def list_tasks(
-        status: str | list[str] | None = None,
+        current_stage_state: str | list[str] | None = None,
         priority: int | None = None,
         task_type: str | None = None,
         assignee: str | None = None,
@@ -601,13 +614,13 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}", "tasks": [], "count": 0}
 
-        # Handle comma-separated status string
-        status_filter: str | list[str] | None = status
-        if isinstance(status, str) and "," in status:
-            status_filter = [s.strip() for s in status.split(",")]
+        # Handle comma-separated current-stage state strings.
+        current_stage_filter: str | list[str] | None = current_stage_state
+        if isinstance(current_stage_state, str) and "," in current_stage_state:
+            current_stage_filter = [s.strip() for s in current_stage_state.split(",")]
 
         tasks = ctx.task_manager.list_tasks(
-            status=status_filter,
+            current_stage_state=current_stage_filter,
             priority=priority,
             task_type=task_type,
             assignee=assignee,
@@ -625,9 +638,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         input_schema={
             "type": "object",
             "properties": {
-                "status": {
+                "current_stage_state": {
                     "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                    "description": "Filter by status. Can be a single status, array of statuses, or comma-separated string (e.g., 'open,in_progress')",
+                    "description": "Filter by current stage state. Can be a single state, array of states, or comma-separated string.",
                     "default": None,
                 },
                 "priority": {

@@ -251,7 +251,11 @@ async def test_smtp_reconnect_on_failure(adapter, mock_secret_resolver):
 
         # Should have reconnected
         mock_smtp_inst.connect.assert_called_once()
+        assert mock_smtp_inst.connect.call_count == 1
+        assert mock_smtp_inst.connect.call_args is not None
         mock_smtp_inst.login.assert_called_once_with("bot@example.com", "pass123")
+        assert mock_smtp_inst.login.call_count == 1
+        assert mock_smtp_inst.login.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -281,7 +285,11 @@ async def test_smtp_reconnect_on_noop_exception(adapter, mock_secret_resolver):
         await adapter._ensure_smtp_connected()
 
         mock_smtp_inst.connect.assert_called_once()
+        assert mock_smtp_inst.connect.call_count == 1
+        assert mock_smtp_inst.connect.call_args is not None
         mock_smtp_inst.login.assert_called_once_with("bot@example.com", "pass123")
+        assert mock_smtp_inst.login.call_count == 1
+        assert mock_smtp_inst.login.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -331,3 +339,5 @@ async def test_send_attachment_uses_async_file_read(adapter, mock_secret_resolve
         await adapter.send_attachment(msg, attachment, mock_path)
 
         mock_to_thread.assert_called_once_with(mock_path.read_bytes)
+        assert mock_to_thread.call_count == 1
+        assert mock_to_thread.call_args is not None

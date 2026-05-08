@@ -14,3 +14,6 @@ rules:
       - type: set_variable
         variable: mode_level
         value: 2
+      - type: set_variable
+        variable: gemini_qwen_gcode_plan_hint_shown
+        value: false

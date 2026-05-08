@@ -756,6 +756,7 @@ class ChatSession(ChatSessionPermissionsMixin):
                             self._last_model,
                             None,
                             overrides=self._context_window_overrides or None,
+                            provider="claude",
                         )
 
                         logger.info(
@@ -849,7 +850,10 @@ class ChatSession(ChatSessionPermissionsMixin):
     def _resolve_context_window_fallback(self) -> int | None:
         """Resolve context_window from _last_model for error paths."""
         return resolve_context_window(
-            self._last_model, None, overrides=self._context_window_overrides or None
+            self._last_model,
+            None,
+            overrides=self._context_window_overrides or None,
+            provider="claude",
         )
 
     async def interrupt(self) -> None:

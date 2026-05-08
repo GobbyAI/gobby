@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
@@ -23,7 +24,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_WAKE_SIGNAL = "<continue />\n"
+CONTINUE_WAKE_SIGNAL = "Message from Gobby daemon: Job's Done.\n"
+
+# Coalesce bursty completions targeting an interactive pane: while the user is
+# idle on the same turn, suppress redundant tmux send-keys after the first wake.
+# The 30s ceiling guarantees we resume nudging if turn_count signals get missed.
+PANE_WAKE_DEBOUNCE_SECONDS = 30.0
 
 # tmux_sender signature: (tmux_session_name: str, message: str) -> None
 TmuxSender = Callable[[str, str], Coroutine[Any, Any, None]]
@@ -61,6 +67,8 @@ class WakeDispatcher:
         self._tmux_pane_sender = tmux_pane_sender
         self._sdk_resumer = sdk_resumer
         self._agent_run_manager = agent_run_manager
+        # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
+        self._last_pane_wake: dict[str, tuple[int, float]] = {}
 
     async def wake(
         self,
@@ -90,7 +98,7 @@ class WakeDispatcher:
         if agent_depth == 0:
             if terminal_context and self._tmux_pane_sender:
                 tmux_pane = self._parse_tmux_pane(terminal_context)
-                if tmux_pane:
+                if tmux_pane and self._should_send_pane_wake(session_id, session):
                     tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
                     try:
                         await self._tmux_pane_sender(
@@ -98,6 +106,7 @@ class WakeDispatcher:
                             CONTINUE_WAKE_SIGNAL,
                             tmux_socket_path,
                         )
+                        self._record_pane_wake(session_id, session)
                     except Exception:
                         logger.warning(
                             f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
@@ -130,6 +139,35 @@ class WakeDispatcher:
                         f"SDK resume failed for session {session_id} (sdk={sdk_session_id})",
                         exc_info=True,
                     )
+
+    def _should_send_pane_wake(self, session_id: str, session: Any) -> bool:
+        """Decide whether to send a live tmux pane wake to an interactive session.
+
+        Coalesces bursty completions: if a pane wake was already delivered to
+        this session and the user has not advanced the turn since (and the 30s
+        ceiling has not elapsed), skip the live nudge. Durable ISMs are stored
+        unconditionally, so the agent still sees every completion when it next
+        reads its inbox.
+        """
+        now = time.monotonic()
+        stale_before = now - PANE_WAKE_DEBOUNCE_SECONDS
+        for recorded_session_id, (_, recorded_ts) in tuple(self._last_pane_wake.items()):
+            if recorded_ts < stale_before:
+                self._last_pane_wake.pop(recorded_session_id, None)
+
+        last = self._last_pane_wake.get(session_id)
+        if last is None:
+            return True
+        last_turn, last_ts = last
+        current_turn = int(getattr(session, "turn_count", 0) or 0)
+        if current_turn > last_turn:
+            return True
+        return (now - last_ts) >= PANE_WAKE_DEBOUNCE_SECONDS
+
+    def _record_pane_wake(self, session_id: str, session: Any) -> None:
+        """Record that a tmux pane wake was just delivered to this session."""
+        current_turn = int(getattr(session, "turn_count", 0) or 0)
+        self._last_pane_wake[session_id] = (current_turn, time.monotonic())
 
     def _resolve_sdk_session_id(self, session_id: str) -> str | None:
         """Look up the SDK session ID for a session via agent_runs.

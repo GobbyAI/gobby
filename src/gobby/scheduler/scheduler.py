@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -11,6 +12,12 @@ from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob, CronRun
+from gobby.utils.project_context import (
+    reset_project_context,
+    set_project_context,
+    set_project_context_from_ref,
+)
+from gobby.utils.session_context import reset_session_context, set_session_context
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +113,10 @@ class CronScheduler:
         if not due_jobs:
             return
 
+        expired_runs = self.storage.fail_stale_running_runs(self.config.running_timeout_seconds)
+        if expired_runs:
+            logger.warning("Marked %s stale cron run(s) failed before dispatch", expired_runs)
+
         # Respect max concurrent limit
         running_count = self.storage.count_running()
         available_slots = self.config.max_concurrent_jobs - running_count
@@ -117,8 +128,19 @@ class CronScheduler:
             )
             return
 
-        for job in due_jobs[:available_slots]:
+        dispatched = 0
+        for job in due_jobs:
+            if dispatched >= available_slots:
+                break
             try:
+                if self.storage.has_running_run(job.id):
+                    logger.debug(
+                        "Skipping cron job %s (%s): previous run still active",
+                        job.id,
+                        job.name,
+                    )
+                    continue
+
                 # Check backoff for consecutive failures
                 if job.consecutive_failures > 0:
                     backoff = self._get_backoff_seconds(job.consecutive_failures)
@@ -137,8 +159,8 @@ class CronScheduler:
                 # Create run and advance next_run_at immediately to prevent re-dispatch
                 run = self.storage.create_run(job.id)
                 next_run = compute_next_run(job)
-                self.storage.update_job(
-                    job.id,
+                self._update_job_bookkeeping(
+                    job,
                     next_run_at=next_run.isoformat() if next_run else None,
                 )
                 logger.info(f"Dispatching cron job {job.id} ({job.name}), run {run.id}")
@@ -147,9 +169,11 @@ class CronScheduler:
                 task = asyncio.create_task(
                     self._execute_and_update(job, run),
                     name=f"cron-run-{run.id}",
+                    context=contextvars.Context(),
                 )
                 self._active_tasks.add(task)
                 task.add_done_callback(self._active_tasks.discard)
+                dispatched += 1
             except Exception as e:
                 logger.error(f"Failed to dispatch cron job {job.id}: {e}", exc_info=True)
 
@@ -158,42 +182,53 @@ class CronScheduler:
         if not run:
             logger.error(f"Cannot execute job {job.id}: valid run record required")
             return
-        result: CronRun | None = None
+        session_token = set_session_context(None)
+        project_token = None
+        if job.project_id:
+            project_token = set_project_context_from_ref(job.project_id, self.storage.db)
+            if project_token is None:
+                project_token = set_project_context({"id": job.project_id})
         try:
-            result = await self.executor.execute(job, run)
-
-            # Update job status
-            now = datetime.now(UTC).isoformat()
-            if result.status == "completed":
-                # Reset failure counter (next_run_at already set before dispatch)
-                self.storage.update_job(
-                    job.id,
-                    last_run_at=now,
-                    last_status="completed",
-                    consecutive_failures=0,
-                )
-            else:
-                # Increment failure counter (next_run_at already set before dispatch)
-                failures = job.consecutive_failures + 1
-                self.storage.update_job(
-                    job.id,
-                    last_run_at=now,
-                    last_status="failed",
-                    consecutive_failures=failures,
-                )
-                logger.warning(
-                    f"Cron job {job.id} ({job.name}) failed ({failures} consecutive failures)"
-                )
-
-        except Exception as e:
-            logger.error(f"Unexpected error executing cron job {job.id}: {e}", exc_info=True)
-
-        # Fire event callback (best-effort, non-blocking)
-        if self.on_run_complete and result:
+            result: CronRun | None = None
             try:
-                await self.on_run_complete(job, result)
-            except Exception as exc:
-                logger.debug(f"Cron event callback failed: {exc}")
+                result = await self.executor.execute(job, run)
+
+                # Update job status
+                now = datetime.now(UTC).isoformat()
+                if result.status == "completed":
+                    # Reset failure counter (next_run_at already set before dispatch)
+                    self._update_job_bookkeeping(
+                        job,
+                        last_run_at=now,
+                        last_status="completed",
+                        consecutive_failures=0,
+                    )
+                else:
+                    # Increment failure counter (next_run_at already set before dispatch)
+                    failures = job.consecutive_failures + 1
+                    self._update_job_bookkeeping(
+                        job,
+                        last_run_at=now,
+                        last_status="failed",
+                        consecutive_failures=failures,
+                    )
+                    logger.warning(
+                        f"Cron job {job.id} ({job.name}) failed ({failures} consecutive failures)"
+                    )
+
+            except Exception as e:
+                logger.error(f"Unexpected error executing cron job {job.id}: {e}", exc_info=True)
+
+            # Fire event callback (best-effort, non-blocking)
+            if self.on_run_complete and result:
+                try:
+                    await self.on_run_complete(job, result)
+                except Exception as exc:
+                    logger.debug(f"Cron event callback failed: {exc}")
+        finally:
+            if project_token is not None:
+                reset_project_context(project_token)
+            reset_session_context(session_token)
 
     def _get_backoff_seconds(self, consecutive_failures: int) -> int:
         """Get backoff delay based on number of consecutive failures."""
@@ -202,6 +237,11 @@ class CronScheduler:
             return 0
         idx = min(consecutive_failures - 1, len(delays) - 1)
         return delays[idx]
+
+    def _update_job_bookkeeping(self, job: CronJob, **fields: object) -> CronJob | None:
+        if job.is_system:
+            return self.storage.update_system_job_bookkeeping(job.id, **fields)
+        return self.storage.update_job(job.id, **fields)
 
     async def run_now(self, job_id: str) -> CronRun | None:
         """Trigger immediate execution of a job (bypasses schedule).
@@ -221,6 +261,7 @@ class CronScheduler:
         task = asyncio.create_task(
             self._execute_and_update(job, run),
             name=f"cron-run-manual-{run.id}",
+            context=contextvars.Context(),
         )
         self._active_tasks.add(task)
         task.add_done_callback(self._active_tasks.discard)

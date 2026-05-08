@@ -48,9 +48,29 @@ interface Filters {
   pipeline_name?: string;
 }
 
-export function usePipelineExecutions(projectId?: string) {
+export interface UsePipelineExecutionsOptions {
+  projectId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+const DEFAULT_LIMIT = 50;
+
+export function usePipelineExecutions(
+  options?: UsePipelineExecutionsOptions | string,
+) {
+  // Backward-compat: callers used to pass a bare projectId string.
+  const opts: UsePipelineExecutionsOptions =
+    typeof options === "string" ? { projectId: options } : (options ?? {});
+  const { projectId, limit = DEFAULT_LIMIT, offset = 0 } = opts;
+
   const [executions, setExecutions] = useState<PipelineExecutionRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [statusSummary, setStatusSummary] = useState<Record<string, number>>(
+    {},
+  );
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>({});
   const refetchTimerRef = useRef<number | null>(null);
 
@@ -60,12 +80,19 @@ export function usePipelineExecutions(projectId?: string) {
     if (filters.status) params.set("status", filters.status);
     if (filters.pipeline_name)
       params.set("pipeline_name", filters.pipeline_name);
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
 
     try {
       const res = await fetch(`/api/pipelines/executions?${params}`);
       if (res.ok) {
         const data = await res.json();
         setExecutions(data.executions || []);
+        setTotal(typeof data.total === "number" ? data.total : 0);
+        setStatusSummary(
+          (data.status_summary as Record<string, number> | undefined) || {},
+        );
+        setError(null);
       } else {
         console.error(
           "Failed to fetch pipeline executions:",
@@ -73,21 +100,28 @@ export function usePipelineExecutions(projectId?: string) {
           res.statusText,
         );
         setExecutions([]);
+        setTotal(0);
+        setStatusSummary({});
+        setError(`HTTP ${res.status}: ${res.statusText}`);
       }
     } catch (e) {
       console.error("Failed to fetch pipeline executions:", e);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, filters]);
+  }, [projectId, filters, limit, offset]);
 
-  // Initial load + refetch on filter change
+  // Initial load + refetch on filter / pagination change
   useEffect(() => {
     setIsLoading(true);
     fetchExecutions();
   }, [fetchExecutions]);
 
-  // Real-time updates via singleton WebSocket
+  // Real-time updates via singleton WebSocket. WS lifecycle events update
+  // existing rows in place by execution_id, so a *new* execution arriving
+  // while the user is on page 2 won't migrate to page 1 until the next
+  // refetch — which we trigger on a short debounce so the UI stays fresh.
   useWebSocketEvent(
     "pipeline_event",
     useCallback(() => {
@@ -139,10 +173,16 @@ export function usePipelineExecutions(projectId?: string) {
 
   return {
     executions,
+    total,
+    limit,
+    offset,
+    statusSummary,
     isLoading,
+    error,
     filters,
     setFilters,
     fetchExecutions,
+    refetch: fetchExecutions,
     approvePipeline,
     rejectPipeline,
   };

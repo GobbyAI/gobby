@@ -25,10 +25,12 @@ from gobby.search.embeddings import generate_embedding
 from gobby.servers.http import HTTPServer
 from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.processor import SessionMessageProcessor
+from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.mcp import LocalMCPManager
@@ -179,6 +181,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     _ensure_headless_settings()
 
     runner._shutdown_requested = False
+    runner._shutdown_intent = ShutdownIntent.STOP
     runner._metrics_cleanup_task = None
     runner._vector_rebuild_task = None
     runner._zombie_messages_task = None
@@ -186,6 +189,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._metrics_archive_task = None
     runner._metric_snapshot_task = None
     runner._hook_inbox_task = None
+    runner._bin_freshness_task = None
     runner._expired_isolation_task = None
 
     # Initialize local storage with dual-write if in project context
@@ -259,6 +263,12 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         total = sync_result["total_synced"]
         if total > 0:
             logger.info(f"Dev mode: synced {total} bundled items on startup")
+
+    from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
+
+    stage_sync = StageRegistryLoader().sync(runner.database)
+    if stage_sync.upserted > 0:
+        logger.info(f"Synced {stage_sync.upserted} bundled stage registry rows")
 
     # Initialize Prompt Manager
     from gobby.storage.prompts import LocalPromptManager
@@ -431,17 +441,9 @@ def init_services(runner: GobbyRunner) -> None:
     # Task Sync Manager
     runner.task_sync_manager = TaskSyncManager(runner.task_manager)
 
-    # Import synced tasks before wiring export listener
-    # (e.g. from git on a new machine with more tasks than local DB)
-    try:
-        runner.task_sync_manager.import_from_jsonl()
-        logger.info("Initial task sync import completed")
-    except Exception as e:
-        logger.warning(f"Task sync import failed: {e}")
-
     # NOTE: Startup export removed to avoid git noise (#10198).
-    # The pre-commit hook exports and stages JSONL files at commit time.
-    # Import above pulls in changes from git; export deferred to commit.
+    # JSONL files are backup/export artifacts. Reads are explicit only via CLI/MCP.
+    # The pre-push hook exports and stages JSONL files before push.
 
     # Initialize Memory Sync Manager (Phase 7) & Wire up listeners
     runner.memory_sync_manager = None
@@ -454,26 +456,15 @@ def init_services(runner: GobbyRunner) -> None:
                     config=runner.config.memory_sync,
                 )
                 # No per-change listener — the file is a backup, not a live mirror.
-                # Export happens at: pre-commit hook, CLI `memory backup`, or explicit sync_export.
-                logger.debug("MemorySyncManager initialized (export on commit/CLI only)")
-
-                # Import synced memories before exporting
-                # (e.g. from git on a new machine with more memories than local DB)
-                try:
-                    imported = runner.memory_sync_manager.import_sync()
-                    if imported > 0:
-                        logger.info(f"Imported {imported} memories from sync file")
-                except (OSError, ValueError) as e:
-                    logger.warning(f"Memory import failed: {e}")
+                # Export happens via pre-push hook, CLI `memory backup`, or explicit sync_export.
+                # Import happens only through explicit restore/import commands.
+                logger.debug("MemorySyncManager initialized (backup/export only)")
 
             except Exception as e:
                 logger.error(f"Failed to initialize MemorySyncManager: {e}")
 
     # Session Message Processor (Phase 6)
-    # Created here and passed to HTTPServer which injects it into HookManager.
-    # session_manager is required for the Codex rollout-tail synthesis path
-    # to resolve the (external_id, machine_id, project_id) composite key that
-    # HookManager.session_lookup uses to attribute rule effects.
+    # Created here for transcript-derived session history and stats.
     runner.message_processor = None
     if getattr(runner.config, "message_tracking", None) and runner.config.message_tracking.enabled:
         runner.message_processor = SessionMessageProcessor(
@@ -683,9 +674,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
         memory_sync_manager=runner.memory_sync_manager,
     )
 
-    # Conductor manager (persistent tick-based orchestration agent)
-    runner.conductor_manager = None
-
     # Cron Scheduler (background jobs for recurring tasks)
     runner.cron_storage = None
     runner.cron_scheduler = None
@@ -699,7 +687,17 @@ def init_orchestration(runner: GobbyRunner) -> None:
             storage=runner.cron_storage,
             agent_runner=runner.agent_runner,
             pipeline_executor=runner.pipeline_executor,
+            services=runner,
         )
+        cron_executor.register_handler(
+            "dispatch.tick",
+            cron_executor._execute_dispatcher,
+        )
+        if runner.project_id:
+            from gobby.runner import install_dispatcher_cron_row
+
+            install_dispatcher_cron_row(runner.database, project_id=runner.project_id)
+            logger.info("Installed system cron job: gobby:dispatcher")
 
         # Register pipeline heartbeat handler
         try:
@@ -735,42 +733,23 @@ def init_orchestration(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.error(f"Failed to register pipeline heartbeat: {e}")
 
-        # Register conductor handler (if enabled)
-        if runner.config.conductor.enabled and runner.project_id:
-            try:
-                from gobby.conductor.manager import ConductorManager
+        # Retired with the old conductor package; disable pre-existing system jobs.
+        try:
+            conductor_job = runner.cron_storage.get_job_by_name("gobby:conductor-tick")
+            if conductor_job and conductor_job.enabled:
+                runner.cron_storage.update_job(conductor_job.id, enabled=False, next_run_at=None)
+                logger.info("Disabled retired system cron job: gobby:conductor-tick")
+        except Exception as e:
+            logger.warning(f"Failed to disable retired conductor cron job: {e}")
 
-                runner.conductor_manager = ConductorManager(
-                    project_id=runner.project_id,
-                    project_path=str(Path.cwd()),
-                    session_manager=runner.session_manager,
-                    config=runner.config.conductor,
-                    execution_manager=runner.pipeline_execution_manager,
-                )
-                cron_executor.register_handler("conductor_tick", runner.conductor_manager)
-                existing = runner.cron_storage.get_job_by_name("gobby:conductor-tick")
-                if not existing:
-                    runner.cron_storage.create_job(
-                        project_id=runner.project_id,
-                        name="gobby:conductor-tick",
-                        description="Persistent conductor: checks tasks, dispatches agents",
-                        schedule_type="interval",
-                        interval_seconds=runner.config.conductor.tick_interval_seconds,
-                        action_type="handler",
-                        action_config={"handler": "conductor_tick"},
-                        enabled=True,
-                    )
-                    logger.info("Created system cron job: gobby:conductor-tick")
-                logger.info(f"Conductor enabled (model={runner.config.conductor.model})")
-            except Exception as e:
-                logger.error(f"Failed to initialize conductor: {e}")
+        from gobby.storage.projects import LocalProjectManager
+
+        pm = LocalProjectManager(runner.database)
 
         # Register Linear sync handler (for projects with Linear integration)
         try:
-            from gobby.storage.projects import LocalProjectManager
             from gobby.sync.linear import create_linear_sync_handler
 
-            pm = LocalProjectManager(runner.database)
             for project in pm.list():
                 if project.linear_team_id:
                     handler = create_linear_sync_handler(
@@ -778,6 +757,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                         task_manager=runner.task_manager,
                         project_id=project.id,
                         team_id=project.linear_team_id,
+                        linear_project_id=project.linear_project_id,
                     )
                     handler_name = f"linear_sync:{project.id}"
                     cron_executor.register_handler(handler_name, handler)
@@ -799,6 +779,24 @@ def init_orchestration(runner: GobbyRunner) -> None:
             logger.debug("Linear sync handlers registered")
         except Exception as e:
             logger.error(f"Failed to register Linear sync handlers: {e}")
+
+        # Register GitHub issue triage reconciliation handlers.
+        try:
+            from gobby.github_triage.cron import register_github_triage_cron
+
+            registered = register_github_triage_cron(
+                cron_storage=runner.cron_storage,
+                cron_executor=cron_executor,
+                db=runner.database,
+                mcp_manager=runner.mcp_proxy,
+                task_manager=runner.task_manager,
+                project_manager=pm,
+                memory_manager=runner.memory_manager,
+                secret_store=runner.secret_store,
+            )
+            logger.debug("GitHub issue triage cron handlers registered: %s", registered)
+        except Exception as e:
+            logger.error(f"Failed to register GitHub issue triage cron handlers: {e}")
 
         runner.cron_scheduler = CronScheduler(
             storage=runner.cron_storage,
@@ -835,6 +833,8 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
+    web_chat_session_registry = WebChatSessionRegistry()
+
     # HTTP Server
     # Bundle services into container
     services = ServiceContainer(
@@ -872,12 +872,15 @@ def init_servers(runner: GobbyRunner) -> None:
         config_store=runner.config_store,
         provider_model_catalog=ProviderModelCatalog(runner.config),
         web_chat_runtime_manager=None,
+        web_chat_session_registry=web_chat_session_registry,
         prompt_manager=runner.prompt_manager,
         dev_mode=runner._dev_mode,
         tool_proxy_getter=lambda: runner.http_server.tool_proxy,
     )
 
     set_app_context(services)
+    if runner.cron_scheduler and getattr(runner.cron_scheduler, "executor", None):
+        runner.cron_scheduler.executor.services = services
 
     if runner.communications_manager:
         from gobby.communications.reactions import ReactionHandler
@@ -917,6 +920,8 @@ def init_servers(runner: GobbyRunner) -> None:
         test_mode=runner.config.test_mode,
         codex_client=codex_client,
     )
+    # Intentional GobbyRunner <-> HTTPServer back-reference for HTTP shutdown/restart.
+    runner.http_server._runner = runner
 
     # Ensure message_processor property is set (redundant but explicit):
     runner.http_server.message_processor = runner.message_processor
@@ -941,6 +946,7 @@ def init_servers(runner: GobbyRunner) -> None:
             session_manager=runner.session_manager,
             daemon_config=runner.config,
             internal_manager=runner.http_server._internal_manager,
+            web_chat_session_registry=web_chat_session_registry,
         )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         # Pass WebSocket server reference to HTTP server for broadcasting

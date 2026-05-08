@@ -308,6 +308,8 @@ class TestChatSessionSendMessage:
             pass
 
         session._reconnect_for_reasoning_effort_change.assert_awaited_once()
+        assert session._reconnect_for_reasoning_effort_change.await_count == 1
+        assert session._reconnect_for_reasoning_effort_change.await_args is not None
 
     @staticmethod
     async def _mock_stream(items):

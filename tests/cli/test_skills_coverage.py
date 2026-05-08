@@ -429,6 +429,7 @@ class TestSkillsValidate:
             skills, ["validate", str(skill_file)], obj=_make_config_obj(), catch_exceptions=False
         )
         assert result.exit_code == 0
+        assert mock_validator_cls.return_value.validate.call_args.args == (parsed,)
 
     @patch("gobby.skills.validator.SkillValidator")
     @patch("gobby.skills.loader.SkillLoader")
@@ -477,6 +478,7 @@ class TestSkillsValidate:
             catch_exceptions=False,
         )
         assert result.exit_code == 0
+        assert json.loads(result.output)["valid"] is True
 
     @patch("gobby.skills.loader.SkillLoader")
     def test_validate_load_error(

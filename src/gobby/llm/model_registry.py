@@ -29,6 +29,10 @@ PROVIDER_MAP: dict[str, str] = {
     "anthropic/": "claude",
     "openai/": "codex",
     "google/": "gemini",
+    "qwen/": "qwen",
+    "z-ai/": "droid",
+    "moonshotai/": "droid",
+    "minimax/": "droid",
 }
 
 # Request timeout — startup shouldn't block forever on a slow network
@@ -41,7 +45,7 @@ class ModelInfo:
 
     id: str
     name: str
-    provider: str  # Gobby provider name (claude, codex, gemini)
+    provider: str  # Gobby provider name (claude, codex, gemini, qwen, droid)
     context_length: int
     max_completion_tokens: int | None
 

@@ -30,7 +30,6 @@ class TestGetTaskTool:
             assert result["id"] == sample_task.id
             assert result["title"] == "Test Task"
             assert "state" in result
-            assert "compat" in result
             assert result["state"]["is_blocked"] is False
             assert "dependencies" in result
             assert "blocked_by" in result["dependencies"]
@@ -128,7 +127,6 @@ class TestGetTaskTool:
 
             assert result["id"] == sample_task.id
             assert "state" in result
-            assert "compat" in result
             assert "description" in result
             assert "validation_criteria" in result
             assert "dependencies" in result
@@ -137,7 +135,7 @@ class TestGetTaskTool:
     async def test_get_task_brief_resolves_dependencies(
         self, mock_task_manager, mock_sync_manager, sample_task
     ):
-        """Test get_task brief mode resolves deps to ref+title+status."""
+        """Test get_task brief mode resolves deps to ref+title+state."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
 
@@ -153,7 +151,9 @@ class TestGetTaskTool:
             linked_task = MagicMock()
             linked_task.seq_num = 42
             linked_task.title = "Blocking Task"
-            linked_task.status = "in_progress"
+            linked_task.id = "550e8400-e29b-41d4-a716-446655440001"
+            linked_state = {"current_stage": {"name": "implementation", "state": "in_progress"}}
+            linked_task.to_brief.return_value = {"state": linked_state}
 
             def get_task_side_effect(task_id):
                 if task_id == sample_task.id:
@@ -172,7 +172,7 @@ class TestGetTaskTool:
             assert len(blocked_by) == 1
             assert blocked_by[0]["ref"] == "#42"
             assert blocked_by[0]["title"] == "Blocking Task"
-            assert blocked_by[0]["status"] == "in_progress"
+            assert blocked_by[0]["state"] == linked_state
             assert blocked_by[0]["dep_type"] == "blocks"
 
 
@@ -220,7 +220,7 @@ class TestUpdateTaskTool:
         """Test update_task with all updatable fields.
 
         Note: All status transitions are blocked by production code.
-        Must use claim_task, close_task, reopen_task, or mark_task_needs_review.
+        Must use claim_task, close_task, reopen_task, or submit_for_review.
         """
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -241,6 +241,7 @@ class TestUpdateTaskTool:
                 "validation_criteria": "Must pass",
                 "parent_task_id": "550e8400-e29b-41d4-a716-446655440010",
                 "category": "automated",
+                "task_type": "epic",
                 "workflow_name": "dev-flow",
                 "verification": "Run tests",
                 "sequence_order": 5,
@@ -256,10 +257,120 @@ class TestUpdateTaskTool:
             validation_criteria="Must pass",
             parent_task_id="550e8400-e29b-41d4-a716-446655440010",
             category="automated",
+            task_type="epic",
             workflow_name="dev-flow",
             verification="Run tests",
             sequence_order=5,
         )
+        assert mock_task_manager.update_task.call_count >= 1
+        assert mock_task_manager.update_task.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_update_task_task_type(self, mock_task_manager, mock_sync_manager):
+        """update_task forwards task_type to the storage layer."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "task_type": "epic"},
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000", task_type="epic"
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_allow_automation(self, mock_task_manager, mock_sync_manager):
+        """update_task forwards allow_automation to the storage layer."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "allow_automation": False,
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000", allow_automation=False
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_assigned_agent(self, mock_task_manager, mock_sync_manager):
+        """update_task forwards assigned_agent to the storage layer."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "assigned_agent": "backend-developer",
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000", assigned_agent="backend-developer"
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_additional_skills(self, mock_task_manager, mock_sync_manager):
+        """update_task forwards additional_skills to the storage layer."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "additional_skills": ["tech-writer"],
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000", additional_skills=["tech-writer"]
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_assignment_fields_combined(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """update_task forwards both assignment fields together."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "assigned_agent": "backend-developer",
+                "additional_skills": ["tech-writer", "code-index"],
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000",
+            assigned_agent="backend-developer",
+            additional_skills=["tech-writer", "code-index"],
+        )
+        assert result == {}
 
     @pytest.mark.asyncio
     async def test_update_task_blocks_open_status(self, mock_task_manager, mock_sync_manager):
@@ -288,7 +399,7 @@ class TestUpdateTaskTool:
 
         assert "error" in result
         assert "Cannot set status to 'needs_review'" in result["error"]
-        assert "mark_task_needs_review" in result["error"]
+        assert "submit_for_review" in result["error"]
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
@@ -305,7 +416,7 @@ class TestUpdateTaskTool:
 
         assert "error" in result
         assert "Cannot set status to 'needs_review'" in result["error"]
-        assert "mark_task_needs_review" in result["error"]
+        assert "submit_for_review" in result["error"]
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
@@ -348,6 +459,8 @@ class TestUpdateTaskTool:
         mock_task_manager.update_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", title="Updated Title"
         )
+        assert mock_task_manager.update_task.call_count >= 1
+        assert mock_task_manager.update_task.call_args is not None
 
 
 # =============================================================================
@@ -471,6 +584,8 @@ class TestDeleteTaskTool:
         mock_task_manager.delete_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", cascade=False, unlink=False
         )
+        assert mock_task_manager.delete_task.call_count >= 1
+        assert mock_task_manager.delete_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_delete_task_with_unlink(self, mock_task_manager, mock_sync_manager):
@@ -549,7 +664,7 @@ class TestListTasksTool:
             await registry.call(
                 "list_tasks",
                 {
-                    "status": "open",
+                    "current_stage_state": "ready",
                     "priority": 1,
                     "task_type": "bug",
                     "assignee": "dev",
@@ -561,7 +676,7 @@ class TestListTasksTool:
             )
 
             mock_task_manager.list_tasks.assert_called_with(
-                status="open",
+                current_stage_state="ready",
                 priority=1,
                 task_type="bug",
                 assignee="dev",
@@ -571,6 +686,8 @@ class TestListTasksTool:
                 limit=10,
                 project_id="proj-1",
             )
+            assert mock_task_manager.list_tasks.call_count >= 1
+            assert mock_task_manager.list_tasks.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_tasks_all_projects(self, mock_task_manager, mock_sync_manager):
@@ -589,7 +706,7 @@ class TestListTasksTool:
 
     @pytest.mark.asyncio
     async def test_list_tasks_comma_separated_status(self, mock_task_manager, mock_sync_manager):
-        """Test list_tasks handles comma-separated status strings."""
+        """Test list_tasks handles comma-separated current_stage_state strings."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
         mock_task_manager.list_tasks.return_value = []
@@ -597,10 +714,10 @@ class TestListTasksTool:
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": "proj-1"}
 
-            await registry.call("list_tasks", {"status": "open,in_progress"})
+            await registry.call("list_tasks", {"current_stage_state": "ready,in_progress"})
 
             call_kwargs = mock_task_manager.list_tasks.call_args.kwargs
-            assert call_kwargs["status"] == ["open", "in_progress"]
+            assert call_kwargs["current_stage_state"] == ["ready", "in_progress"]
 
 
 # =============================================================================

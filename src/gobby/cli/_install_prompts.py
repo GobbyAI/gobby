@@ -355,6 +355,12 @@ _CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
         "~/.qwen/settings.json",
     ),
     "codex": ("Codex", "~/.codex/hooks.json", ".codex/hooks.json", None),
+    "droid": (
+        "Droid CLI",
+        "~/.factory/hooks/hooks.json",
+        ".factory/hooks/hooks.json",
+        "~/.factory/mcp.json",
+    ),
 }
 
 
@@ -365,7 +371,7 @@ def _run_standard_cli_install(
     mode: str,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run install + echo for a standard CLI (claude, gemini, qwen, codex)."""
+    """Run install + echo for a standard CLI (claude, gemini, qwen, codex, droid)."""
     display_name, global_config, project_subpath, mcp_path = _CLI_INSTALL_META[cli_name]
 
     click.echo("-" * 40)
@@ -390,7 +396,7 @@ def _run_git_hooks_install(
 ) -> None:
     """Run install + echo for Git hooks."""
     click.echo("-" * 40)
-    click.echo("Git Hooks (Task Auto-Sync)")
+    click.echo("Git Hooks (Verification + JSONL Export)")
     click.echo("-" * 40)
 
     result = installer(project_path)
@@ -404,6 +410,10 @@ def _run_git_hooks_install(
         if result.get("skipped"):
             click.echo("Skipped:")
             for hook in result["skipped"]:
+                click.echo(f"  - {hook}")
+        if result.get("removed_legacy_imports"):
+            click.echo("Removed legacy import hooks:")
+            for hook in result["removed_legacy_imports"]:
                 click.echo(f"  - {hook}")
         if not result.get("installed") and not result.get("skipped"):
             click.echo("No hooks to install")
@@ -814,6 +824,7 @@ _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
     "gemini": ("Gemini CLI", "hooks from settings"),
     "qwen": ("Qwen CLI", "hooks from settings"),
     "codex": ("Codex", "hooks from settings"),
+    "droid": ("Droid CLI", "hooks from settings"),
 }
 
 

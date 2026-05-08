@@ -1,4 +1,5 @@
 import { useState, useCallback, type FormEvent } from 'react'
+import { GobbyLogo } from '../shared/GobbyLogo'
 
 interface LoginPageProps {
   onLogin: (username: string, password: string, rememberMe: boolean) => Promise<string | null>
@@ -24,7 +25,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     <div style={styles.container}>
       <form onSubmit={handleSubmit} style={styles.card}>
         <div style={styles.logoRow}>
-          <img src="/logo.png" alt="Gobby" style={styles.logo} />
+          <GobbyLogo label="Gobby" size={36} />
           <h1 style={styles.title}>Gobby</h1>
         </div>
         <p style={styles.subtitle}>Sign in to continue</p>
@@ -106,15 +107,11 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '0.75rem',
     justifyContent: 'center',
   },
-  logo: {
-    width: 36,
-    height: 36,
-  },
   title: {
     margin: 0,
-    fontSize: '1.5rem',
-    fontWeight: 700,
     color: 'var(--text-primary)',
+    fontSize: 'var(--text-3xl)',
+    fontWeight: 'var(--font-weight-bold)',
   },
   subtitle: {
     margin: 0,
@@ -125,8 +122,8 @@ const styles: Record<string, React.CSSProperties> = {
   error: {
     padding: '0.5rem 0.75rem',
     borderRadius: 6,
-    background: 'rgba(255, 80, 80, 0.12)',
-    color: '#ff5050',
+    background: 'var(--color-error-soft)',
+    color: 'var(--color-error)',
     fontSize: '0.85rem',
     textAlign: 'center' as const,
   },
@@ -160,7 +157,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     border: 'none',
     background: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--accent-foreground)',
     fontSize: '0.95rem',
     fontWeight: 600,
     cursor: 'pointer',

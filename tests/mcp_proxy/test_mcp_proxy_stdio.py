@@ -34,8 +34,10 @@ class TestGetDaemonPid:
             ]
             assert get_daemon_pid() is None
 
-    def test_returns_pid_when_daemon_process_found(self) -> None:
+    def test_returns_pid_when_daemon_process_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test returns PID when valid daemon process found."""
+        # Disable the test-protect fence to exercise production-path behavior.
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
             # Matches logic: "gobby.cli.app" and "daemon" and "start"
             mock_iter.return_value = [
@@ -57,8 +59,9 @@ class TestGetDaemonPid:
             ]
             assert get_daemon_pid() == 12345
 
-    def test_ignores_current_process(self) -> None:
+    def test_ignores_current_process(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test ignores the current process even if it matches."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         current_pid = 777
         with patch("gobby.mcp_proxy.daemon_control.os.getpid", return_value=current_pid):
             with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
@@ -80,6 +83,62 @@ class TestGetDaemonPid:
                 mock_iter.return_value = [mock_proc_self, mock_proc_other]
 
                 assert get_daemon_pid() == 888
+                assert mock_iter.call_count == 1
+
+    def test_test_protect_skips_processes_outside_gobby_home(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under GOBBY_TEST_PROTECT, processes whose cmdline does not reference
+        the current GOBBY_HOME / GOBBY_CONFIG_FILE are not returned — this is
+        the fence that prevents tests from discovering the production daemon.
+        """
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_HOME", "/tmp/gobby-e2e-isolated")
+        monkeypatch.delenv("GOBBY_CONFIG_FILE", raising=False)
+        with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
+            mock_iter.return_value = [
+                MagicMock(
+                    info={
+                        "pid": 12345,
+                        "name": "python",
+                        "cmdline": [
+                            "python",
+                            "-m",
+                            "gobby.runner",
+                            "--config",
+                            "/Users/someone/.gobby/config.yaml",
+                        ],
+                    }
+                ),
+            ]
+            assert get_daemon_pid() is None
+
+    def test_test_protect_returns_pid_inside_gobby_home(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under GOBBY_TEST_PROTECT, processes whose cmdline DOES reference the
+        current GOBBY_HOME are still returned — the fence must not break tests
+        that legitimately spawn an isolated daemon and look it up."""
+        isolated_home = "/tmp/gobby-e2e-isolated"
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_HOME", isolated_home)
+        with patch("gobby.mcp_proxy.daemon_control.psutil.process_iter") as mock_iter:
+            mock_iter.return_value = [
+                MagicMock(
+                    info={
+                        "pid": 12345,
+                        "name": "python",
+                        "cmdline": [
+                            "python",
+                            "-m",
+                            "gobby.runner",
+                            "--config",
+                            f"{isolated_home}/config.yaml",
+                        ],
+                    }
+                ),
+            ]
+            assert get_daemon_pid() == 12345
 
 
 class TestIsDaemonRunning:
@@ -203,8 +262,28 @@ class TestStopDaemonProcess:
     """Tests for stop_daemon_process function."""
 
     @pytest.mark.asyncio
-    async def test_returns_not_running_if_daemon_not_running(self):
+    async def test_skips_when_test_protect_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Under GOBBY_TEST_PROTECT, stop_daemon_process must short-circuit
+        BEFORE looking up a PID and BEFORE issuing any signal — this is the
+        guard that prevents the production daemon from being SIGTERMed when
+        a test path reaches mcp_proxy.daemon_control.
+        """
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345) as mock_pid:
+            with patch("gobby.mcp_proxy.daemon_control.os.kill") as mock_kill:
+                result = await stop_daemon_process()
+
+                assert result["success"] is True
+                assert result["skipped"] == "test_protect"
+                mock_pid.assert_not_called()
+                mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_not_running_if_daemon_not_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test returns not_running if daemon is not running."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=None):
             result = await stop_daemon_process()
 
@@ -212,8 +291,9 @@ class TestStopDaemonProcess:
             assert result["not_running"] is True
 
     @pytest.mark.asyncio
-    async def test_stops_daemon_successfully(self):
+    async def test_stops_daemon_successfully(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test successful daemon stop."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
 
             def kill_side_effect(pid, sig):
@@ -224,16 +304,29 @@ class TestStopDaemonProcess:
             with patch(
                 "gobby.mcp_proxy.daemon_control.os.kill", side_effect=kill_side_effect
             ) as mock_kill:
-                with patch("gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock):
+                with (
+                    patch(
+                        "gobby.runner_maintenance.write_shutdown_source",
+                    ) as mock_write_shutdown_source,
+                    patch(
+                        "gobby.mcp_proxy.daemon_control.asyncio.sleep",
+                        new_callable=AsyncMock,
+                    ),
+                ):
                     result = await stop_daemon_process()
 
                     assert result["success"] is True
                     assert result["output"] == "Daemon stopped"
                     mock_kill.assert_any_call(12345, signal.SIGTERM)
+                    mock_write_shutdown_source.assert_called_once_with(
+                        "mcp_stop",
+                        intent="stop",
+                    )
 
     @pytest.mark.asyncio
-    async def test_handles_stop_failure_permission(self):
+    async def test_handles_stop_failure_permission(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test handles daemon stop failure due to permission."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
             with patch(
                 "gobby.mcp_proxy.daemon_control.os.kill", side_effect=PermissionError("Denied")
@@ -244,8 +337,9 @@ class TestStopDaemonProcess:
                 assert result["error"] == "Permission denied"
 
     @pytest.mark.asyncio
-    async def test_handles_stop_failure_not_found(self):
+    async def test_handles_stop_failure_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test handles daemon stop failure due to process lookup."""
+        monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
             with patch(
                 "gobby.mcp_proxy.daemon_control.os.kill",
@@ -289,7 +383,11 @@ class TestRestartDaemonProcess:
 
                         assert result["success"] is True
                         assert result["pid"] == 54321
-                        mock_stop.assert_called_once_with(12345)
+                        mock_stop.assert_called_once_with(
+                            12345,
+                            shutdown_intent="restart",
+                            shutdown_source="mcp_restart",
+                        )
                         mock_start.assert_called_once_with(60887, 60888)
 
 
@@ -368,6 +466,7 @@ class TestCreateStdioMcpServer:
                 mcp = create_stdio_mcp_server()
                 # Just check it's returned
                 assert mcp is not None
+                assert "list_mcp_servers" in mcp._tool_manager._tools
 
 
 class TestEnsureDaemonRunning:
@@ -383,20 +482,22 @@ class TestEnsureDaemonRunning:
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
                     return_value=True,
-                ):
+                ) as mock_health:
                     # Should not raise or call start
                     # Must import function from module to ensure patches apply
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                    await ensure_daemon_running()
+                    result = await ensure_daemon_running()
+                    assert result is None
+                    assert mock_health.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_restarts_unhealthy_daemon(self):
-        """Test restarts daemon if running but unhealthy."""
+    async def test_waits_for_unhealthy_daemon_without_restart(self):
+        """Test waits for an unhealthy daemon instead of restarting it."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
             with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
-                health_checks = [False, False, False, True]
+                health_checks = [False, False, True]
                 with patch(
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
@@ -409,12 +510,43 @@ class TestEnsureDaemonRunning:
                     ) as mock_restart:
                         with patch("gobby.mcp_proxy.stdio.get_daemon_pid", return_value=12345):
                             with patch(
-                                "gobby.mcp_proxy.stdio.asyncio.sleep", new_callable=AsyncMock
-                            ):
+                                "gobby.mcp_proxy.stdio.asyncio.sleep",
+                                new_callable=AsyncMock,
+                            ) as mock_sleep:
                                 from gobby.mcp_proxy.stdio import ensure_daemon_running
 
                                 await ensure_daemon_running()
-                                mock_restart.assert_called_once()
+                                mock_restart.assert_not_called()
+                                assert mock_sleep.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_exits_instead_of_restarting_persistently_unhealthy_daemon(self):
+        """Test stdio MCP clients do not restart a busy or unhealthy daemon."""
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
+                with patch(
+                    "gobby.mcp_proxy.stdio.check_daemon_http_health",
+                    new_callable=AsyncMock,
+                    return_value=False,
+                ):
+                    with patch(
+                        "gobby.mcp_proxy.stdio.restart_daemon_process",
+                        new_callable=AsyncMock,
+                    ) as mock_restart:
+                        with patch("gobby.mcp_proxy.stdio.get_daemon_pid", return_value=12345):
+                            with patch(
+                                "gobby.mcp_proxy.stdio.asyncio.sleep",
+                                new_callable=AsyncMock,
+                            ):
+                                with patch("sys.exit", side_effect=SystemExit(1)) as mock_exit:
+                                    from gobby.mcp_proxy.stdio import ensure_daemon_running
+
+                                    with pytest.raises(SystemExit):
+                                        await ensure_daemon_running()
+
+                                    mock_restart.assert_not_called()
+                                    mock_exit.assert_called_with(1)
 
     @pytest.mark.asyncio
     async def test_starts_daemon_if_not_running(self):
@@ -436,6 +568,31 @@ class TestEnsureDaemonRunning:
 
                         await ensure_daemon_running()
                         mock_start.assert_called_once()
+                        assert mock_start.call_count == 1
+                        assert mock_start.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_managed_agent_refuses_to_auto_start_daemon(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Managed agent MCP clients must not bootstrap the daemon themselves."""
+        monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-agent")
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=False):
+                with patch(
+                    "gobby.mcp_proxy.stdio.start_daemon_process",
+                    new_callable=AsyncMock,
+                ) as mock_start:
+                    with patch("sys.exit", side_effect=SystemExit(1)) as mock_exit:
+                        from gobby.mcp_proxy.stdio import ensure_daemon_running
+
+                        with pytest.raises(SystemExit):
+                            await ensure_daemon_running()
+
+                        mock_start.assert_not_called()
+                        mock_exit.assert_called_with(1)
 
 
 class TestDaemonProxy:
@@ -473,10 +630,14 @@ class TestDaemonProxy:
                 mock_request.assert_called_with(
                     "POST", "/api/mcp/server/tools/normal_tool", json={}, timeout=30.0
                 )
+                assert mock_request.call_count >= 1
+                assert mock_request.call_args is not None
                 await proxy.call_tool("server", "expand_task", {})
                 mock_request.assert_called_with(
                     "POST", "/api/mcp/server/tools/expand_task", json={}, timeout=300.0
                 )
+                assert mock_request.call_count >= 1
+                assert mock_request.call_args is not None
 
 
 class TestDaemonProxyMethods:
@@ -540,13 +701,35 @@ class TestDaemonProxyMethods:
         proxy = DaemonProxy(60887)
         with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = {
-                "total": 1,
-                "connected": 1,
-                "servers": [{"name": "srv1", "state": "connected", "transport": "http"}],
+                "total": 2,
+                "connected": 2,
+                "servers": [
+                    {"name": "srv1", "state": "connected", "transport": "http"},
+                    {"name": "srv2", "state": "connected", "transport": "stdio"},
+                ],
             }
             result = await proxy.list_mcp_servers()
-            assert result["total"] == 1
-            assert result["servers"][0]["name"] == "srv1"
+            assert result["total"] == 2
+            assert result["servers"] == ["srv1", "srv2"]
+            assert "issues" not in result
+
+    @pytest.mark.asyncio
+    async def test_list_mcp_servers_keeps_issue_details(self):
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = {
+                "total": 2,
+                "connected": 1,
+                "servers": [
+                    {"name": "srv1", "state": "connected", "transport": "http"},
+                    {"name": "srv2", "state": "pending", "transport": "stdio"},
+                ],
+            }
+            result = await proxy.list_mcp_servers()
+            assert result["servers"] == ["srv1", "srv2"]
+            assert result["issues"] == [{"name": "srv2", "state": "pending", "transport": "stdio"}]
 
     @pytest.mark.asyncio
     async def test_recommend_tools(self):
@@ -769,8 +952,9 @@ class TestMCPToolsWrapper:
             "outer-tool",
             {"session_id": "inner-session", "value": "ok"},
             project_id="outer-project",
+            session_id="outer-session",
         )
-        assert mock_proxy._session_id == "outer-session"
+        assert mock_proxy._session_id is None
 
     @pytest.mark.asyncio
     async def test_call_tool_emits_progress_heartbeat_for_wait_tools(self) -> None:
@@ -821,6 +1005,8 @@ class TestMCPToolsWrapper:
         )
 
         ctx.report_progress.assert_not_awaited()
+        assert ctx.report_progress.await_count == 0
+        assert ctx.report_progress.await_args is None
 
 
 class TestEnsureDaemonRunningFailures:
@@ -843,6 +1029,8 @@ class TestEnsureDaemonRunningFailures:
                             await ensure_daemon_running()
 
                         mock_exit.assert_called_with(1)
+                        assert mock_exit.call_count >= 1
+                        assert mock_exit.call_args is not None
 
     @pytest.mark.asyncio
     async def test_health_check_timeout_exits(self):
@@ -867,6 +1055,8 @@ class TestEnsureDaemonRunningFailures:
                                     with pytest.raises(SystemExit):
                                         await ensure_daemon_running()
                                     mock_exit.assert_called_with(1)
+                                    assert mock_exit.call_count >= 1
+                                    assert mock_exit.call_args is not None
 
 
 class TestStripNone:

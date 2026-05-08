@@ -83,6 +83,57 @@ class TestTTSPipeline:
         await pipeline.cancel()
 
     @pytest.mark.asyncio
+    async def test_flush_enqueues_multiple_ordered_chunks_for_long_remainder(self) -> None:
+        ws = DummyWebSocket()
+        pipeline = TTSPipeline(
+            tts=OrderedTTS({}),
+            conversation_id="conv-1234",
+            clients={ws: {"conversation_id": "conv-1234"}},
+            max_chunk_chars=18,
+        )
+
+        pipeline.feed_text("alpha beta, gamma delta epsilon")
+        await pipeline.flush()
+
+        text_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], str)
+        ]
+        payloads = [json.loads(message) for message in text_frames]
+        chunk_indices = [
+            payload["chunk_index"] for payload in payloads if payload["type"] == "tts_audio"
+        ]
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
+
+        assert chunk_indices == [0, 1, 2]
+        assert binary_frames == [b"alpha beta,", b"gamma delta", b"epsilon"]
+
+        await pipeline.cancel()
+
+    @pytest.mark.asyncio
+    async def test_synthesizes_normalized_spoken_text(self) -> None:
+        ws = DummyWebSocket()
+        pipeline = TTSPipeline(
+            tts=OrderedTTS({}),
+            conversation_id="conv-1234",
+            clients={ws: {"conversation_id": "conv-1234"}},
+        )
+
+        pipeline.feed_text("### *'Ship it'* for issue #123. Don't strip contractions.")
+        await pipeline.flush()
+
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
+        assert binary_frames == [
+            b"Ship it for issue number 123.",
+            b"Don't strip contractions.",
+        ]
+
+        await pipeline.cancel()
+
+    @pytest.mark.asyncio
     async def test_synthesis_failure_emits_tts_error_status_once(self) -> None:
         ws = DummyWebSocket()
         pipeline = TTSPipeline(

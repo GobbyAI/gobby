@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.llm.claude_models import resolve_context_window
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,15 @@ class ManagedChatSessionBase:
         merged = "\n\n".join(part for part in self._deferred_contexts if part)
         self._deferred_contexts.clear()
         return merged or None
+
+    def _resolve_context_window(self) -> int | None:
+        """Resolve context window metadata for this provider/model pair."""
+        return resolve_context_window(
+            self._model,
+            None,
+            overrides=self._context_window_overrides or None,
+            provider=self.provider,
+        )
 
     async def _apply_pre_tool_lifecycle(
         self,

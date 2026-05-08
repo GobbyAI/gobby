@@ -5,9 +5,45 @@ import pytest
 
 from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager, StageState, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.utils.session_context import session_context_for_test
+
+
+def _stage(task_id: str, state: str) -> StageState:
+    return StageState(
+        task_id=task_id,
+        stage_name="development",
+        position=0,
+        state=state,
+        review_policy="required",
+        reviewer_agent=None,
+        entered_at="now",
+        entered_by_session_id=None,
+        completed_at=None,
+        completed_by_session_id=None,
+        completed_commit_sha=None,
+        work_attempt_count=0,
+        review_round_count=0,
+        max_work_attempts=None,
+        max_review_rounds=None,
+        artifact_refs=None,
+        notes=None,
+        updated_at="now",
+    )
+
+
+def _task(**kwargs) -> Task:
+    status = kwargs.pop("status", "open")
+    task_id = kwargs["id"]
+    if status == "closed":
+        kwargs.setdefault("closed_at", "now")
+    elif status == "escalated":
+        kwargs.setdefault("is_escalated", True)
+        kwargs.setdefault("escalated_at", "now")
+    elif status in {"ready", "in_progress", "needs_review", "review_approved"}:
+        kwargs.setdefault("stages", (_stage(task_id, status),))
+    return Task(**kwargs)
 
 
 # close_task requires an active session context after Change 4 — seed one for
@@ -52,7 +88,7 @@ async def test_validate_task_tool_success(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     # Setup
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -87,7 +123,7 @@ async def test_validate_task_tool_failure_retry(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     # Setup
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -106,7 +142,7 @@ async def test_validate_task_tool_failure_retry(
         status="invalid", feedback="Bad job"
     )
 
-    fix_subtask = Task(
+    fix_subtask = _task(
         id="fix1",
         title="Fix validation",
         project_id="p1",
@@ -148,7 +184,7 @@ async def test_validate_task_tool_failure_max_retries(
 ):
     # Setup -> already failed 2 times (max is 3, so failing one more time makes 3 -> failed?)
 
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -200,7 +236,7 @@ async def test_validate_parent_task_all_children_closed(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test that parent task validates successfully when all children are closed."""
-    parent_task = Task(
+    parent_task = _task(
         id="parent1",
         title="Parent Task",
         project_id="p1",
@@ -211,7 +247,7 @@ async def test_validate_parent_task_all_children_closed(
         updated_at="now",
     )
 
-    child1 = Task(
+    child1 = _task(
         id="child1",
         title="Child 1",
         project_id="p1",
@@ -222,7 +258,7 @@ async def test_validate_parent_task_all_children_closed(
         created_at="now",
         updated_at="now",
     )
-    child2 = Task(
+    child2 = _task(
         id="child2",
         title="Child 2",
         project_id="p1",
@@ -252,7 +288,7 @@ async def test_validate_parent_task_some_children_open(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test that parent task validation fails when some children are still open."""
-    parent_task = Task(
+    parent_task = _task(
         id="parent1",
         title="Parent Task",
         project_id="p1",
@@ -263,7 +299,7 @@ async def test_validate_parent_task_some_children_open(
         updated_at="now",
     )
 
-    child1 = Task(
+    child1 = _task(
         id="child1",
         title="Completed Child",
         project_id="p1",
@@ -274,7 +310,7 @@ async def test_validate_parent_task_some_children_open(
         created_at="now",
         updated_at="now",
     )
-    child2 = Task(
+    child2 = _task(
         id="child2",
         title="Open Child",
         project_id="p1",
@@ -285,7 +321,7 @@ async def test_validate_parent_task_some_children_open(
         created_at="now",
         updated_at="now",
     )
-    child3 = Task(
+    child3 = _task(
         id="child3",
         title="In Progress Child",
         project_id="p1",
@@ -322,7 +358,7 @@ async def test_validate_task_llm_returns_pending(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test handling when LLM validation returns pending status (error case)."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -361,7 +397,7 @@ async def test_validate_task_llm_exception(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test handling when LLM throws an exception during validation."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -396,7 +432,7 @@ async def test_validate_task_failure_creates_fix_subtask_with_correct_fields(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test that validation failure creates a properly configured fix subtask."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Implement feature X",
         project_id="proj123",
@@ -416,7 +452,7 @@ async def test_validate_task_failure_creates_fix_subtask_with_correct_fields(
         feedback="Missing error handling for edge case X. Tests for Y are incomplete.",
     )
 
-    fix_subtask = Task(
+    fix_subtask = _task(
         id="fix-abc",
         title="Fix validation failures for Implement feature X",
         project_id="proj123",
@@ -459,7 +495,7 @@ async def test_validate_task_second_failure_creates_second_subtask(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test that second validation failure also creates a fix subtask."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -478,7 +514,7 @@ async def test_validate_task_second_failure_creates_second_subtask(
         status="invalid", feedback="Still has issues"
     )
 
-    fix_subtask = Task(
+    fix_subtask = _task(
         id="fix2",
         title="Fix 2",
         project_id="p1",
@@ -511,7 +547,7 @@ async def test_validate_task_exactly_at_max_retries(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test behavior when validation fails exactly at max retries (3)."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Problematic Task",
         project_id="p1",
@@ -557,7 +593,7 @@ async def test_validate_task_beyond_max_retries(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test behavior when task already has max failures and fails again."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Already Failed Task",
         project_id="p1",
@@ -607,7 +643,7 @@ async def test_validate_task_without_changes_summary_uses_smart_context(
     mock_task_manager, mock_task_validator
 ):
     """Test that validation without changes_summary uses smart context gathering."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -655,7 +691,7 @@ async def test_validate_task_no_context_available_raises_error(
     mock_task_manager, mock_task_validator
 ):
     """Test that validation fails gracefully when no context is available."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Task 1",
         project_id="p1",
@@ -701,7 +737,7 @@ async def test_reset_validation_count(
     mock_task_manager, mock_task_validator, registry_with_patches
 ):
     """Test resetting validation failure count."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Escalated Task",
         project_id="p1",
@@ -713,7 +749,7 @@ async def test_reset_validation_count(
         validation_fail_count=3,
     )
     mock_task_manager.get_task.return_value = task
-    mock_task_manager.update_task.return_value = Task(
+    mock_task_manager.update_task.return_value = _task(
         id="t1",
         title="Escalated Task",
         project_id="p1",
@@ -743,7 +779,7 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
     mock_task_manager, mock_task_validator
 ):
     """Test that close_task uses commit-based diff when task has linked commits."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Task with commits",
         project_id="p1",
@@ -810,7 +846,7 @@ async def test_close_task_skip_reason_bypasses_commit_check(mock_task_manager, m
     When using a skip reason like 'obsolete', 'duplicate', 'already_implemented',
     or 'wont_fix', the commit check is skipped and validation is also auto-skipped.
     """
-    task = Task(
+    task = _task(
         id="t1",
         title="Task without commits",
         project_id="p1",
@@ -864,8 +900,12 @@ async def test_close_task_skip_reason_bypasses_commit_check(mock_task_manager, m
         assert "error" not in result
         # close_task should have been called
         mock_task_manager.close_task.assert_called_once()
+        assert mock_task_manager.close_task.call_count == 1
+        assert mock_task_manager.close_task.call_args is not None
         # Validator should NOT have been called (skip reasons auto-skip validation)
         mock_task_validator.validate_task.assert_not_called()
+        assert mock_task_validator.validate_task.call_count == 0
+        assert not mock_task_validator.validate_task.called
 
 
 @pytest.mark.integration
@@ -874,7 +914,7 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
     mock_task_manager, mock_task_validator
 ):
     """Test that close_task excludes uncommitted changes (linked commits are the work)."""
-    task = Task(
+    task = _task(
         id="t1",
         title="Task with commits",
         project_id="p1",
@@ -921,6 +961,8 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
         # changes_summary is provided, so get_task_diff is NOT called
         # (changes_summary takes precedence over commit-based diff)
         mock_diff.assert_not_called()
+        assert mock_diff.call_count == 0
+        assert not mock_diff.called
 
 
 @pytest.mark.integration
@@ -933,7 +975,7 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
     When a task has linked commits, those commits ARE the work, so we don't
     fall back to smart context even if the diff is empty.
     """
-    task = Task(
+    task = _task(
         id="t1",
         title="Task with commits but empty diff",
         project_id="p1",
@@ -982,4 +1024,8 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
 
         # changes_summary is provided, so neither get_task_diff nor smart context is called
         mock_diff.assert_not_called()
+        assert mock_diff.call_count == 0
+        assert not mock_diff.called
         mock_smart_context.assert_not_called()
+        assert mock_smart_context.call_count == 0
+        assert not mock_smart_context.called

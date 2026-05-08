@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.memory.manager import MemoryManager
+from tests._timing import wait_for_async_condition, wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -117,6 +118,8 @@ class TestBackgroundDedupTask:
 
         # Verify dedup was fired
         manager._dedup_service.process.assert_called_once()
+        assert manager._dedup_service.process.call_count == 1
+        assert manager._dedup_service.process.call_args is not None
 
     @pytest.mark.asyncio
     async def test_background_task_tracked_and_cleaned(self) -> None:
@@ -206,8 +209,10 @@ class TestBackgroundDedupTask:
         memory = await manager.create_memory(content="Content")
         assert memory.id == "mem-4"
 
-        # Wait for background task to complete (with error)
-        await asyncio.sleep(0.1)
+        await wait_for_async_condition(
+            lambda: len(manager._background_tasks) == 0,
+            description="dedup background task cleanup",
+        )
 
         # Task should still be cleaned up
         assert len(manager._background_tasks) == 0
@@ -235,7 +240,7 @@ class TestBackgroundDedupTask:
 
         # Make dedup slow
         async def slow_dedup(*args, **kwargs):
-            await asyncio.sleep(5)
+            await wait_forever()
 
         manager._dedup_service.process = AsyncMock(side_effect=slow_dedup)
 
@@ -245,3 +250,4 @@ class TestBackgroundDedupTask:
             timeout=1.0,
         )
         assert memory.id == "mem-5"
+        assert memory.content == "Immediate"

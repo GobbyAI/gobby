@@ -47,6 +47,8 @@ class TestExecuteNestedPipeline:
         await executor._execute_nested_pipeline("child-pipeline", context, "proj-123")
 
         mock_loader.load_pipeline.assert_called_once_with("child-pipeline")
+        assert mock_loader.load_pipeline.call_count == 1
+        assert mock_loader.load_pipeline.call_args is not None
 
     @pytest.mark.asyncio
     async def test_nested_pipeline_returns_dict(
@@ -183,6 +185,8 @@ class TestExecuteNestedPipelineDictForm:
         await executor._execute_nested_pipeline(pipeline_ref, context, "proj-123")
 
         mock_loader.load_pipeline.assert_called_once_with("command-listener")
+        assert mock_loader.load_pipeline.call_count == 1
+        assert mock_loader.load_pipeline.call_args is not None
 
     @pytest.mark.asyncio
     async def test_dict_form_uses_explicit_arguments(
@@ -278,6 +282,8 @@ class TestExecuteNestedPipelineDictForm:
         await executor._execute_nested_pipeline("command-listener", context, "proj-123")
 
         mock_loader.load_pipeline.assert_called_once_with("command-listener")
+        assert mock_loader.load_pipeline.call_count == 1
+        assert mock_loader.load_pipeline.call_args is not None
 
     @pytest.mark.asyncio
     async def test_dict_form_returns_pipeline_name_in_result(

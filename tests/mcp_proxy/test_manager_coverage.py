@@ -25,6 +25,7 @@ from gobby.mcp_proxy.models import (
     MCPError,
     MCPServerConfig,
 )
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -434,6 +435,8 @@ class TestMCPClientManagerRemoveServer:
         await manager.remove_server("test-server")
 
         mock_db.remove_server.assert_called_once_with("test-server", "config-project")
+        assert mock_db.remove_server.call_count == 1
+        assert mock_db.remove_server.call_args is not None
 
     @pytest.mark.asyncio
     async def test_remove_server_uses_provided_project_id(self):
@@ -451,6 +454,8 @@ class TestMCPClientManagerRemoveServer:
         await manager.remove_server("test-server", project_id="override-project")
 
         mock_db.remove_server.assert_called_once_with("test-server", "override-project")
+        assert mock_db.remove_server.call_count == 1
+        assert mock_db.remove_server.call_args is not None
 
 
 class TestMCPClientManagerConnectAll:
@@ -732,7 +737,7 @@ class TestMCPClientManagerEnsureConnected:
         )
 
         async def slow_connect(cfg):
-            await asyncio.sleep(10)  # Will timeout
+            await wait_forever()
 
         with patch.object(manager, "_connect_server", side_effect=slow_connect):
             with pytest.raises(MCPError, match="Connection timeout"):
@@ -815,7 +820,7 @@ class TestMCPClientManagerDisconnect:
 
         # Add a mock reconnect task
         async def slow_reconnect():
-            await asyncio.sleep(100)
+            await wait_forever()
 
         task = asyncio.create_task(slow_reconnect())
         manager._reconnect_tasks.add(task)
@@ -840,7 +845,7 @@ class TestMCPClientManagerDisconnect:
         mock_connection = AsyncMock()
 
         async def slow_disconnect():
-            await asyncio.sleep(100)
+            await wait_forever()
 
         mock_connection.disconnect = slow_disconnect
         mock_connection.is_connected = True
@@ -901,7 +906,7 @@ class TestMCPClientManagerCallTool:
         mock_session = AsyncMock()
 
         async def slow_tool(*args):
-            await asyncio.sleep(10)
+            await wait_forever()
             return {"result": "late"}
 
         mock_session.call_tool = slow_tool
@@ -1174,12 +1179,8 @@ class TestMCPClientManagerGetToolInputSchema:
 
         with patch.object(
             manager,
-            "list_tools",
-            return_value={
-                "test-server": [
-                    {"name": "test-tool", "inputSchema": expected_schema},
-                ]
-            },
+            "_list_tools_for_server",
+            new=AsyncMock(return_value=[{"name": "test-tool", "inputSchema": expected_schema}]),
         ):
             result = await manager.get_tool_input_schema("test-server", "test-tool")
 
@@ -1199,8 +1200,8 @@ class TestMCPClientManagerGetToolInputSchema:
 
         with patch.object(
             manager,
-            "list_tools",
-            return_value={"test-server": []},
+            "_list_tools_for_server",
+            new=AsyncMock(return_value=[]),
         ):
             with pytest.raises(MCPError, match="Tool nonexistent not found"):
                 await manager.get_tool_input_schema("test-server", "nonexistent")
@@ -1285,6 +1286,8 @@ class TestMCPClientManagerReconnect:
             await manager._reconnect("test-server")
 
         old_conn.disconnect.assert_awaited_once()
+        assert old_conn.disconnect.await_count == 1
+        assert old_conn.disconnect.await_args is not None
 
     @pytest.mark.asyncio
     async def test_reconnect_no_old_connection(self):
@@ -1302,6 +1305,8 @@ class TestMCPClientManagerReconnect:
             await manager._reconnect("test-server")
 
         mock_connect.assert_awaited_once()
+        assert mock_connect.await_count == 1
+        assert mock_connect.await_args is not None
 
     @pytest.mark.asyncio
     async def test_reconnect_old_disconnect_failure_does_not_block(self):
@@ -1323,14 +1328,17 @@ class TestMCPClientManagerReconnect:
             await manager._reconnect("test-server")
 
         mock_connect.assert_awaited_once()
+        assert mock_connect.await_count == 1
+        assert mock_connect.await_args is not None
 
     @pytest.mark.asyncio
     async def test_reconnect_handles_unknown_server(self):
         """Test _reconnect handles unknown server gracefully."""
         manager = MCPClientManager(server_configs=[])
 
-        # Should not raise
-        await manager._reconnect("unknown-server")
+        result = await manager._reconnect("unknown-server")
+        assert result is None
+        assert "unknown-server" not in manager._connections
 
     @pytest.mark.asyncio
     async def test_reconnect_handles_failure(self):
@@ -1349,8 +1357,9 @@ class TestMCPClientManagerReconnect:
             "_connect_server",
             side_effect=Exception("Reconnect failed"),
         ):
-            # Should not raise
-            await manager._reconnect("test-server")
+            result = await manager._reconnect("test-server")
+            assert result is None
+            assert "test-server" not in manager._connections
 
 
 class TestMCPClientManagerServerConfig:
@@ -1472,21 +1481,15 @@ class TestMCPClientManagerMonitorHealth:
         )
         manager._running = True
 
-        # Start monitoring
-        task = asyncio.create_task(manager._monitor_health())
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
 
-        # Wait for a health check
-        await asyncio.sleep(0.05)
-
-        # Stop monitoring
-        manager._running = False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
 
         mock_connection.health_check.assert_called()
+        assert mock_connection.health_check.call_count >= 1
+        assert mock_connection.health_check.call_args is not None
 
     @pytest.mark.asyncio
     async def test_monitor_health_triggers_reconnect_on_unhealthy(self):
@@ -1537,6 +1540,115 @@ class TestMCPClientManagerMonitorHealth:
                 await task
             except asyncio.CancelledError:
                 pass
+            assert mock_connection.health_check.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_monitor_health_keeps_transient_failure_below_warning(self, caplog):
+        """Transient health failures are tracked without warning-level log noise."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        mock_connection = AsyncMock()
+        mock_connection.is_connected = True
+        mock_connection.health_check.return_value = False
+        manager._connections["test-server"] = mock_connection
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+        )
+        manager._running = True
+        caplog.set_level("WARNING", logger="gobby.mcp_proxy.manager")
+
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
+
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
+
+        assert manager.health["test-server"].consecutive_failures == 1
+        assert "Health check failed for test-server" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_monitor_health_warns_on_unhealthy_transition(self, caplog):
+        """A server emits one warning when it crosses into unhealthy state."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        mock_connection = AsyncMock()
+        mock_connection.is_connected = True
+        mock_connection.health_check.return_value = False
+        manager._connections["test-server"] = mock_connection
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+            health=HealthState.DEGRADED,
+            consecutive_failures=4,
+        )
+        manager._running = True
+        caplog.set_level("WARNING", logger="gobby.mcp_proxy.manager")
+
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
+
+        with (
+            patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval),
+            patch.object(manager, "_reconnect", new_callable=AsyncMock),
+        ):
+            await manager._monitor_health()
+
+        assert manager.health["test-server"].health == HealthState.UNHEALTHY
+        assert "Health check failed for test-server" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_monitor_health_debugs_repeated_unhealthy_failure_with_context(self, caplog):
+        """Repeated unhealthy health failures are logged at debug with context."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        mock_connection = AsyncMock()
+        mock_connection.is_connected = True
+        mock_connection.health_check.return_value = False
+        manager._connections["test-server"] = mock_connection
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+            health=HealthState.UNHEALTHY,
+            consecutive_failures=5,
+        )
+        manager._running = True
+        caplog.set_level("DEBUG", logger="gobby.mcp.manager")
+
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
+
+        with (
+            patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval),
+            patch.object(manager, "_reconnect", new_callable=AsyncMock),
+        ):
+            await manager._monitor_health()
+
+        debug_records = [
+            record
+            for record in caplog.records
+            if record.levelname == "DEBUG"
+            and record.message == "Health check failed for test-server"
+        ]
+        assert debug_records
+        assert debug_records[0].server_name == "test-server"
+        assert debug_records[0].previous_health == HealthState.UNHEALTHY.value
+        assert debug_records[0].consecutive_failures == 6
 
     @pytest.mark.asyncio
     async def test_monitor_health_continues_when_no_connections(self):
@@ -1552,17 +1664,11 @@ class TestMCPClientManagerMonitorHealth:
         mock_connection.is_connected = False
         manager._connections["test-server"] = mock_connection
 
-        task = asyncio.create_task(manager._monitor_health())
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
 
-        # Wait for a few iterations
-        await asyncio.sleep(0.05)
-
-        manager._running = False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
 
         # Should not have called health_check since not connected
         assert (
@@ -1595,19 +1701,14 @@ class TestMCPClientManagerMonitorHealth:
         )
         manager._running = True
 
-        task = asyncio.create_task(manager._monitor_health())
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
 
-        # Let it run for a bit with exceptions
-        await asyncio.sleep(0.05)
+        with patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval):
+            await manager._monitor_health()
 
-        manager._running = False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-        # Should have continued running despite exceptions
+        assert mock_connection.health_check.await_count >= 1
+        assert manager.health["test-server"].consecutive_failures >= 1
 
 
 class TestMCPClientManagerConnectAllEager:
@@ -1732,11 +1833,11 @@ class TestMCPClientManagerConcurrentConnection:
         manager = MCPClientManager(server_configs=[config])
 
         mock_session = MagicMock()
+        connect_started = asyncio.Event()
         connection_established = asyncio.Event()
 
         async def simulate_concurrent_connect():
-            # Wait for test to acquire lock first
-            await asyncio.sleep(0.01)
+            await connect_started.wait()
             # Simulate another coroutine connecting while we wait
             mock_connection = MagicMock()
             mock_connection.is_connected = True
@@ -1746,6 +1847,7 @@ class TestMCPClientManagerConcurrentConnection:
 
         async def slow_connect(cfg):
             # Wait for "concurrent" connection to complete
+            connect_started.set()
             await connection_established.wait()
             return mock_session
 

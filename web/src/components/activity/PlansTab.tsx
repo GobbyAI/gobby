@@ -1,6 +1,7 @@
 import { memo, useEffect } from 'react'
 import type { Artifact } from '../../types/artifacts'
 import { ArtifactPanel } from '../chat/artifacts/ArtifactPanel'
+import { ActivityPanelEmpty, PlansEmptyIcon } from './ActivityPanelEmpty'
 
 interface PlansTabProps {
   artifacts: Map<string, Artifact>
@@ -44,12 +45,11 @@ export const PlansTab = memo(function PlansTab({
 
   if (!latestPlan) {
     return (
-      <div className="activity-tab-empty">
-        <p>No plans yet</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Plans will appear here when the agent proposes one for review
-        </p>
-      </div>
+      <ActivityPanelEmpty
+        icon={<PlansEmptyIcon />}
+        heading="Plans"
+        body="Plans appear here when the agent proposes one for review"
+      />
     )
   }
 

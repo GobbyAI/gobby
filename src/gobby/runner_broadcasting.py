@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 # Module-level reference so broadcast_agent_event can be called directly
 # from spawn and completion paths without going through the registry.
 _agent_event_callback: Any | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineTerminalPayload:
+    execution_id: str
+    data: dict[str, Any]
 
 
 def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
@@ -174,6 +181,26 @@ def setup_pipeline_event_broadcasting(
 
     async def broadcast_pipeline_event(event: str, execution_id: str, **kwargs: Any) -> None:
         """Broadcast pipeline events via WebSocket."""
+        if event in {"pipeline_completed", "pipeline_failed", "pipeline_cancelled"}:
+            from gobby.hooks.event_handlers import _dispatch
+
+            payload = PipelineTerminalPayload(execution_id=execution_id, data=dict(kwargs))
+            db = getattr(pipeline_executor, "db", None)
+            try:
+                if event == "pipeline_completed":
+                    await asyncio.to_thread(_dispatch.on_pipeline_completed, payload, db=db)
+                elif event == "pipeline_failed":
+                    await asyncio.to_thread(_dispatch.on_pipeline_failed, payload, db=db)
+                else:
+                    await asyncio.to_thread(_dispatch.on_pipeline_cancelled, payload, db=db)
+            except Exception as exc:  # noqa: BLE001 - log and continue to broadcast
+                logger.warning(
+                    "Pipeline terminal dispatch handler raised for %s execution_id=%s: %s",
+                    event,
+                    execution_id,
+                    exc,
+                    exc_info=True,
+                )
         if websocket_server:
             await websocket_server.broadcast_pipeline_event(
                 event=event,

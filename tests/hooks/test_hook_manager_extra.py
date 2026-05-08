@@ -24,6 +24,10 @@ class TestReregisterActiveSessions:
 
             manager._reregister_active_sessions()
             mock_components.session_coordinator.reregister_active_sessions.assert_called_once()
+            assert mock_components.session_coordinator.reregister_active_sessions.call_count == 1
+            assert (
+                mock_components.session_coordinator.reregister_active_sessions.call_args is not None
+            )
 
 
 class TestDispatchSessionSummaries:
@@ -48,6 +52,8 @@ class TestDispatchSessionSummaries:
 
             # It should create a task on the running loop
             mock_loop.create_task.assert_called_once()
+            assert mock_loop.create_task.call_count == 1
+            assert mock_loop.create_task.call_args is not None
 
             # To test the side-effects of the coro, we'd have to execute it,
             # but we just verified the correct branch was taken.
@@ -77,6 +83,8 @@ class TestDispatchSessionSummaries:
             manager._dispatch_session_summaries("sess-1", done_event=event)
 
             mock_threadsafe.assert_called_once()
+            assert mock_threadsafe.call_count == 1
+            assert mock_threadsafe.call_args is not None
 
     @patch("gobby.hooks.hook_manager.asyncio.get_running_loop")
     @patch("threading.Thread")
@@ -102,8 +110,12 @@ class TestDispatchSessionSummaries:
             manager._dispatch_session_summaries("sess-1", done_event=event)
 
             mock_thread.assert_called_once()
+            assert mock_thread.call_count == 1
+            assert mock_thread.call_args is not None
             assert mock_thread.call_args[1]["daemon"] is True
             mock_thread_instance.start.assert_called_once()
+            assert mock_thread_instance.start.call_count == 1
+            assert mock_thread_instance.start.call_args is not None
 
 
 class TestDedupMemoryResults:

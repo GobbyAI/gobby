@@ -25,7 +25,7 @@ from gobby.memory.manager import MemoryManager
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.hook_assembler import HookTranscriptAssembler
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.database import DatabaseProtocol, LocalDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -130,6 +130,8 @@ class HookManagerFactory:
         completion_registry: Any | None,
         get_machine_id: Callable[[], str],
         resolve_project_id: Callable[[str | None, str | None], str],
+        database: DatabaseProtocol | None = None,
+        session_manager: SessionManager | None = None,
         code_index_trigger: Any | None = None,
     ) -> HookManagerComponents:
         """Create all HookManager subsystems.
@@ -150,6 +152,8 @@ class HookManagerFactory:
             completion_registry: Optional CompletionEventRegistry for wait-step wakeups
             get_machine_id: Callable returning machine ID
             resolve_project_id: Callable resolving project ID from (project_id, cwd)
+            database: Optional database instance to share with daemon services
+            session_manager: Optional SessionManager instance to share with daemon services
 
         Returns:
             HookManagerComponents with all wired subsystem instances
@@ -167,7 +171,11 @@ class HookManagerFactory:
                 )
 
         # Initialize core components
-        database = cls._create_database(config)
+        if session_manager is not None:
+            if database is not None and database is not session_manager.db:
+                raise ValueError("database and session_manager.db must reference the same object")
+            database = session_manager.db
+        database = cast(LocalDatabase, database or cls._create_database(config))
         daemon_client = DaemonClient(
             host=daemon_host,
             port=daemon_port,
@@ -177,7 +185,12 @@ class HookManagerFactory:
         transcript_processor = ClaudeTranscriptParser(logger_instance=hook_logger)
 
         # Create storage layer
-        storage = cls._create_storage(database, logger=hook_logger, config=config)
+        storage = cls._create_storage(
+            database,
+            logger=hook_logger,
+            config=config,
+            session_manager=session_manager,
+        )
 
         # Initialize autonomous components
         autonomous = cls._create_autonomous(database)
@@ -393,8 +406,9 @@ class HookManagerFactory:
         *,
         logger: logging.Logger,
         config: Any | None,
+        session_manager: SessionManager | None = None,
     ) -> _Storage:
-        session = SessionManager(database, logger_instance=logger, config=config)
+        session = session_manager or SessionManager(database, logger_instance=logger, config=config)
         session_task = SessionTaskManager(database)
         return _Storage(
             session=session,

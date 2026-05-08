@@ -5,12 +5,32 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query
 
-from gobby.storage.tasks._state_sql import canonical_status_case, is_ready_sql
-
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+
+def _current_stage_join_sql(task_alias: str = "task") -> str:
+    return f"""
+    LEFT JOIN task_stage_states current_stage
+      ON current_stage.task_id = {task_alias}.id
+     AND current_stage.state != 'done'
+     AND current_stage.position = (
+         SELECT MIN(stage_scan.position)
+           FROM task_stage_states stage_scan
+          WHERE stage_scan.task_id = {task_alias}.id
+            AND stage_scan.state != 'done'
+     )
+    """
+
+
+def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
+    return (
+        f"{task_alias}.closed_at IS NULL "
+        f"AND {task_alias}.escalated_at IS NULL "
+        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+    )
 
 
 def _build_filters(
@@ -60,29 +80,28 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         # --- Tasks ---
         task_stats: dict[str, Any] = {
-            "open": 0,
+            "ready": 0,
             "in_progress": 0,
             "closed": 0,
             "needs_review": 0,
             "review_approved": 0,
             "escalated": 0,
-            "ready": 0,
+            "ready_unblocked": 0,
             "blocked": 0,
             "closed_24h": 0,
         }
         try:
-            projected_status = canonical_status_case()
             rows = db.fetchall(
-                f"SELECT {projected_status} as status, COUNT(*) as cnt FROM tasks "
-                f"WHERE 1=1 {time_filter} GROUP BY status",
+                "SELECT task.state_bucket as task_state, COUNT(*) as cnt FROM tasks task "
+                f"WHERE 1=1 {time_filter} GROUP BY task_state",
                 tuple(params),
             )
             for row in rows:
-                status = row["status"]
-                if status in task_stats:
-                    task_stats[status] = row["cnt"]
+                state = row["task_state"]
+                if state in task_stats:
+                    task_stats[state] = row["cnt"]
 
-            # Ready = canonically executable tasks with no unresolved blocking deps
+            # Available ready work with no unresolved blocking deps.
             tf_aliased, _ = _build_filters(
                 hours,
                 days,
@@ -92,7 +111,12 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             )
             ready_rows = db.fetchall(
                 "SELECT COUNT(*) as cnt FROM tasks t "
-                f"WHERE {is_ready_sql('t')} "
+                f"{_current_stage_join_sql('t')} "
+                f"WHERE {_not_closed_or_escalated_sql('t')} "
+                "AND ("
+                "  current_stage.state IN ('ready', 'in_progress') "
+                "  OR NOT EXISTS (SELECT 1 FROM task_stage_states s WHERE s.task_id = t.id)"
+                ") "
                 f"{tf_aliased} "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM task_dependencies td "
@@ -101,7 +125,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 ")",
                 tuple(params),
             )
-            task_stats["ready"] = ready_rows[0]["cnt"] if ready_rows else 0
+            task_stats["ready_unblocked"] = ready_rows[0]["cnt"] if ready_rows else 0
 
             # Blocked = unresolved tasks with unresolved blocking deps
             blocked_rows = db.fetchall(

@@ -5,6 +5,7 @@ which handle installing and uninstalling Gobby hooks for Claude Code CLI.
 """
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -103,16 +104,20 @@ class TestInstallClaude:
             result = install_claude(temp_project, mode="project")
 
         assert result["success"] is True
+        assert result["hooks_installed"]
         assert result["error"] is None
         assert "SessionStart" in result["hooks_installed"]
         assert "PreToolUse" in result["hooks_installed"]
         assert result["workflows_installed"] == []  # DB-managed
         assert "memory/" in result["commands_installed"]
         assert result["mcp_configured"] is True
+        assert result["trust"]["success"] is True
 
         # Verify .claude directory structure was created
         assert (temp_project / ".claude").exists()
         assert (temp_project / ".claude" / "settings.json").exists()
+        assert os.environ["GOBBY_HOME"] in result["trust"]["paths"]
+        assert any((mock_home_dir / ".claude" / "projects").iterdir())
         with open(temp_project / ".claude" / "settings.json") as f:
             settings = json.load(f)
         assert settings["statusLine"]["type"] == "command"
@@ -534,6 +539,8 @@ class TestInstallClaude:
 
         # Global hooks were installed
         mock_global_hooks.assert_called_once()
+        assert mock_global_hooks.call_count == 1
+        assert mock_global_hooks.call_args is not None
 
     @patch("gobby.cli.installers.claude.install_global_hooks")
     @patch("gobby.cli.installers.claude.get_install_dir")
@@ -565,6 +572,8 @@ class TestInstallClaude:
 
         assert result["success"] is True
         mock_global_hooks.assert_called_once()
+        assert mock_global_hooks.call_count == 1
+        assert mock_global_hooks.call_args is not None
 
 
 class TestUninstallClaude:
@@ -1002,6 +1011,7 @@ class TestInstallClaudeEdgeCases:
             result = install_claude(temp_project, mode="project")
 
         assert result["success"] is True
+        assert result["hooks_installed"]
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.install_shared_content")
@@ -1035,6 +1045,7 @@ class TestInstallClaudeEdgeCases:
             result = install_claude(unicode_project, mode="project")
 
         assert result["success"] is True
+        assert (unicode_project / ".claude" / "settings.json").exists()
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.install_shared_content")
@@ -1072,6 +1083,7 @@ class TestInstallClaudeEdgeCases:
             "commands_installed",
             "mcp_configured",
             "mcp_already_configured",
+            "trust",
             "error",
             "plugins_installed",
             "agents_installed",
@@ -1086,6 +1098,7 @@ class TestInstallClaudeEdgeCases:
         assert isinstance(result["agents_installed"], list)
         assert isinstance(result["mcp_configured"], bool)
         assert isinstance(result["mcp_already_configured"], bool)
+        assert isinstance(result["trust"], dict)
 
 
 class TestCleanProjectHooks:

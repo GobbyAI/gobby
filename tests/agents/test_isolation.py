@@ -6,7 +6,7 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,8 +18,10 @@ from gobby.agents.isolation import (
     SpawnConfig,
     WorktreeIsolationHandler,
     _patch_mcp_config_for_isolation,
+    ensure_isolation_code_index,
     generate_branch_name,
     get_isolation_handler,
+    provider_mcp_config_error,
 )
 
 pytestmark = pytest.mark.unit
@@ -63,6 +65,45 @@ class TestIsolationContext:
         )
 
         assert ctx.extra["main_repo_path"] == "/path/to/main"
+
+
+class TestEnsureIsolationCodeIndex:
+    """Tests for pre-spawn gcode indexing in isolated workspaces."""
+
+    @pytest.mark.asyncio
+    async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
+        proc = AsyncMock()
+        proc.returncode = 0
+        proc.communicate.return_value = (b"", b"")
+
+        with (
+            patch("gobby.utils.native_bin.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.isolation.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ) as create_proc,
+        ):
+            await ensure_isolation_code_index(str(tmp_path))
+
+        create_proc.assert_awaited_once()
+        assert create_proc.call_args.args[:3] == ("/tmp/gcode", "index", "--quiet")
+        assert create_proc.call_args.kwargs["cwd"] == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
+        proc = AsyncMock()
+        proc.returncode = 2
+        proc.communicate.return_value = (b"", b"parse failed")
+
+        with (
+            patch("gobby.utils.native_bin.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.isolation.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="gcode_index_failed:2:parse failed"):
+                await ensure_isolation_code_index(str(tmp_path))
 
 
 class TestSpawnConfig:
@@ -299,8 +340,9 @@ class TestNoneIsolationHandler:
             parent_session_id="sess",
         )
 
-        # Should not raise
-        await handler.cleanup_environment(config)
+        result = await handler.cleanup_environment(config)
+        assert result is None
+        assert handler.build_context_prompt("prompt", IsolationContext(cwd="/path")) == "prompt"
 
     def test_is_isolation_handler_subclass(self) -> None:
         """Test NoneIsolationHandler is a subclass of IsolationHandler."""
@@ -393,11 +435,22 @@ class TestWorktreeIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        with patch("pathlib.Path.is_dir", return_value=True):
+        with (
+            patch("pathlib.Path.is_dir", return_value=True),
+            patch(
+                "gobby.agents.isolation.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
+        ):
             ctx = await handler.prepare_environment(config)
 
         assert ctx.worktree_id == "existing-wt-456"
         assert ctx.cwd == "/tmp/worktrees/existing-branch"
+        repair.assert_awaited_once_with(
+            main_repo_path="/path/to/main/repo",
+            isolated_path="/tmp/worktrees/existing-branch",
+            provider="claude",
+        )
         # Should NOT create a new worktree
         mock_git_manager.create_worktree.assert_not_called()
 
@@ -618,6 +671,8 @@ class TestWorktreeIsolationHandler:
                 "/path/to/main/repo",
                 handler._generate_worktree_path("my-branch", "repo"),
             )
+            assert mock_ensure.call_count == 1
+            assert mock_ensure.call_args is not None
 
     def test_is_isolation_handler_subclass(self) -> None:
         """Test WorktreeIsolationHandler is a subclass of IsolationHandler."""
@@ -804,11 +859,22 @@ class TestCloneIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        with patch("pathlib.Path.is_dir", return_value=True):
+        with (
+            patch("pathlib.Path.is_dir", return_value=True),
+            patch(
+                "gobby.agents.isolation.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
+        ):
             ctx = await handler.prepare_environment(config)
 
         assert ctx.clone_id == "existing-clone-456"
         assert ctx.cwd == "/tmp/clones/existing-branch"
+        repair.assert_awaited_once_with(
+            main_repo_path="/path/to/main/repo",
+            isolated_path="/tmp/clones/existing-branch",
+            provider="claude",
+        )
         # Should NOT create a new clone
         mock_clone_manager.create_clone.assert_not_called()
 
@@ -1012,6 +1078,8 @@ class TestCloneIsolationHandler:
                 "/path/to/source/repo",
                 handler._generate_clone_path("my-branch", "repo"),
             )
+            assert mock_ensure.call_count == 1
+            assert mock_ensure.call_args is not None
 
     def test_is_isolation_handler_subclass(self) -> None:
         """Test CloneIsolationHandler is a subclass of IsolationHandler."""
@@ -1155,3 +1223,48 @@ class TestPatchMcpConfigForIsolation:
 
         # Verify warning was logged
         assert any("Failed to write" in msg for msg in caplog.messages)
+
+
+class TestProviderMcpConfigPreflight:
+    """Tests for provider_mcp_config_error."""
+
+    def test_reports_missing_mcp_json(self, tmp_path: Path) -> None:
+        assert provider_mcp_config_error(str(tmp_path), "gemini").startswith(
+            "provider_mcp_config_missing:"
+        )
+
+    def test_accepts_non_claude_mcp_json(self, tmp_path: Path) -> None:
+        (tmp_path / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gobby": {
+                            "command": "uv",
+                            "args": ["run", "--project", "/main", "gobby", "mcp-server"],
+                        }
+                    }
+                }
+            )
+        )
+
+        assert provider_mcp_config_error(str(tmp_path), "gemini") is None
+
+    def test_requires_claude_project_config(self, tmp_path: Path) -> None:
+        (tmp_path / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gobby": {
+                            "command": "uv",
+                            "args": ["run", "--project", "/main", "gobby", "mcp-server"],
+                        }
+                    }
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            error = provider_mcp_config_error(str(tmp_path), "claude")
+
+        assert error is not None
+        assert error.startswith("provider_mcp_config_missing:")

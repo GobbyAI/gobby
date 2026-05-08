@@ -12,7 +12,7 @@ type SessionDetailMock = {
   transcriptStatus: { content_state: string } | null;
 };
 
-const mockUseSessionDetail = vi.fn<() => SessionDetailMock>(() => ({
+const mockUseSessionDetail = vi.fn<(sessionId?: string | null) => SessionDetailMock>(() => ({
   session: null,
   messages: [],
   isLoading: false,
@@ -30,7 +30,7 @@ vi.mock("../../shared/SourceIcon", () => ({
 }));
 
 vi.mock("../../../hooks/useSessionDetail", () => ({
-  useSessionDetail: () => mockUseSessionDetail(),
+  useSessionDetail: (sessionId?: string | null) => mockUseSessionDetail(sessionId),
 }));
 
 vi.mock("../../chat/MessageItem", () => ({
@@ -199,6 +199,10 @@ const PIPELINE_SESSION = makeSession({
 
 describe("SessionsTab", () => {
   beforeEach(() => {
+    // SessionsTab persists the watched session id in localStorage. Without
+    // clearing, a prior test's selection leaks into the next one and trips
+    // selectedEntry-gated UI (Summary/Resume/Swap buttons render against null).
+    localStorage.clear();
     mockUseSessionDetail.mockReset();
     mockUseSessionDetail.mockReturnValue({
       session: PAUSED_SESSION,
@@ -245,7 +249,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
     expect(screen.queryByText("#204: Pipeline Session")).toBeNull();
 
-    fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "paused-ext-1" },
     });
     await waitFor(() => {
@@ -253,18 +257,33 @@ describe("SessionsTab", () => {
       expect(screen.queryByText("#201: Live Terminal")).toBeNull();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
+    fireEvent.change(screen.getByPlaceholderText("Search"), {
       target: { value: "" },
     });
-    fireEvent.change(screen.getByLabelText("Session status filter"), {
-      target: { value: "expired" },
-    });
+    fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
       expect(screen.getByText("#203: Expired Terminal")).toBeInTheDocument();
     });
     expect(screen.queryByText("#202: Paused Terminal")).toBeNull();
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
+  });
+
+  it("renders the Live | Expired status filter as a SegmentedControl", async () => {
+    render(<SessionsTab sessions={[LIVE_SESSION]} focusSessionId="live-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#201: Live Terminal")).toBeInTheDocument();
+    });
+
+    const liveRadio = screen.getByRole("radio", { name: "Live" });
+    const expiredRadio = screen.getByRole("radio", { name: "Expired" });
+    expect(liveRadio).toHaveAttribute("aria-checked", "true");
+    expect(expiredRadio).toHaveAttribute("aria-checked", "false");
+    // Active uses the subdued tint, not the saturated bg-accent fill —
+    // the SegmentedControl primitive deliberately does not expose the
+    // saturated variant. See impeccable §absolute_bans / Pass 6.
+    expect(liveRadio).toHaveClass("bg-accent/15");
   });
 
   it("shows active/paused agent sessions in Live but excludes terminal agent statuses", async () => {
@@ -290,9 +309,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#209: Errored Agent Terminal")).toBeNull();
     expect(screen.queryByText("#210: Cancelled Agent Terminal")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("Session status filter"), {
-      target: { value: "expired" },
-    });
+    fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
       expect(screen.queryByText("#206: Running Agent Terminal")).toBeNull();
@@ -370,9 +387,90 @@ describe("SessionsTab", () => {
       sessionType: "terminal",
       agentRunId: null,
     });
-
-    fireEvent.click(screen.getByRole("button", { name: "Transcript" }));
+    expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
     expect(screen.getByText("Transcript output")).toBeInTheDocument();
+  });
+
+  it("resets summary mode when focus targets the selected parked session", async () => {
+    const onFocusHandled = vi.fn();
+    const { rerender } = render(
+      <SessionsTab sessions={[PAUSED_SESSION]} onFocusHandled={onFocusHandled} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
+      "# Session Summary",
+    );
+
+    rerender(
+      <SessionsTab
+        sessions={[PAUSED_SESSION]}
+        focusSessionId="paused-1"
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+      expect(screen.getByText("Transcript output")).toBeInTheDocument();
+    });
+    expect(onFocusHandled).toHaveBeenCalled();
+  });
+
+  it("scrolls the watching transcript to bottom when selecting another session", async () => {
+    localStorage.removeItem("gobby-watching-session-id");
+    const scrollIntoView = vi.fn();
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      "scrollIntoView",
+    );
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      mockUseSessionDetail.mockImplementation((sessionId) => ({
+        session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+        messages: [
+          {
+            id: `msg-${sessionId ?? "none"}`,
+            role: "assistant",
+            content: `Transcript output for ${sessionId ?? "none"}`,
+            timestamp: "2026-04-08T12:11:00Z",
+          },
+        ],
+        isLoading: false,
+        transcriptStatus: null,
+      }));
+
+      render(
+        <SessionsTab
+          sessions={[LIVE_SESSION, PAUSED_SESSION]}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Transcript output for paused-1")).toBeInTheDocument();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.click(screen.getByText("#201: Live Terminal"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+      });
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", originalDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    }
   });
 
   it("keeps session token accounting out of the sessions list UI", async () => {
@@ -413,9 +511,7 @@ describe("SessionsTab", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Session status filter"), {
-      target: { value: "expired" },
-    });
+    fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
       expect(screen.getByText("Session has no transcript")).toBeInTheDocument();

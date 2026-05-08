@@ -9,8 +9,38 @@ import { SkillForm } from './SkillForm'
 import type { SkillFormData } from './SkillForm'
 import { SkillHubBrowser } from './SkillHubBrowser'
 import { SkillImportModal } from './SkillImportModal'
-import '../workflows/WorkflowsPage.css'
-import './SkillsPage.css'
+import { cn } from '../../lib/utils'
+import {
+  WORKFLOWS_PAGE_CLS,
+  WORKFLOWS_TOOLBAR_CLS,
+  WORKFLOWS_TOOLBAR_LEFT_CLS,
+  WORKFLOWS_TOOLBAR_TITLE_CLS,
+  WORKFLOWS_TOOLBAR_RIGHT_CLS,
+  WORKFLOWS_TOOLBAR_BTN_CLS,
+  WORKFLOWS_NEW_BTN_CLS,
+  WORKFLOWS_FILTER_BAR_CLS,
+  WORKFLOWS_FILTER_WRAPPER_CLS,
+  WORKFLOWS_FILTER_BTN_CLS,
+  WORKFLOWS_FILTER_BADGE_CLS,
+  WORKFLOWS_FILTER_POPOVER_CLS,
+  WORKFLOWS_FILTER_POPOVER_SECTION_CLS,
+  WORKFLOWS_FILTER_POPOVER_LABEL_CLS,
+  WORKFLOWS_FILTER_POPOVER_CHIPS_CLS,
+  WORKFLOWS_FILTER_CHIP_CLS,
+  WORKFLOWS_FILTER_CHIP_ACTIVE_CLS,
+  WORKFLOWS_SEARCH_CLS,
+  WORKFLOWS_CONTENT_CLS,
+  WORKFLOWS_LOADING_CLS,
+} from '../workflows/workflows-styles'
+
+const ERROR_TOAST_CLS =
+  'fixed right-5 top-[60px] z-[1000] cursor-pointer appearance-none rounded-md border-0 bg-[var(--color-error)] px-4 py-2 text-left text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fadeIn_0.2s_ease]'
+
+const VIEW_TOGGLE_CLS =
+  'flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5'
+const VIEW_BTN_CLS =
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0 text-[var(--text-muted)] transition-[background-color,color] duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const VIEW_BTN_ACTIVE_CLS = 'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]'
 
 type ActiveTab = 'installed' | 'hub'
 type SourceFilter = 'installed' | 'project' | 'deleted'
@@ -64,7 +94,6 @@ export function SkillsPage() {
   const [showFilterPopover, setShowFilterPopover] = useState(false)
   const filterRef = useRef<HTMLDivElement>(null)
 
-  // Click-outside to close popover
   useEffect(() => {
     if (!showFilterPopover) return
     const handleMouseDown = (e: MouseEvent) => {
@@ -81,7 +110,6 @@ export function SkillsPage() {
     setTimeout(() => setErrorMessage(null), 4000)
   }, [])
 
-  // Apply source filter + search + source type filter to skills
   const filteredSkills = useMemo(() => {
     let result = skills
 
@@ -231,31 +259,34 @@ export function SkillsPage() {
   const activeFilterCount = sourceFilter !== 'installed' ? 1 : 0
 
   return (
-    <main className="workflows-page">
+    <main className={WORKFLOWS_PAGE_CLS}>
       {ConfirmDialogElement}
       {errorMessage && (
-        <div className="skills-error-toast" onClick={() => setErrorMessage(null)}>
+        <button
+          type="button"
+          className={ERROR_TOAST_CLS}
+          onClick={() => setErrorMessage(null)}
+          aria-label={`Dismiss error: ${errorMessage}`}
+        >
           {errorMessage}
-        </div>
+        </button>
       )}
 
-      {/* Title row */}
-      <div className="workflows-toolbar">
-        <div className="workflows-toolbar-left">
-          <h2 className="workflows-toolbar-title">Skills</h2>
-          <span className="workflows-toolbar-count">{stats?.total ?? 0}</span>
+      <div className={WORKFLOWS_TOOLBAR_CLS}>
+        <div className={WORKFLOWS_TOOLBAR_LEFT_CLS}>
+          <h1 className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Skills</h1>
         </div>
-        <div className="workflows-toolbar-right">
-          <div className="skills-view-toggle" style={{ marginRight: activeTab === 'installed' ? '8px' : '0' }}>
+        <div className={WORKFLOWS_TOOLBAR_RIGHT_CLS}>
+          <div className={cn(VIEW_TOGGLE_CLS, activeTab === 'installed' && 'mr-2')}>
             <button
-              className={`skills-view-btn ${activeTab === 'installed' ? 'skills-view-btn--active' : ''}`}
+              className={cn(VIEW_BTN_CLS, activeTab === 'installed' && VIEW_BTN_ACTIVE_CLS)}
               onClick={() => setActiveTab('installed')}
               title="Library"
             >
               <LibraryIcon />
             </button>
             <button
-              className={`skills-view-btn ${activeTab === 'hub' ? 'skills-view-btn--active' : ''}`}
+              className={cn(VIEW_BTN_CLS, activeTab === 'hub' && VIEW_BTN_ACTIVE_CLS)}
               onClick={() => setActiveTab('hub')}
               title="Hub Browser"
             >
@@ -264,51 +295,53 @@ export function SkillsPage() {
           </div>
           {activeTab === 'installed' && (
             <>
-              <button className="workflows-toolbar-btn" onClick={() => setShowImport(true)} title="Import">
+              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={() => setShowImport(true)} title="Import">
                 <ImportIcon />
               </button>
-              <button className="workflows-toolbar-btn" onClick={handleRestore} title="Restore Defaults">
+              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={handleRestore} title="Restore Defaults">
                 <RestoreIcon />
               </button>
-              <button className="workflows-new-btn" onClick={handleCreate}>+ New</button>
+              <button className={WORKFLOWS_NEW_BTN_CLS} onClick={handleCreate}>+ New</button>
             </>
           )}
         </div>
       </div>
 
-      {/* Filter row */}
-      <div className="workflows-filter-row">
+      <div className={WORKFLOWS_FILTER_BAR_CLS}>
         {activeTab === 'installed' && (
           <input
-            className="workflows-search"
+            className={WORKFLOWS_SEARCH_CLS}
             type="text"
             value={searchText}
             onChange={handleSearch}
-            placeholder="Search..."
+            placeholder="Search"
           />
         )}
         {activeTab === 'installed' && (
-          <div className="workflows-filter-wrapper" ref={filterRef}>
+          <div className={WORKFLOWS_FILTER_WRAPPER_CLS} ref={filterRef}>
             <button
               type="button"
-              className="workflows-filter-btn"
+              className={WORKFLOWS_FILTER_BTN_CLS}
               onClick={() => setShowFilterPopover(v => !v)}
             >
               Filter
               {activeFilterCount > 0 && (
-                <span className="workflows-filter-badge">{activeFilterCount}</span>
+                <span className={WORKFLOWS_FILTER_BADGE_CLS}>{activeFilterCount}</span>
               )}
             </button>
             {showFilterPopover && (
-              <div className="workflows-filter-popover">
-                <div className="workflows-filter-popover-section">
-                  <div className="workflows-filter-popover-label">Source</div>
-                  <div className="workflows-filter-popover-chips">
+              <div className={WORKFLOWS_FILTER_POPOVER_CLS}>
+                <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+                  <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Source</div>
+                  <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
                     {SOURCE_OPTIONS.map(opt => (
                       <button
                         key={opt.value}
                         type="button"
-                        className={`workflows-filter-chip ${sourceFilter === opt.value ? 'workflows-filter-chip--active' : ''}`}
+                        className={cn(
+                          WORKFLOWS_FILTER_CHIP_CLS,
+                          sourceFilter === opt.value && WORKFLOWS_FILTER_CHIP_ACTIVE_CLS,
+                        )}
                         onClick={() => handleSourceFilter(opt.value)}
                       >
                         {opt.label}
@@ -322,7 +355,6 @@ export function SkillsPage() {
         )}
       </div>
 
-      {/* Installed View */}
       {activeTab === 'installed' && (
         <>
           <SkillsFilters
@@ -334,9 +366,9 @@ export function SkillsPage() {
             onClear={handleClearFilters}
           />
 
-          <div className="workflows-content">
+          <div className={WORKFLOWS_CONTENT_CLS}>
             {isLoading ? (
-              <div className="workflows-loading">Loading skills...</div>
+              <div className={WORKFLOWS_LOADING_CLS}>Loading skills...</div>
             ) : (
               <SkillsGrid
                 skills={filteredSkills}
@@ -355,9 +387,8 @@ export function SkillsPage() {
         </>
       )}
 
-      {/* Hub View */}
       {activeTab === 'hub' && (
-        <div className="workflows-content">
+        <div className={WORKFLOWS_CONTENT_CLS}>
           <SkillHubBrowser
             hubs={hubs}
             hubResults={hubResults}
@@ -370,7 +401,6 @@ export function SkillsPage() {
         </div>
       )}
 
-      {/* Detail slide-out */}
       {selectedSkill && (
         <SkillDetail
           skill={selectedSkill}
@@ -381,7 +411,6 @@ export function SkillsPage() {
         />
       )}
 
-      {/* Create/Edit modal */}
       {showForm && (
         <SkillForm
           skill={editSkill}
@@ -390,7 +419,6 @@ export function SkillsPage() {
         />
       )}
 
-      {/* Import modal */}
       {showImport && (
         <SkillImportModal
           onImport={handleImport}

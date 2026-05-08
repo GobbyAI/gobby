@@ -1,6 +1,7 @@
 """Tests for run-oriented task expansion MCP tools."""
 
 import asyncio
+import textwrap
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -114,7 +116,48 @@ def _compiled_spec() -> dict:
     }
 
 
+def _write_plan_missing_target(tmp_path) -> str:
+    path = tmp_path / "plan.md"
+    path.write_text(
+        textwrap.dedent(
+            """
+            > **Plan ID:** missing-target
+
+            # Missing Target
+
+            ## P1: Work
+            `kind: framing`
+
+            ### 1.1 Work [category: code]
+            `kind: deliverable`
+
+            Update implementation.
+
+            **Acceptance:**
+            - 1.1.1 - Implementation exists. file: `src/app.py`.
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 class TestExpansionRuns:
+    @pytest.mark.asyncio
+    async def test_validate_plan_file_returns_semantic_lint_errors(
+        self,
+        expansion_registry,
+        tmp_path,
+    ) -> None:
+        result = await expansion_registry.call(
+            "validate_plan_file",
+            {"plan_file": _write_plan_missing_target(tmp_path)},
+        )
+
+        assert result["valid"] is False
+        assert any("target-coverage" in error for error in result["errors"])
+        assert result["semantic_lint"]["valid"] is False
+
     @pytest.mark.asyncio
     async def test_start_expansion_run_creates_run(
         self,
@@ -134,7 +177,7 @@ class TestExpansionRuns:
                     "start_expansion_run",
                     {"task_id": parent_task, "auto_apply": False},
                 )
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
         assert result["success"] is True
         assert result["status"] == "running"
@@ -274,7 +317,7 @@ class TestExpansionRuns:
                     "resume_expansion_run",
                     {"run_id": run.id},
                 )
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
         assert result["success"] is True
         assert result["status"] == "running"

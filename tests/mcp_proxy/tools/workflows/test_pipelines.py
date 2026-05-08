@@ -97,8 +97,7 @@ class TestAutoSubscribeLineage:
         registry = MagicMock()
         registry.register.side_effect = RuntimeError("register failed")
 
-        # Should not raise
-        _auto_subscribe_lineage(
+        result = _auto_subscribe_lineage(
             completion_registry=registry,
             completion_id="pe-1",
             session_id="sess-1",
@@ -106,6 +105,8 @@ class TestAutoSubscribeLineage:
             continuation_prompt=None,
             db=None,
         )
+        assert result is None
+        assert registry.register.call_count == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -228,6 +229,8 @@ class TestRegisterPipelineTools:
         ):
             register_pipeline_tools(registry, db=db)
             MockDM.assert_called_once_with(db)
+            assert MockDM.call_count == 1
+            assert MockDM.call_args is not None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -380,8 +383,9 @@ class TestRegisterExposedPipelineTools:
         )
 
         registry = InternalToolRegistry("test")
-        # Should not raise
-        _register_exposed_pipeline_tools(registry, None, lambda: None)
+        result = _register_exposed_pipeline_tools(registry, None, lambda: None)
+        assert result is None
+        assert registry._tools == {}
 
     def test_handles_discovery_error(self) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import (
@@ -392,8 +396,9 @@ class TestRegisterExposedPipelineTools:
         loader = MagicMock()
         loader.discover_pipeline_workflows_sync.side_effect = RuntimeError("discover failed")
 
-        # Should not raise
-        _register_exposed_pipeline_tools(registry, loader, lambda: None)
+        result = _register_exposed_pipeline_tools(registry, loader, lambda: None)
+        assert result is None
+        assert registry._tools == {}
 
     def test_skips_non_exposed_pipelines(self) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import (

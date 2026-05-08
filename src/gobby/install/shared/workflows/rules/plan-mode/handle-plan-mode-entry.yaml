@@ -10,3 +10,22 @@ rules:
     effects:
       - type: load_skill
         skill: plan
+
+  teach-gemini-qwen-gcode-plan-mode:
+    description: "Teach Gemini/Qwen that gcode is allowed for code navigation in plan mode"
+    event: turn_start
+    enabled: true
+    priority: 11
+    when: >
+      variables.get('plan_mode')
+      and source in ('gemini', 'qwen')
+      and not variables.get('gemini_qwen_gcode_plan_hint_shown')
+    effects:
+      - type: inject_context
+        template: |
+          Gemini/Qwen plan mode permits `gcode` through shell command execution for code navigation.
+          Use `gcode outline path/to/file`, `gcode search "query"`, and `gcode symbol <full-uuid>` when inspecting code. Get full UUIDs from search or outline results.
+          File edits and write/destructive shell commands remain blocked until plan approval.
+      - type: set_variable
+        variable: gemini_qwen_gcode_plan_hint_shown
+        value: true

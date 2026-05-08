@@ -23,7 +23,9 @@ def test_setup_internal_registries_with_merge() -> None:
     )
 
     registries = manager.get_all_registries()
-    assert any(r.name == "gobby-merge" for r in registries)
+    registry_names = [r.name for r in registries]
+    assert "gobby-merge" in registry_names
+    assert "gobby-worktrees" in registry_names
 
 
 def test_setup_with_config_none() -> None:
@@ -225,6 +227,16 @@ def test_setup_tasks_disabled_by_config() -> None:
     assert "gobby-tasks" not in registry_names
 
 
+def test_setup_plans_registry_when_db_exists_even_without_tasks(temp_db) -> None:
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+
+    manager = setup_internal_registries(_config=mock_config, db=temp_db)
+
+    registry_names = [r.name for r in manager.get_all_registries()]
+    assert "gobby-plans" in registry_names
+
+
 def test_setup_tasks_missing_task_manager() -> None:
     """Test tasks registry is not created when task_manager is None."""
     mock_config = MagicMock()
@@ -259,6 +271,27 @@ def test_setup_tasks_missing_sync_manager() -> None:
     registry_names = [r.name for r in registries]
     # Tasks should NOT be present when sync_manager is None
     assert "gobby-tasks" not in registry_names
+
+
+def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db) -> None:
+    """The stage-native build flow no longer exposes front_half_tick."""
+    from gobby.storage.tasks import LocalTaskManager
+
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = True
+
+    manager = setup_internal_registries(
+        _config=mock_config,
+        task_manager=LocalTaskManager(temp_db),
+        sync_manager=MagicMock(),
+    )
+
+    registry = manager.get_registry("gobby-tasks-ops")
+    assert registry is not None
+
+    tool_names = [tool["name"] for tool in registry.list_tools()]
+    assert "front_half_tick" not in tool_names
+    assert "build_task" in tool_names
 
 
 def test_setup_merge_requires_both_storage_and_resolver() -> None:
@@ -414,6 +447,7 @@ def test_setup_with_pipeline_executor() -> None:
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
     assert "gobby-workflows" in registry_names
+    assert len(registry_names) >= 1
 
 
 def test_setup_pipelines_always_registered_even_without_executor() -> None:

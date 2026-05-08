@@ -286,6 +286,8 @@ class TestInstallGhook:
             result = _install_ghook(force=True)
 
         mock_latest.assert_not_called()
+        assert mock_latest.call_count == 0
+        assert not mock_latest.called
         assert result["version"] == "0.1.0"
 
     def test_method_override_github(self, tmp_path: Path, _patch_platform: None) -> None:
@@ -311,7 +313,11 @@ class TestInstallGhook:
             result = _install_ghook(force=True)
 
         mock_binstall.assert_not_called()
+        assert mock_binstall.call_count == 0
+        assert not mock_binstall.called
         mock_install.assert_not_called()
+        assert mock_install.call_count == 0
+        assert not mock_install.called
         assert result["method"] == "github"
 
     def test_method_override_cargo_binstall(

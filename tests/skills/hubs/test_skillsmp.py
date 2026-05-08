@@ -1,11 +1,12 @@
 """Tests for SkillsMPProvider."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
-from gobby.skills.hubs.base import HubSkillInfo
+from gobby.skills.hubs.base import HubSkillDetails, HubSkillInfo
 from gobby.skills.hubs.skillsmp import SkillsMPProvider
 
 pytestmark = pytest.mark.unit
@@ -202,6 +203,130 @@ class TestSkillsMPListSkills:
             assert results[0].hub_name == "skillsmp"
 
 
+class TestSkillsMPDetails:
+    """Tests for SkillsMPProvider get_skill_details functionality."""
+
+    @pytest.mark.asyncio
+    async def test_get_skill_details_raises_without_api_key(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+        )
+
+        with pytest.raises(RuntimeError, match="API key not configured") as excinfo:
+            await provider.get_skill_details("openapi")
+
+        assert "gobby install" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_get_skill_details_returns_exact_search_match(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+        response = {
+            "skills": [
+                {
+                    "id": "openapi-helper",
+                    "name": "OpenAPI Helper",
+                    "description": "Wrong fuzzy match",
+                },
+                {
+                    "id": "some-other-id",
+                    "slug": "openapi",
+                    "name": "OpenAPI",
+                    "description": "Build OpenAPI specs",
+                    "version": "1.2.3",
+                    "versions": ["1.0.0", "1.2.3"],
+                    "latest_version": "1.2.3",
+                    "stars": 12,
+                    "githubUrl": "https://github.com/acme/skills/openapi/SKILL.md",
+                },
+            ]
+        }
+
+        with patch.object(provider, "_make_request", return_value=response) as request:
+            details = await provider.get_skill_details("openapi")
+
+        assert isinstance(details, HubSkillDetails)
+        assert details.slug == "some-other-id"
+        assert details.display_name == "OpenAPI"
+        assert details.description == "Build OpenAPI specs"
+        assert details.version == "1.2.3"
+        assert details.latest_version == "1.2.3"
+        assert details.versions == ["1.0.0", "1.2.3"]
+        assert details.score == 12.0
+        request.assert_awaited_once_with(
+            method="GET",
+            endpoint="/skills/search",
+            params={"q": "openapi", "limit": 10},
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_skill_details_returns_none_without_exact_match(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+
+        with patch.object(
+            provider,
+            "_make_request",
+            return_value={"skills": [{"id": "openapi-helper", "name": "OpenAPI Helper"}]},
+        ) as request:
+            details = await provider.get_skill_details("openapi")
+
+        assert details is None
+        assert request.await_args.kwargs["endpoint"] == "/skills/search"
+
+    @pytest.mark.asyncio
+    async def test_get_skill_details_tries_derived_display_name_query(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+        slug = "owner-registry-author-skills-openapi-spec-generation-skill-md"
+
+        with patch.object(
+            provider,
+            "_make_request",
+            side_effect=[
+                {"skills": [{"id": "different-openapi-skill"}]},
+                {
+                    "skills": [
+                        {
+                            "id": slug,
+                            "name": "openapi-spec-generation",
+                            "description": "Generate specs",
+                        }
+                    ]
+                },
+            ],
+        ) as request:
+            details = await provider.get_skill_details(slug)
+
+        assert details is not None
+        assert details.slug == slug
+        queries = [call.kwargs["params"]["q"] for call in request.await_args_list]
+        assert queries == [slug, "openapi-spec-generation"]
+
+    @pytest.mark.asyncio
+    async def test_get_skill_details_returns_none_for_upstream_failure(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+
+        with patch.object(provider, "_make_request", side_effect=RuntimeError("boom")):
+            details = await provider.get_skill_details("openapi")
+
+        assert details is None
+
+
 class TestSkillsMPSearchEndToEnd:
     """End-to-end regression tests for SkillsMPProvider.search() with HTTP mocked.
 
@@ -368,14 +493,142 @@ class TestSkillsMPDownload:
     """Tests for SkillsMPProvider download functionality."""
 
     @pytest.mark.asyncio
-    async def test_download_no_url_returns_error(self) -> None:
-        """Test download returns error when no download URL provided."""
+    async def test_download_raises_without_api_key_as_failed_result(self) -> None:
         provider = SkillsMPProvider(
             hub_name="skillsmp",
             base_url="https://skillsmp.com/api/v1",
         )
 
-        with patch.object(provider, "_make_request", return_value={"download_url": ""}):
+        result = await provider.download_skill("test-skill")
+
+        assert result.success is False
+        assert result.error is not None
+        assert "API key not configured" in result.error
+
+    @pytest.mark.asyncio
+    async def test_download_missing_github_url_returns_error(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+
+        with patch.object(
+            provider,
+            "_make_request",
+            return_value={"skills": [{"id": "test-skill", "skillUrl": "https://skillsmp.com/s"}]},
+        ) as request:
             result = await provider.download_skill("test-skill")
-            assert result.success is False
-            assert "No download URL" in result.error
+
+        assert result.success is False
+        assert result.error is not None
+        assert "No GitHub source URL" in result.error
+        assert request.await_args.kwargs["endpoint"] == "/skills/search"
+
+    @pytest.mark.asyncio
+    async def test_download_unsupported_github_url_returns_error(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+
+        with (
+            patch.object(
+                provider,
+                "_make_request",
+                return_value={"skills": [{"id": "test-skill", "githubUrl": "https://example.com"}]},
+            ),
+            patch("gobby.skills.hubs.skillsmp.clone_skill_repo") as clone,
+        ):
+            result = await provider.download_skill("test-skill")
+
+        assert result.success is False
+        assert result.error is not None
+        assert "Unsupported GitHub source URL" in result.error
+        clone.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_download_copies_github_skill_directory(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+        repo = tmp_path / "repo"
+        skill = repo / "skills" / "openapi"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# OpenAPI\n", encoding="utf-8")
+        (skill / "asset.txt").write_text("asset\n", encoding="utf-8")
+        target = tmp_path / "installed" / "openapi"
+
+        with (
+            patch.object(
+                provider,
+                "_make_request",
+                return_value={
+                    "skills": [
+                        {
+                            "id": "openapi",
+                            "githubUrl": "https://github.com/acme/skills/tree/main/skills/openapi",
+                        }
+                    ]
+                },
+            ) as request,
+            patch("gobby.skills.hubs.skillsmp.clone_skill_repo", return_value=repo) as clone,
+        ):
+            result = await provider.download_skill("openapi", target_dir=str(target))
+
+        assert result.success is True
+        assert result.path == str(target)
+        assert result.version == "main"
+        assert (target / "SKILL.md").read_text(encoding="utf-8") == "# OpenAPI\n"
+        assert (target / "asset.txt").read_text(encoding="utf-8") == "asset\n"
+        assert request.await_args.kwargs["endpoint"] == "/skills/search"
+        ref = clone.call_args.args[0]
+        assert ref.owner == "acme"
+        assert ref.repo == "skills"
+        assert ref.branch == "main"
+        assert ref.path == "skills/openapi"
+
+
+class TestSkillsMPGitHubUrlParsing:
+    """Tests for SkillsMP GitHub source URL parsing."""
+
+    @pytest.mark.parametrize(
+        ("url", "branch", "path"),
+        [
+            ("https://github.com/acme/skills", None, None),
+            ("https://github.com/acme/skills/tree/main/openapi", "main", "openapi"),
+            (
+                "https://github.com/acme/skills/blob/main/openapi/SKILL.md",
+                "main",
+                "openapi",
+            ),
+            (
+                "https://raw.githubusercontent.com/acme/skills/main/openapi/SKILL.md",
+                "main",
+                "openapi",
+            ),
+            ("https://github.com/acme/skills/openapi/SKILL.md", None, "openapi"),
+        ],
+    )
+    def test_parse_supported_github_urls(
+        self,
+        url: str,
+        branch: str | None,
+        path: str | None,
+    ) -> None:
+        ref = SkillsMPProvider._parse_github_url(url)
+
+        assert ref.owner == "acme"
+        assert ref.repo == "skills"
+        assert ref.branch == branch
+        assert ref.path == path
+
+    def test_parse_rejects_unsupported_url_shape(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported GitHub source URL"):
+            SkillsMPProvider._parse_github_url("https://example.com/acme/skills/SKILL.md")

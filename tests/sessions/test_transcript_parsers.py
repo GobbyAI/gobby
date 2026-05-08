@@ -5,6 +5,7 @@ Consolidated from individual files.
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
+from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
 pytestmark = pytest.mark.unit
@@ -779,6 +781,47 @@ class TestClaudeExpandLine:
         assert msgs[0].content_type == "tool_result"
         assert msgs[0].tool_name == "Read"
         assert msgs[0].tool_use_id == "toolu_xyz"
+
+    def test_parse_lines_collapses_hook_blocking_error_and_tool_result(self, parser) -> None:
+        """Claude emits hook_blocking_error and tool_result for one denied tool call."""
+        lines = [
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "hook_blocking_error",
+                    "toolUseID": "toolu_blocked",
+                    "content": "Gobby blocked [require-uv]: Use uv instead.",
+                    "timestamp": "2024-01-01T12:00:00Z",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_blocked",
+                                "content": "Gobby blocked [require-uv]: Use uv instead.",
+                                "is_error": True,
+                            }
+                        ],
+                    },
+                    "timestamp": "2024-01-01T12:00:01Z",
+                }
+            ),
+        ]
+
+        msgs = parser.parse_lines(lines)
+
+        assert len(msgs) == 1
+        msg = msgs[0]
+        assert isinstance(msg, ParsedMessage)
+        assert msg.role == "tool"
+        assert msg.content_type == "tool_result"
+        assert msg.tool_use_id == "toolu_blocked"
+        assert msg.content == "Gobby blocked [require-uv]: Use uv instead."
 
     def test_expand_unknown_type_returns_empty(self, parser) -> None:
         """Unknown message type returns empty list."""
@@ -2007,12 +2050,24 @@ class TestParserRegistry:
         assert PARSER_REGISTRY["claude"] is ClaudeTranscriptParser
         assert PARSER_REGISTRY["gemini"] is GeminiTranscriptParser
         assert PARSER_REGISTRY["codex"] is CodexTranscriptParser
+        assert PARSER_REGISTRY["droid"] is DroidTranscriptParser
 
     def test_get_parser_returns_correct_instances(self) -> None:
         """get_parser should return instances of the correct parser class."""
         assert isinstance(get_parser("claude"), ClaudeTranscriptParser)
         assert isinstance(get_parser("gemini"), GeminiTranscriptParser)
         assert isinstance(get_parser("codex"), CodexTranscriptParser)
+        assert isinstance(get_parser("droid"), DroidTranscriptParser)
+
+    def test_get_parser_threads_transcript_path_to_droid(self) -> None:
+        """Droid parser construction keeps the transcript path for sidecar lookup."""
+        transcript_path = Path("/tmp/fixture.jsonl")
+
+        parser = get_parser("droid", session_id="session-id", transcript_path=transcript_path)
+
+        assert isinstance(parser, DroidTranscriptParser)
+        assert parser._transcript_path == transcript_path
+        assert DroidTranscriptParser()._transcript_path is None
 
     def test_get_parser_unknown_source_defaults_to_claude(self) -> None:
         """Unknown source should default to ClaudeTranscriptParser."""

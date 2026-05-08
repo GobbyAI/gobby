@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 from qdrant_client import QdrantClient
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -25,10 +28,54 @@ from qdrant_client.models import (
 
 logger = logging.getLogger(__name__)
 
+_UNINITIALIZED_MESSAGE = "VectorStore not initialized. Call initialize() first."
+_INITIAL_RETRY_BACKOFF_SECONDS = 5.0
+_MAX_RETRY_BACKOFF_SECONDS = 300.0
+
 
 def _vector_size(vectors_cfg: Any) -> int | None:
     """Extract vector size from a Qdrant vectors config when available."""
     return vectors_cfg.size if isinstance(vectors_cfg, VectorParams) else None
+
+
+class VectorStoreUnavailableError(RuntimeError):
+    """Raised when Qdrant is temporarily unavailable and lazy retry is backing off."""
+
+    def __init__(self, message: str = _UNINITIALIZED_MESSAGE) -> None:
+        super().__init__(message)
+
+
+def is_recoverable_vector_store_error(error: BaseException) -> bool:
+    """Return True for transient VectorStore/Qdrant availability errors."""
+    if isinstance(error, VectorStoreUnavailableError | ResponseHandlingException):
+        return True
+    if isinstance(error, UnexpectedResponse):
+        return error.status_code is not None and 500 <= error.status_code < 600
+    return isinstance(error, httpx.TransportError)
+
+
+VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
+
+
+def log_rate_limited_warning(
+    target_logger: logging.Logger,
+    last_warned_at: float,
+    message: str,
+    error: BaseException,
+) -> float:
+    """Emit a rate-limited warning for transient VectorStore failures.
+
+    Returns the timestamp the caller should persist as the new
+    ``last_warned_at`` value. Callers that share a rate-limit window
+    (e.g., distinct services on the same VectorStore) can route their
+    warnings through this helper so the cadence is uniform.
+    """
+    now = time.monotonic()
+    if now - last_warned_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
+        target_logger.warning("%s: %s", message, error)
+        return now
+    target_logger.debug("%s: %s", message, error)
+    return last_warned_at
 
 
 class VectorStore:
@@ -60,9 +107,28 @@ class VectorStore:
         self._collection_name = collection_name
         self._embedding_dim = embedding_dim
         self._client: QdrantClient | None = None
+        self._init_lock = asyncio.Lock()
+        self._retry_backoff_seconds = _INITIAL_RETRY_BACKOFF_SECONDS
+        self._next_retry_at = 0.0
+
+    @property
+    def collection_name(self) -> str:
+        """Return the default collection name configured for this store."""
+        return self._collection_name
 
     async def initialize(self) -> None:
         """Create the Qdrant client and ensure the collection exists."""
+        async with self._init_lock:
+            try:
+                await self._initialize_locked()
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                await self.close()
+                raise
+            self._reset_retry()
+
+    async def _initialize_locked(self) -> None:
+        """Initialize the client while the caller holds _init_lock."""
         if self._client is None:
             if self._url:
                 self._client = await asyncio.to_thread(
@@ -99,15 +165,66 @@ class VectorStore:
                         f"or run 'gobby memory rebuild' to re-embed with the new model."
                     )
             except Exception as e:
+                self._raise_if_recoverable(e)
                 logger.warning(
                     f"Could not verify collection dimensions for '{self._collection_name}': {e}"
                 )
 
-    def _ensure_client(self) -> QdrantClient:
-        """Return the client, raising if not initialized."""
+    async def _ensure_initialized(self) -> QdrantClient:
+        """Return an initialized client, lazily retrying after recoverable failures."""
+        if self._client is not None:
+            return self._client
+
+        if time.monotonic() < self._next_retry_at:
+            raise VectorStoreUnavailableError()
+
+        async with self._init_lock:
+            if self._client is not None:
+                return self._client
+
+            if time.monotonic() < self._next_retry_at:
+                raise VectorStoreUnavailableError()
+
+            try:
+                await self._initialize_locked()
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                raise
+            self._reset_retry()
+
         if self._client is None:
-            raise RuntimeError("VectorStore not initialized. Call initialize() first.")
+            raise VectorStoreUnavailableError()
         return self._client
+
+    def _raise_if_recoverable(self, error: Exception) -> None:
+        if not is_recoverable_vector_store_error(error):
+            return
+        self._mark_unavailable(error)
+        raise VectorStoreUnavailableError() from error
+
+    def _mark_unavailable(self, error: BaseException) -> None:
+        client = self._client
+        self._client = None
+        if client is not None:
+            try:
+                client.close()
+            except Exception as close_error:  # noqa: BLE001 - log and proceed
+                logger.warning(
+                    "Failed to close Qdrant client during mark_unavailable: %s",
+                    close_error,
+                )
+        delay = self._retry_backoff_seconds
+        self._next_retry_at = time.monotonic() + delay
+        self._retry_backoff_seconds = min(delay * 2, _MAX_RETRY_BACKOFF_SECONDS)
+        logger.warning(
+            "VectorStore unavailable; retrying initialization in %.0fs: %s",
+            delay,
+            error,
+        )
+
+    def _reset_retry(self) -> None:
+        self._retry_backoff_seconds = _INITIAL_RETRY_BACKOFF_SECONDS
+        self._next_retry_at = 0.0
 
     async def upsert(
         self,
@@ -117,17 +234,21 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Insert or update a single point."""
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
         point = PointStruct(
             id=memory_id,
             vector=embedding,
             payload=payload or {},
         )
-        await asyncio.to_thread(
-            client.upsert,
-            collection_name=collection_name or self._collection_name,
-            points=[point],
-        )
+        try:
+            await asyncio.to_thread(
+                client.upsert,
+                collection_name=collection_name or self._collection_name,
+                points=[point],
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
     async def search(
         self,
@@ -147,7 +268,7 @@ class VectorStore:
         Returns:
             List of (memory_id, score) tuples sorted by relevance (desc).
         """
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
 
         query_filter = None
         if filters:
@@ -156,13 +277,17 @@ class VectorStore:
             ]
             query_filter = Filter(must=conditions)
 
-        results = await asyncio.to_thread(
-            client.query_points,
-            collection_name=collection_name or self._collection_name,
-            query=query_embedding,
-            query_filter=query_filter,
-            limit=limit,
-        )
+        try:
+            results = await asyncio.to_thread(
+                client.query_points,
+                collection_name=collection_name or self._collection_name,
+                query=query_embedding,
+                query_filter=query_filter,
+                limit=limit,
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
         return [(str(point.id), point.score) for point in results.points]
 
@@ -184,7 +309,7 @@ class VectorStore:
         Returns:
             List of (memory_id, score, payload) tuples sorted by relevance (desc).
         """
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
 
         query_filter = None
         if filters:
@@ -193,13 +318,17 @@ class VectorStore:
             ]
             query_filter = Filter(must=conditions)
 
-        results = await asyncio.to_thread(
-            client.query_points,
-            collection_name=collection_name or self._collection_name,
-            query=query_embedding,
-            query_filter=query_filter,
-            limit=limit,
-        )
+        try:
+            results = await asyncio.to_thread(
+                client.query_points,
+                collection_name=collection_name or self._collection_name,
+                query=query_embedding,
+                query_filter=query_filter,
+                limit=limit,
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
         return [(str(point.id), point.score, point.payload or {}) for point in results.points]
 
@@ -216,13 +345,17 @@ class VectorStore:
             payload: Payload fields to set/overwrite.
             collection_name: Optional collection name override.
         """
-        client = self._ensure_client()
-        await asyncio.to_thread(
-            client.set_payload,
-            collection_name=collection_name or self._collection_name,
-            payload=payload,
-            points=[memory_id],
-        )
+        client = await self._ensure_initialized()
+        try:
+            await asyncio.to_thread(
+                client.set_payload,
+                collection_name=collection_name or self._collection_name,
+                payload=payload,
+                points=[memory_id],
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
     async def delete(
         self,
@@ -231,7 +364,7 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Delete a point by memory ID or filter."""
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
 
         selector: PointIdsList | FilterSelector
         if memory_id:
@@ -244,11 +377,15 @@ class VectorStore:
         else:
             raise ValueError("Must provide either memory_id or filters to delete")
 
-        await asyncio.to_thread(
-            client.delete,
-            collection_name=collection_name or self._collection_name,
-            points_selector=selector,
-        )
+        try:
+            await asyncio.to_thread(
+                client.delete,
+                collection_name=collection_name or self._collection_name,
+                points_selector=selector,
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
     async def delete_many(
         self,
@@ -258,13 +395,17 @@ class VectorStore:
         """Delete multiple points by memory ID in a single batch call."""
         if not memory_ids:
             return
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
         selector = PointIdsList(points=memory_ids)
-        await asyncio.to_thread(
-            client.delete,
-            collection_name=collection_name or self._collection_name,
-            points_selector=selector,
-        )
+        try:
+            await asyncio.to_thread(
+                client.delete,
+                collection_name=collection_name or self._collection_name,
+                points_selector=selector,
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
     async def batch_upsert(
         self,
@@ -279,24 +420,29 @@ class VectorStore:
         """
         if not items:
             return
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
         points = [
             PointStruct(id=memory_id, vector=embedding, payload=payload)
             for memory_id, embedding, payload in items
         ]
-        await asyncio.to_thread(
-            client.upsert,
-            collection_name=collection_name or self._collection_name,
-            points=points,
-        )
+        try:
+            await asyncio.to_thread(
+                client.upsert,
+                collection_name=collection_name or self._collection_name,
+                points=points,
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
     async def get_collection_dimension(self, collection_name: str | None = None) -> int | None:
         """Return the vector dimension for a collection when readable."""
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
         resolved_name = collection_name or self._collection_name
         try:
             info = await asyncio.to_thread(client.get_collection, resolved_name)
         except Exception as exc:
+            self._raise_if_recoverable(exc)
             logger.warning(
                 "Failed to read Qdrant collection dimension for '%s': %s",
                 resolved_name,
@@ -314,15 +460,23 @@ class VectorStore:
             collection_name: Collection to ensure
             embedding_dim: Vector dimension (defaults to instance's _embedding_dim)
         """
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
         dim = embedding_dim or self._embedding_dim
-        exists = await asyncio.to_thread(client.collection_exists, collection_name)
+        try:
+            exists = await asyncio.to_thread(client.collection_exists, collection_name)
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
         if not exists:
-            await asyncio.to_thread(
-                client.create_collection,
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-            )
+            try:
+                await asyncio.to_thread(
+                    client.create_collection,
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+                )
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                raise
             logger.info(f"Created Qdrant collection '{collection_name}' (dim={dim})")
         else:
             try:
@@ -344,20 +498,29 @@ class VectorStore:
                         f"(dim changed {existing_dim}→{dim})"
                     )
             except Exception as e:
+                self._raise_if_recoverable(e)
                 logger.warning(f"Could not verify collection '{collection_name}': {e}")
 
     async def delete_collection(self, collection_name: str) -> None:
         """Delete a collection by name."""
-        client = self._ensure_client()
-        await asyncio.to_thread(
-            client.delete_collection,
-            collection_name=collection_name,
-        )
+        client = await self._ensure_initialized()
+        try:
+            await asyncio.to_thread(
+                client.delete_collection,
+                collection_name=collection_name,
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
     async def count(self) -> int:
         """Return the number of points in the collection."""
-        client = self._ensure_client()
-        result = await asyncio.to_thread(client.count, collection_name=self._collection_name)
+        client = await self._ensure_initialized()
+        try:
+            result = await asyncio.to_thread(client.count, collection_name=self._collection_name)
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
         count: int = result.count
         return count
 
@@ -366,8 +529,16 @@ class VectorStore:
 
         Safe to call from sync code running inside an async event loop.
         """
-        client = self._ensure_client()
-        result = client.count(collection_name=self._collection_name)
+        client = self._client
+        if client is None:
+            return 0
+        try:
+            result = client.count(collection_name=self._collection_name)
+        except Exception as exc:
+            if is_recoverable_vector_store_error(exc):
+                self._mark_unavailable(exc)
+                return 0
+            raise
         return result.count
 
     async def rebuild(
@@ -384,15 +555,19 @@ class VectorStore:
                       Other keys are stored as payload.
             embed_fn: Async function that takes content text and returns embedding.
         """
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
 
         # Delete and recreate collection for clean rebuild
-        await asyncio.to_thread(client.delete_collection, collection_name=self._collection_name)
-        await asyncio.to_thread(
-            client.create_collection,
-            collection_name=self._collection_name,
-            vectors_config=VectorParams(size=self._embedding_dim, distance=Distance.COSINE),
-        )
+        try:
+            await asyncio.to_thread(client.delete_collection, collection_name=self._collection_name)
+            await asyncio.to_thread(
+                client.create_collection,
+                collection_name=self._collection_name,
+                vectors_config=VectorParams(size=self._embedding_dim, distance=Distance.COSINE),
+            )
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
         if not memories:
             return
@@ -421,19 +596,23 @@ class VectorStore:
 
     async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
         """Return all point IDs in the collection."""
-        client = self._ensure_client()
+        client = await self._ensure_initialized()
         all_ids: list[str] = []
         offset = None
 
         while True:
-            points, next_offset = await asyncio.to_thread(
-                client.scroll,
-                collection_name=self._collection_name,
-                limit=batch_size,
-                offset=offset,
-                with_payload=False,
-                with_vectors=False,
-            )
+            try:
+                points, next_offset = await asyncio.to_thread(
+                    client.scroll,
+                    collection_name=self._collection_name,
+                    limit=batch_size,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                raise
             all_ids.extend(str(p.id) for p in points)
             if next_offset is None:
                 break

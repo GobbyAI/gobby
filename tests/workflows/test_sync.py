@@ -5,6 +5,7 @@ Tests sync edge cases, error handling, orphan cleanup, and variable sync.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -198,7 +199,7 @@ rules:
 """
         )
 
-        with patch("gobby.workflows.sync_rules.get_bundled_rules_path", return_value=rules_dir):
+        with patch("gobby.workflows.sync_rules.get_bundled_rules_paths", return_value=[rules_dir]):
             sync_bundled_rules(db)
 
             row = manager.get_by_name("bundled-rule")
@@ -272,9 +273,44 @@ class TestSyncBundledPipelines:
 
         rows = manager.list_all(workflow_type="pipeline")
         names = [row.name for row in rows]
-        assert "orchestrator" in names
-        assert "front-half-orchestrator" in names
-        assert "delivery-orchestrator" in names
+        assert "expand-task" in names
+        assert "spawn-developer" in names
+        assert "spawn-qa" in names
+        assert "dev" in names
+        assert "qa" in names
+        assert "review" in names
+        assert "orchestrator" not in names
+        assert "front-half-orchestrator" not in names
+        assert "delivery-orchestrator" not in names
+
+    def test_ignores_deprecated_pipeline_directory(self, db: LocalDatabase, tmp_path: Path) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        pip_dir = tmp_path / "pipelines"
+        deprecated_dir = pip_dir / "deprecated"
+        deprecated_dir.mkdir(parents=True)
+        (deprecated_dir / "old.yaml").write_text(
+            """
+name: old-pipeline
+type: pipeline
+description: Deprecated pipeline
+steps: []
+"""
+        )
+
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            result = sync_bundled_pipelines(db)
+
+        assert result["success"] is True
+        assert result["synced"] == 0
+        assert result["updated"] == 0
+        assert result["skipped"] == 0
+        assert result["errors"] == []
+
+        rows = LocalWorkflowDefinitionManager(db).list_all(workflow_type="pipeline")
+        assert [row.name for row in rows] == []
 
     def test_skips_yaml_without_name(self, db: LocalDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
@@ -326,6 +362,117 @@ steps:
         ):
             result = sync_bundled_pipelines(db)
             assert result["synced"] == 1
+
+    def test_syncs_root_pipeline_files(self, db: LocalDatabase, tmp_path: Path) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        workflows_dir = tmp_path / "workflows"
+        pip_dir = workflows_dir / "pipelines"
+        pip_dir.mkdir(parents=True)
+        (workflows_dir / "dev.yaml").write_text(
+            """
+name: dev
+type: pipeline
+description: Root dev pipeline
+enabled: true
+steps:
+  - id: spawn_developer
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: backend-developer
+"""
+        )
+        (pip_dir / "spawn-developer.yaml").write_text(
+            """
+name: spawn-developer
+type: pipeline
+description: Nested dispatch pipeline
+enabled: true
+steps:
+  - id: spawn
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: backend-developer
+"""
+        )
+
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            result = sync_bundled_pipelines(db)
+
+        assert result["synced"] == 2
+        rows = LocalWorkflowDefinitionManager(db).list_all(workflow_type="pipeline")
+        assert {row.name for row in rows} == {"dev", "spawn-developer"}
+
+    def test_updates_legacy_template_pipeline_row(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        workflows_dir = tmp_path / "workflows"
+        pip_dir = workflows_dir / "pipelines"
+        pip_dir.mkdir(parents=True)
+        (pip_dir / "spawn-developer.yaml").write_text(
+            """
+name: spawn-developer
+type: pipeline
+description: Dispatch pipeline
+enabled: true
+inputs:
+  agent:
+    type: string
+    default: backend-developer
+steps:
+  - id: spawn
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: "${{ inputs.agent }}"
+"""
+        )
+        manager.create(
+            name="spawn-developer",
+            definition_json=json.dumps(
+                {
+                    "name": "spawn-developer",
+                    "type": "pipeline",
+                    "description": "Old dispatch pipeline",
+                    "enabled": True,
+                    "inputs": {"agent": {"type": "string", "default": "developer"}},
+                    "steps": [
+                        {
+                            "id": "spawn",
+                            "mcp": {
+                                "server": "gobby-agents",
+                                "tool": "spawn_agent",
+                                "arguments": {"agent": "${{ inputs.agent }}"},
+                            },
+                        }
+                    ],
+                }
+            ),
+            workflow_type="pipeline",
+            source="template",
+            tags=["gobby"],
+        )
+
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            result = sync_bundled_pipelines(db)
+
+        assert result["updated"] == 1
+        row = manager.get_by_name("spawn-developer")
+        assert row is not None
+        assert row.source == "installed"
+        data = json.loads(row.definition_json)
+        assert data["inputs"]["agent"]["default"] == "backend-developer"
 
 
 # ═══════════════════════════════════════════════════════════════════════

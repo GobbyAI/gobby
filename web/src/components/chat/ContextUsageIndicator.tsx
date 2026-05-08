@@ -35,8 +35,12 @@ export function ContextUsageIndicator({
   const circumference = 2 * Math.PI * radius
   const dashOffset = circumference - (percentage / 100) * circumference
 
-  // Color based on usage: green < 50%, yellow 50-80%, red > 80%
-  const color = percentage > 80 ? 'var(--destructive, #ef4444)' : percentage > 50 ? 'var(--warning, #f59e0b)' : 'var(--success, #22c55e)'
+  // Color based on usage: success < 50%, warning 50-80%, error > 80%
+  const color = percentage > 80
+    ? 'var(--color-error)'
+    : percentage > 50
+      ? 'var(--color-warning-foreground)'
+      : 'var(--color-success-foreground)'
 
   const formatTokens = (n: number) => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -67,6 +71,7 @@ export function ContextUsageIndicator({
   return (
     <div
       className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      data-testid="context-usage-indicator"
       style={{ opacity: isStale ? 0.55 : 1 }}
       title={tooltipLines.join('\n')}
     >

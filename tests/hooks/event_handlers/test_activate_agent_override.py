@@ -67,10 +67,14 @@ class TestAgentNameOverride:
             )
 
             mock_cs.assert_not_called()
+            assert mock_cs.call_count == 0
+            assert not mock_cs.called
 
         mock_resolve.assert_called_once_with(
             "custom-agent", handlers._session_manager.db, project_id="proj-1"
         )
+        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
@@ -95,7 +99,11 @@ class TestAgentNameOverride:
             )
 
             mock_cs.assert_called_once_with(handlers._session_manager.db)
+            assert mock_cs.call_count == 1
+            assert mock_cs.call_args is not None
             mock_cs.return_value.get.assert_called_once_with("default_agent")
+            assert mock_cs.return_value.get.call_count == 1
+            assert mock_cs.return_value.get.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
@@ -116,6 +124,8 @@ class TestAgentNameOverride:
         mock_resolve.assert_called_once_with(
             "my-agent", handlers._session_manager.db, project_id="proj-2"
         )
+        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
@@ -156,13 +166,13 @@ class TestActivateDefaultAgentEdgeCases:
             logger=logging.getLogger("test"),
         )
 
-        # Should not raise
-        handlers._activate_default_agent(
+        result = handlers._activate_default_agent(
             session_id="sess-1",
             cli_source="claude",
             project_id=None,
             agent_name_override="my-agent",
         )
+        assert result is None
 
     def test_no_session_storage_returns_early(self) -> None:
         """If session_storage is None, method returns without error."""
@@ -172,13 +182,13 @@ class TestActivateDefaultAgentEdgeCases:
             logger=logging.getLogger("test"),
         )
 
-        # Should not raise
-        handlers._activate_default_agent(
+        result = handlers._activate_default_agent(
             session_id="sess-1",
             cli_source="claude",
             project_id=None,
             agent_name_override="my-agent",
         )
+        assert result is None
 
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_override_none_agent_name_skips(self, mock_resolve: MagicMock) -> None:
@@ -193,6 +203,8 @@ class TestActivateDefaultAgentEdgeCases:
         )
 
         mock_resolve.assert_not_called()
+        assert mock_resolve.call_count == 0
+        assert not mock_resolve.called
 
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_resolve_failure_logs_error(self, mock_resolve: MagicMock) -> None:
@@ -202,13 +214,13 @@ class TestActivateDefaultAgentEdgeCases:
         handlers = _make_event_handlers()
         mock_resolve.side_effect = AgentResolutionError("not found")
 
-        # Should not raise
-        handlers._activate_default_agent(
+        result = handlers._activate_default_agent(
             session_id="sess-1",
             cli_source="claude",
             project_id=None,
             agent_name_override="bad-agent",
         )
+        assert result is None
 
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_resolve_returns_none_logs_debug(self, mock_resolve: MagicMock) -> None:
@@ -225,3 +237,5 @@ class TestActivateDefaultAgentEdgeCases:
         )
 
         handlers._session_manager.update.assert_not_called()
+        assert handlers._session_manager.update.call_count == 0
+        assert not handlers._session_manager.update.called

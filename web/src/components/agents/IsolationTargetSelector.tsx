@@ -1,4 +1,9 @@
 import { useState, useEffect } from 'react'
+import {
+  AGENT_EDIT_FIELD_CLS,
+  AGENT_EDIT_INPUT_CLS,
+  AGENT_EDIT_LABEL_CLS,
+} from './agents-styles'
 
 interface WorktreeItem {
   id: string
@@ -42,10 +47,10 @@ export function IsolationTargetSelector({ isolation, worktreeId, cloneId, onWork
 
   if (isolation === 'worktree' && worktrees.length > 0) {
     return (
-      <label className="agent-edit-field">
-        <span className="agent-edit-label">Worktree</span>
+      <label className={AGENT_EDIT_FIELD_CLS}>
+        <span className={AGENT_EDIT_LABEL_CLS}>Worktree</span>
         <select
-          className="agent-edit-input"
+          className={AGENT_EDIT_INPUT_CLS}
           value={worktreeId || ''}
           onChange={e => onWorktreeIdChange(e.target.value || null)}
         >
@@ -62,10 +67,10 @@ export function IsolationTargetSelector({ isolation, worktreeId, cloneId, onWork
 
   if (isolation === 'clone' && clones.length > 0) {
     return (
-      <label className="agent-edit-field">
-        <span className="agent-edit-label">Clone</span>
+      <label className={AGENT_EDIT_FIELD_CLS}>
+        <span className={AGENT_EDIT_LABEL_CLS}>Clone</span>
         <select
-          className="agent-edit-input"
+          className={AGENT_EDIT_INPUT_CLS}
           value={cloneId || ''}
           onChange={e => onCloneIdChange(e.target.value || null)}
         >

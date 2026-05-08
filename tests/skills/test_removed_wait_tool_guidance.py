@@ -7,7 +7,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills"
-UPDATED_SKILLS = ("expand", "orchestrate", "plan", "test-battery")
+UPDATED_SKILLS = ("expand", "plan")
 
 
 @pytest.mark.parametrize("skill_name", UPDATED_SKILLS)

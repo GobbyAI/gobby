@@ -94,6 +94,8 @@ class TestPreCompactHandlerEdgeCases:
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
             "sess-123", "handoff_ready"
         )
+        assert mock_dependencies["session_manager"].update_session_status.call_count == 1
+        assert mock_dependencies["session_manager"].update_session_status.call_args is not None
 
     def test_pre_compact_no_session_id(self, mock_dependencies: dict) -> None:
         """Test PRE_COMPACT handles missing session_id."""
@@ -191,6 +193,8 @@ class TestNotificationHandlerEdgeCases:
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
             "sess-123", "paused"
         )
+        assert mock_dependencies["session_manager"].update_session_status.call_count == 1
+        assert mock_dependencies["session_manager"].update_session_status.call_args is not None
 
     def test_notification_status_update_error(self, mock_dependencies: dict) -> None:
         """Test error updating session status is handled."""
@@ -294,12 +298,16 @@ class TestWorktreeHandlers:
             create_branch=True,
             use_local=False,
         )
+        assert git_manager.create_worktree.call_count == 1
+        assert git_manager.create_worktree.call_args is not None
         mock_dependencies["worktree_manager"].create.assert_called_once_with(
             project_id="proj-123",
             branch_name="feature-auth",
             worktree_path="/tmp/worktrees/feature-auth",
             base_branch="main",
         )
+        assert mock_dependencies["worktree_manager"].create.call_count == 1
+        assert mock_dependencies["worktree_manager"].create.call_args is not None
 
     def test_worktree_remove_deletes_git_worktree_and_record(self, mock_dependencies: dict) -> None:
         mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(id="wt-123")
@@ -327,7 +335,11 @@ class TestWorktreeHandlers:
             worktree_path="/tmp/worktrees/feature-auth",
             force=True,
         )
+        assert mock_git_manager.delete_worktree.call_count == 1
+        assert mock_git_manager.delete_worktree.call_args is not None
         mock_dependencies["worktree_manager"].delete.assert_called_once_with("wt-123")
+        assert mock_dependencies["worktree_manager"].delete.call_count == 1
+        assert mock_dependencies["worktree_manager"].delete.call_args is not None
 
 
 class TestPermissionRequestEdgeCases:

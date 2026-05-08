@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from typing import Any
 
+import pytest
+
 from gobby.communications.adapters import (
     get_adapter_class,
     list_adapter_types,
@@ -10,6 +12,8 @@ from gobby.communications.adapters import (
 )
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.models import ChannelCapabilities, ChannelConfig, CommsMessage
+
+pytestmark = pytest.mark.unit
 
 
 class DummyAdapter(BaseChannelAdapter):
@@ -97,3 +101,12 @@ def test_chunk_message_very_long_word() -> None:
     # "short " -> "verylongwordhere" > 10
     # breaks verylongwordhere to "verylongwo", "rdhere"
     assert chunks == ["short", "verylongwo", "rdhere"]
+
+
+@pytest.mark.asyncio
+async def test_send_proactive_default_raises() -> None:
+    """Adapters opt into proactive messaging by overriding send_proactive."""
+    adapter = DummyAdapter()
+
+    with pytest.raises(NotImplementedError, match="does not support proactive messaging"):
+        await adapter.send_proactive("conv-1", "hello")

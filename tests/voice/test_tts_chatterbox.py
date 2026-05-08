@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -172,7 +173,7 @@ class TestChatterboxTurboProvider:
                 "t3_cond": "conds",
                 "text_tokens": "tokens",
                 "temperature": voice_config.tts_temperature,
-                "max_gen_len": 256,
+                "max_gen_len": 1000,
             }
         ]
         assert mock_model.t3.inference_turbo is inference_turbo
@@ -251,6 +252,44 @@ class TestChatterboxTurboProvider:
         provider._prime_synthesis_runtime(mock_model)
 
         assert inference_calls[0]["max_gen_len"] == 8
+
+    def test_generate_with_token_cap_warns_when_t3_missing(
+        self, caplog: pytest.LogCaptureFixture, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        mock_model = SimpleNamespace(generate=MagicMock(return_value=MagicMock()))
+
+        caplog.set_level(logging.WARNING, logger="gobby.voice.tts_chatterbox")
+
+        provider._generate_with_token_cap(mock_model, "Fallback")
+
+        assert "model.t3 is missing" in caplog.text
+        mock_model.generate.assert_called_once_with(
+            "Fallback",
+            temperature=voice_config.tts_temperature,
+        )
+
+    def test_generate_with_token_cap_warns_when_inference_turbo_not_callable(
+        self, caplog: pytest.LogCaptureFixture, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        mock_model = MagicMock()
+        mock_model.t3 = SimpleNamespace(inference_turbo=None)
+        mock_model.generate.return_value = MagicMock()
+
+        caplog.set_level(logging.WARNING, logger="gobby.voice.tts_chatterbox")
+
+        provider._generate_with_token_cap(mock_model, "Fallback")
+
+        assert "model.t3.inference_turbo is not callable" in caplog.text
+        mock_model.generate.assert_called_once_with(
+            "Fallback",
+            temperature=voice_config.tts_temperature,
+        )
 
     def test_missing_reference_audio_makes_provider_unavailable(
         self, voice_config_no_ref: VoiceConfig
@@ -544,6 +583,8 @@ class TestDepCheck:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        assert create_mock.await_count == 1
+        assert create_mock.await_args is not None
 
     @pytest.mark.asyncio
     async def test_install_packages_falls_back_to_uv_module(self) -> None:
@@ -575,6 +616,8 @@ class TestDepCheck:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        assert create_mock.await_count == 1
+        assert create_mock.await_args is not None
 
     @pytest.mark.asyncio
     async def test_install_packages_returns_false_when_uv_is_unavailable(

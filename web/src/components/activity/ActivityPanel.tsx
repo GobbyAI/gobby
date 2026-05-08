@@ -6,23 +6,30 @@ import {
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { PlansTab } from "./PlansTab";
+import { ArtifactsTab } from "./ArtifactsTab";
 import { FileChangesTab } from "./FileChangesTab";
 import { CanvasTab } from "./CanvasTab";
 import { SessionsTab } from "./SessionsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
+import { CronTab } from "./CronTab";
+import { TracesTab } from "./TracesTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
+import type { SessionsFilters } from "./sessionsFilters";
 
 export type ActivityTab =
   | "sessions"
   | "pipelines"
+  | "cron"
+  | "traces"
   | "tasks"
   | "files"
   | "plans"
   | "artifacts"
+  | "changes"
   | "canvas";
 
 const iconProps = {
@@ -73,6 +80,17 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
   },
   {
     id: "artifacts",
+    label: "Artifacts",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+        <line x1="12" y1="22.08" x2="12" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    id: "changes",
     label: "Changes",
     icon: (
       <svg {...iconProps}>
@@ -114,18 +132,39 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
       </svg>
     ),
   },
+  {
+    id: "cron",
+    label: "Cron",
+    icon: (
+      <svg {...iconProps}>
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+    ),
+  },
+  {
+    id: "traces",
+    label: "Traces",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M3 12h4l3-9 4 18 3-9h4" />
+      </svg>
+    ),
+  },
 ];
 
 const noopFetchDiff = async (): Promise<string> => "";
 
 // Width constants shared between the inline style, ResizeHandle, and the
 // `useActivityPanel` localStorage validator. CHAT_MIN_WIDTH mirrors the
-// `min-w-[400px]` on the chat column in ChatPage.tsx so the maxWidth calc
+// `min-w-[320px]` on the chat column in ChatPage.tsx so the maxWidth calc
 // always leaves enough room for the chat to keep its floor.
-const PANEL_MIN_WIDTH = 280;
-const PANEL_MAX_WIDTH = 1200;
-const CHAT_MIN_WIDTH = 400;
-const LAYOUT_BUFFER = 24;
+const PANEL_MIN_WIDTH = 320;
+const CHAT_MIN_WIDTH = 320;
+// LAYOUT_BUFFER used to be 24 (cushion before chat hit its hard min-width).
+// Dropped to 0 so dragging the activity panel can compress chat to exactly
+// CHAT_MIN_WIDTH, matching the explicit 320 ask.
+const LAYOUT_BUFFER = 0;
 
 type ActivityTabConfig = (typeof TABS)[number];
 
@@ -158,6 +197,8 @@ interface ActivityPanelProps {
   projectId?: string | null;
   sessions?: GobbySession[];
   sessionsLoading?: boolean;
+  sessionsFilters?: SessionsFilters;
+  onSessionsFiltersChange?: (filters: SessionsFilters) => void;
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
   // Sessions tab
@@ -203,8 +244,21 @@ function ActivityDropdown({
           <span className="activity-panel-tab-icon">{activeTabConfig.icon}</span>
           <span>{activeTabConfig.label}</span>
         </span>
-        <span className="activity-panel-mobile-trigger__caret">
-          {isOpen ? "\u25B2" : "\u25BC"}
+        <span className="activity-panel-mobile-trigger__caret" aria-hidden="true">
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            {isOpen ? (
+              <polyline points="4 10 8 6 12 10" />
+            ) : (
+              <polyline points="4 6 8 10 12 6" />
+            )}
+          </svg>
         </span>
       </button>
       {isOpen && (
@@ -252,6 +306,8 @@ export function ActivityPanel({
   projectId,
   sessions = [],
   sessionsLoading = false,
+  sessionsFilters,
+  onSessionsFiltersChange,
   onAddFileToChat,
   onKillAgent,
   onExpireSession,
@@ -264,15 +320,26 @@ export function ActivityPanel({
 }: ActivityPanelProps) {
   // Use overlay mode when viewport is too narrow for side-by-side layout
   const [narrowViewport, setNarrowViewport] = useState(
-    () => window.innerWidth < 1100,
+    () => window.innerWidth < 768,
   );
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [showMobileTabMenu, setShowMobileTabMenu] = useState(false);
   const mobileTabMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
+    const handleResize = () => {
+      setNarrowViewport(window.innerWidth < 768);
+      setViewportWidth(window.innerWidth);
+    };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+  // Activity panel max width derives from viewport minus chat floor — without
+  // this the resize handle's static PANEL_MAX_WIDTH (1200) prevented chat from
+  // reaching 320 on wide viewports (e.g. maximized 1920 → chat floor was 720).
+  const effectivePanelMaxWidth = Math.max(
+    PANEL_MIN_WIDTH,
+    viewportWidth - CHAT_MIN_WIDTH - LAYOUT_BUFFER,
+  );
   useEffect(() => {
     if (!showMobileTabMenu) {
       return;
@@ -321,6 +388,8 @@ export function ActivityPanel({
           <SessionsTab
             sessions={sessions}
             isLoadingSessions={sessionsLoading}
+            filters={sessionsFilters}
+            onFiltersChange={onSessionsFiltersChange}
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
             chatSessionId={chatSessionId ?? undefined}
@@ -332,6 +401,10 @@ export function ActivityPanel({
         );
       case "pipelines":
         return <PipelinesTab projectId={projectId} />;
+      case "cron":
+        return <CronTab projectId={projectId} />;
+      case "traces":
+        return <TracesTab projectId={projectId} />;
       case "tasks":
         return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":
@@ -351,6 +424,20 @@ export function ActivityPanel({
           />
         );
       case "artifacts":
+        return (
+          <ArtifactsTab
+            artifacts={artifacts}
+            artifact={activeArtifact}
+            onOpenArtifact={onOpenArtifact}
+            onClose={onCloseArtifact}
+            onUpdateContent={onUpdateArtifactContent}
+            onSetVersion={onSetArtifactVersion}
+            planPendingApproval={planPendingApproval}
+            onApprovePlan={onApprovePlan}
+            onRequestPlanChanges={onRequestPlanChanges}
+          />
+        );
+      case "changes":
         return (
           <FileChangesTab
             changedFiles={changedFiles}
@@ -373,7 +460,8 @@ export function ActivityPanel({
   if (useOverlay) {
     return (
       <div className="activity-panel-mobile-overlay">
-        <div className="activity-panel">
+        <aside className="activity-panel" aria-labelledby="activity-panel-title">
+          <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
           <div className="activity-panel-tabs">
             <ActivityDropdown
               tabs={TABS}
@@ -395,7 +483,7 @@ export function ActivityPanel({
 
           {/* Tab content */}
           <div className="activity-panel-content">{tabContent()}</div>
-        </div>
+        </aside>
       </div>
     );
   }
@@ -406,10 +494,11 @@ export function ActivityPanel({
         onResize={onWidthChange}
         panelWidth={panelWidth}
         minWidth={PANEL_MIN_WIDTH}
-        maxWidth={PANEL_MAX_WIDTH}
+        maxWidth={effectivePanelMaxWidth}
       />
-      <div
+      <aside
         className="activity-panel"
+        aria-labelledby="activity-panel-title"
         style={{
           width: panelWidth,
           minWidth: PANEL_MIN_WIDTH,
@@ -417,6 +506,7 @@ export function ActivityPanel({
           flexShrink: 1,
         }}
       >
+        <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
         <div className="activity-panel-tabs">
           <ActivityDropdown
             tabs={TABS}
@@ -427,40 +517,11 @@ export function ActivityPanel({
             onSelect={handleTabSelect}
             wrapperRef={mobileTabMenuRef}
           />
-          <button
-            className="activity-panel-pin"
-            onClick={() => {
-              setShowMobileTabMenu(false);
-              onPinnedChange(!isPinned);
-            }}
-            title={isPinned ? "Unpin panel" : "Pin panel"}
-          >
-            <PinIcon pinned={isPinned} />
-          </button>
         </div>
 
         {/* Tab content */}
         <div className="activity-panel-content">{tabContent()}</div>
-      </div>
+      </aside>
     </>
-  );
-}
-
-function PinIcon({ pinned }: { pinned: boolean }) {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{ transform: pinned ? "rotate(45deg)" : undefined }}
-    >
-      <line x1="12" y1="17" x2="12" y2="22" />
-      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
-    </svg>
   );
 }

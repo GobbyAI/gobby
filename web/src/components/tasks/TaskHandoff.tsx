@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react'
-
-// =============================================================================
-// Types
-// =============================================================================
+import { cn } from '../../lib/utils'
 
 type HandoffTarget = 'agent' | 'human'
+
+const AGENT_ICON = '\u2699'
+const HUMAN_ICON = '\u{1F464}'
+const CLOSE_ICON = '\u2715'
 
 interface HandoffContext {
   target: HandoffTarget
@@ -14,9 +15,43 @@ interface HandoffContext {
   blockers: string
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
+const BUTTONS_CLS = 'flex gap-1.5'
+const TRIGGER_CLS =
+  'cursor-pointer rounded-md border border-[var(--border)] bg-transparent px-2.5 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] transition-colors duration-150 pointer-coarse:min-h-11'
+const TRIGGER_AGENT_CLS =
+  'text-[var(--accent)] hover:border-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)]'
+const TRIGGER_HUMAN_CLS =
+  'text-[var(--color-warning-foreground)] hover:border-[var(--color-warning-foreground)] hover:bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,transparent)]'
+
+const FORM_CLS = 'flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-2.5'
+const FORM_HEADER_CLS = 'flex items-center justify-between'
+const FORM_TITLE_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] font-semibold text-[var(--text-primary)]'
+const FORM_CLOSE_CLS =
+  'cursor-pointer border-0 bg-transparent px-1 py-0.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11'
+
+const TARGET_TOGGLE_CLS = 'flex gap-0.5 rounded-md bg-[var(--bg-primary)] p-0.5'
+const TARGET_BTN_CLS =
+  'flex-1 cursor-pointer rounded border-0 bg-transparent px-2 py-1 text-[length:calc(var(--font-size-base)*0.68)] font-medium text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const TARGET_BTN_ACTIVE_CLS =
+  'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
+
+const FIELD_CLS = 'flex flex-col gap-[3px]'
+const LABEL_CLS =
+  'text-[length:calc(var(--font-size-base)*0.62)] font-semibold uppercase tracking-[0.03em] text-[var(--text-muted)]'
+const REQUIRED_CLS = 'text-[var(--color-error)]'
+const INPUT_CLS =
+  'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-[5px] font-[inherit] text-[length:calc(var(--font-size-base)*0.72)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] pointer-coarse:min-h-11'
+const CURRENT_CLS = 'text-[length:calc(var(--font-size-base)*0.58)] text-[var(--text-muted)]'
+const TEXTAREA_CLS =
+  'resize-y rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-[5px] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]'
+
+const ERROR_CLS =
+  'rounded bg-[var(--color-error-soft)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)] text-[var(--color-error)]'
+const ACTIONS_CLS = 'flex justify-end gap-1.5 pt-0.5'
+const CANCEL_CLS =
+  'cursor-pointer rounded border border-[var(--border)] bg-transparent px-3 py-1 text-[length:calc(var(--font-size-base)*0.68)] text-[var(--text-muted)] hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const SUBMIT_CLS =
+  'cursor-pointer rounded border-0 bg-[var(--accent)] px-3.5 py-1 text-[length:calc(var(--font-size-base)*0.68)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 
 function getBaseUrl(): string {
   return ''
@@ -30,10 +65,6 @@ function formatHandoffComment(ctx: HandoffContext): string {
   if (ctx.blockers.trim()) lines.push(`\n**Blockers:**\n${ctx.blockers.trim()}`)
   return lines.join('\n')
 }
-
-// =============================================================================
-// TaskHandoff
-// =============================================================================
 
 interface TaskHandoffProps {
   taskId: string
@@ -74,7 +105,6 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
     }
 
     try {
-      // Post handoff comment
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/comments`, {
         method: 'POST',
@@ -90,7 +120,6 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
         throw new Error(`Failed to post handoff comment: ${response.statusText}`)
       }
 
-      // Update assignee
       try {
         await onHandoff(assignee.trim())
       } catch (handoffErr) {
@@ -111,83 +140,80 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
 
   if (!isOpen) {
     return (
-      <div className="task-handoff-buttons">
+      <div className={BUTTONS_CLS}>
         <button
-          className="task-handoff-trigger task-handoff-trigger--agent"
+          className={cn(TRIGGER_CLS, TRIGGER_AGENT_CLS)}
           onClick={() => { setTarget('agent'); setIsOpen(true) }}
           title="Transfer this task to an agent"
         >
-          {'\u2699'} Hand to Agent
+          {AGENT_ICON} Hand to Agent
         </button>
         <button
-          className="task-handoff-trigger task-handoff-trigger--human"
+          className={cn(TRIGGER_CLS, TRIGGER_HUMAN_CLS)}
           onClick={() => { setTarget('human'); setIsOpen(true) }}
           title="Transfer this task to a human"
         >
-          {'\u{1F464}'} Hand to Human
+          {HUMAN_ICON} Hand to Human
         </button>
       </div>
     )
   }
 
   return (
-    <div className="task-handoff-form">
-      <div className="task-handoff-form-header">
-        <span className="task-handoff-form-title">
+    <div className={FORM_CLS}>
+      <div className={FORM_HEADER_CLS}>
+        <span className={FORM_TITLE_CLS}>
           Handoff to {target === 'agent' ? 'Agent' : 'Human'}
         </span>
         <button
-          className="task-handoff-form-close"
+          className={FORM_CLOSE_CLS}
           onClick={() => { reset(); setIsOpen(false) }}
           aria-label="Close handoff form"
           type="button"
         >
-          {'\u2715'}
+          {CLOSE_ICON}
         </button>
       </div>
 
-      {/* Target toggle */}
-      <div className="task-handoff-target-toggle">
+      <div className={TARGET_TOGGLE_CLS}>
         <button
-          className={`task-handoff-target-btn ${target === 'agent' ? 'active' : ''}`}
+          className={cn(TARGET_BTN_CLS, target === 'agent' && TARGET_BTN_ACTIVE_CLS)}
           onClick={() => setTarget('agent')}
         >
-          {'\u2699'} Agent
+          {AGENT_ICON} Agent
         </button>
         <button
-          className={`task-handoff-target-btn ${target === 'human' ? 'active' : ''}`}
+          className={cn(TARGET_BTN_CLS, target === 'human' && TARGET_BTN_ACTIVE_CLS)}
           onClick={() => setTarget('human')}
         >
-          {'\u{1F464}'} Human
+          {HUMAN_ICON} Human
         </button>
       </div>
 
-      {/* Assignee */}
-      <div className="task-handoff-field">
-        <label htmlFor="handoff-assignee" className="task-handoff-label">
-          New assignee <span className="task-handoff-required">*</span>
+      <div className={FIELD_CLS}>
+        <label htmlFor="handoff-assignee" className={LABEL_CLS}>
+          New assignee <span className={REQUIRED_CLS}>*</span>
         </label>
         <input
           id="handoff-assignee"
-          className="task-handoff-input"
+          className={INPUT_CLS}
           value={assignee}
           onChange={e => setAssignee(e.target.value)}
           placeholder={target === 'agent' ? 'Session ID or agent name...' : 'Name or identifier...'}
           autoFocus
         />
         {currentAssignee && (
-          <span className="task-handoff-current">
+          <span className={CURRENT_CLS}>
             Currently: {currentAssignee}
           </span>
         )}
       </div>
 
-      {/* What's done */}
-      <div className="task-handoff-field">
-        <label htmlFor="handoff-done" className="task-handoff-label">What's been completed</label>
+      <div className={FIELD_CLS}>
+        <label htmlFor="handoff-done" className={LABEL_CLS}>What's been completed</label>
         <textarea
           id="handoff-done"
-          className="task-handoff-textarea"
+          className={TEXTAREA_CLS}
           value={whatsDone}
           onChange={e => setWhatsDone(e.target.value)}
           placeholder="Summary of work completed so far..."
@@ -195,12 +221,11 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
         />
       </div>
 
-      {/* What's left */}
-      <div className="task-handoff-field">
-        <label htmlFor="handoff-remaining" className="task-handoff-label">What's remaining</label>
+      <div className={FIELD_CLS}>
+        <label htmlFor="handoff-remaining" className={LABEL_CLS}>What's remaining</label>
         <textarea
           id="handoff-remaining"
-          className="task-handoff-textarea"
+          className={TEXTAREA_CLS}
           value={whatsLeft}
           onChange={e => setWhatsLeft(e.target.value)}
           placeholder="Next steps and remaining work..."
@@ -208,12 +233,11 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
         />
       </div>
 
-      {/* Blockers */}
-      <div className="task-handoff-field">
-        <label htmlFor="handoff-blockers" className="task-handoff-label">Blockers</label>
+      <div className={FIELD_CLS}>
+        <label htmlFor="handoff-blockers" className={LABEL_CLS}>Blockers</label>
         <textarea
           id="handoff-blockers"
-          className="task-handoff-textarea"
+          className={TEXTAREA_CLS}
           value={blockers}
           onChange={e => setBlockers(e.target.value)}
           placeholder="Any blockers or issues to be aware of..."
@@ -222,21 +246,20 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
       </div>
 
       {error && (
-        <div className="task-handoff-error">{error}</div>
+        <div className={ERROR_CLS}>{error}</div>
       )}
 
-      {/* Actions */}
-      <div className="task-handoff-actions">
+      <div className={ACTIONS_CLS}>
         <button
           type="button"
-          className="task-handoff-cancel"
+          className={CANCEL_CLS}
           onClick={() => { reset(); setIsOpen(false) }}
         >
           Cancel
         </button>
         <button
           type="button"
-          className="task-handoff-submit"
+          className={SUBMIT_CLS}
           onClick={handleSubmit}
           disabled={!assignee.trim() || submitting}
         >

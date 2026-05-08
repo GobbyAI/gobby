@@ -55,6 +55,15 @@ def _get_requested_session_id(arguments: Any, request: Request | None = None) ->
     return header_session_id or None
 
 
+def _get_argument_session_id(arguments: Any) -> str | None:
+    """Return a target-tool session_id from the request body when present."""
+    if isinstance(arguments, dict):
+        session_id = arguments.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return session_id
+    return None
+
+
 def _get_discovery_session_id(arguments: Any, request: Request | None = None) -> str | None:
     """Return the session ref that should own HTTP discovery side effects.
 
@@ -70,14 +79,60 @@ def _get_discovery_session_id(arguments: Any, request: Request | None = None) ->
     return _get_requested_session_id(arguments, request)
 
 
+def _session_ref_seq_num(session_ref: str | None) -> int | None:
+    if not session_ref:
+        return None
+    raw = session_ref[1:] if session_ref.startswith("#") else session_ref
+    return int(raw) if raw.isdigit() else None
+
+
+def _derive_project_from_unique_session_seq(
+    server: "HTTPServer", session_ref: str | None
+) -> str | None:
+    """Return a project_id for an unscoped #N session ref when it is unambiguous."""
+    seq_num = _session_ref_seq_num(session_ref)
+    session_manager = server.session_manager if server.session_manager else None
+    db = session_manager.db if session_manager else None
+    if seq_num is None or db is None:
+        return None
+
+    try:
+        rows = db.fetchall(
+            """
+            SELECT DISTINCT project_id
+            FROM sessions
+            WHERE seq_num = ? AND project_id IS NOT NULL
+            LIMIT 2
+            """,
+            (seq_num,),
+        )
+    except Exception as exc:
+        logger.debug(
+            "Could not derive project from session ref %r: %s",
+            session_ref,
+            exc,
+        )
+        return None
+
+    if len(rows) == 1:
+        project_id = rows[0]["project_id"]
+        return str(project_id) if project_id else None
+    if len(rows) > 1:
+        logger.debug(
+            "Session ref %r is ambiguous across projects; project header is required",
+            session_ref,
+        )
+    return None
+
+
 def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
 ) -> SeededContextTokens:
     """Set project and session context vars from the best available source.
 
     Priority:
-      1. session_id from tool arguments (most specific — tool knows its session)
-      2. X-Gobby-Session-Id header (injected by stdio proxy from learned session)
+      1. X-Gobby-Session-Id header (the caller/workflow context)
+      2. session_id from tool arguments (the target tool parameter)
       3. X-Gobby-Project-Id header (injected by stdio proxy from CWD project.json)
 
     The stdio process runs in the CLI's project directory, so its CWD-derived
@@ -88,21 +143,26 @@ def _set_context_for_request(
     """
     header_session_id = request.headers.get("x-gobby-session-id") if request else None
     project_id_header = request.headers.get("x-gobby-project-id") if request else None
+    argument_session_id = _get_argument_session_id(arguments)
 
-    # 1. Harvest the session ref from arguments, then header.
-    session_id = _get_requested_session_id(arguments, request)
+    # Header session is wrapper/caller context. Body session_id remains a
+    # target-tool parameter and must not make child-session workflow
+    # enforcement apply to the caller.
+    session_id = header_session_id or argument_session_id
 
     # HTTP-specific bootstrap: when the incoming session_id is #N/numeric and
     # the X-Gobby-Project-Id header is missing, derive a project scope from the
     # header-session UUID so the #N lookup can succeed. (After Change 1,
     # resolve_session_reference handles external_id UUIDs in the header too.)
     canonical_project_ref = project_id_header
+    if not canonical_project_ref and header_session_id:
+        canonical_project_ref = _derive_project_from_unique_session_seq(server, header_session_id)
     if (
         not canonical_project_ref
         and header_session_id
-        and session_id
+        and argument_session_id
         and server.session_manager
-        and session_id.lstrip("#").isdigit()
+        and argument_session_id.lstrip("#").isdigit()
     ):
         try:
             bootstrap_id = resolve_session_reference(server.session_manager.db, header_session_id)
@@ -127,28 +187,6 @@ def _set_context_for_request(
 def _reset_context(tokens: SeededContextTokens) -> None:
     """Reset project and session context vars."""
     reset_seeded_contexts(tokens)
-
-
-async def _emit_proxy_after_tool(
-    server: "HTTPServer",
-    *,
-    session_id: str | None = None,
-    tool_name: str,
-    tool_input: dict[str, Any],
-    result: dict[str, Any],
-    is_failure: bool = False,
-) -> None:
-    """Emit synthetic proxy AFTER_TOOL events for HTTP discovery routes."""
-    if server.tool_proxy is None:
-        return
-
-    await server.tool_proxy.emit_synthetic_proxy_after_tool(
-        session_id=session_id or get_current_session_id(),
-        tool_name=tool_name,
-        tool_input=tool_input,
-        result=result,
-        is_failure=is_failure,
-    )
 
 
 def _process_tool_proxy_result(
@@ -306,13 +344,6 @@ async def list_mcp_tools(
                     "tool_count": len(tools),
                     "response_time_ms": response_time_ms,
                 }
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="list_tools",
-                    tool_input={"server_name": server_name},
-                    result=result,
-                )
                 return result
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {
@@ -320,14 +351,6 @@ async def list_mcp_tools(
                 "error": f"Internal server '{server_name}' not found",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
         if mcp_manager is None:
@@ -337,14 +360,6 @@ async def list_mcp_tools(
                 "error": "MCP manager not available",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
         # Check if server is configured
@@ -360,14 +375,6 @@ async def list_mcp_tools(
         except KeyError as e:
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
         except Exception as e:
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -376,14 +383,6 @@ async def list_mcp_tools(
                 "error": f"MCP server '{server_name}' connection failed: {e}",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                session_id=requested_session_id,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
         # List tools using MCP SDK
@@ -432,12 +431,6 @@ async def list_mcp_tools(
                 "tool_count": len(tools),
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-            )
             return result
 
         except Exception as e:
@@ -452,13 +445,6 @@ async def list_mcp_tools(
                 "error": f"Failed to list tools: {e}",
                 "response_time_ms": response_time_ms,
             }
-            await _emit_proxy_after_tool(
-                server,
-                tool_name="list_tools",
-                tool_input={"server_name": server_name},
-                result=result,
-                is_failure=True,
-            )
             return result
 
     except HTTPException:
@@ -490,7 +476,13 @@ async def get_tool_schema(
     start_time = time.perf_counter()
 
     try:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": f"Invalid JSON: {exc.msg}"},
+            ) from exc
         server_name = body.get("server_name")
         tool_name = body.get("tool_name")
 
@@ -500,7 +492,6 @@ async def get_tool_schema(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
-        requested_session_id = _get_discovery_session_id(body, request)
         ctx_token = _set_context_for_request(server, body, request)
 
         try:
@@ -511,8 +502,6 @@ async def get_tool_schema(
                     schema = registry.get_schema(tool_name)
                     if schema:
                         response_time_ms = (time.perf_counter() - start_time) * 1000
-                        # unlocked_tools is owned by the track-schema-lookup
-                        # rule fired off the synthetic AFTER_TOOL emitted below.
                         # Build response with description only if present
                         result: dict[str, Any] = {
                             "success": True,
@@ -523,13 +512,6 @@ async def get_tool_schema(
                         }
                         if schema.get("description"):
                             result["description"] = schema["description"]
-                        await _emit_proxy_after_tool(
-                            server,
-                            session_id=requested_session_id,
-                            tool_name="get_tool_schema",
-                            tool_input={"server_name": server_name, "tool_name": tool_name},
-                            result=result,
-                        )
                         return result
                     raise HTTPException(
                         status_code=404,
@@ -549,8 +531,6 @@ async def get_tool_schema(
             try:
                 tool_info = await server.mcp_manager.get_tool_info(server_name, tool_name)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
-                # unlocked_tools is owned by the track-schema-lookup rule fired
-                # off the synthetic AFTER_TOOL emitted below.
 
                 # Build response with description only if present
                 response: dict[str, Any] = {
@@ -562,27 +542,12 @@ async def get_tool_schema(
                 }
                 if tool_info.get("description"):
                     response["description"] = tool_info["description"]
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="get_tool_schema",
-                    tool_input={"server_name": server_name, "tool_name": tool_name},
-                    result=response,
-                )
                 return response
 
             except (KeyError, ValueError) as e:
                 # Tool or server not found
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 response = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="get_tool_schema",
-                    tool_input={"server_name": server_name, "tool_name": tool_name},
-                    result=response,
-                    is_failure=True,
-                )
                 return response
             except Exception as e:
                 # Connection, timeout, or internal errors
@@ -596,14 +561,6 @@ async def get_tool_schema(
                     "error": f"Failed to get tool schema: {e}",
                     "response_time_ms": response_time_ms,
                 }
-                await _emit_proxy_after_tool(
-                    server,
-                    session_id=requested_session_id,
-                    tool_name="get_tool_schema",
-                    tool_input={"server_name": server_name, "tool_name": tool_name},
-                    result=response,
-                    is_failure=True,
-                )
                 return response
         finally:
             _reset_context(ctx_token)
@@ -637,7 +594,13 @@ async def call_mcp_tool(
     inc_counter("mcp_tool_calls_total")
 
     try:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": f"Invalid JSON: {exc.msg}"},
+            ) from exc
         server_name = body.get("server_name")
         tool_name = body.get("tool_name")
         arguments = body.get("arguments", {})

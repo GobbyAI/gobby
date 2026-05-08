@@ -5,9 +5,7 @@ import { TaskDetail } from '../TaskDetail'
 import type { GobbyTaskDetail } from '../../../hooks/useTasks'
 
 // Mock CSS imports
-vi.mock('../task-detail.css', () => ({}))
 vi.mock('../task-execution.css', () => ({}))
-vi.mock('../task-advanced.css', () => ({}))
 
 // Mock heavy sub-components
 vi.mock('../ReasoningTimeline', () => ({ ReasoningTimeline: () => null }))
@@ -52,6 +50,8 @@ const SAMPLE_TASK: GobbyTaskDetail = {
   start_date: null,
   due_date: null,
   project_id: 'proj-1',
+  current_stage: null,
+  stages: [],
   description: 'A detailed bug description',
   labels: ['backend'],
   category: 'fix',
@@ -59,6 +59,7 @@ const SAMPLE_TASK: GobbyTaskDetail = {
   validation_feedback: null,
   validation_criteria: null,
   validation_fail_count: 0,
+  validation_override_reason: null,
   closed_at: null,
   closed_reason: null,
   closed_commit_sha: null,
@@ -83,8 +84,7 @@ describe('TaskDetail', () => {
     actions: {
       claimTask: vi.fn().mockResolvedValue(null),
       releaseTaskClaim: vi.fn().mockResolvedValue(null),
-      markTaskNeedsReview: vi.fn().mockResolvedValue(null),
-      markTaskReviewApproved: vi.fn().mockResolvedValue(null),
+      advanceStage: vi.fn().mockResolvedValue(undefined),
       escalateTask: vi.fn().mockResolvedValue(null),
       deEscalateTask: vi.fn().mockResolvedValue(null),
       closeTask: vi.fn().mockResolvedValue(null),

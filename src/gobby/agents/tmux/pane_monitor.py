@@ -15,7 +15,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 
@@ -117,6 +117,21 @@ class TmuxPaneMonitor:
         mgr = TmuxSessionManager(self._config)
         try:
             live_sessions = await mgr.list_sessions()
+        except TimeoutError as exc:
+            logger.debug(
+                "TmuxPaneMonitor: timed out listing tmux sessions",
+                extra={
+                    "tmux_command": self._config.command,
+                    "tmux_subcommand": "list-sessions",
+                    "socket_name": self._config.socket_name,
+                    "socket_path": self._config.socket_path,
+                    "config_file": self._config.config_file,
+                    "timeout_seconds": TMUX_COMMAND_TIMEOUT_SECONDS,
+                    "poll_interval_seconds": self._poll_interval,
+                    "error": str(exc),
+                },
+            )
+            return
         except Exception:
             logger.warning("TmuxPaneMonitor: failed to list tmux sessions", exc_info=True)
             return

@@ -58,7 +58,6 @@ def sample_task():
         id="550e8400-e29b-41d4-a716-446655440000",
         project_id="proj-1",
         title="Test Task",
-        status="open",
         priority=2,
         task_type="task",
         created_at="2024-01-01T00:00:00Z",

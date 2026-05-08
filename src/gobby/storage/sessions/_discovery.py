@@ -34,7 +34,7 @@ class _DiscoveryMixin:
             external_id: External session identifier
             machine_id: Machine identifier
             project_id: Project identifier
-            source: CLI source (claude, gemini, qwen, codex)
+            source: CLI source (claude, gemini, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:
@@ -97,7 +97,7 @@ class _DiscoveryMixin:
         Args:
             external_id: External session identifier
             machine_id: Machine identifier
-            source: CLI source (claude, gemini, qwen, codex)
+            source: CLI source (claude, gemini, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:

@@ -1,13 +1,33 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useWebSocketEvent } from './useWebSocketEvent'
+import type {
+  LifecycleTask,
+  ReviewPolicy,
+  StageAdvanceAction,
+  StageState5,
+  StageStateView,
+} from '../lib/stageActions'
 import type { CanonicalTaskState, TaskCompatProjection } from '../lib/taskState'
-import { countTasksByBucket, matchesTaskBucketFilter } from '../lib/taskState'
+import { countTasksByState, matchesTaskStateFilter } from '../lib/taskState'
+import {
+  normalizeTaskPayload,
+  normalizeTaskPayloads,
+  type RawTaskPayload,
+} from '../lib/taskNormalization'
+
+export type {
+  LifecycleTask,
+  ReviewPolicy,
+  StageAdvanceAction,
+  StageState5,
+  StageStateView,
+}
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export interface GobbyTask {
+export interface GobbyTask extends LifecycleTask {
   id: string
   ref: string
   title: string
@@ -29,12 +49,13 @@ export interface GobbyTask {
   due_date: string | null
   project_id: string
   claimed_by_session_id?: string | null
-  lifecycle_stage?: string | null
   closed_at?: string | null
   closed_in_session_id?: string | null
   escalated_at?: string | null
   pre_escalation_status?: string | null
   category?: string | null
+  current_stage: StageStateView | null
+  stages: StageStateView[]
 }
 
 export interface GobbyTaskDetail extends GobbyTask {
@@ -46,6 +67,7 @@ export interface GobbyTaskDetail extends GobbyTask {
   validation_feedback: string | null
   validation_criteria: string | null
   validation_fail_count: number
+  validation_override_reason: string | null
   closed_at: string | null
   closed_reason: string | null
   closed_commit_sha: string | null
@@ -60,6 +82,12 @@ export interface GobbyTaskDetail extends GobbyTask {
   expansion_status: string
   github_pr_number: number | null
   github_repo: string | null
+  allow_automation?: boolean | null
+  yolo?: boolean | null
+  isolation?: string | null
+  dispatch_failure_count?: number | null
+  additional_skills?: string[] | null
+  assigned_agent?: string | null
 }
 
 export interface TaskFilters {
@@ -69,6 +97,8 @@ export interface TaskFilters {
   assignee: string | null
   label: string | null
   parentTaskId: string | null
+  stage: string | null
+  stageState: StageState5 | null
   search: string
   projectId?: string | null
 }
@@ -127,6 +157,68 @@ function getBaseUrl(): string {
   return ''
 }
 
+const normalizeTask = normalizeTaskPayload
+const normalizeTasks = normalizeTaskPayloads
+
+function setQueryParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | null | undefined,
+): void {
+  if (value === null || value === undefined || value === '') return
+  params.set(key, String(value))
+}
+
+function buildTaskListParams(filters: TaskFilters, offset: number, limit: number): URLSearchParams {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  })
+  params.set('sort_by', 'updated_at')
+  params.set('sort_order', 'desc')
+  params.set('include_stages', '1')
+  setQueryParam(params, 'priority', filters.priority)
+  setQueryParam(params, 'task_type', filters.taskType)
+  setQueryParam(params, 'assignee', filters.assignee)
+  setQueryParam(params, 'label', filters.label)
+  setQueryParam(params, 'parent_task_id', filters.parentTaskId)
+  setQueryParam(params, 'stage', filters.stage)
+  setQueryParam(params, 'stage_state', filters.stageState)
+  setQueryParam(params, 'search', filters.search)
+  setQueryParam(params, 'project_id', filters.projectId)
+  return params
+}
+
+function appendIncomingTasks(current: GobbyTask[], incoming: GobbyTask[]): GobbyTask[] {
+  const seen = new Set(current.map(task => task.id))
+  const merged = current.slice()
+  for (const task of incoming) {
+    if (!seen.has(task.id)) merged.push(task)
+  }
+  return merged
+}
+
+function applyTaskEvent(
+  tasks: GobbyTask[],
+  event: string,
+  taskData: Record<string, unknown>,
+): GobbyTask[] {
+  const taskId = taskData.id as string
+  if (event === 'task_deleted') {
+    return tasks.filter(task => task.id !== taskId)
+  }
+  if (event === 'task_created') {
+    const newTask = normalizeTask(taskData as unknown as RawTaskPayload)
+    if (tasks.some(task => task.id === taskId)) return tasks
+    return [...tasks, newTask]
+  }
+
+  const updated = taskData as unknown as RawTaskPayload
+  return tasks.map(task =>
+    task.id === taskId ? normalizeTask({ ...task, ...updated }) : task
+  )
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
@@ -145,6 +237,8 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     assignee: null,
     label: null,
     parentTaskId: null,
+    stage: null,
+    stageState: null,
     search: '',
     projectId: projectId ?? null,
   })
@@ -159,20 +253,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   }, [projectId])
 
   const buildParams = useCallback((offset: number, limit: number) => {
-    const params = new URLSearchParams({
-      limit: String(limit),
-      offset: String(offset),
-    })
-    params.set('sort_by', 'updated_at')
-    params.set('sort_order', 'desc')
-    if (filters.priority !== null) params.set('priority', String(filters.priority))
-    if (filters.taskType) params.set('task_type', filters.taskType)
-    if (filters.assignee) params.set('assignee', filters.assignee)
-    if (filters.label) params.set('label', filters.label)
-    if (filters.parentTaskId) params.set('parent_task_id', filters.parentTaskId)
-    if (filters.search) params.set('search', filters.search)
-    if (filters.projectId) params.set('project_id', filters.projectId)
-    return params
+    return buildTaskListParams(filters, offset, limit)
   }, [filters])
 
   // Fetch first page (replaces accumulated tasks)
@@ -185,7 +266,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       if (requestVersionRef.current !== requestVersion) return
       if (response.ok) {
         const data: TaskListResponse = await response.json()
-        setAllTasks(data.tasks || [])
+        setAllTasks(normalizeTasks(data.tasks))
         setServerTotal(data.total ?? (data.tasks?.length ?? 0))
         setError(null)
       } else {
@@ -214,17 +295,9 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       if (requestVersionRef.current !== requestVersion) return
       if (response.ok) {
         const data: TaskListResponse = await response.json()
-        const incoming = data.tasks || []
+        const incoming = normalizeTasks(data.tasks)
         if (incoming.length > 0) {
-          setAllTasks(prev => {
-            // Avoid duplicates if the server returns overlapping rows after a refetch.
-            const seen = new Set(prev.map(t => t.id))
-            const merged = prev.slice()
-            for (const t of incoming) {
-              if (!seen.has(t.id)) merged.push(t)
-            }
-            return merged
-          })
+          setAllTasks(prev => appendIncomingTasks(prev, incoming))
         }
         setServerTotal((prev) => data.total ?? prev)
         setError(null)
@@ -241,13 +314,13 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   }, [allTasks.length, buildParams, isLoadingMore, pageSize])
 
   const tasks = useMemo(
-    () => allTasks.filter(task => matchesTaskBucketFilter(task, filters.status)),
+    () => allTasks.filter(task => matchesTaskStateFilter(task, filters.status)),
     [allTasks, filters.status]
   )
 
   const total = serverTotal
   const hasMore = allTasks.length < serverTotal
-  const stats = useMemo(() => countTasksByBucket(allTasks), [allTasks])
+  const stats = useMemo(() => countTasksByState(allTasks), [allTasks])
 
   // Get single task detail
   const getTask = useCallback(async (taskId: string): Promise<GobbyTaskDetail | null> => {
@@ -255,7 +328,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}`)
       if (response.ok) {
-        return await response.json()
+        return normalizeTask(await response.json())
       }
     } catch (e) {
       console.error('Failed to get task:', e)
@@ -274,7 +347,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           body: JSON.stringify(params),
         })
         if (response.ok) {
-          const task = await response.json()
+          const task = normalizeTask(await response.json())
           fetchTasks()
           return task
         }
@@ -297,7 +370,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           body: JSON.stringify(params),
         })
         if (response.ok) {
-          const task = await response.json()
+          const task = normalizeTask(await response.json())
           fetchTasks()
           return task
         }
@@ -322,7 +395,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           }
         )
         if (response.ok) {
-          const task = await response.json()
+          const task = normalizeTask(await response.json())
           fetchTasks()
           return task
         }
@@ -334,6 +407,66 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     [fetchTasks]
   )
 
+  const patchStage = useCallback(
+    async (taskId: string, stageName: string, body: Record<string, unknown>): Promise<void> => {
+      const baseUrl = getBaseUrl()
+      const response = await fetch(
+        `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/stages/${encodeURIComponent(stageName)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      )
+      if (!response.ok) {
+        let payload: unknown
+        try {
+          payload = await response.json()
+        } catch {
+          payload = { status: response.status, detail: response.statusText }
+        }
+        throw payload
+      }
+      fetchTasks()
+    },
+    [fetchTasks]
+  )
+
+  const advanceStage = useCallback(
+    async (
+      taskId: string,
+      stageName: string,
+      action: StageAdvanceAction,
+      notes?: string,
+    ): Promise<void> => {
+      if (action === 'reject_review' && !notes) {
+        throw new Error('reject_review requires a reason')
+      }
+      let body: Record<string, unknown> = { action }
+      if (action === 'reject_review') {
+        body = { action, reason: notes, notes }
+      } else if (notes) {
+        body = { action, notes }
+      }
+      await patchStage(taskId, stageName, body)
+    },
+    [patchStage]
+  )
+
+  const failStage = useCallback(
+    async (taskId: string, stageName: string, reason: string): Promise<void> => {
+      await patchStage(taskId, stageName, { action: 'fail', reason })
+    },
+    [patchStage]
+  )
+
+  const startStage = useCallback(
+    async (taskId: string, stageName: string): Promise<void> => {
+      await patchStage(taskId, stageName, { action: 'start' })
+    },
+    [patchStage]
+  )
+
   const claimTask = useCallback(
     async (taskId: string, sessionId: string, force = false): Promise<GobbyTaskDetail | null> =>
       postTaskTransition(taskId, 'claim', { session_id: sessionId, force }),
@@ -343,18 +476,6 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   const releaseTaskClaim = useCallback(
     async (taskId: string, status?: string): Promise<GobbyTaskDetail | null> =>
       postTaskTransition(taskId, 'release-claim', status ? { status } : {}),
-    [postTaskTransition]
-  )
-
-  const markTaskNeedsReview = useCallback(
-    async (taskId: string, notes?: string): Promise<GobbyTaskDetail | null> =>
-      postTaskTransition(taskId, 'needs-review', notes ? { notes } : {}),
-    [postTaskTransition]
-  )
-
-  const markTaskReviewApproved = useCallback(
-    async (taskId: string, notes?: string): Promise<GobbyTaskDetail | null> =>
-      postTaskTransition(taskId, 'review-approved', notes ? { notes } : {}),
     [postTaskTransition]
   )
 
@@ -438,11 +559,11 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(
-        `${baseUrl}/api/tasks?parent_task_id=${encodeURIComponent(taskId)}&limit=100`
+        `${baseUrl}/api/tasks?parent_task_id=${encodeURIComponent(taskId)}&limit=100&include_stages=1`
       )
       if (response.ok) {
         const data: TaskListResponse = await response.json()
-        return data.tasks || []
+        return normalizeTasks(data.tasks)
       }
     } catch (e) {
       console.error('Failed to get subtasks:', e)
@@ -465,6 +586,10 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   // -------------------------------------------------------------------------
 
   const debouncedRefetchRef = useRef<number | null>(null)
+  const scheduleRefetch = useCallback(() => {
+    if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+    debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), REFETCH_DEBOUNCE_MS)
+  }, [fetchTasks])
 
   // Use a ref for the event handler to avoid stale closures in the WS callback
   const handleTaskEventRef = useRef<(event: string, taskData: Record<string, unknown>) => void>(() => {})
@@ -472,24 +597,11 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     const taskId = taskData.id as string
     if (!taskId) return
 
-    if (event === 'task_deleted') {
-      setAllTasks(prev => prev.filter(t => t.id !== taskId))
-    } else if (event === 'task_created') {
-      const newTask = taskData as unknown as GobbyTask
-      setAllTasks(prev => {
-        if (prev.some(t => t.id === taskId)) return prev
-        return [...prev, newTask]
-      })
-    } else {
-      // task_updated, task_closed, task_reopened
-      const updated = taskData as unknown as GobbyTask
-      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updated } : t))
-    }
+    setAllTasks(prev => applyTaskEvent(prev, event, taskData))
 
     // Debounced full refetch to sync stats, total, and filter accuracy
-    if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
-    debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), REFETCH_DEBOUNCE_MS)
-  }, [fetchTasks])
+    scheduleRefetch()
+  }, [scheduleRefetch])
 
   useEffect(() => {
     handleTaskEventRef.current = handleTaskEvent
@@ -503,6 +615,10 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       )
     }
   }, []))
+
+  useWebSocketEvent('stage_changed', useCallback(() => {
+    scheduleRefetch()
+  }, [scheduleRefetch]))
 
   const refreshTasks = useCallback(() => {
     setIsLoading(true)
@@ -526,10 +642,11 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     updateTask,
     claimTask,
     releaseTaskClaim,
-    markTaskNeedsReview,
-    markTaskReviewApproved,
     escalateTask,
     deEscalateTask,
+    advanceStage,
+    failStage,
+    startStage,
     closeTask,
     reopenTask,
     deleteTask,

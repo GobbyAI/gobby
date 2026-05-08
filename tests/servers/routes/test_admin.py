@@ -1,12 +1,33 @@
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.admin import create_admin_router
+from gobby.shutdown_intent import ShutdownIntent
 
 pytestmark = pytest.mark.unit
+
+
+class RunnerShutdownStub:
+    def __init__(self) -> None:
+        self._shutdown_requested = False
+        self._shutdown_intent: ShutdownIntent | None = None
+        self.request_shutdown_calls: list[ShutdownIntent | None] = []
+
+    def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
+        self.request_shutdown_calls.append(intent)
+        if intent is not None:
+            self._shutdown_intent = intent
+        self._shutdown_requested = True
+
+
+class MinimalRunnerFallbackStub:
+    def __init__(self) -> None:
+        self._shutdown_requested = False
+        self._shutdown_intent: ShutdownIntent | None = None
 
 
 class TestAdminRoutes:
@@ -44,7 +65,7 @@ class TestAdminRoutes:
         server.session_manager.count_by_status.return_value = {"active": 1, "paused": 0}
 
         server.task_manager = MagicMock()
-        server.task_manager.count_by_status.return_value = {"open": 2}
+        server.task_manager.count_by_state.return_value = {"ready": 2}
         server.task_manager.count_ready_tasks.return_value = 1
         server.task_manager.count_blocked_tasks.return_value = 0
 
@@ -54,6 +75,7 @@ class TestAdminRoutes:
         server.memory_manager._neo4j_client = None
 
         server._background_tasks = set()
+        server._runner = RunnerShutdownStub()
 
         # Shutdown support
         server._process_shutdown = AsyncMock()
@@ -166,13 +188,18 @@ class TestAdminRoutes:
     def test_shutdown_endpoint(self, client, mock_server) -> None:
         # We don't need to patch shutdown_event, admin.py calls server._process_shutdown()
 
-        response = client.post("/api/admin/shutdown")
+        with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
+            response = client.post("/api/admin/shutdown")
         assert response.status_code == 200
         assert response.json() == {
             "status": "shutting_down",
             "message": "Graceful shutdown initiated",
             "response_time_ms": response.json()["response_time_ms"],  # ignore value
         }
+        mock_write_shutdown.assert_called_once_with("http_shutdown", intent="stop")
+        assert mock_server._runner._shutdown_requested is True
+        assert mock_server._runner._shutdown_intent is ShutdownIntent.STOP
+        assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.STOP]
 
         # Verify shutdown was initiated
         # Note: TestClient runs synchronous, but create_task might loop issues.
@@ -184,6 +211,15 @@ class TestAdminRoutes:
         # Instead of checking background_tasks (which might clear quickly via callback),
         # verify the method was called.
         mock_server._process_shutdown.assert_called()
+
+    def test_request_runner_shutdown_falls_back_to_runner_attrs(self) -> None:
+        from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
+
+        runner = MinimalRunnerFallbackStub()
+        _request_runner_shutdown(SimpleNamespace(_runner=runner), ShutdownIntent.RESTART)
+
+        assert runner._shutdown_requested is True
+        assert runner._shutdown_intent is ShutdownIntent.RESTART
 
     @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
     @patch(
@@ -201,7 +237,8 @@ class TestAdminRoutes:
     ) -> None:
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
-        response = client.post("/api/admin/restart")
+        with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
+            response = client.post("/api/admin/restart")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "restarting"
@@ -211,6 +248,10 @@ class TestAdminRoutes:
         mock_popen.assert_called_once()
         command = mock_popen.call_args.args[0]
         assert command == [sys.executable, "-c", lifecycle._DIRECT_RESTART_HELPER, "4321"]
+        mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
+        assert mock_server._runner._shutdown_requested is True
+        assert mock_server._runner._shutdown_intent is ShutdownIntent.RESTART
+        assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.RESTART]
 
         mock_server._process_shutdown.assert_called()
 
@@ -230,7 +271,8 @@ class TestAdminRoutes:
     ) -> None:
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
-        response = client.post("/api/admin/restart")
+        with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
+            response = client.post("/api/admin/restart")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "restarting"
@@ -245,7 +287,12 @@ class TestAdminRoutes:
             lifecycle._SERVICE_RESTART_HELPER,
             "4321",
             str(mock_server.port),
+            "http_restart",
         ]
+        mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
+        assert mock_server._runner._shutdown_requested is True
+        assert mock_server._runner._shutdown_intent is ShutdownIntent.RESTART
+        assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.RESTART]
 
         mock_server._process_shutdown.assert_called()
 
@@ -262,12 +309,14 @@ class TestAdminRoutes:
         mock_server,
     ) -> None:
         # First restart should succeed
-        response1 = client.post("/api/admin/restart")
+        with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
+            response1 = client.post("/api/admin/restart")
+            response2 = client.post("/api/admin/restart")
         assert response1.json()["status"] == "restarting"
 
         # Second restart should be rejected
-        response2 = client.post("/api/admin/restart")
         assert response2.json()["status"] == "already_restarting"
+        mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
         mock_popen.assert_called_once()
 
 
@@ -288,11 +337,15 @@ class TestAdminRestartHelpers:
         mock_wait_for_health.side_effect = [None, 0.5]
         mock_service_restart.return_value = {"success": True, "method": "launchctl"}
 
-        lifecycle._run_service_restart_helper(4321, 60887)
+        lifecycle._run_service_restart_helper(4321, 60887, "http_restart")
 
-        mock_service_restart.assert_called_once_with()
+        mock_service_restart.assert_called_once_with(shutdown_source="http_restart")
+        assert mock_service_restart.call_count == 1
+        assert mock_service_restart.call_args is not None
         assert mock_wait_for_health.call_count == 2
         mock_log.assert_not_called()
+        assert mock_log.call_count == 0
+        assert not mock_log.called
 
 
 class TestHealthEndpoint:

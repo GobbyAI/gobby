@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,26 @@ from gobby.hooks.session_types import HookSessionManager
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.worktrees import LocalWorktreeManager
+
+
+_AUTH_PROMPT_RE = re.compile(
+    r"/login|Press 1 to trust|not authenticated|Invalid API key|API key required",
+    re.IGNORECASE,
+)
+_NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
+
+
+def _format_no_activity_error(result: Any) -> str:
+    if not isinstance(result, str) or not result.strip():
+        return _NO_ACTIVITY_ERROR
+
+    tail = "\n".join(result.splitlines()[-20:])
+    if _AUTH_PROMPT_RE.search(tail):
+        return (
+            f"{_NO_ACTIVITY_ERROR} - auth/trust prompt detected in pane output. "
+            "Check daemon-visible API/provider credentials or Claude Code login state."
+        )
+    return f"{_NO_ACTIVITY_ERROR} - last pane output:\n{tail}"
 
 
 class SessionCoordinator:
@@ -464,7 +485,7 @@ class SessionCoordinator:
             if tool_calls_count == 0 and turns_used == 0:
                 self._agent_run_manager.fail(
                     run_id=agent_run_id,
-                    error="Agent completed with no activity (0 tool calls, 0 turns)",
+                    error=_format_no_activity_error(result),
                 )
                 self.logger.warning(
                     f"Agent run {agent_run_id} marked as failed: "

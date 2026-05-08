@@ -11,15 +11,24 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
+
+
+class MCPInventoryProtocol(Protocol):
+    def get_available_servers(self) -> list[str]:
+        """Return available MCP server names."""
+        ...
+
+    async def list_tools(self) -> dict[str, list[dict[str, Any]]]:
+        """Return MCP tools grouped by server name."""
+        ...
 
 
 @dataclass
@@ -124,7 +133,7 @@ async def evaluate_workflow(
     name: str,
     workflow_loader: WorkflowLoader,
     project_path: str | None = None,
-    mcp_manager: MCPClientManager | None = None,
+    mcp_manager: MCPInventoryProtocol | None = None,
 ) -> WorkflowEvaluation:
     """
     Evaluate a workflow definition for structural and semantic issues.
@@ -412,7 +421,7 @@ def _has_terminal_path(
 async def _check_semantics(
     definition: WorkflowDefinition,
     result: WorkflowEvaluation,
-    mcp_manager: MCPClientManager | None,
+    mcp_manager: MCPInventoryProtocol | None,
 ) -> None:
     """Run semantic checks that require live MCP connection."""
     if mcp_manager is None:
@@ -496,6 +505,9 @@ async def _check_semantics(
                         )
                     )
 
+        for handler in [*step.on_mcp_success, *step.on_mcp_error]:
+            _check_mcp_handler_ref(step.name, handler, available_servers, server_tools, result)
+
 
 def _check_mcp_tool_refs(
     step_name: str,
@@ -536,6 +548,45 @@ def _check_mcp_tool_refs(
                     detail={"step": step_name, "server": server, "tool": tool, "ref": ref},
                 )
             )
+
+
+def _check_mcp_handler_ref(
+    step_name: str,
+    handler: object,
+    available_servers: set[str],
+    server_tools: dict[str, set[str]],
+    result: WorkflowEvaluation,
+) -> None:
+    """Check MCP tool references in success/error handlers."""
+    if not isinstance(handler, dict):
+        return
+    server = handler.get("server")
+    tool = handler.get("tool")
+    if not isinstance(server, str) or not server:
+        return
+    if not isinstance(tool, str) or not tool:
+        return
+    ref = f"{server}:{tool}"
+    if server not in available_servers:
+        result.items.append(
+            EvaluationItem(
+                layer="semantics",
+                level="warning",
+                code="UNKNOWN_MCP_HANDLER_TARGET",
+                message=f"Step '{step_name}' handler references unknown server '{server}'",
+                detail={"step": step_name, "server": server, "ref": ref},
+            )
+        )
+    elif tool != "*" and tool not in server_tools.get(server, set()):
+        result.items.append(
+            EvaluationItem(
+                layer="semantics",
+                level="warning",
+                code="UNKNOWN_MCP_HANDLER_TARGET",
+                message=f"Step '{step_name}' handler references unknown tool '{ref}'",
+                detail={"step": step_name, "server": server, "tool": tool, "ref": ref},
+            )
+        )
 
 
 def _build_step_trace(definition: WorkflowDefinition, result: WorkflowEvaluation) -> None:

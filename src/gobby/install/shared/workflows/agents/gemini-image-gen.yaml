@@ -1,0 +1,130 @@
+name: gemini-image-gen
+description: |
+  Specialized agent for high-quality image generation and editing using
+  Google's Gemini Nano Banana models. Handles prompt engineering,
+  iterative refinement, and visual asset production.
+
+version: "1.0"
+enabled: true
+priority: 50
+surfaces: [spawn, persona]
+provider: gemini
+model: gemini-3-pro-image-preview
+reasoning_effort: medium
+isolation: inherit
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+skills:
+  baseline:
+    - nano-banana
+    - prompt engineering for image generation
+    - visual composition and style refinement
+    - iterative image editing
+  tool_allowlist:
+    - nano-banana
+    - curl
+    - python
+
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - Agent termination is separate and still requires `end_agent_run`.
+  - `kill_agent` is for external targeted termination, not self-completion.
+
+  You are the gemini-image-gen agent. Your primary purpose is to generate and
+  edit images using the `nano-banana` skill and its specialty recipe references.
+
+  CORE WORKFLOW:
+  1. Load the `nano-banana` skill by calling `get_skill(name="nano-banana")` on `gobby-skills`.
+     This is both the generic image-generation surface and the router for specialty recipes.
+  2. If the user request matches a specialty recipe (anime-to-life, character-reference-sheet,
+     figure-to-life, imax-portrait, j-cover, j-idol, j-poses, photo-restoration, real-mecha),
+     load it via `get_skill_file(name="nano-banana", path="references/<recipe>.md")` on
+     `gobby-skills` and follow that file's instructions.
+  3. Analyze the user's image generation or editing request.
+  4. Use the tools and guidelines provided by the loaded skill (and any loaded reference)
+     to fulfill the request.
+  5. If the result needs refinement, iterate on the prompt or editing parameters.
+
+  CRITICAL RULES:
+  - ALWAYS call `get_skill(name="nano-banana")` at the start of your implementation step.
+  - Use `get_skill_file` for specialty recipes — do NOT try to load them via `get_skill`,
+    they are no longer registered as standalone skills.
+  - Follow the prompt engineering guidelines provided in the skill contents.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+  - If the native image-generation/editing tool fails, call top-level
+    `mcp__gobby__set_variable` with `name="generation_failed"` and `value=true`
+    before terminating. The `on_mcp_error` hook below only observes task-closure failures.
+  - Do NOT terminate without calling end_agent_run.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+
+step_variables:
+  skill_loaded: false
+  generation_complete: false
+  generation_failed: false
+
+steps:
+  - name: load_skill
+    description: "Load the nano-banana skill"
+    status_message: "Loading nano-banana skill from gobby-skills..."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: generate
+        when: "vars.skill_loaded"
+
+  - name: generate
+    description: "Generate or edit images"
+    status_message: |
+      Executing image generation/editing with nano-banana. If the native image
+      generation or editing tool fails, set generation_failed=true via the
+      top-level mcp__gobby__set_variable tool before moving to termination.
+    allowed_tools: "all"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: close_task
+        action: set_variable
+        variable: generation_complete
+        value: true
+    on_mcp_error:
+      - server: gobby-tasks
+        tool: close_task
+        action: set_variable
+        variable: generation_failed
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.generation_complete"
+      - to: terminate
+        when: "vars.generation_failed"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Task complete. Call end_agent_run to terminate."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:end_agent_run"
+
+exit_condition: "current_step == 'terminate'"

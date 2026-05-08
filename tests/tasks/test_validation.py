@@ -387,6 +387,8 @@ class TestGetValidationContextSmartEdgeCases:
         assert context is not None
         # Verify multi-commit diff was NOT called because remaining < 5000
         mock_diff.assert_not_called()
+        assert mock_diff.call_count == 0
+        assert not mock_diff.called
 
     @patch("gobby.tasks.validation.run_git_command")
     @patch("gobby.tasks.validation.get_multi_commit_diff")
@@ -408,6 +410,7 @@ class TestGetValidationContextSmartEdgeCases:
         # File analysis may or may not be triggered depending on implementation
         # The test verifies the function handles the low remaining chars case
         assert context is not None
+        assert context.startswith("=== STAGED CHANGES ===")
 
     @patch("gobby.tasks.validation.run_git_command")
     def test_context_truncation_on_join(self, mock_run) -> None:
@@ -729,6 +732,7 @@ class TestGetValidationContextSmartFileBranch:
         # With no git changes, no commit diff, and no matching files,
         # context should be None
         assert context is None
+        assert mock_find.call_count == 1
 
 
 class TestIntegrationScenarios:
@@ -1242,6 +1246,31 @@ class TestGetValidationContextSmartMerged:
         )
         # Should try to find files mentioned in criteria
         mock_find.assert_called()
+        assert mock_find.call_count >= 1
+        assert mock_find.call_args is not None
+
+    @patch("gobby.tasks.validation.run_git_command")
+    @patch("gobby.tasks.validation.get_multi_commit_diff")
+    def test_includes_related_test_files(self, mock_diff, mock_run, tmp_path: Path) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        mock_diff.return_value = None
+
+        tests_dir = tmp_path / "tests" / "tasks"
+        tests_dir.mkdir(parents=True)
+        related_test = tests_dir / "test_task_validation.py"
+        related_test.write_text("def test_validation_context_related_files(): pass\n")
+
+        context = get_validation_context_smart(
+            "Improve task validation context",
+            validation_criteria="Task validation includes related test files",
+            cwd=tmp_path,
+            max_chars=5000,
+        )
+
+        assert context is not None
+        assert "=== RELATED TEST FILES ===" in context
+        assert "test_task_validation.py" in context
+        assert "test_validation_context_related_files" in context
 
     @patch("gobby.tasks.validation.run_git_command")
     @patch("gobby.tasks.validation.get_multi_commit_diff")
@@ -1249,12 +1278,11 @@ class TestGetValidationContextSmartMerged:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         mock_diff.return_value = None
 
-        get_validation_context_smart(
+        context = get_validation_context_smart(
             "Task with no related files",
             max_chars=100,  # Very limited
         )
-        # May return None or minimal context
-        # The function should handle this gracefully
+        assert context is None
 
     @patch("gobby.tasks.validation.run_git_command")
     def test_respects_max_chars(self, mock_run) -> None:

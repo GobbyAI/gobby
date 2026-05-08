@@ -187,12 +187,9 @@ def update_workflow_definition(
         if "description" in data:
             fields["description"] = data["description"]
         _VALID_WORKFLOW_TYPES = {"rule", "variable", "agent", "pipeline"}
-        _LEGACY_TYPE_MAP = {"step": "pipeline", "workflow": "pipeline"}
         yaml_type = data.get("type")
         if yaml_type in _VALID_WORKFLOW_TYPES:
             fields["workflow_type"] = yaml_type
-        elif yaml_type in _LEGACY_TYPE_MAP:
-            fields["workflow_type"] = _LEGACY_TYPE_MAP[yaml_type]
         elif yaml_type is not None:
             return {
                 "success": False,

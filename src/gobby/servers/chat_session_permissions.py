@@ -27,6 +27,7 @@ from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     find_out_of_repo_write_path,
     get_global_approval_rules,
+    is_gcode_shell_command,
     is_safe_canvas_call,
     is_tool_auto_allowed,
     load_project_approval_rules,
@@ -123,7 +124,7 @@ class ChatSessionPermissionsMixin:
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Callback for tool permission checks.
 
-        Auto-approves all tools except AskUserQuestion (which blocks
+        Bypasses approval prompts for all tools except AskUserQuestion (which blocks
         until the user provides answers via provide_answer()) and tools
         matched by tool_approval policies (which block until approved).
         """
@@ -228,7 +229,11 @@ class ChatSessionPermissionsMixin:
                         "Present your plan to the user for approval before making changes."
                     )
                 )
-            if is_shell_tool(tool_name) and self._is_write_bash(input_data):
+            if (
+                is_shell_tool(tool_name)
+                and self._is_write_bash(input_data)
+                and not is_gcode_shell_command(input_data)
+            ):
                 return PermissionResultDeny(
                     message=(
                         "Plan mode is active — write/destructive shell commands are blocked. "
@@ -543,7 +548,7 @@ class ChatSessionPermissionsMixin:
         """Return mode context for additionalContext injection.
 
         Returns context for ALL modes so the agent always knows its current
-        mode. Critical for Plan → Act/Auto transitions: without explicit
+        mode. Critical for Plan → Act/YOLO transitions: without explicit
         counter-context, the agent retains stale plan mode instructions
         from earlier in the conversation.
 
@@ -552,15 +557,25 @@ class ChatSessionPermissionsMixin:
         ``_consume_`` signals this mutation to callers.
         """
         if self.chat_mode != "plan":
-            # Non-plan modes: SDK set_permission_mode handles mode signaling
-            # to the agent via the control protocol — no context injection needed.
-            return None
+            if self.chat_mode == "bypass":
+                return (
+                    '<chat-mode status="yolo">\n'
+                    "You are in YOLO MODE. You may execute work, edit files, and use tools; "
+                    "Gobby will not ask for approval before tool requests.\n"
+                    "</chat-mode>"
+                )
+            return (
+                '<chat-mode status="act">\n'
+                "You are in ACT MODE. You may execute work, edit files, and use tools; "
+                "Gobby may ask the user to approve sensitive tool requests.\n"
+                "</chat-mode>"
+            )
 
         if self._plan_approved:
             return (
                 '<plan-mode status="approved">\n'
                 "The user has approved your plan, but you are still in PLAN MODE.\n"
-                "Do not execute changes until the session is explicitly switched to Act or Auto.\n"
+                "Do not execute changes until the session is explicitly switched to Act or YOLO.\n"
                 "</plan-mode>"
             )
 
@@ -568,7 +583,7 @@ class ChatSessionPermissionsMixin:
             '<plan-mode status="active">',
             "You are in PLAN MODE. Your role is to research and design, not execute.",
             "",
-            "ALLOWED: Read, Glob, Grep, read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .gemini/, .qwen/, .codex/)",
+            "ALLOWED: Read, Glob, Grep, gcode via Bash for code navigation (gcode outline/search/symbol), read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .gemini/, .qwen/, .codex/)",
             "BLOCKED: Edit, Write, NotebookEdit, write/destructive Bash (rm, mv, git add/commit/push, redirects)",
             "",
             "Present a structured plan with:",

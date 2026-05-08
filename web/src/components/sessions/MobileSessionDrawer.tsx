@@ -3,6 +3,7 @@ import type { GobbySession } from '../../types/sessions'
 import { SourceIcon } from '../shared/SourceIcon'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { getSessionTitleText } from '../../lib/sessionTitle'
+import { MODEL_BADGE_CLS, META_COUNT_CLS } from './styles'
 
 function getModelBadge(model: string): string {
   const parts = model.split('-')
@@ -76,11 +77,11 @@ export function MobileSessionDrawer({
                   </div>
                   <div className="session-item-actions">
                     {session.model && (
-                      <span className="session-detail-model-badge">
+                      <span className={MODEL_BADGE_CLS}>
                         {getModelBadge(session.model)}
                       </span>
                     )}
-                    <span className="session-meta-count">{session.message_count} msg</span>
+                    <span className={META_COUNT_CLS}>{session.message_count} msg</span>
                     <span className="session-pid">
                       {formatRelativeTime(session.updated_at)}
                     </span>

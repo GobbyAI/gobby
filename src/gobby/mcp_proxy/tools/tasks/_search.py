@@ -26,7 +26,7 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     def search_tasks(
         query: str,
-        status: str | list[str] | None = None,
+        current_stage_state: str | list[str] | None = None,
         task_type: str | None = None,
         priority: int | None = None,
         parent_task_id: str | None = None,
@@ -39,12 +39,12 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Search tasks using FTS5 full-text search.
 
         Performs keyword-based full-text search (FTS5) on task title, description, labels, and type.
-        Results are ranked by relevance and can be filtered by status, type, etc.
+        Results are ranked by relevance and can be filtered by current stage state, type, etc.
 
         Args:
             query: Search query text (required). Natural language query.
-            status: Filter by status (open, in_progress, needs_review, closed).
-                Can be a single status or comma-separated list.
+            current_stage_state: Filter by current stage state.
+                Can be a single state or comma-separated list.
             task_type: Filter by task type (task, bug, feature, epic)
             priority: Filter by priority (1=High, 2=Medium, 3=Low)
             parent_task_id: Filter by parent task ID (UUID, #N, or N format)
@@ -65,10 +65,10 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"error": str(e), "tasks": [], "count": 0}
 
-        # Handle comma-separated status string
-        status_filter: str | list[str] | None = status
-        if isinstance(status, str) and "," in status:
-            status_filter = [s.strip() for s in status.split(",")]
+        # Handle comma-separated current-stage state string.
+        current_stage_filter: str | list[str] | None = current_stage_state
+        if isinstance(current_stage_state, str) and "," in current_stage_state:
+            current_stage_filter = [s.strip() for s in current_stage_state.split(",")]
 
         # Resolve parent_task_id if provided (#N, N, or UUID -> UUID)
         resolved_parent_id = None
@@ -88,7 +88,7 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         results = ctx.task_manager.search_tasks(
             query=query.strip(),
             project_id=project_id,
-            status=status_filter,
+            current_stage_state=current_stage_filter,
             task_type=task_type,
             priority=priority,
             parent_task_id=resolved_parent_id,
@@ -119,12 +119,12 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Search query text. Natural language query to find matching tasks.",
                 },
-                "status": {
+                "current_stage_state": {
                     "oneOf": [
                         {"type": "string"},
                         {"type": "array", "items": {"type": "string"}},
                     ],
-                    "description": "Filter by status. Can be single status or comma-separated list (e.g., 'open,in_progress')",
+                    "description": "Filter by current stage state. Can be a single state or comma-separated list.",
                     "default": None,
                 },
                 "task_type": {

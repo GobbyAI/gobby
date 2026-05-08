@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -241,8 +242,6 @@ class ClaudeSandboxResolver(SandboxResolver):
                     "allowAllUnixSockets": False,
                     "allowLocalBinding": False,
                     "allowedDomains": [],
-                    "httpProxyPort": None,
-                    "socksProxyPort": None,
                 },
                 "enableWeakerNestedSandbox": False,
             },
@@ -476,8 +475,14 @@ def compute_sandbox_paths(
     Returns:
         ResolvedSandboxPaths with all paths computed.
     """
-    # Start with workspace in write paths
+    workspace = Path(workspace_path).expanduser()
+
+    # Start with workspace in write paths.
     write_paths = [workspace_path]
+
+    for path in _git_metadata_write_paths(workspace):
+        if path not in write_paths:
+            write_paths.append(path)
 
     # Add extra write paths
     for path in config.extra_write_paths:
@@ -495,3 +500,47 @@ def compute_sandbox_paths(
         write_paths=write_paths,
         allow_external_network=config.allow_network,
     )
+
+
+def _git_metadata_write_paths(workspace: Path) -> list[str]:
+    """Return Git metadata dirs that must be writable for commits from a worktree."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                "git",
+                "-C",
+                str(workspace),
+                "rev-parse",
+                "--git-dir",
+                "--git-common-dir",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    paths: list[str] = []
+    for raw_path in result.stdout.splitlines():
+        resolved = _resolve_git_metadata_path(workspace, raw_path)
+        if resolved and resolved not in paths:
+            paths.append(resolved)
+    return paths
+
+
+def _resolve_git_metadata_path(workspace: Path, raw_path: str) -> str | None:
+    raw_path = raw_path.strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = workspace / path
+    try:
+        return str(path.resolve(strict=False))
+    except OSError:
+        return str(path)

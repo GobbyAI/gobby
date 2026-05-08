@@ -1,14 +1,28 @@
 import { useState, useMemo, useRef } from 'react'
-import './SessionsPage.css'
 import type { GobbySession, SessionFilters } from '../../types/sessions'
 import { KNOWN_SOURCES } from '../../types/sessions'
 import { useNow } from '../../hooks/useNow'
 import { useSessionDetail } from '../../hooks/useSessionDetail'
 import { SessionDetail } from './SessionDetail'
 import { SourceIcon } from '../shared/SourceIcon'
+import { SOURCE_LABELS } from '../shared/sourceTheme'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { MobileSessionDrawer } from './MobileSessionDrawer'
 import { getSessionTitleText } from '../../lib/sessionTitle'
+import { cn } from '../../lib/utils'
+import { MODEL_BADGE_CLS, META_COUNT_CLS } from './styles'
+
+const PAGE_CLS = 'flex flex-1 overflow-hidden'
+
+const BROWSER_CLS =
+  'flex w-[var(--sidebar-width)] min-w-[var(--sidebar-width)] flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--bg-secondary)] transition-[width,min-width] duration-200 max-md:hidden'
+const BROWSER_COLLAPSED_CLS = 'w-10 min-w-10'
+
+const MAIN_CLS = 'flex flex-1 flex-col overflow-hidden bg-[var(--bg-primary)]'
+const EMPTY_CLS =
+  'flex flex-1 flex-col items-center justify-center gap-3 text-center text-[var(--text-muted)] [&_svg]:opacity-30'
+const EMPTY_TITLE_CLS = 'text-[length:var(--text-lg)] font-medium text-[var(--text-secondary)]'
+const EMPTY_TEXT_CLS = 'text-[length:var(--text-base)]'
 
 interface SessionsPageProps {
   sessions: GobbySession[]
@@ -22,12 +36,7 @@ interface SessionsPageProps {
 }
 
 function sourceLabel(source: string): string {
-  switch (source) {
-    case 'claude': return 'Claude'
-    case 'gemini': return 'Gemini'
-    case 'codex': return 'Codex'
-    default: return source
-  }
+  return SOURCE_LABELS[source] ?? source
 }
 
 export function SessionsPage({
@@ -49,7 +58,6 @@ export function SessionsPage({
 
   const detail = useSessionDetail(selectedSessionId)
 
-  // Time-group sessions
   const grouped = useMemo(() => {
     const groups: { label: string; sessions: GobbySession[] }[] = [
       { label: 'Today', sessions: [] },
@@ -71,9 +79,8 @@ export function SessionsPage({
   }, [sessions, now])
 
   return (
-    <div className="sessions-page">
-      {/* Left panel: session browser */}
-      <div className={`sessions-browser ${sidebarOpen ? '' : 'collapsed'}`}>
+    <div className={PAGE_CLS}>
+      <div className={cn(BROWSER_CLS, !sidebarOpen && BROWSER_COLLAPSED_CLS)}>
         <div className="sessions-sidebar-header">
           {sidebarOpen && <span className="sessions-sidebar-title">Sessions</span>}
           <div className="sessions-sidebar-actions">
@@ -82,7 +89,7 @@ export function SessionsPage({
               onClick={() => setSidebarOpen(!sidebarOpen)}
               title={sidebarOpen ? 'Collapse' : 'Expand'}
             >
-              {sidebarOpen ? '\u25C0' : '\u25B6'}
+              {sidebarOpen ? '◀' : '▶'}
             </button>
           </div>
         </div>
@@ -93,7 +100,7 @@ export function SessionsPage({
               <input
                 className="sessions-filter-input"
                 type="text"
-                placeholder="Search sessions..."
+                placeholder="Search"
                 value={filters.search}
                 onChange={(e) =>
                   onFiltersChange({ ...filters, search: e.target.value })
@@ -196,11 +203,11 @@ export function SessionsPage({
                         </div>
                         <div className="session-item-actions">
                           {session.model && (
-                            <span className="session-detail-model-badge">
+                            <span className={MODEL_BADGE_CLS}>
                               {session.model.split('-').slice(-1)[0]}
                             </span>
                           )}
-                          <span className="session-meta-count">{session.message_count}msg</span>
+                          <span className={META_COUNT_CLS}>{session.message_count} msg</span>
                           <span className="session-pid">
                             {formatRelativeTime(session.updated_at)}
                           </span>
@@ -215,8 +222,7 @@ export function SessionsPage({
         )}
       </div>
 
-      {/* Right panel: session detail or empty state */}
-      <div className="sessions-main">
+      <div className={MAIN_CLS}>
         <MobileSessionDrawer
           sessions={sessions}
           selectedSessionId={selectedSessionId}
@@ -239,10 +245,10 @@ export function SessionsPage({
             onSelectSession={setSelectedSessionId}
           />
         ) : (
-          <div className="sessions-empty">
+          <div className={EMPTY_CLS}>
             <SessionsIcon size={48} />
-            <h3>Select a session</h3>
-            <p>Choose a session from the list to view details, stats, and transcript.</p>
+            <h3 className={EMPTY_TITLE_CLS}>Select a session</h3>
+            <p className={EMPTY_TEXT_CLS}>Choose a session from the list to view details, stats, and transcript.</p>
           </div>
         )}
       </div>

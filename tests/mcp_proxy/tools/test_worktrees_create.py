@@ -64,6 +64,48 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
 
 
 @pytest.mark.asyncio
+async def test_create_worktree_installs_droid_hooks(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = Worktree(
+        id="wt-droid",
+        project_id="proj-1",
+        task_id=None,
+        branch_name="feature/droid",
+        worktree_path="/tmp/wt/feature-droid",
+        base_branch="main",
+        agent_session_id=None,
+        status="active",
+        created_at="now",
+        updated_at="now",
+        merged_at=None,
+    )
+
+    with (
+        patch("gobby.mcp_proxy.tools.worktrees._create.copy_project_json_to_worktree"),
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._create.install_provider_hooks",
+            return_value=True,
+        ) as mock_install,
+    ):
+        result = await registry.call(
+            "create_worktree",
+            {
+                "branch_name": "feature/droid",
+                "worktree_path": "/tmp/wt/feature-droid",
+                "provider": "droid",
+            },
+        )
+
+    assert result["success"] is True
+    assert result["hooks_installed"] is True
+    mock_install.assert_called_once_with("droid", "/tmp/wt/feature-droid")
+
+
+@pytest.mark.asyncio
 async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git_manager) -> None:
     mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = False

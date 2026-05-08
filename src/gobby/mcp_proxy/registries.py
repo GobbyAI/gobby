@@ -67,8 +67,11 @@ def setup_internal_registries(
     completion_registry: CompletionEventRegistry | None = None,
     agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
     cron_scheduler: Any | None = None,
+    mcp_manager: Any | None = None,
     transcript_reader: Any | None = None,
     communications_manager: Any | None = None,
+    web_chat_session_registry: Any | None = None,
+    code_index: Any | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -141,9 +144,17 @@ def setup_internal_registries(
                 config=_config,
                 llm_service=llm_service,
                 completion_registry=completion_registry,
+                mcp_manager=mcp_manager,
             )
             manager.add_registry(ops_registry)
             logger.debug("Tasks-ops registry initialized")
+
+    if db is not None:
+        from gobby.mcp_proxy.tools.plans import create_plan_registry
+
+        plan_registry = create_plan_registry(db, default_project_id=project_id)
+        manager.add_registry(plan_registry)
+        logger.debug("Plans registry initialized")
 
     # Initialize sessions registry (messages + session CRUD)
     if session_manager is not None:
@@ -157,6 +168,7 @@ def setup_internal_registries(
             worktree_manager=worktree_storage,
             inter_session_message_manager=inter_session_message_manager,
             transcript_reader=transcript_reader,
+            web_chat_session_registry=web_chat_session_registry,
         )
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")
@@ -175,6 +187,7 @@ def setup_internal_registries(
             memory_sync_manager=memory_sync_manager,
             session_manager=session_manager,
             config=_config,
+            task_manager=task_manager,
         )
         manager.add_registry(memory_registry)
         logger.debug("Memory registry initialized")
@@ -186,6 +199,8 @@ def setup_internal_registries(
         loader=workflow_loader,
         session_manager=session_manager,
         db=getattr(session_manager, "db", None) if session_manager else None,
+        internal_manager=manager,
+        mcp_manager=mcp_manager,
         executor_getter=lambda: pipeline_executor,
         execution_manager_getter=lambda: pipeline_execution_manager,
         completion_registry=completion_registry,
@@ -239,6 +254,7 @@ def setup_internal_registries(
             completion_registry=completion_registry,
             lifecycle_monitor=agent_lifecycle_monitor,
             daemon_config=_config,
+            code_index=code_index,
         )
 
         # Add inter-agent messaging tools if dependencies are available
@@ -310,6 +326,7 @@ def setup_internal_registries(
             merge_resolver=merge_resolver,
             git_manager=git_manager,
             worktree_manager=worktree_storage,
+            db=db,
         )
         manager.add_registry(merge_registry)
         logger.debug("Merge registry initialized")

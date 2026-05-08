@@ -14,9 +14,6 @@ vi.mock('../ToolCallCard', () => ({
   ToolCallCards: ({ toolCalls }: { toolCalls: unknown[] }) => (
     <div data-testid="tool-calls">{toolCalls.length} tool calls</div>
   ),
-  ToolChainGroup: ({ toolCalls }: { toolCalls: unknown[] }) => (
-    <div data-testid="tool-chain">{toolCalls.length} tools</div>
-  ),
 }))
 
 function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -109,7 +106,7 @@ describe('MessageItem', () => {
 
     const markdowns = screen.getAllByTestId('markdown')
     expect(markdowns).toHaveLength(2)
-    expect(screen.getByTestId('tool-chain')).toBeTruthy()
+    expect(screen.getByTestId('tool-calls')).toBeTruthy()
   })
 
   it('renders protocol tags inside text as collapsed tool chains', () => {
@@ -126,11 +123,11 @@ describe('MessageItem', () => {
     expect(markdowns).toHaveLength(2)
     expect(markdowns[0].textContent).toContain('Visible text')
     expect(markdowns[1].textContent).toContain('Trailing text')
-    expect(screen.getByTestId('tool-chain')).toBeTruthy()
-    expect(screen.getByText('1 tools')).toBeTruthy()
+    expect(screen.getByTestId('tool-calls')).toBeTruthy()
+    expect(screen.getByText('1 tool calls')).toBeTruthy()
   })
 
-  it('renders image blocks', () => {
+  it('renders base64 image blocks', () => {
     render(
       <MessageItem
         message={makeMessage({
@@ -138,7 +135,7 @@ describe('MessageItem', () => {
           contentBlocks: [
             {
               type: 'image',
-              source: { type: 'base64', media_type: 'image/png', data: 'abc' }
+              source: { type: 'base64', media_type: 'image/png', data: 'abc' },
             },
           ],
         })}
@@ -148,6 +145,26 @@ describe('MessageItem', () => {
     const img = screen.getByAltText('Image content')
     expect(img).toBeTruthy()
     expect(img.getAttribute('src')).toBe('data:image/png;base64,abc')
+  })
+
+  it('renders image blocks with image_url sources', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'image',
+              image_url: { url: 'https://example.test/generated.png' },
+            },
+          ],
+        })}
+      />,
+    )
+
+    const img = screen.getByAltText('Image content')
+    expect(img).toBeTruthy()
+    expect(img.getAttribute('src')).toBe('https://example.test/generated.png')
   })
 
   it('shows streaming cursor when isStreaming', () => {

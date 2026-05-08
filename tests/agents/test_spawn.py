@@ -69,6 +69,8 @@ class TestPrepareTerminalSpawnMetadata:
             agent_run_id=result.agent_run_id,
             workflow_name=None,
         )
+        assert sm.update_terminal_pickup_metadata.call_count == 1
+        assert sm.update_terminal_pickup_metadata.call_args is not None
 
     def test_agent_run_id_format(self) -> None:
         """agent_run_id starts with 'run-' and is 16 chars (run- + 12 hex)."""

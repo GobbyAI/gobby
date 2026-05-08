@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.transcripts.base import (
@@ -16,16 +16,24 @@ from gobby.sessions.transcripts.base import (
 
 logger = logging.getLogger(__name__)
 
+ToolResultKind = Literal["text", "json", "image", "error"]
+
 _INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt"})
 _PROTOCOL_TOOL_NAME = "protocol_context"
 
 
 @dataclass
 class ToolResult:
-    """Result of a tool execution."""
+    """Result of a tool execution.
+
+    `kind` discriminates how `content` should be rendered: text bodies are
+    plain strings, json bodies are dict/list payloads, image/error bodies
+    follow tool-specific shapes. The frontend dispatches on `kind` rather
+    than sniffing `typeof content`.
+    """
 
     content: Any
-    content_type: str  # text/json/image/error
+    kind: ToolResultKind
     truncated: bool = False
     metadata: dict[str, Any] | None = None
 
@@ -49,6 +57,15 @@ class _ProtocolContentSegment:
     kind: str
     text: str | None = None
     tool_call: RenderedToolCall | None = None
+
+
+@dataclass(frozen=True)
+class _ProtocolToolMatch:
+    start: int
+    end: int
+    tag: str
+    attrs: str
+    body: str
 
 
 TOOL_TYPE_MAP = {
@@ -330,12 +347,11 @@ def _tag_pattern(tags: tuple[str, ...]) -> str:
 _PROTOCOL_TOOL_TAG_PATTERN = _tag_pattern(_PROTOCOL_TOOL_TAGS)
 _INLINE_WRAPPER_PROTOCOL_TAG_PATTERN = _tag_pattern(_INLINE_WRAPPER_PROTOCOL_TAGS)
 
-# Protocol/context tags that should surface as collapsed protocol tool calls.
-_PROTOCOL_TOOL_RE = re.compile(
-    rf"<(?P<tag>{_PROTOCOL_TOOL_TAG_PATTERN})(?=[\s>])(?P<attrs>[^>]*)>"
-    rf"(?P<body>.*?)(?:</(?P=tag)\s*>|\Z)",
-    re.DOTALL | re.IGNORECASE,
+_PROTOCOL_TAG_RE = re.compile(
+    rf"<(?P<closing>/)?(?P<tag>{_PROTOCOL_TOOL_TAG_PATTERN})(?=[\s>])(?P<attrs>[^>]*)>",
+    re.IGNORECASE,
 )
+_PROTOCOL_CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]*(?:`|$)", re.DOTALL)
 
 _INLINE_WRAPPER_PROTOCOL_TAG_RE = re.compile(
     rf"</?(?:{_INLINE_WRAPPER_PROTOCOL_TAG_PATTERN})(?=[\s>])[^>]*>",
@@ -470,6 +486,74 @@ def _parse_protocol_payload(content: str, depth: int = 0) -> Any:
     return content
 
 
+def _find_protocol_protected_ranges(content: str) -> list[tuple[int, int]]:
+    return [(match.start(), match.end()) for match in _PROTOCOL_CODE_SPAN_RE.finditer(content)]
+
+
+def _is_protected_protocol_index(index: int, ranges: list[tuple[int, int]]) -> bool:
+    # Assumes ranges are sorted by start (re.finditer yields matches in order).
+    for start, end in ranges:
+        if index < start:
+            return False
+        if index < end:
+            return True
+
+    return False
+
+
+def _find_matching_protocol_close(
+    content: str,
+    start_index: int,
+    normalized_tag: str,
+    protected_ranges: list[tuple[int, int]],
+) -> re.Match[str] | None:
+    depth = 1
+    for match in _PROTOCOL_TAG_RE.finditer(content, start_index):
+        if _is_protected_protocol_index(match.start(), protected_ranges):
+            continue
+
+        if match.group("tag").lower() != normalized_tag:
+            continue
+
+        if match.group("closing"):
+            depth -= 1
+            if depth == 0:
+                return match
+        else:
+            depth += 1
+
+    return None
+
+
+def _iter_protocol_tool_matches(content: str) -> Iterable[_ProtocolToolMatch]:
+    protected_ranges = _find_protocol_protected_ranges(content)
+    index = 0
+    while match := _PROTOCOL_TAG_RE.search(content, index):
+        if _is_protected_protocol_index(match.start(), protected_ranges):
+            index = match.end()
+            continue
+
+        if match.group("closing"):
+            index = match.end()
+            continue
+
+        close_match = _find_matching_protocol_close(
+            content, match.end(), match.group("tag").lower(), protected_ranges
+        )
+        if close_match is None:
+            index = match.end()
+            continue
+
+        yield _ProtocolToolMatch(
+            start=match.start(),
+            end=close_match.end(),
+            tag=match.group("tag"),
+            attrs=match.group("attrs"),
+            body=content[match.end() : close_match.start()],
+        )
+        index = close_match.end()
+
+
 def _make_protocol_tool_call(
     tag: str,
     body: str,
@@ -484,7 +568,7 @@ def _make_protocol_tool_call(
         arguments["attributes"] = parsed_attrs
 
     result_content = _parse_protocol_payload(body)
-    result_type = "json" if isinstance(result_content, (dict, list)) else "text"
+    result_kind: ToolResultKind = "json" if isinstance(result_content, (dict, list)) else "text"
 
     return RenderedToolCall(
         id=f"protocol-{source_index}-{ordinal}",
@@ -494,7 +578,7 @@ def _make_protocol_tool_call(
         arguments=arguments,
         result=ToolResult(
             content=result_content,
-            content_type=result_type,
+            kind=result_kind,
             metadata={"protocol_tag": normalized_tag},
         ),
         status="completed",
@@ -509,45 +593,84 @@ def _make_plain_text_protocol_tool_call(
     return _make_protocol_tool_call(tag, body, "", source_index, 0)
 
 
+def _append_visible_protocol_segment(
+    segments: list[_ProtocolContentSegment],
+    text: str,
+    source_index: int,
+    ordinal: int,
+) -> int:
+    if not text.strip():
+        return ordinal
+
+    if _looks_like_system_bootstrap_text(text):
+        ordinal += 1
+        segments.append(
+            _ProtocolContentSegment(
+                kind="protocol_tool",
+                tool_call=_make_protocol_tool_call(
+                    "system_instructions",
+                    text.strip(),
+                    "",
+                    source_index,
+                    ordinal,
+                ),
+            )
+        )
+        return ordinal
+
+    segments.append(_ProtocolContentSegment(kind="text", text=text))
+    return ordinal
+
+
 def _extract_protocol_content_segments(
     content: str, source_index: int
 ) -> list[_ProtocolContentSegment]:
-    if "<" not in content:
+    if "<" not in content and not _looks_like_system_bootstrap_text(content):
         return [_ProtocolContentSegment(kind="text", text=content)] if content else []
 
     segments: list[_ProtocolContentSegment] = []
     last_end = 0
     ordinal = 0
 
-    for match in _PROTOCOL_TOOL_RE.finditer(content):
-        visible_text = _sanitize_visible_protocol_text(content[last_end : match.start()]).rstrip()
-        if visible_text.strip():
-            segments.append(_ProtocolContentSegment(kind="text", text=visible_text))
+    for match in _iter_protocol_tool_matches(content):
+        visible_text = _sanitize_visible_protocol_text(content[last_end : match.start]).rstrip()
+        ordinal = _append_visible_protocol_segment(
+            segments,
+            visible_text,
+            source_index,
+            ordinal,
+        )
 
         ordinal += 1
         segments.append(
             _ProtocolContentSegment(
                 kind="protocol_tool",
                 tool_call=_make_protocol_tool_call(
-                    match.group("tag"),
-                    match.group("body"),
-                    match.group("attrs"),
+                    match.tag,
+                    match.body,
+                    match.attrs,
                     source_index,
                     ordinal,
                 ),
             )
         )
-        last_end = match.end()
+        last_end = match.end
 
     trailing_text = _sanitize_visible_protocol_text(content[last_end:]).lstrip()
-    if trailing_text.strip():
-        segments.append(_ProtocolContentSegment(kind="text", text=trailing_text))
+    ordinal = _append_visible_protocol_segment(
+        segments,
+        trailing_text,
+        source_index,
+        ordinal,
+    )
 
     if segments:
         return segments
 
     sanitized = _sanitize_visible_protocol_text(content)
-    return [_ProtocolContentSegment(kind="text", text=sanitized)] if sanitized.strip() else []
+    fallback_segments: list[_ProtocolContentSegment] = []
+    _append_visible_protocol_segment(fallback_segments, sanitized, source_index, 0)
+    return fallback_segments
 
 
 def _is_protocol_only_text(content: str) -> bool:
@@ -662,7 +785,7 @@ def _process_message_block(
             content = msg.tool_result or msg.content
             tool_call.result = ToolResult(
                 content=content,
-                content_type="json" if msg.tool_result else "text",
+                kind="json" if msg.tool_result else "text",
                 metadata=extract_result_metadata(tool_call.tool_type, content, tool_call.arguments),
             )
             tool_call.status = "completed"

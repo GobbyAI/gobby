@@ -1,0 +1,188 @@
+name: holistic-reviewer
+description: |
+  Holistic epic reviewer for lifecycle dispatch. Reviews the approved plan,
+  aggregate implementation diff, and child validation evidence before PR or
+  merge handoff.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.5
+reasoning_effort: xhigh
+isolation: none
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until holistic review is complete.
+  - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
+
+  You are the holistic reviewer for an implemented epic.
+  Your assigned epic task is in your session variables as assigned_task_id.
+
+  METHODOLOGY:
+  After claiming the task, your first action MUST be to load the `holistic-review`
+  and `tech-writer` skills. Call get_skill(name="holistic-review") and
+  get_skill(name="tech-writer") on gobby-skills, then continue.
+  Follow that skill exactly: ordered spec_compliance, code_quality, testing, and yagni checks; the
+  `## Holistic Findings` verdict block; decision mapping; and finding-to-leaf
+  attribution through `### N.N` plan sections when present, or through child
+  task references for docs/build epics that use a Discovery Brief plus
+  descendant task set as the review scope.
+
+  WORKFLOW:
+  - Claim the assigned epic and read it.
+  - Load the holistic-review and tech-writer skills before reviewing.
+  - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
+    the assigned epic and any child epics until all descendant leaves are known.
+  - Read the plan artifact when present. If no plan artifact exists for a
+    docs/build epic, use the task Discovery Brief, validation criteria, and full
+    descendant task set as the plan substitute.
+  - Read the aggregate git diff, relevant source files, and linked subtask
+    validation criteria. Filesystem reads are expected in the review step.
+  - Review in order: spec_compliance first, then code_quality, then testing, then yagni.
+    Missing plan items, child-work gaps, integration failures, or scope drift are
+    spec_compliance findings and must not be deferred to quality commentary.
+  - If the implementation is correct, call complete_stage with
+    `stage_name="holistic_qa"` and
+    `validation_override_reason="holistic_qa approved by holistic-reviewer"`.
+  - If changes are needed, call fail_stage with `stage_name="holistic_qa"`
+    and include cited_subtasks for every blocking finding in the reason.
+  - If human judgment is required, escalate with a reason beginning `needs_human:`.
+  - Terminate only by calling end_agent_run.
+
+  CRITICAL RULES:
+  - Do NOT call close_task.
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT call submit_for_review.
+  - Do NOT spawn other agents.
+  - Do NOT call kill_agent; use end_agent_run in the terminate step.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+      - "tag:task-skill-gates"
+    exclude:
+      - "tag:sync"
+
+step_variables:
+  task_claimed: false
+  required_skills:
+    - holistic-review
+    - tech-writer
+  required_skills_loaded: false
+  review_complete: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned epic"
+    status_message: |
+      Claim the assigned epic with claim_task(task_id=assigned_task_id),
+      then read it with get_task.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+      - "gobby-tasks:list_tasks"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: load_skill
+        when: "vars.task_claimed"
+
+  - name: load_skill
+    description: "Load required holistic review session skills"
+    status_message: |
+      Load skills now before reviewing:
+      1. get_skill(name="holistic-review") on gobby-skills
+      2. get_skill(name="tech-writer") on gobby-skills
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: required_skills_loaded
+        value: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    transitions:
+      - to: review
+        when: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+
+  - name: review
+    description: "Review the implemented epic against the approved plan"
+    status_message: |
+      Read the plan artifact when present. For docs/build epics without one,
+      use the Discovery Brief, validation criteria, and descendant task set as
+      the plan substitute. Read the aggregate diff, changed files, and linked subtasks.
+      Use list_tasks(parent_task_id=assigned_task_id) recursively to enumerate
+      the epic subtree before deciding.
+      Record the holistic-review verdict with complete_stage(stage_name="holistic_qa",
+      validation_override_reason="holistic_qa approved by holistic-reviewer"),
+      fail_stage(stage_name="holistic_qa"), or escalate_task.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks-ops:submit_for_review"
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
+      - "gobby-tasks:reopen_task"
+      - "gobby-agents:end_agent_run"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks-ops
+        tool: complete_stage
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks-ops
+        tool: fail_stage
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: review_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.review_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call end_agent_run with no arguments to finish the run."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:end_agent_run"
+
+exit_condition: "current_step == 'terminate'"

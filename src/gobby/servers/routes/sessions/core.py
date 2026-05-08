@@ -205,10 +205,10 @@ def register_core_routes(
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
             provider = body.provider or "claude"
-            if provider not in {"claude", "gemini", "qwen", "codex"}:
+            if provider not in {"claude", "gemini", "qwen", "codex", "droid"}:
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid provider. Must be one of: claude, gemini, qwen, codex",
+                    detail="Invalid provider. Must be one of: claude, gemini, qwen, codex, droid",
                 )
 
             project_id = server.resolve_project_id(body.project_id, body.cwd)
@@ -217,6 +217,9 @@ def register_core_routes(
 
             machine_id = get_machine_id() or "unknown-machine"
             model = body.model if isinstance(body.model, str) and body.model else None
+            from gobby.llm.local_detection import is_local_agent_definition
+
+            is_local = is_local_agent_definition(provider, model)
             chat_mode = (
                 body.chat_mode if isinstance(body.chat_mode, str) and body.chat_mode else None
             )
@@ -234,13 +237,13 @@ def register_core_routes(
                 source=provider,
                 title=body.title,
                 model=model,
+                is_local=is_local,
                 chat_mode=chat_mode,
                 sandbox_enabled=sandbox_enabled,
                 sandbox_policy_hash=sandbox_policy_hash,
             )
 
             inc_counter("session_registrations_total")
-            await broadcast_session("session_created", session.id)
 
             return {
                 "status": "created",
@@ -309,7 +312,6 @@ def register_core_routes(
             )
 
             inc_counter("session_registrations_total")
-            await broadcast_session("session_created", session.id)
 
             return {
                 "status": "registered",
@@ -472,6 +474,59 @@ def register_core_routes(
         current_session_id: str | None = Query(
             None, description="Caller's own session ID (excluded from resumable list)"
         ),
+        cursor_updated_at: str | None = Query(
+            None,
+            description="Compound-cursor timestamp from a prior page's next_cursor",
+        ),
+        cursor_id: str | None = Query(
+            None,
+            description="Compound-cursor session id from a prior page's next_cursor",
+        ),
+        sources: list[str] | None = Query(
+            None, description="Repeatable: filter by multiple sources (source IN ...)"
+        ),
+        status_in: list[str] | None = Query(
+            None,
+            description=(
+                "Repeatable: filter by multiple statuses (status IN ...). "
+                "Stacks on top of the exclude-deleted base predicate."
+            ),
+        ),
+        mode: list[str] | None = Query(
+            None,
+            description=(
+                "Repeatable: 'interactive' (agent_depth=0) or 'auto' (agent_depth>=1). "
+                "Both/neither = no filter."
+            ),
+        ),
+        model: list[str] | None = Query(
+            None, description="Repeatable: filter by model (model IN ...)"
+        ),
+        session_seq_min: int | None = Query(
+            None, description="Lower bound (inclusive) on sessions.seq_num"
+        ),
+        session_seq_max: int | None = Query(
+            None, description="Upper bound (inclusive) on sessions.seq_num"
+        ),
+        task_ref_min: int | None = Query(
+            None, description="Lower bound (inclusive) on linked task seq_num"
+        ),
+        task_ref_max: int | None = Query(
+            None, description="Upper bound (inclusive) on linked task seq_num"
+        ),
+        task_ref_role: list[str] | None = Query(
+            None,
+            description=(
+                "Repeatable subset of {claimed, created, closed} for task ref filter. "
+                "Defaults to claimed when min/max is set without roles."
+            ),
+        ),
+        created_after: str | None = Query(
+            None, description="Inclusive lower bound on created_at (ISO timestamp)"
+        ),
+        created_before: str | None = Query(
+            None, description="Exclusive upper bound on created_at (ISO timestamp)"
+        ),
     ) -> dict[str, Any]:
         """
         List sessions with optional filtering and message counts.
@@ -484,9 +539,14 @@ def register_core_routes(
             exclude_subagents: If true, only return top-level sessions
             include_resumability: If true, enrich with resumability and filter non-resumable
             current_session_id: Caller's session to exclude from resumable results
+            cursor_updated_at: Pass next_cursor.updated_at from a prior page to fetch the next.
+            cursor_id: Pass next_cursor.id from a prior page; both cursor params must be set
+                together. Cursor pagination is disabled when include_resumability=true (the
+                over-fetch semantics make cursor positioning unreliable); next_cursor is
+                always null in that mode.
 
         Returns:
-            List of session objects with message counts
+            Dict with `sessions`, `count`, `next_cursor` (or null), and `response_time_ms`.
         """
         start_time = time.perf_counter()
 
@@ -503,12 +563,40 @@ def register_core_routes(
                 source=source,
                 limit=fetch_limit,
                 exclude_subagents=exclude_subagents,
+                cursor_updated_at=cursor_updated_at,
+                cursor_id=cursor_id,
+                sources=sources,
+                statuses=status_in,
+                modes=mode,
+                models=model,
+                session_seq_min=session_seq_min,
+                session_seq_max=session_seq_max,
+                task_ref_min=task_ref_min,
+                task_ref_max=task_ref_max,
+                task_ref_roles=task_ref_role,
+                created_after=created_after,
+                created_before=created_before,
             )
 
             # Build resumability info if requested
             resumability: dict[str, tuple[bool, str | None]] = {}
             if include_resumability:
                 resumability = await _compute_resumability(server, sessions, current_session_id)
+
+            # One bulk join against tasks for the whole page — populates
+            # claimed_task_refs / created_task_refs / closed_task_refs on each
+            # session before serialization. Empty lists when the session never
+            # touched a task.
+            task_refs_by_session = server.session_manager.fetch_task_refs_by_session(
+                [s.id for s in sessions]
+            )
+            for session in sessions:
+                refs = task_refs_by_session.get(session.id)
+                if refs is None:
+                    continue
+                session.claimed_task_refs = refs["claimed"]
+                session.created_task_refs = refs["created"]
+                session.closed_task_refs = refs["closed"]
 
             # Enrich sessions with counts
             session_list = []
@@ -529,9 +617,18 @@ def register_core_routes(
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
+            next_cursor: dict[str, str] | None = None
+            if not include_resumability and len(session_list) >= limit and session_list:
+                last = session_list[-1]
+                next_cursor = {
+                    "updated_at": str(last["updated_at"]),
+                    "id": str(last["id"]),
+                }
+
             return {
                 "sessions": session_list,
                 "count": len(session_list),
+                "next_cursor": next_cursor,
                 "response_time_ms": response_time_ms,
             }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -15,7 +15,6 @@ import { useUsage } from '../../hooks/useUsage'
 import { useModelBreakdown } from '../../hooks/useModelBreakdown'
 import { cn } from '../../lib/utils'
 import { DashboardCard } from './DashboardCard'
-import { GranularityToggle } from './GranularityToggle'
 import { ModelDistributionBar } from './ModelDistributionBar'
 import { ModelBreakdownList } from './ModelBreakdownList'
 import {
@@ -57,8 +56,14 @@ function formatTokensShort(n: number): string {
   return String(n)
 }
 
+function granularityForHours(hours: number): TimeSeriesGranularity {
+  if (hours <= 6) return '30m'
+  if (hours <= 168) return '1h'
+  return '1d'
+}
+
 const CHART_MARGIN = { top: 5, right: 10, left: 0, bottom: 5 }
-const GRID_STROKE = 'rgba(255,255,255,0.06)'
+const GRID_STROKE = 'color-mix(in srgb, var(--text-primary) 6%, transparent)'
 const AXIS_STYLE = { fontSize: 10, fill: 'var(--text-secondary)' }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -76,7 +81,7 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
   const tokenEventsEnabled =
     import.meta.env.VITE_TOKEN_EVENTS !== '0' &&
     import.meta.env.VITE_TOKEN_EVENTS !== 'false'
-  const [granularity, setGranularity] = useState<TimeSeriesGranularity>('1h')
+  const granularity = granularityForHours(hours)
   const { data: tsData, isLoading } = useTokenTimeSeries(hours, projectId, granularity)
   const { data: savingsData } = useSavings(hours, projectId)
   const { data: usageData } = useUsage(hours, projectId)
@@ -104,23 +109,17 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
 
   const hasData = chartData.length > 0
   const categories = savingsData?.categories ?? {}
+  const efficiencyBadge = efficiencyPct > 0 ? (
+    <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
+      {efficiencyPct}% efficiency
+    </span>
+  ) : undefined
 
   return (
     <DashboardCard
       title="Token Efficiency"
       className={dashboardFullCardClass}
-      action={
-        <div className="flex items-center gap-2">
-          {tokenEventsEnabled && (
-            <GranularityToggle value={granularity} onChange={setGranularity} />
-          )}
-          {efficiencyPct > 0 ? (
-            <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
-              {efficiencyPct}% efficiency
-            </span>
-          ) : null}
-        </div>
-      }
+      action={efficiencyBadge}
     >
         {isLoading && !hasData ? (
           <div className={dashboardChartEmptyClass}>Loading token data...</div>
@@ -134,13 +133,13 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
                 width={45}
                 tickFormatter={formatTokensShort}
               />
-                <Tooltip
-                  contentStyle={{
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border)',
-                    fontSize: 12,
-                  }}
-                  formatter={(value, name) => [
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                  fontSize: 12,
+                }}
+                formatter={(value, name) => [
                   formatTokens(Number(value)),
                   String(name) === 'tokens_spent' ? 'Spent' : 'Saved',
                 ]}
@@ -149,17 +148,15 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
                 type="monotone"
                 dataKey="tokens_spent"
                 name="tokens_spent"
-                stackId="tokens"
-                stroke="#3b82f6"
-                fill="rgba(59,130,246,0.2)"
+                stroke="var(--color-info)"
+                fill="color-mix(in srgb, var(--color-info) 20%, transparent)"
               />
               <Area
                 type="monotone"
                 dataKey="tokens_saved"
                 name="tokens_saved"
-                stackId="tokens"
-                stroke="#22c55e"
-                fill="rgba(34,197,94,0.2)"
+                stroke="var(--color-success-foreground)"
+                fill="color-mix(in srgb, var(--color-success-foreground) 20%, transparent)"
               />
               <Legend
                 iconSize={8}

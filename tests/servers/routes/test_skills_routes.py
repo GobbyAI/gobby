@@ -497,6 +497,7 @@ class TestHubs:
         skill_manager.create_skill.side_effect = ValueError("exists")
         response = client.post("/api/skills/hubs/install", json={"hub_name": "h", "slug": "s"})
         assert response.status_code == 409
+        assert "exists" in response.text
 
     def test_install_from_hub_error(self, client: TestClient, hub_manager) -> None:
         hub_manager.get_provider.side_effect = Exception("Fail")

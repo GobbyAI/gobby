@@ -1,9 +1,12 @@
 import { memo } from 'react'
 import type { ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
+import { extractImageSrc } from '../../lib/imageSources'
+import { MESSAGE_SPACING } from '../shared/spacing'
+import { GobbyLogo } from '../shared/GobbyLogo'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ToolCallCards, ToolChainGroup } from './ToolCallCard'
+import { ToolCallCards } from './ToolCallCard'
 import { UnknownBlockCard } from './UnknownBlockCard'
 import type { A2UISurfaceState, UserAction } from '../canvas'
 import { splitProtocolContent } from './protocolContent'
@@ -69,7 +72,7 @@ function ProtocolAwareText({
         }
 
         return (
-          <ToolChainGroup
+          <ToolCallCards
             key={`${id}-p${index}`}
             toolCalls={[segment.call]}
             onRespond={onRespondToQuestion}
@@ -84,7 +87,6 @@ function ProtocolAwareText({
 }
 
 export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: MessageItemProps) {
-  const isCommandResult = message.role === 'system' && message.toolCalls?.length && !message.content
   const isModelSwitch = message.role === 'system' && message.id.startsWith('model-switch-')
   const lastTextBlockIndex = message.contentBlocks?.reduce(
     (last, block, index) => (block.type === 'text' ? index : last),
@@ -110,14 +112,13 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
 
   return (
     <div className={cn(
-      'px-4 py-3',
-      message.role === 'user' && 'bg-[#1e3a5f]/30',
-      message.role === 'system' && !isCommandResult && 'bg-muted/30',
+      MESSAGE_SPACING.body,
+      message.role === 'user' && 'bg-[var(--color-info-soft)]',
     )}>
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-2 mb-1.5">
+        <div className={MESSAGE_SPACING.headerRow}>
           {message.role === 'assistant' && (
-            <img src="/logo.png" alt="App logo" className="w-5 h-5 rounded" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+            <GobbyLogo label="App logo" className="rounded" />
           )}
           <span className="text-xs font-medium text-muted-foreground">
             {message.role === 'user' ? 'You' : message.role === 'assistant' ? 'Gobby' : 'System'}
@@ -131,7 +132,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
         </div>
 
         {isThinking && !message.content && !message.thinkingContent && (
-          <div className="flex items-center gap-2 py-2">
+          <div className={MESSAGE_SPACING.metaRow}>
             <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
             <span className="text-sm text-muted-foreground">Thinking...</span>
           </div>
@@ -163,7 +164,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
               }
               if (block.type === 'tool_chain') {
                 return (
-                  <ToolChainGroup
+                  <ToolCallCards
                     key={`${message.id}-b${i}`}
                     toolCalls={block.tool_calls}
                     onRespond={onRespondToQuestion}
@@ -181,8 +182,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                 )
               }
               if (block.type === 'image') {
-                const { source } = block
-                const src = source?.data ? `data:${source.media_type};base64,${source.data}` : ''
+                const src = extractImageSrc(block)
                 if (!src) return null
                 return (
                   <div key={`${message.id}-b${i}`} className="my-2">

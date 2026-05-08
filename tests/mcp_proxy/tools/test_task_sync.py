@@ -176,11 +176,12 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        auto_link(task_id="task-1")
+        result = auto_link(task_id="task-1")
 
         # Verify task_id was passed
         call_kwargs = mock_fn.call_args.kwargs
         assert call_kwargs["task_id"] == "task-1"
+        assert result["linked_tasks"] == ["task-1"]
 
     def test_auto_link_commits_with_since(self, mock_sync_registry) -> None:
         """Test auto_link_commits with since parameter."""
@@ -205,10 +206,11 @@ class TestAutoLinkCommits:
         )
 
         auto_link = registry.get_tool("auto_link_commits")
-        auto_link(since="1 week ago")
+        result = auto_link(since="1 week ago")
 
         call_kwargs = mock_fn.call_args.kwargs
         assert call_kwargs["since"] == "1 week ago"
+        assert result["total_linked"] == 0
 
     def test_auto_link_commits_no_project(self, mock_sync_registry) -> None:
         """Test auto_link_commits when no project context."""
@@ -237,11 +239,12 @@ class TestAutoLinkCommits:
             )
 
             auto_link = registry.get_tool("auto_link_commits")
-            auto_link()
+            result = auto_link()
 
             # Should still work, just with cwd=None
             call_kwargs = mock_fn.call_args.kwargs
             assert call_kwargs["cwd"] is None
+            assert result["linked_tasks"] == []
 
 
 class TestGetTaskDiff:
@@ -360,6 +363,8 @@ class TestGitIntegrationEdgeCases:
         link(task_id="task-1", commit_sha=full_sha)
 
         task_manager.link_commit.assert_called_with("task-1", full_sha, cwd=None)
+        assert task_manager.link_commit.call_count >= 1
+        assert task_manager.link_commit.call_args is not None
 
     def test_link_commit_short_sha(self, mock_sync_registry) -> None:
         """Test linking with short SHA."""
@@ -380,6 +385,8 @@ class TestGitIntegrationEdgeCases:
         link(task_id="task-1", commit_sha="abc123")
 
         task_manager.link_commit.assert_called_with("task-1", "abc123", cwd=None)
+        assert task_manager.link_commit.call_count >= 1
+        assert task_manager.link_commit.call_args is not None
 
     def test_auto_link_with_skipped_commits(self, mock_sync_registry) -> None:
         """Test auto_link_commits reports skipped commits."""
@@ -410,6 +417,7 @@ class TestGitIntegrationEdgeCases:
         result = auto_link()
 
         assert len(result["skipped"]) == 2
+        assert result["skipped"][0]["reason"] == "already linked"
 
     def test_get_task_diff_no_commits(self, mock_sync_registry) -> None:
         """Test get_task_diff when task has no linked commits."""

@@ -5,6 +5,8 @@ import App from "../App";
 import { useChat } from "../hooks/useChat";
 import { useSessionCatalog } from "../hooks/useSessionCatalog";
 
+const chatPagePropsSpy = vi.hoisted(() => vi.fn());
+
 vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(() => ({
     authRequired: false,
@@ -92,6 +94,7 @@ function makeProjectsHookState() {
         github_url: null,
         github_repo: null,
         linear_team_id: null,
+        linear_project_id: null,
         approval_rules: [],
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
@@ -107,6 +110,7 @@ function makeProjectsHookState() {
         github_url: null,
         github_repo: null,
         linear_team_id: null,
+        linear_project_id: null,
         approval_rules: [],
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
@@ -122,6 +126,7 @@ function makeProjectsHookState() {
         github_url: null,
         github_repo: null,
         linear_team_id: null,
+        linear_project_id: null,
         approval_rules: [],
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
@@ -137,8 +142,11 @@ function makeSessionCatalogState() {
   return {
     sessions: [],
     isLoading: false,
+    isLoadingMore: false,
     error: null,
     refresh: vi.fn(),
+    loadMore: vi.fn(),
+    hasMore: false,
     removeSession: vi.fn(),
     markSessionDeleting: vi.fn(),
     confirmSessionDeleted: vi.fn(),
@@ -247,7 +255,10 @@ vi.mock("../components/dashboard/DashboardPage", () => ({
 }));
 
 vi.mock("../components/chat/ChatPage", () => ({
-  ChatPage: () => <div>Chat</div>,
+  ChatPage: (props: unknown) => {
+    chatPagePropsSpy(props);
+    return <div>Chat</div>;
+  },
 }));
 
 Object.defineProperty(window, "matchMedia", {
@@ -267,6 +278,8 @@ Object.defineProperty(window, "matchMedia", {
 describe("App wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(useChat).mockReturnValue(makeChatHookState() as never);
+    vi.mocked(useSessionCatalog).mockReturnValue(makeSessionCatalogState() as never);
     window.location.hash = "";
 
     const storage = new Map<string, string>();
@@ -439,5 +452,87 @@ describe("App wiring", () => {
     await waitFor(() => {
       expect(window.location.hash).toBe("#chat");
     });
+  });
+
+  it("keeps parked web chat session catalog entries wired while viewing a terminal", async () => {
+    const webSession = {
+      id: "web-main",
+      ref: "#101",
+      external_id: "server-session-1",
+      source: "claude",
+      project_id: "repo-project",
+      title: "Parked chat",
+      status: "active",
+      model: "sonnet",
+      message_count: 1,
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:01:00Z",
+      seq_num: 101,
+      summary_markdown: null,
+      digest_markdown: null,
+      git_branch: "main",
+      usage_input_tokens: 0,
+      usage_output_tokens: 0,
+      had_edits: false,
+      agent_depth: 0,
+      chat_mode: null,
+      agent_run_id: null,
+      parent_session_id: null,
+      session_type: "web_chat",
+      terminal_context: null,
+    };
+    const terminalSession = {
+      ...webSession,
+      id: "terminal-1",
+      ref: "#202",
+      external_id: "terminal-ext-1",
+      source: "codex",
+      title: "Observed terminal",
+      seq_num: 202,
+      session_type: "terminal",
+      terminal_context: { tmux_pane: "%44" },
+    };
+
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      conversationId: "web-main",
+      dbSessionId: "web-main",
+      viewingSessionId: "terminal-1",
+      viewingSessionMeta: {
+        ref: "#202",
+        source: "codex",
+        title: "Observed terminal",
+        status: "active",
+        model: "gpt-5.4",
+        externalId: "terminal-ext-1",
+        sessionType: "terminal",
+      },
+    } as never);
+    vi.mocked(useSessionCatalog).mockReturnValue({
+      ...makeSessionCatalogState(),
+      sessions: [webSession, terminalSession],
+    } as never);
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(chatPagePropsSpy).toHaveBeenCalled();
+    });
+    const props = chatPagePropsSpy.mock.calls[
+      chatPagePropsSpy.mock.calls.length - 1
+    ]?.[0] as {
+      chat: { dbSessionId: string | null; viewingSessionId: string | null };
+      conversations: { activeSessionId: string | null };
+      allProjectSessions: Array<{ id: string }>;
+      activitySessions: Array<{ id: string }>;
+    };
+
+    expect(props.chat.dbSessionId).toBe("web-main");
+    expect(props.chat.viewingSessionId).toBe("terminal-1");
+    expect(props.conversations.activeSessionId).toBe("web-main");
+    expect(props.allProjectSessions.map((session) => session.id)).toContain("web-main");
+    expect(props.activitySessions.map((session) => session.id)).toContain("web-main");
   });
 });

@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import type { GobbyTaskDetail } from '../../hooks/useTasks'
-import { getCanonicalTaskState, getTaskBucket, TASK_BUCKET_COLORS, TASK_BUCKET_LABELS } from '../../lib/taskState'
-
-// =============================================================================
-// Types
-// =============================================================================
+import {
+  getCanonicalTaskState,
+  getTaskDisplayState,
+  TASK_STATE_COLORS,
+  TASK_STATE_LABELS,
+} from '../../lib/taskState'
 
 interface ResultSection {
   key: string
@@ -12,9 +13,31 @@ interface ResultSection {
   content: JSX.Element
 }
 
-// =============================================================================
-// Icons
-// =============================================================================
+const ROOT_CLS = 'flex flex-col gap-2'
+const SECTION_CLS = 'flex flex-col gap-[0.2rem]'
+const LABEL_CLS =
+  'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] font-semibold uppercase tracking-[0.04em] text-[var(--text-muted)]'
+
+const OUTCOME_CLS = 'flex items-center gap-2'
+const OUTCOME_BADGE_CLS =
+  'inline-flex items-center gap-[0.3rem] rounded-[12px] border px-2 py-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] font-semibold'
+const DATE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
+
+const VALIDATION_CLS = 'flex flex-col gap-[0.2rem]'
+const VALIDATION_BADGE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] font-semibold capitalize'
+const VALIDATION_FEEDBACK_CLS =
+  'rounded bg-[var(--bg-secondary)] px-2 py-[0.3rem] text-[length:calc(var(--font-size-base)*0.7)] leading-[1.4] text-[var(--text-secondary)]'
+
+const COMMITS_CLS = 'flex flex-wrap gap-1'
+const COMMIT_CLS =
+  'inline-flex items-center gap-[0.3rem] rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-[0.4rem] py-[0.15rem] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)]'
+const COMMIT_CODE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--accent)]'
+const COMMIT_TAG_CLS =
+  'rounded-[2px] bg-[color-mix(in_srgb,var(--color-success-foreground)_10%,transparent)] px-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.5)] font-semibold uppercase text-[var(--color-success-foreground)]'
+
+const PR_CLS =
+  'inline-flex w-fit items-center gap-[0.3rem] rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--accent)] no-underline transition-colors duration-150 hover:border-[var(--accent)]'
+const PR_REPO_CLS = 'text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
 
 function CommitIcon() {
   return (
@@ -43,10 +66,6 @@ function CheckIcon() {
   )
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
-
 function formatDate(iso: string): string {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return 'Invalid date'
@@ -55,39 +74,37 @@ function formatDate(iso: string): string {
 }
 
 function outcomeLabel(task: GobbyTaskDetail): { text: string; color: string } {
-  const bucket = getTaskBucket(task)
+  const displayState = getTaskDisplayState(task)
   const state = getCanonicalTaskState(task)
 
-  if (bucket === 'merge_ready') return { text: 'Approved', color: TASK_BUCKET_COLORS.merge_ready }
-  if (bucket === 'closed') {
+  if (displayState === 'review_approved') {
+    return { text: 'Approved', color: TASK_STATE_COLORS.review_approved }
+  }
+  if (displayState === 'closed') {
     switch (state.closed_reason) {
-      case 'completed': return { text: 'Completed', color: '#22c55e' }
-      case 'duplicate': return { text: 'Duplicate', color: '#737373' }
-      case 'wont_fix': return { text: "Won't Fix", color: '#737373' }
-      case 'obsolete': return { text: 'Obsolete', color: '#737373' }
-      case 'already_implemented': return { text: 'Already Done', color: '#3b82f6' }
-      default: return { text: 'Closed', color: '#22c55e' }
+      case 'completed': return { text: 'Completed', color: 'var(--color-success-foreground)' }
+      case 'duplicate': return { text: 'Duplicate', color: 'var(--text-muted)' }
+      case 'wont_fix': return { text: "Won't Fix", color: 'var(--text-muted)' }
+      case 'obsolete': return { text: 'Obsolete', color: 'var(--text-muted)' }
+      case 'already_implemented': return { text: 'Already Done', color: 'var(--color-info)' }
+      default: return { text: 'Closed', color: 'var(--color-success-foreground)' }
     }
   }
   if (state.is_escalated) {
-    return { text: 'Escalated', color: '#f87171' }
+    return { text: 'Escalated', color: 'var(--color-error)' }
   }
-  if (bucket === 'blocked') {
-    return { text: 'Blocked', color: TASK_BUCKET_COLORS.blocked }
+  if (displayState === 'blocked') {
+    return { text: 'Blocked', color: TASK_STATE_COLORS.blocked }
   }
-  return { text: TASK_BUCKET_LABELS[bucket], color: TASK_BUCKET_COLORS[bucket] }
+  return { text: TASK_STATE_LABELS[displayState], color: TASK_STATE_COLORS[displayState] }
 }
 
 const VALIDATION_COLORS: Record<string, string> = {
-  passed: '#22c55e',
-  failed: '#ef4444',
-  skipped: '#eab308',
-  pending: '#737373',
+  passed: 'var(--color-success-foreground)',
+  failed: 'var(--color-error)',
+  skipped: 'var(--color-warning-foreground)',
+  pending: 'var(--text-muted)',
 }
-
-// =============================================================================
-// TaskResults
-// =============================================================================
 
 interface TaskResultsProps {
   task: GobbyTaskDetail
@@ -96,51 +113,48 @@ interface TaskResultsProps {
 export function TaskResults({ task }: TaskResultsProps) {
   const sections = useMemo(() => {
     const result: ResultSection[] = []
-    const bucket = getTaskBucket(task)
+    const displayState = getTaskDisplayState(task)
     const state = getCanonicalTaskState(task)
 
-    // Outcome summary
-    const isDone = bucket === 'closed' || bucket === 'merge_ready' || state.is_escalated
+    const isDone = displayState === 'closed' || displayState === 'review_approved' || state.is_escalated
     if (isDone) {
       const outcome = outcomeLabel(task)
-      const outcomeDate = task.closed_at || (bucket !== 'closed' ? task.updated_at : null)
+      const outcomeDate = task.closed_at || (displayState !== 'closed' ? task.updated_at : null)
       result.push({
         key: 'outcome',
         label: 'Outcome',
         content: (
-          <div className="task-results-outcome">
-            <span className="task-results-outcome-badge" style={{ color: outcome.color, borderColor: outcome.color }}>
+          <div className={OUTCOME_CLS}>
+            <span className={OUTCOME_BADGE_CLS} style={{ color: outcome.color, borderColor: outcome.color }}>
               <CheckIcon />
               {outcome.text}
             </span>
             {outcomeDate && (
-              <span className="task-results-date">{formatDate(outcomeDate)}</span>
+              <span className={DATE_CLS}>{formatDate(outcomeDate)}</span>
             )}
           </div>
         ),
       })
     }
 
-    // Validation result
     if (task.validation_status && task.validation_status !== 'pending') {
-      const vcolor = VALIDATION_COLORS[task.validation_status] || '#737373'
+      const vcolor = VALIDATION_COLORS[task.validation_status] || 'var(--text-muted)'
       result.push({
         key: 'validation',
         label: 'Validation',
         content: (
-          <div className="task-results-validation">
-            <span className="task-results-validation-badge" style={{ color: vcolor }}>
+          <div className={VALIDATION_CLS}>
+            <span className={VALIDATION_BADGE_CLS} style={{ color: vcolor }}>
               {task.validation_status}
             </span>
             {task.validation_feedback && (
-              <div className="task-results-validation-feedback">{task.validation_feedback}</div>
+              <div className={VALIDATION_FEEDBACK_CLS}>{task.validation_feedback}</div>
             )}
           </div>
         ),
       })
     }
 
-    // Commits
     const allCommits = new Set<string>()
     if (task.closed_commit_sha) allCommits.add(task.closed_commit_sha)
     if (task.commits) task.commits.forEach(c => allCommits.add(c))
@@ -151,13 +165,13 @@ export function TaskResults({ task }: TaskResultsProps) {
         key: 'commits',
         label: `Commits (${commitList.length})`,
         content: (
-          <div className="task-results-commits">
+          <div className={COMMITS_CLS}>
             {commitList.map(sha => (
-              <span key={sha} className="task-results-commit">
+              <span key={sha} className={COMMIT_CLS}>
                 <CommitIcon />
-                <code>{sha.slice(0, 8)}</code>
+                <code className={COMMIT_CODE_CLS}>{sha.slice(0, 8)}</code>
                 {sha === task.closed_commit_sha && (
-                  <span className="task-results-commit-tag">closing</span>
+                  <span className={COMMIT_TAG_CLS}>closing</span>
                 )}
               </span>
             ))}
@@ -166,21 +180,20 @@ export function TaskResults({ task }: TaskResultsProps) {
       })
     }
 
-    // PR link
     if (task.github_pr_number && task.github_repo) {
       result.push({
         key: 'pr',
         label: 'Pull Request',
         content: (
           <a
-            className="task-results-pr"
+            className={PR_CLS}
             href={`https://github.com/${task.github_repo}/pull/${task.github_pr_number}`}
             target="_blank"
             rel="noopener noreferrer"
           >
             <PrIcon />
             <span>#{task.github_pr_number}</span>
-            <span className="task-results-pr-repo">{task.github_repo}</span>
+            <span className={PR_REPO_CLS}>{task.github_repo}</span>
           </a>
         ),
       })
@@ -192,10 +205,10 @@ export function TaskResults({ task }: TaskResultsProps) {
   if (sections.length === 0) return null
 
   return (
-    <div className="task-results">
+    <div className={ROOT_CLS}>
       {sections.map(section => (
-        <div key={section.key} className="task-results-section">
-          <span className="task-results-label">{section.label}</span>
+        <div key={section.key} className={SECTION_CLS}>
+          <span className={LABEL_CLS}>{section.label}</span>
           {section.content}
         </div>
       ))}

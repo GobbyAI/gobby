@@ -8,71 +8,86 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
+from gobby.servers.provider_models import DROID_MODEL_CATALOG, with_context_lengths
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-
-_SUPPORTED_WEB_CHAT_CODEX_MODELS = frozenset(
-    {
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex",
-        "gpt-5.3-codex-spark",
-        "gpt-5.2",
-    }
-)
 
 # Static model catalog per provider. Dynamic probing can augment this
 # later without breaking the contract.
 _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
-    "claude": [
-        {
-            "value": "opus",
-            "label": "Opus",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
-        },
-        {
-            "value": "sonnet",
-            "label": "Sonnet",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
-        },
-        {
-            "value": "haiku",
-            "label": "Haiku",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
-        },
-    ],
-    "gemini": [
-        {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},
-        {"value": "gemini-3-flash-preview", "label": "flash-3"},
-    ],
+    "claude": with_context_lengths(
+        "claude",
+        [
+            {
+                "value": "opus",
+                "label": "Opus",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+            },
+            {
+                "value": "sonnet",
+                "label": "Sonnet",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+            },
+            {
+                "value": "haiku",
+                "label": "Haiku",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+            },
+        ],
+    ),
+    "gemini": with_context_lengths(
+        "gemini",
+        [
+            {
+                "value": "gemini-3.1-pro-preview",
+                "label": "pro-3.1",
+                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
+            },
+            {
+                "value": "gemini-3-flash-preview",
+                "label": "flash-3",
+                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
+            },
+        ],
+    ),
     "qwen": [],
-    "codex": [
-        {
-            "value": "gpt-5.4",
-            "label": "codex-5.4",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.4-mini",
-            "label": "mini-5.4",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.3-codex",
-            "label": "codex-5.3",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.3-codex-spark",
-            "label": "spark-5.3",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.2",
-            "label": "gpt-5.2",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-    ],
+    "codex": with_context_lengths(
+        "codex",
+        [
+            {
+                "value": "gpt-5.5",
+                "label": "gpt-5.5",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.4",
+                "label": "codex-5.4",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.4-mini",
+                "label": "mini-5.4",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.3-codex",
+                "label": "codex-5.3",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.3-codex-spark",
+                "label": "spark-5.3",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.2",
+                "label": "gpt-5.2",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+        ],
+    ),
+    "droid": DROID_MODEL_CATALOG,
 }
 
 _PROVIDER_DEFS = [
@@ -80,7 +95,9 @@ _PROVIDER_DEFS = [
     ("gemini", "gemini"),
     ("qwen", "qwen"),
     ("codex", "codex"),
+    ("droid", "droid"),
 ]
+_LAZY_ACP_PROVIDERS = frozenset({"gemini", "qwen"})
 
 
 def _friendly_label(provider: str, model: str) -> str:
@@ -103,32 +120,74 @@ def _friendly_label(provider: str, model: str) -> str:
     return model
 
 
+def _configured_model_entries(config: Any, provider: str) -> list[dict[str, Any]]:
+    providers = getattr(config, "llm_providers", None)
+    provider_config = getattr(providers, provider, None) if providers is not None else None
+    fields_set = getattr(providers, "model_fields_set", None)
+    if fields_set is not None and provider not in fields_set:
+        return []
+    if provider_config is None or not hasattr(provider_config, "get_models_list"):
+        return []
+    return [
+        {"value": model, "label": _friendly_label(provider, model)}
+        for model in provider_config.get_models_list()
+    ]
+
+
+def _merge_model_entries(
+    primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    by_value: dict[str, dict[str, Any]] = {}
+    for item in [*primary, *secondary]:
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        if value in by_value:
+            existing = by_value[value]
+            for key, field_value in item.items():
+                existing.setdefault(key, field_value)
+            continue
+        entry = dict(item)
+        by_value[value] = entry
+        merged.append(entry)
+    return merged
+
+
 def _build_model_catalog(
     server: HTTPServer | None = None,
 ) -> dict[str, tuple[list[dict[str, Any]], str]]:
     """Return the canonical web-chat provider model catalog.
 
-    For web chat, the backend owns the supported model picker contract.
-    We intentionally do not mirror arbitrary daemon config model strings into
-    the picker because that reintroduces stale or retired model IDs.
+    Configured model lists are prepended when present, then live or static
+    catalog entries fill in labels, reasoning, context windows, and fallbacks.
     """
     provider_model_catalog = getattr(
         getattr(server, "services", None), "provider_model_catalog", None
     )
     if provider_model_catalog is not None:
-        catalog = {
-            provider: (
-                provider_model_catalog.get_provider_snapshot(provider).get("models", []),
-                provider_model_catalog.get_provider_snapshot(provider).get("source", "failed"),
+        catalog = {}
+        for provider, _binary in _PROVIDER_DEFS:
+            snapshot = provider_model_catalog.get_provider_snapshot(provider)
+            models = snapshot.get("models", [])
+            catalog[provider] = (
+                with_context_lengths(provider, models) if isinstance(models, list) else [],
+                snapshot.get("source", "failed"),
             )
-            for provider, _binary in _PROVIDER_DEFS
-        }
     else:
         catalog = {
             provider: ([*models], "static") for provider, models in _BASE_MODEL_CATALOG.items()
         }
 
     config = getattr(getattr(server, "services", None), "config", None)
+    for provider, (models, source) in list(catalog.items()):
+        configured_models = _configured_model_entries(config, provider)
+        if configured_models:
+            catalog[provider] = (
+                with_context_lengths(provider, _merge_model_entries(configured_models, models)),
+                source,
+            )
+
     local_cfg = getattr(config, "local", None) if config is not None else None
     if local_cfg and getattr(local_cfg, "model", None):
         claude_entries, source = catalog["claude"]
@@ -151,22 +210,16 @@ def _provider_health(
     health = runtime_manager.health(provider)
     if provider == "claude":
         return path is not None and health.available, health.startup_error
+    if provider in _LAZY_ACP_PROVIDERS:
+        return path is not None, health.startup_error
     return health.available, health.startup_error
 
 
 def _filter_models_for_web_chat(
     provider: str, models: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Keep the model picker aligned with the documented web-chat-safe surface."""
-    visible_models = [model for model in models if not bool(model.get("hidden", False))]
-    if provider != "codex":
-        return visible_models
-
-    return [
-        model
-        for model in visible_models
-        if str(model.get("value") or "").strip() in _SUPPORTED_WEB_CHAT_CODEX_MODELS
-    ]
+    """Drop hidden models from the web-chat picker."""
+    return [model for model in models if not bool(model.get("hidden", False))]
 
 
 async def _probe_providers() -> list[tuple[str, str | None]]:

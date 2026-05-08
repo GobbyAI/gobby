@@ -1,0 +1,8 @@
+name: conductor
+type: pipeline
+version: "2.1"
+enabled: false
+deprecated: true
+deprecated_reason: "Replaced by the state-driven dispatcher."
+description: "[DEPRECATED] Replaced by the state-driven dispatcher."
+steps: []

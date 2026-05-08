@@ -9,21 +9,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.isolation import (
     SpawnConfig,
+    ensure_isolation_code_index,
     get_isolation_handler,
+    provider_mcp_config_error,
+    repair_isolation_environment,
 )
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
 
@@ -32,6 +37,131 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, Iterable) or isinstance(value, str | bytes | dict):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
+    if not condition:
+        return True
+    try:
+        evaluator = SafeExpressionEvaluator(
+            context={"vars": variables, "variables": variables},
+            allowed_funcs={
+                "len": len,
+                "bool": bool,
+                "str": str,
+                "int": int,
+                "list": list,
+                "dict": dict,
+                "any": any,
+                "all": all,
+            },
+        )
+        return evaluator.evaluate(condition)
+    except ValueError as exc:
+        logger.warning("Failed to evaluate initial step transition %r: %s", condition, exc)
+        return False
+
+
+def _advance_initial_step(
+    agent_body: AgentDefinitionBody,
+    current_step: str,
+    variables: dict[str, Any],
+) -> str:
+    steps = {step.name: step for step in (agent_body.steps or [])}
+    max_transitions = len(steps) + 1
+
+    for _ in range(max_transitions):
+        step = steps.get(current_step)
+        if step is None:
+            return current_step
+
+        for transition in step.transitions:
+            if not _transition_condition_met(transition.when, variables):
+                continue
+            if transition.to not in steps:
+                logger.warning(
+                    "Initial step transition to unknown step %r in agent %r",
+                    transition.to,
+                    agent_body.name,
+                )
+                continue
+            current_step = transition.to
+            break
+        else:
+            return current_step
+
+    logger.warning(
+        "Stopped initial step transition chain for agent %r after %d transitions",
+        agent_body.name,
+        max_transitions,
+    )
+    return current_step
+
+
+def _initial_step_state_for_spawn(
+    agent_body: AgentDefinitionBody,
+    *,
+    task_owned_by_child: bool,
+    initial_variables: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Return the initial step workflow state for a spawned agent."""
+    step_variables = dict(agent_body.step_variables)
+    if initial_variables and "additional_skills" in initial_variables:
+        step_variables["additional_skills"] = initial_variables["additional_skills"]
+
+    additional_skills = _normalize_string_list(step_variables.get("additional_skills"))
+    step_variables["additional_skills"] = additional_skills
+    step_variables["additional_skills_loaded"] = not additional_skills or all(
+        skill in _normalize_string_list(step_variables.get("loaded_skills"))
+        for skill in additional_skills
+    )
+
+    steps = agent_body.steps or []
+    if not steps:
+        raise ValueError("Cannot initialize step state for an agent with no steps")
+    first_step = steps[0]
+    current_step = first_step.name
+
+    if task_owned_by_child and first_step.name == "claim":
+        step_variables["task_claimed"] = True
+
+    current_step = _advance_initial_step(agent_body, current_step, step_variables)
+
+    return current_step, step_variables
+
+
+def _persist_spawn_runtime(
+    runner: Any,
+    run_id: str,
+    spawn_result: Any,
+    *,
+    tmux_session_name: str | None,
+    worktree_id: str | None,
+    clone_id: str | None,
+) -> None:
+    child_session_id = getattr(spawn_result, "child_session_id", None)
+    if child_session_id is not None:
+        try:
+            runner.run_storage.update_child_session(run_id, child_session_id)
+        except Exception as e:
+            logger.warning(f"Failed to update child_session_id for {run_id}: {e}")
+
+    try:
+        runner.run_storage.update_runtime(
+            run_id,
+            pid=getattr(spawn_result, "pid", None),
+            tmux_session_name=tmux_session_name,
+            worktree_id=worktree_id,
+            clone_id=clone_id,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
 
 
 async def spawn_agent_impl(
@@ -68,6 +198,7 @@ async def spawn_agent_impl(
     session_manager: Any | None = None,  # SessionManager
     db: Any | None = None,  # DatabaseProtocol
     daemon_config: Any | None = None,  # DaemonConfig
+    code_index: Any | None = None,  # CodeIndexContext
 ) -> dict[str, Any]:
     """
     Core spawn_agent implementation that can be called directly.
@@ -90,7 +221,7 @@ async def spawn_agent_impl(
         clone_manager: Git manager for clone operations
         workflow: Workflow to use
         mode: Execution mode (interactive/autonomous)
-        provider: AI provider (claude/gemini/qwen/codex)
+        provider: AI provider (claude/gemini/qwen/codex/droid)
         model: Model to use
         timeout: Timeout in seconds
         max_turns: Maximum conversation turns
@@ -103,6 +234,21 @@ async def spawn_agent_impl(
     Returns:
         Dict with success status, run_id, child_session_id, isolation metadata
     """
+    # 0. Plan-validation gate for planning agents.
+    # planner / plan-adversary spawns refuse to start when the task's
+    # plan artifact fails the Plan-Coverage Contract validator. Catches
+    # structural drift the parser silently drops before wasting an LLM call.
+    from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
+
+    gate_failure = validate_plan_for_agent_spawn(
+        agent_lookup_name,
+        task_id,
+        task_manager,
+        code_index=code_index,
+    )
+    if gate_failure is not None:
+        return gate_failure
+
     # 1. Merge config: agent_body defaults < params
     _raw_isolation: str | None = isolation
     if _raw_isolation is None and agent_body:
@@ -125,6 +271,9 @@ async def spawn_agent_impl(
     effective_model = model
     if effective_model is None and agent_body:
         effective_model = agent_body.model
+    from gobby.llm.local_detection import is_local_agent_definition
+
+    is_local_run = is_local_agent_definition(effective_provider, effective_model)
 
     requested_reasoning_effort = reasoning_effort
     if requested_reasoning_effort is None and agent_body:
@@ -239,7 +388,10 @@ async def spawn_agent_impl(
     resolved_task_id: str | None = None
     task_title: str | None = None
     task_seq_num: int | None = None
+    task_category: str | None = None
+    task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
+    task_owned_by_child = False
 
     if task_id and task_manager:
         try:
@@ -248,6 +400,9 @@ async def spawn_agent_impl(
             if task:
                 task_title = task.title
                 task_seq_num = task.seq_num
+                task_category = getattr(task, "category", None)
+                if task.additional_skills is not None:
+                    task_additional_skills = _normalize_string_list(task.additional_skills)
                 claimed_session_id = get_claimed_session_id(task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
@@ -278,6 +433,15 @@ async def spawn_agent_impl(
                 "error": f"Worktree directory missing: {existing_worktree.worktree_path} (stale record cleaned up)",
             }
 
+        try:
+            await repair_isolation_environment(
+                main_repo_path=resolved_project_path,
+                isolated_path=existing_worktree.worktree_path,
+                provider=effective_provider,
+            )
+        except Exception as e:
+            return {"success": False, "error": f"Failed to repair worktree isolation: {e}"}
+
         from gobby.agents.isolation import IsolationContext
 
         isolation_ctx = IsolationContext(
@@ -301,6 +465,15 @@ async def spawn_agent_impl(
                 "success": False,
                 "error": f"Clone directory missing: {existing_clone.clone_path} (stale record cleaned up)",
             }
+
+        try:
+            await repair_isolation_environment(
+                main_repo_path=resolved_project_path,
+                isolated_path=existing_clone.clone_path,
+                provider=effective_provider,
+            )
+        except Exception as e:
+            return {"success": False, "error": f"Failed to repair clone isolation: {e}"}
 
         from gobby.agents.isolation import IsolationContext
 
@@ -350,6 +523,32 @@ async def spawn_agent_impl(
                 logger.warning(f"Cleanup after prepare failure also failed: {cleanup_err}")
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
 
+    if effective_isolation in {"worktree", "clone"}:
+        config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
+        if config_error is not None:
+            return {"success": False, "error": config_error}
+        if task_category != "docs":
+            try:
+                await ensure_isolation_code_index(isolation_ctx.cwd)
+            except Exception as e:
+                reason = str(e)
+                logger.warning(
+                    "Code index preflight failed for isolated agent cwd=%s: %s",
+                    isolation_ctx.cwd,
+                    reason,
+                )
+                # Keep code_index preflight failures structured so callers can distinguish
+                # isolation failures from normal spawn failures without parsing text.
+                return {
+                    "success": False,
+                    "error": "code_index_preflight_failed",
+                    "message": reason,
+                    "details": {
+                        "preflight": "code_index",
+                        "cwd": isolation_ctx.cwd,
+                    },
+                }
+
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
 
@@ -376,6 +575,10 @@ async def spawn_agent_impl(
         )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
+    additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
+    if task_additional_skills is not None:
+        additional_skills = task_additional_skills
+    effective_initial_variables["additional_skills"] = additional_skills
 
     # 10b. Inject isolation context so workflow variables can reference them
     if isolation_ctx.clone_id:
@@ -407,6 +610,7 @@ async def spawn_agent_impl(
         agent_run_id=run_id,
         parent_session_id=parent_session_id,
         project_id=project_id,
+        project_path=resolved_project_path,
         workflow=effective_workflow,
         initial_variables=effective_initial_variables,
         worktree_id=isolation_ctx.worktree_id,
@@ -419,6 +623,7 @@ async def spawn_agent_impl(
         session_manager=runner.child_session_manager,
         machine_id=get_machine_id() or "unknown",
         model=effective_model,
+        is_local=is_local_run,
         api_base=effective_api_base,
         api_token=effective_api_token,
         requested_reasoning_effort=reasoning.requested_effort,
@@ -428,6 +633,7 @@ async def spawn_agent_impl(
         reasoning_message=reasoning.message,
         sandbox_config=effective_sandbox_config,
         timeout_seconds=effective_timeout,
+        daemon_config=daemon_config,
     )
 
     # run_id is minted above and threaded through SpawnRequest.agent_run_id.
@@ -445,7 +651,11 @@ async def spawn_agent_impl(
     if not isinstance(tmux_socket_path, str):
         tmux_socket_path = None
 
-    if spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name:
+    tmux_spawn = bool(
+        spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
+    )
+    runtime_persisted = False
+    if tmux_spawn and tmux_session_name:
         alive = await _check_tmux_session_alive(
             tmux_session_name,
             socket_name=tmux_socket_name,
@@ -455,35 +665,41 @@ async def spawn_agent_impl(
             spawn_result.success = False
             spawn_result.status = "failed"
             spawn_result.error = f"tmux session '{tmux_session_name}' failed live-pane verification"
+            tmux_spawn = False
 
-    # 12. Update DB and handle post-spawn setup based on spawn result
-    if spawn_result.success and spawn_result.child_session_id is not None:
-        try:
-            runner.run_storage.update_child_session(run_id, spawn_result.child_session_id)
-        except Exception as e:
-            logger.warning(f"Failed to update child_session_id for {run_id}: {e}")
-
-        # Persist runtime state for daemon restart recovery
-        try:
-            runner.run_storage.update_runtime(
+    if tmux_spawn and tmux_session_name:
+        if spawn_result.child_session_id is not None:
+            _persist_spawn_runtime(
+                runner,
                 run_id,
-                pid=spawn_result.pid,
+                spawn_result,
                 tmux_session_name=tmux_session_name,
                 worktree_id=isolation_ctx.worktree_id,
                 clone_id=isolation_ctx.clone_id,
             )
-        except Exception as e:
-            logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
+            runtime_persisted = True
+            try:
+                runner.run_storage.start(run_id)
+            except Exception as e:
+                logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
 
-        # Flip agent_runs.status from 'pending' to 'running' now that we have a
-        # live PID. Don't wait for the child session's SessionStart hook —
-        # SessionCoordinator.start_agent_run stays idempotent (returns False
-        # when status is no longer 'pending') so a later hook-driven call is a
-        # safe no-op. See hooks/session_coordinator.py:313.
-        try:
-            runner.run_storage.start(run_id)
-        except Exception as e:
-            logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
+    # 12. Update DB and handle post-spawn setup based on spawn result
+    if spawn_result.success and spawn_result.child_session_id is not None:
+        if not runtime_persisted:
+            _persist_spawn_runtime(
+                runner,
+                run_id,
+                spawn_result,
+                tmux_session_name=tmux_session_name,
+                worktree_id=isolation_ctx.worktree_id,
+                clone_id=isolation_ctx.clone_id,
+            )
+
+        if not tmux_spawn:
+            try:
+                runner.run_storage.start(run_id)
+            except Exception as e:
+                logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
 
         # Fire agent_started event for WebSocket broadcasting
         try:
@@ -505,17 +721,14 @@ async def spawn_agent_impl(
         except Exception as e:
             logger.debug(f"Failed to fire agent_started event for {run_id}: {e}")
 
-        # 12a. Auto-claim task if task_id was provided
-        # Always set assignee (orchestrator tracking), but only transition
-        # status to in_progress for open tasks (don't regress needs_review etc.)
+        # 12a. Auto-claim task if task_id was provided.
         if resolved_task_id and task_manager:
             try:
                 task_obj = task_manager.get_task(resolved_task_id)
-                if not task_obj or not is_active_claim_status(task_obj.status):
+                if not task_obj or not is_task_actionable(task_obj):
                     logger.info(
-                        "Skipping auto-claim for task %s; status=%s is not active work",
+                        "Skipping auto-claim for task %s; task is not actionable",
                         f"#{task_seq_num}" if task_seq_num else resolved_task_id,
-                        getattr(task_obj, "status", None),
                     )
                 elif (
                     current_owner := get_claimed_session_id(task_obj)
@@ -526,9 +739,12 @@ async def spawn_agent_impl(
                         current_owner,
                     )
                 else:
-                    task_manager.claim_task(
+                    claimed_task = task_manager.claim_task(
                         resolved_task_id,
                         session_id=spawn_result.child_session_id,
+                    )
+                    task_owned_by_child = (
+                        get_claimed_session_id(claimed_task) == spawn_result.child_session_id
                     )
                     logger.info(
                         f"Auto-claimed task {(f'#{task_seq_num}' if task_seq_num else resolved_task_id)} for agent {run_id} (session {spawn_result.child_session_id})",
@@ -548,14 +764,19 @@ async def spawn_agent_impl(
                 from gobby.workflows.definitions import WorkflowInstance
                 from gobby.workflows.state_manager import WorkflowInstanceManager
 
+                current_step, step_variables = _initial_step_state_for_spawn(
+                    agent_body,
+                    task_owned_by_child=task_owned_by_child,
+                    initial_variables=effective_initial_variables,
+                )
                 step_instance = WorkflowInstance(
                     id=str(uuid.uuid4()),
                     session_id=spawn_result.child_session_id,
                     workflow_name=step_wf_name,
                     enabled=True,
                     priority=10,
-                    current_step=agent_body.steps[0].name,
-                    variables=dict(agent_body.step_variables),
+                    current_step=current_step,
+                    variables=step_variables,
                 )
                 WorkflowInstanceManager(db).save_instance(step_instance)
 

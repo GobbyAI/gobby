@@ -202,6 +202,33 @@ describe("useChat message and conversation state", () => {
     expect(sentMsg.provider).toBe("gemini");
   });
 
+  it("sendMessage includes explicit TTS intent when provided", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      // sendMessage is positional; this test needs to set only the seventh TTS flag.
+      result.current.sendMessage(
+        "Read this aloud",
+        null,
+        undefined,
+        null,
+        undefined,
+        null,
+        true,
+      );
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+    expect(sentMsg.type).toBe("chat_message");
+    expect(sentMsg.tts_enabled).toBe(true);
+  });
+
   it("continueSessionInChat preserves the source session provider when resuming", async () => {
     mockFetch.mockJsonResponse("/api/sessions/source-session", {
       session: {

@@ -9,6 +9,7 @@ Implements a four-tier resolution strategy:
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -18,6 +19,15 @@ if TYPE_CHECKING:
     from gobby.llm.service import LLMService
 
 logger = logging.getLogger(__name__)
+
+
+def _conflict_file_path(conflict: dict[str, Any]) -> Path:
+    file_path = Path(str(conflict.get("file", "unknown")))
+    worktree_path = conflict.get("worktree_path")
+    if file_path.is_absolute() or not worktree_path:
+        return file_path
+    return Path(str(worktree_path)) / file_path
+
 
 # Patterns for files that always conflict trivially in merges
 # These are append-only sync files that get re-synced from the DB anyway
@@ -98,6 +108,40 @@ async def auto_resolve_trivial_conflicts(
     return remaining
 
 
+_CONFLICT_BLOCK_RE = re.compile(
+    r"<<<<<<< [^\n]*\n.*?\n=======[ \t]*\n.*?\n>>>>>>> [^\n]*\n",
+    re.DOTALL,
+)
+
+
+def splice_resolutions_into_file(
+    file_content: str,
+    hunk_resolutions: list[str],
+) -> str | None:
+    """Splice LLM-resolved hunks back into a file with conflict markers.
+
+    Replaces each `<<<<<<<...=======...>>>>>>>` block with the corresponding
+    entry from hunk_resolutions, preserving surrounding content.
+
+    Returns None when the conflict-block count does not match the resolution
+    count — caller should fall through to a different tier.
+    """
+    matches = list(_CONFLICT_BLOCK_RE.finditer(file_content))
+    if len(matches) != len(hunk_resolutions):
+        return None
+
+    out: list[str] = []
+    last_end = 0
+    for match, replacement in zip(matches, hunk_resolutions, strict=True):
+        out.append(file_content[last_end : match.start()])
+        normalized = replacement.strip("\n")
+        if normalized:
+            out.append(normalized + "\n")
+        last_end = match.end()
+    out.append(file_content[last_end:])
+    return "".join(out)
+
+
 class ResolutionTier(Enum):
     """Resolution strategy tiers, from fastest to most expensive."""
 
@@ -122,6 +166,8 @@ class MergeResult:
         resolved_files: List of files that were successfully resolved
         unresolved_conflicts: List of conflicts that could not be resolved
         needs_human_review: Whether manual intervention is required
+        resolved_content_by_file: Map of file path -> full resolved file content,
+            populated by AI tiers so callers can write the resolution to disk.
     """
 
     success: bool
@@ -130,6 +176,7 @@ class MergeResult:
     resolved_files: list[str] = field(default_factory=list)
     unresolved_conflicts: list[dict[str, Any]] = field(default_factory=list)
     needs_human_review: bool = False
+    resolved_content_by_file: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -140,6 +187,7 @@ class MergeResult:
             "resolved_files": self.resolved_files,
             "unresolved_conflicts": self.unresolved_conflicts,
             "needs_human_review": self.needs_human_review,
+            "resolved_content_by_file": self.resolved_content_by_file,
         }
 
 
@@ -161,28 +209,51 @@ class MergeResolver:
         self,
         conflict_size_threshold: int = 100,
         max_parallel_files: int = 5,
+        *,
+        llm_service: "LLMService | None" = None,
+        config: Any | None = None,
     ):
         """Initialize MergeResolver.
 
         Args:
             conflict_size_threshold: Lines of conflict above which to escalate to full-file
             max_parallel_files: Maximum files to resolve in parallel
+            llm_service: Optional LLM service for AI conflict resolution
+            config: Optional MergeResolutionConfig for provider/model selection
         """
         self.conflict_size_threshold = conflict_size_threshold
         self.max_parallel_files = max_parallel_files
-        self._llm_service: LLMService | None = None  # LLM service integration point
-        self._config: Any | None = None  # MergeResolutionConfig for provider/model
+        self._llm_service: LLMService | None = llm_service
+        self._config: Any | None = config
+
+    @property
+    def llm_service(self) -> "LLMService | None":
+        return self._llm_service
+
+    @llm_service.setter
+    def llm_service(self, service: "LLMService | None") -> None:
+        self._llm_service = service
+
+    @property
+    def config(self) -> Any | None:
+        return self._config
+
+    @config.setter
+    def config(self, config: Any | None) -> None:
+        self._config = config
 
     async def resolve_file(
         self,
         path: Path | str,
         conflict_hunks: list[Any],
+        worktree_path: Path | str | None = None,
     ) -> "ResolutionResult":
         """Resolve conflicts in a single file using tiered strategy.
 
         Args:
             path: Path to the file with conflicts
             conflict_hunks: List of ConflictHunk objects or conflict dicts
+            worktree_path: Worktree root used to resolve relative file paths
 
         Returns:
             ResolutionResult with resolution status
@@ -193,6 +264,7 @@ class MergeResolver:
         conflict = {
             "file": file_path,
             "hunks": conflict_hunks,
+            "worktree_path": str(worktree_path) if worktree_path is not None else None,
         }
 
         # Check if conflict is too large for conflict-only resolution
@@ -212,6 +284,11 @@ class MergeResolver:
         if total_lines <= self.conflict_size_threshold:
             result = await self._resolve_conflicts_only([conflict])
             if result["success"]:
+                content_by_file = {
+                    r["file"]: r["content"]
+                    for r in result.get("resolutions", [])
+                    if r.get("content")
+                }
                 return ResolutionResult(
                     success=True,
                     tier=ResolutionTier.CONFLICT_ONLY_AI,
@@ -219,11 +296,15 @@ class MergeResolver:
                     resolved_files=[file_path],
                     unresolved_conflicts=[],
                     needs_human_review=False,
+                    resolved_content_by_file=content_by_file,
                 )
 
         # Tier 3: Full-file resolution
         result = await self._resolve_full_file([conflict])
         if result["success"]:
+            content_by_file = {
+                r["file"]: r["content"] for r in result.get("resolutions", []) if r.get("content")
+            }
             return ResolutionResult(
                 success=True,
                 tier=ResolutionTier.FULL_FILE_AI,
@@ -231,6 +312,7 @@ class MergeResolver:
                 resolved_files=[file_path],
                 unresolved_conflicts=[],
                 needs_human_review=False,
+                resolved_content_by_file=content_by_file,
             )
 
         # Tier 4: Human review fallback
@@ -394,10 +476,16 @@ class MergeResolver:
         for file_rel_path in conflicted_files:
             file_path = Path(worktree_path) / file_rel_path
             try:
-                content = file_path.read_text()
+                content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
                 hunks = extract_conflict_hunks(content)
                 if hunks:
-                    conflicts.append({"file": str(file_rel_path), "hunks": hunks})
+                    conflicts.append(
+                        {
+                            "file": str(file_rel_path),
+                            "hunks": hunks,
+                            "worktree_path": worktree_path,
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Failed to parse conflicts in {file_rel_path}: {e}")
 
@@ -458,18 +546,40 @@ class MergeResolver:
                     caller="worktrees.merge.resolve_hunks",
                 )
 
-                if response:
-                    # Simple parsing assumption - in real app would be more robust
-                    resolved_hunks = response.split("---HUNK SEPARATOR---")
-                    resolutions.append(
-                        {
-                            "file": file_path,
-                            "content": response,  # Storing full response for now as simple implementation
-                            "hunks_resolved": len(resolved_hunks),
-                        }
-                    )
-                else:
+                if not response:
                     return {"success": False, "resolutions": []}
+
+                resolved_hunks = [
+                    chunk.strip("\n") for chunk in response.split("---HUNK SEPARATOR---")
+                ]
+                resolved_hunks = [h for h in resolved_hunks if h]
+                if not resolved_hunks:
+                    resolved_hunks = [response.strip("\n")]
+
+                try:
+                    file_with_markers = await asyncio.to_thread(
+                        _conflict_file_path(conflict).read_text, encoding="utf-8"
+                    )
+                except OSError as read_err:
+                    logger.error(f"Failed to read {file_path} for hunk splicing: {read_err}")
+                    return {"success": False, "resolutions": []}
+
+                spliced = splice_resolutions_into_file(file_with_markers, resolved_hunks)
+                if spliced is None:
+                    logger.warning(
+                        f"Hunk count mismatch splicing {file_path}: "
+                        f"file has {len(_CONFLICT_BLOCK_RE.findall(file_with_markers))} "
+                        f"conflict blocks, LLM returned {len(resolved_hunks)} hunks"
+                    )
+                    return {"success": False, "resolutions": []}
+
+                resolutions.append(
+                    {
+                        "file": file_path,
+                        "content": spliced,
+                        "hunks_resolved": len(resolved_hunks),
+                    }
+                )
             except Exception as e:
                 logger.error(f"LLM resolution failed for {file_path}: {e}")
                 return {"success": False, "resolutions": []}
@@ -499,7 +609,9 @@ class MergeResolver:
             try:
                 # In a real scenario, we'd read the file content with markers here
                 # But typically the file on disk already has markers if git merge failed
-                content_with_markers = Path(file_path).read_text()
+                content_with_markers = await asyncio.to_thread(
+                    _conflict_file_path(conflict).read_text, encoding="utf-8"
+                )
 
                 prompt = f"Resolve all merge conflicts in the following file {file_path}. Return the FULL resolved file content.\n\n"
                 prompt += content_with_markers
@@ -570,7 +682,9 @@ class MergeResolver:
 
         async def resolve_with_limit(conflict: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
-                result = await self._resolve_file_conflict(conflict)
+                result = await self._resolve_file_conflict(
+                    {**conflict, "worktree_path": worktree_path}
+                )
                 return {"conflict": conflict, "result": result}
 
         tasks = [resolve_with_limit(c) for c in conflicts]

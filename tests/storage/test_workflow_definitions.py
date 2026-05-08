@@ -444,6 +444,45 @@ def test_import_from_yaml_invalid(manager: LocalWorkflowDefinitionManager) -> No
         manager.import_from_yaml("not_a_dict: [1, 2, 3]")
 
 
+def test_import_from_yaml_step_type_rejected(
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    """`type: step` is not a valid top-level YAML import type. Step workflows are
+    synthesized by spawn_agent, never hand-imported. Regression for the legacy
+    map that used to silently rewrite step → workflow_type='pipeline'."""
+    yaml_with_step = """
+name: rogue-step
+type: step
+steps:
+  - name: claim
+"""
+    with pytest.raises(ValueError, match="Invalid or missing 'type'"):
+        manager.import_from_yaml(yaml_with_step)
+
+
+def test_import_from_yaml_workflow_type_rejected(
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    """`type: workflow` was the other half of the legacy alias map; reject it."""
+    yaml_with_workflow = """
+name: rogue-workflow
+type: workflow
+steps:
+  - name: do
+"""
+    with pytest.raises(ValueError, match="Invalid or missing 'type'"):
+        manager.import_from_yaml(yaml_with_workflow)
+
+
+def test_import_from_yaml_missing_type_rejected(
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    """Missing `type:` used to silently fall back to pipeline; now it errors."""
+    yaml_no_type = "name: anonymous\nsteps:\n  - name: do\n"
+    with pytest.raises(ValueError, match="Invalid or missing 'type'"):
+        manager.import_from_yaml(yaml_no_type)
+
+
 # =============================================================================
 # Export to YAML
 # =============================================================================

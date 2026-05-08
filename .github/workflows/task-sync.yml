@@ -2,7 +2,7 @@ name: Task Sync
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - '.gobby/tasks.jsonl'
   workflow_dispatch:

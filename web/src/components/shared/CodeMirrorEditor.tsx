@@ -13,6 +13,7 @@ import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 import { yaml } from '@codemirror/lang-yaml'
 import { StreamLanguage } from '@codemirror/language'
+import { CODE_CHROME_TYPOGRAPHY, CODE_CHROME_VARS } from './codeBlockTheme'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 
@@ -119,23 +120,30 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
       EditorView.theme({
         '&': {
           height: '100%',
-          fontSize: '14px',
-          backgroundColor: '#0a0a0a',
+          fontSize: CODE_CHROME_TYPOGRAPHY.fontSize,
+          backgroundColor: CODE_CHROME_VARS.bg,
+          borderRadius: CODE_CHROME_TYPOGRAPHY.borderRadius,
         },
         '.cm-scroller': {
-          fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
+          fontFamily: CODE_CHROME_TYPOGRAPHY.fontFamily,
           overflow: 'auto',
         },
+        '.cm-content': {
+          paddingTop: CODE_CHROME_TYPOGRAPHY.padding,
+          paddingBottom: CODE_CHROME_TYPOGRAPHY.padding,
+        },
         '.cm-gutters': {
-          backgroundColor: '#0a0a0a',
-          borderRight: '1px solid #262626',
-          color: '#555',
+          backgroundColor: CODE_CHROME_VARS.bg,
+          borderRight: `1px solid ${CODE_CHROME_VARS.gutterBorder}`,
+          color: CODE_CHROME_VARS.gutterText,
+          paddingTop: CODE_CHROME_TYPOGRAPHY.padding,
+          paddingBottom: CODE_CHROME_TYPOGRAPHY.padding,
         },
         '.cm-activeLineGutter': {
-          background: '#1a1a1a',
+          background: CODE_CHROME_VARS.activeLineBg,
         },
         '.cm-activeLine': {
-          background: 'rgba(255, 255, 255, 0.03)',
+          background: CODE_CHROME_VARS.activeLineBg,
         },
       }),
     ]
@@ -181,5 +189,5 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
     }
   }, [content])
 
-  return <div ref={containerRef} className="codemirror-container" style={{ background: '#0a0a0a', height: '100%' }} />
+  return <div ref={containerRef} className="codemirror-container h-full overflow-hidden [&_.cm-editor]:h-full" />
 }

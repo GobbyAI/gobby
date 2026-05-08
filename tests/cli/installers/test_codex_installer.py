@@ -4,6 +4,7 @@ import json
 import os
 import tomllib
 from pathlib import Path
+from typing import Any, Final
 from unittest.mock import patch
 
 import pytest
@@ -11,12 +12,80 @@ import pytest
 pytestmark = pytest.mark.unit
 
 # The hooks template events that install_codex should write
-EXPECTED_HOOK_EVENTS = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
+EXPECTED_HOOK_EVENTS: Final[tuple[str, ...]] = (
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "PreCompact",
+    "PostCompact",
+    "SessionStart",
+    "UserPromptSubmit",
+    "Stop",
+)
+EXPECTED_HOOK_EVENT_SET: Final[set[str]] = set(EXPECTED_HOOK_EVENTS)
+HOOKS_WITH_MATCHERS: Final[set[str]] = {"PreToolUse", "PermissionRequest", "PostToolUse"}
+EVENT_KEY_LABELS: Final[dict[str, str]] = {
+    "PreToolUse": "pre_tool_use",
+    "PermissionRequest": "permission_request",
+    "PostToolUse": "post_tool_use",
+    "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
+    "SessionStart": "session_start",
+    "UserPromptSubmit": "user_prompt_submit",
+    "Stop": "stop",
+}
 
 
-def _load_toml_file(path: Path) -> dict[str, object]:
+def _load_toml_file(path: Path) -> dict[str, Any]:
     with open(path, "rb") as f:
         return tomllib.load(f)
+
+
+def _make_hooks_template(events: tuple[str, ...] = EXPECTED_HOOK_EVENTS) -> dict[str, Any]:
+    hooks: dict[str, Any] = {}
+    for event in events:
+        group: dict[str, Any] = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        f'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type={event}'
+                    ),
+                }
+            ]
+        }
+        if event in HOOKS_WITH_MATCHERS:
+            group["matcher"] = ".*"
+        hooks[event] = [group]
+    return {"hooks": hooks}
+
+
+def _assert_stable_hooks_feature(config_data: dict[str, Any]) -> None:
+    features = config_data["features"]
+    assert isinstance(features, dict)
+    assert features["hooks"] is True
+    assert "codex_hooks" not in features
+
+
+def _assert_gobby_trust_state(config_data: dict[str, Any], hooks_path: Path) -> None:
+    hooks = config_data["hooks"]
+    assert isinstance(hooks, dict)
+    state = hooks["state"]
+    assert isinstance(state, dict)
+
+    hooks_prefix = f"{hooks_path.resolve()}:"
+    gobby_entries = {
+        key: value
+        for key, value in state.items()
+        if isinstance(key, str) and key.startswith(hooks_prefix)
+    }
+    assert len(gobby_entries) == len(EXPECTED_HOOK_EVENTS)
+    for event in EXPECTED_HOOK_EVENTS:
+        suffix = f":{EVENT_KEY_LABELS[event]}:0:0"
+        matching = [entry for key, entry in gobby_entries.items() if key.endswith(suffix)]
+        assert len(matching) == 1
+        assert isinstance(matching[0], dict)
+        assert matching[0]["trusted_hash"].startswith("sha256:")
 
 
 def test_set_toml_value_raises_when_descending_through_scalar() -> None:
@@ -26,6 +95,77 @@ def test_set_toml_value_raises_when_descending_through_scalar() -> None:
 
     with pytest.raises(ValueError, match="foo"):
         _set_toml_value(config, "foo.bar", True)
+
+
+def test_codex_hook_trust_hash_matches_codex_discovery() -> None:
+    from gobby.cli.installers.codex import _normalized_codex_command_hook_hash
+
+    # Codex canonicalizes the event name plus command-hook payload before SHA-256 hashing.
+    hook = {"type": "command", "command": "python3 /tmp/user.py"}
+
+    assert (
+        _normalized_codex_command_hook_hash("SessionStart", {"hooks": [hook]}, hook)
+        == "sha256:775a1a39423c99333a34296e0b7c23c35bd26a3f709d4df4fbb3d15304ae8adc"
+    )
+
+
+def test_codex_hook_trust_state_prunes_stale_gobby_positions(tmp_path: Path) -> None:
+    from gobby.cli.installers.codex import (
+        _ensure_codex_hook_trust_state,
+        _load_toml_config,
+    )
+
+    hooks_path = tmp_path / "hooks.json"
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": ".*",
+                            "hooks": [{"type": "command", "command": "python3 /tmp/user.py"}],
+                        },
+                        {
+                            "matcher": ".*",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "ghook --gobby-owned --cli=codex --type=PreToolUse",
+                                }
+                            ],
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    hooks_prefix = str(hooks_path.resolve())
+    config = _load_toml_config(
+        f"""
+[hooks.state."{hooks_prefix}:pre_tool_use:0:0"]
+trusted_hash = "sha256:old-position-without-gobby-marker"
+
+[hooks.state."{hooks_prefix}:pre_tool_use:9:0"]
+trusted_hash = "sha256:user-tool"
+"""
+    )
+
+    trusted_keys = _ensure_codex_hook_trust_state(
+        config,
+        hooks_path,
+        previous_entries=[
+            (
+                f"{hooks_prefix}:pre_tool_use:0:0",
+                "sha256:old-position-without-gobby-marker",
+            )
+        ],
+    )
+
+    state = config["hooks"]["state"]
+    assert f"{hooks_prefix}:pre_tool_use:1:0" in trusted_keys
+    assert f"{hooks_prefix}:pre_tool_use:0:0" not in state
+    assert state[f"{hooks_prefix}:pre_tool_use:9:0"]["trusted_hash"] == "sha256:user-tool"
 
 
 class TestInstallCodex:
@@ -52,63 +192,7 @@ class TestInstallCodex:
         codex_dir = install_dir / "codex"
         codex_dir.mkdir(parents=True)
 
-        # Create the hooks-template.json
-        hooks_template = {
-            "hooks": {
-                "SessionStart": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=SessionStart',
-                            }
-                        ]
-                    }
-                ],
-                "UserPromptSubmit": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=UserPromptSubmit',
-                            }
-                        ]
-                    }
-                ],
-                "PreToolUse": [
-                    {
-                        "matcher": ".*",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=PreToolUse',
-                            }
-                        ],
-                    }
-                ],
-                "PostToolUse": [
-                    {
-                        "matcher": ".*",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=PostToolUse',
-                            }
-                        ],
-                    }
-                ],
-                "Stop": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=Stop',
-                            }
-                        ]
-                    }
-                ],
-            }
-        }
+        hooks_template = _make_hooks_template()
         (codex_dir / "hooks-template.json").write_text(json.dumps(hooks_template, indent=2))
 
         with patch("gobby.cli.installers.codex.get_install_dir", return_value=install_dir):
@@ -155,12 +239,13 @@ class TestInstallCodex:
         assert result["success"] is True
         assert result["error"] is None
         assert result["mcp_configured"] is True
+        assert result["trust"]["success"] is True
 
         # Verify hooks.json was created
         hooks_path = mock_home / ".codex" / "hooks.json"
         assert hooks_path.exists()
         hooks_config = json.loads(hooks_path.read_text())
-        assert set(hooks_config["hooks"].keys()) == EXPECTED_HOOK_EVENTS
+        assert set(hooks_config["hooks"].keys()) == EXPECTED_HOOK_EVENT_SET
 
         # Verify $HOOKS_DIR was substituted
         hooks_str = hooks_path.read_text()
@@ -171,7 +256,9 @@ class TestInstallCodex:
         config_path = mock_home / ".codex" / "config.toml"
         assert config_path.exists()
         config_data = _load_toml_file(config_path)
-        assert config_data["features"]["codex_hooks"] is True
+        _assert_stable_hooks_feature(config_data)
+        _assert_gobby_trust_state(config_data, hooks_path)
+        assert config_data["projects"][os.environ["GOBBY_HOME"]]["trust_level"] == "trusted"
 
     def test_install_hooks_installed_list(
         self,
@@ -180,13 +267,13 @@ class TestInstallCodex:
         mock_shared_content,
         mock_mcp_configure,
     ) -> None:
-        """Test that hooks_installed lists all 5 event types."""
+        """Test that hooks_installed lists all 8 event types."""
         from gobby.cli.installers.codex import install_codex
 
         result = install_codex(mock_home)
 
         assert result["success"] is True
-        assert set(result["hooks_installed"]) == EXPECTED_HOOK_EVENTS
+        assert set(result["hooks_installed"]) == EXPECTED_HOOK_EVENT_SET
 
     def test_install_migrates_from_notify(
         self,
@@ -212,7 +299,7 @@ class TestInstallCodex:
         # Verify notify removed, feature flag added, model preserved
         config_data = _load_toml_file(config_path)
         assert "notify" not in config_data
-        assert config_data["features"]["codex_hooks"] is True
+        _assert_stable_hooks_feature(config_data)
         assert config_data["model"] == "gpt-4"
 
         # Verify backup created
@@ -260,7 +347,7 @@ class TestInstallCodex:
 
         assert result["success"] is True
         config_data = _load_toml_file(config_path)
-        assert config_data["features"]["codex_hooks"] is True
+        _assert_stable_hooks_feature(config_data)
 
     def test_install_feature_flag_before_table_headers(
         self,
@@ -315,28 +402,29 @@ class TestInstallCodex:
         assert result["success"] is True
         config_content = config_path.read_text()
         # Should be placed as bare key inside [features], not as dotted key
-        assert "codex_hooks = true" in config_content
+        assert "hooks = true" in config_content
+        assert "codex_hooks" not in config_content
         # [features] section should still exist
         assert "[features]" in config_content
         # fast_mode preserved
         assert "fast_mode = true" in config_content
-        # codex_hooks must be between [features] and [mcp_servers]
+        # hooks must be between [features] and [mcp_servers]
         features_pos = config_content.index("[features]")
-        codex_hooks_pos = config_content.index("codex_hooks = true")
+        hooks_pos = config_content.index("hooks = true")
         mcp_pos = config_content.index("[mcp_servers")
-        assert features_pos < codex_hooks_pos < mcp_pos
+        assert features_pos < hooks_pos < mcp_pos
         parsed = tomllib.loads(config_content)
         assert parsed["features"]["fast_mode"] is True
-        assert parsed["features"]["codex_hooks"] is True
+        _assert_stable_hooks_feature(parsed)
 
-    def test_install_replaces_flag_in_existing_features_section(
+    def test_install_replaces_legacy_flag_in_existing_features_section(
         self,
         mock_home: Path,
         mock_install_dir: Path,
         mock_shared_content,
         mock_mcp_configure,
     ) -> None:
-        """Test that existing codex_hooks in [features] section is updated."""
+        """Test that existing codex_hooks in [features] section is removed."""
         from gobby.cli.installers.codex import install_codex
 
         codex_dir = mock_home / ".codex"
@@ -349,7 +437,7 @@ class TestInstallCodex:
         assert result["success"] is True
         config_content = config_path.read_text()
         parsed = tomllib.loads(config_content)
-        assert parsed["features"]["codex_hooks"] is True
+        _assert_stable_hooks_feature(parsed)
         assert parsed["features"]["fast_mode"] is True
 
     def test_install_merges_into_existing_hooks_json(
@@ -368,6 +456,20 @@ class TestInstallCodex:
         existing_hooks = {
             "hooks": {
                 "CustomEvent": [{"hooks": [{"type": "command", "command": "echo custom"}]}],
+                "PreToolUse": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {"type": "command", "command": "echo user pre-tool hook"},
+                            {
+                                "type": "command",
+                                "command": (
+                                    "ghook --gobby-owned --cli=codex --type=PreToolUse --old"
+                                ),
+                            },
+                        ],
+                    }
+                ],
             }
         }
         hooks_path.write_text(json.dumps(existing_hooks))
@@ -379,7 +481,12 @@ class TestInstallCodex:
         # Custom event preserved
         assert "CustomEvent" in merged["hooks"]
         # Gobby events added
-        assert set(merged["hooks"].keys()) >= EXPECTED_HOOK_EVENTS
+        assert set(merged["hooks"].keys()) >= EXPECTED_HOOK_EVENT_SET
+        pre_tool_commands = [
+            hook["command"] for group in merged["hooks"]["PreToolUse"] for hook in group["hooks"]
+        ]
+        assert "echo user pre-tool hook" in pre_tool_commands
+        assert not any(command.endswith("--old") for command in pre_tool_commands)
 
     def test_install_missing_template(self, mock_home: Path, temp_dir: Path) -> None:
         """Test installation fails when hooks-template.json is missing."""
@@ -544,6 +651,7 @@ class TestInstallCodex:
         content = config_path.read_text()
         assert "approval_mode" not in content
         assert "uv" in content
+        _assert_stable_hooks_feature(_load_toml_file(config_path))
 
     def test_backward_compat_alias(self) -> None:
         """Test that install_codex_notify is an alias for install_codex."""
@@ -607,9 +715,26 @@ class TestUninstallCodex:
         }
         hooks_path.write_text(json.dumps(hooks_config))
 
-        # Set up config.toml with feature flag
+        # Set up config.toml with feature flags and hook trust state
         config_path = codex_dir / "config.toml"
-        config_path.write_text('model = "gpt-4"\nfeatures.codex_hooks = true\n')
+        hooks_prefix = str(hooks_path.resolve())
+        config_path.write_text(
+            f"""model = "gpt-4"
+
+[features]
+hooks = true
+codex_hooks = true
+
+[hooks.state."{hooks_prefix}:session_start:0:0"]
+trusted_hash = "sha256:gobby-session"
+
+[hooks.state."{hooks_prefix}:pre_tool_use:0:0"]
+trusted_hash = "sha256:gobby-tool"
+
+[hooks.state."{hooks_prefix}:pre_tool_use:9:0"]
+trusted_hash = "sha256:user-tool"
+"""
+        )
 
         result = uninstall_codex()
 
@@ -625,7 +750,12 @@ class TestUninstallCodex:
         # Verify feature flag removed, model preserved
         config_data = _load_toml_file(config_path)
         features = config_data.get("features")
+        assert not isinstance(features, dict) or "hooks" not in features
         assert not isinstance(features, dict) or "codex_hooks" not in features
+        state = config_data["hooks"]["state"]
+        assert f"{hooks_prefix}:session_start:0:0" not in state
+        assert f"{hooks_prefix}:pre_tool_use:0:0" not in state
+        assert state[f"{hooks_prefix}:pre_tool_use:9:0"]["trusted_hash"] == "sha256:user-tool"
         assert config_data["model"] == "gpt-4"
 
     def test_uninstall_preserves_non_gobby_hooks(self, mock_home: Path, mock_mcp_remove) -> None:
@@ -643,7 +773,8 @@ class TestUninstallCodex:
                             {
                                 "type": "command",
                                 "command": "ghook --gobby-owned --cli=codex --type=SessionStart",
-                            }
+                            },
+                            {"type": "command", "command": "echo user session hook"},
                         ]
                     }
                 ],
@@ -661,7 +792,9 @@ class TestUninstallCodex:
         # hooks.json still exists with custom event
         remaining = json.loads(hooks_path.read_text())
         assert "CustomEvent" in remaining["hooks"]
-        assert "SessionStart" not in remaining["hooks"]
+        assert remaining["hooks"]["SessionStart"][0]["hooks"] == [
+            {"type": "command", "command": "echo user session hook"}
+        ]
 
     def test_uninstall_cleans_legacy_notify_script(self, mock_home: Path, mock_mcp_remove) -> None:
         """Test that legacy notify script is cleaned up during uninstall."""
@@ -688,7 +821,9 @@ class TestUninstallCodex:
         codex_dir = mock_home / ".codex"
         codex_dir.mkdir(parents=True)
         config_path = codex_dir / "config.toml"
-        config_path.write_text('notify = ["python3", "/path"]\nfeatures.codex_hooks = true\n')
+        config_path.write_text(
+            'notify = ["python3", "/path"]\nfeatures.hooks = true\nfeatures.codex_hooks = true\n'
+        )
 
         result = uninstall_codex()
 
@@ -696,6 +831,7 @@ class TestUninstallCodex:
         config_data = _load_toml_file(config_path)
         assert "notify" not in config_data
         features = config_data.get("features")
+        assert not isinstance(features, dict) or "hooks" not in features
         assert not isinstance(features, dict) or "codex_hooks" not in features
 
     def test_uninstall_no_hooks_json(self, mock_home: Path, mock_mcp_remove) -> None:
@@ -723,7 +859,7 @@ class TestUninstallCodex:
         codex_dir = mock_home / ".codex"
         codex_dir.mkdir(parents=True)
         config_path = codex_dir / "config.toml"
-        original = 'features.codex_hooks = true\nmodel = "gpt-4"\n'
+        original = 'features.hooks = true\nfeatures.codex_hooks = true\nmodel = "gpt-4"\n'
         config_path.write_text(original)
 
         result = uninstall_codex()
@@ -783,62 +919,7 @@ class TestHooksTemplateFormat:
         codex_dir = install_dir / "codex"
         codex_dir.mkdir(parents=True)
 
-        hooks_template = {
-            "hooks": {
-                "SessionStart": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=SessionStart',
-                            }
-                        ]
-                    }
-                ],
-                "PreToolUse": [
-                    {
-                        "matcher": ".*",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=PreToolUse',
-                            }
-                        ],
-                    }
-                ],
-                "PostToolUse": [
-                    {
-                        "matcher": ".*",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=PostToolUse',
-                            }
-                        ],
-                    }
-                ],
-                "UserPromptSubmit": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=UserPromptSubmit',
-                            }
-                        ]
-                    }
-                ],
-                "Stop": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=Stop',
-                            }
-                        ]
-                    }
-                ],
-            }
-        }
+        hooks_template = _make_hooks_template()
         (codex_dir / "hooks-template.json").write_text(json.dumps(hooks_template, indent=2))
 
         with patch("gobby.cli.installers.codex.get_install_dir", return_value=install_dir):
@@ -875,8 +956,8 @@ class TestHooksTemplateFormat:
         hooks_path = mock_home / ".codex" / "hooks.json"
         hooks_config = json.loads(hooks_path.read_text())
 
-        # PreToolUse and PostToolUse should use ".*" regex matcher
-        for event in ["PreToolUse", "PostToolUse"]:
+        # Tool and permission events should use ".*" regex matchers
+        for event in ["PreToolUse", "PermissionRequest", "PostToolUse"]:
             assert hooks_config["hooks"][event][0]["matcher"] == ".*"
 
     def test_hooks_dir_substituted_with_absolute_path(
@@ -936,30 +1017,7 @@ class TestEdgeCases:
         install_dir = temp_dir / "install"
         codex_dir = install_dir / "codex"
         codex_dir.mkdir(parents=True)
-        hooks_template = {
-            "hooks": {
-                "SessionStart": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=SessionStart',
-                            }
-                        ]
-                    }
-                ],
-                "Stop": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'uv run "$HOOKS_DIR/hook_dispatcher.py" --cli=codex --type=Stop',
-                            }
-                        ]
-                    }
-                ],
-            }
-        }
+        hooks_template = _make_hooks_template()
         (codex_dir / "hooks-template.json").write_text(json.dumps(hooks_template))
         return install_dir
 
@@ -993,7 +1051,7 @@ class TestEdgeCases:
         assert result["success"] is True
         assert result["config_updated"] is True
         config_data = _load_toml_file(config_path)
-        assert config_data["features"]["codex_hooks"] is True
+        _assert_stable_hooks_feature(config_data)
 
     def test_install_preserves_other_config_content(self, mock_home: Path, temp_dir: Path) -> None:
         """Test that updating config preserves other content."""
@@ -1035,7 +1093,7 @@ debug = true
         assert new_config["temperature"] == 0.7
         assert new_config["advanced"]["debug"] is True
         assert "notify" not in new_config
-        assert new_config["features"]["codex_hooks"] is True
+        _assert_stable_hooks_feature(new_config)
         assert "# Comment at top" in config_path.read_text()
 
     def test_install_corrupt_hooks_json_is_overwritten(
@@ -1131,6 +1189,7 @@ class TestResultStructure:
             "error",
         }
         assert set(result.keys()) >= expected_keys
+        assert result["success"] is True
 
     def test_uninstall_result_has_all_keys(self, mock_home: Path) -> None:
         """Test that uninstall result contains all expected keys."""

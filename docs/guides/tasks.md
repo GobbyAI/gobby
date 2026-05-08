@@ -1,629 +1,411 @@
 # Task Management Guide
 
-Gobby includes a native task tracking system designed for AI-assisted development. Tasks are persistent across sessions, support dependencies, and sync with git.
+Gobby's task system is the durable work ledger for local-first development. It
+tracks task trees, dependency edges, stage manifests, session ownership, review
+state, validation, and commit links across restarts and agent handoffs.
 
-## Core Concepts
+Use the MCP tools for agent lifecycle work. Use the CLI for human inspection and
+manual operator actions.
 
-- **Task**: A unit of work with title, description, priority, and status
-- **Epic**: A parent task that groups subtasks
-- **Dependencies**: Tasks can block other tasks (A must complete before B starts)
-- **Ready Work**: Tasks with no unresolved blocking dependencies
-- **Sync**: Tasks export to `.gobby/tasks.jsonl` for git versioning
+## Current Model
 
-## Quick Start
+```mermaid
+flowchart LR
+    Task["Task<br/>#14390"] --> Manifest["Stage manifest"]
+    Task --> Dependencies["Dependencies"]
+    Task --> Owner["Owner session"]
+    Task --> Commits["Linked commits"]
 
-### MCP Tools (for AI Agents)
+    Manifest --> Ready["ready"]
+    Ready --> InProgress["in_progress"]
+    InProgress --> NeedsReview["needs_review"]
+    NeedsReview --> ReviewApproved["review_approved"]
+    ReviewApproved --> Done["done"]
+
+    Task --> Closed["closed metadata"]
+    Task --> Escalated["escalation metadata"]
+```
+
+The storage row still has task metadata such as title, description, priority,
+type, category, parent, labels, and validation criteria. The workflow-facing
+state comes from the stage manifest plus close and escalation metadata:
+
+- `ready`: the current stage has not started.
+- `in_progress`: a session or agent owns the current stage work.
+- `needs_review`: the current stage is waiting for review.
+- `review_approved`: the current stage passed review and can be completed.
+- `done`: a stage row is complete; the next incomplete row becomes current.
+- `closed`: the task has closure metadata.
+- `escalated`: the task needs intervention and is excluded from ready work.
+
+The projected task state is not a free-form `status` field. Agent code should
+use lifecycle tools such as `claim_task`, `submit_for_review`, and `close_task`
+instead of trying to set `status` or `assignee` through `update_task`.
+
+## Agent Workflow
+
+Agents should use progressive MCP discovery before invoking task tools:
 
 ```python
-# Check what's ready to work on
-call_tool(server_name="gobby-tasks", tool_name="list_ready_tasks", arguments={})
+list_mcp_servers()
+list_tools(server_name="gobby-tasks")
+get_tool_schema(server_name="gobby-tasks", tool_name="create_task")
+call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={...})
+```
 
-# Create a task (status='open', no assignee by default)
+The task server resolves the calling session from the Gobby session context. Do
+not pass `session_id` inside `gobby-tasks` tool arguments unless that tool's
+schema explicitly includes it.
+
+### Create and Claim
+
+```python
 call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
-    "title": "Fix authentication bug",
-    "priority": 1,
-    "task_type": "bug",
-    "session_id": "<your_session_id>"  # Required - tracks who created the task
+    "title": "Fix stale task guide",
+    "description": "Audit docs/guides/tasks.md against current behavior.",
+    "category": "docs",
+    "priority": 2,
+    "task_type": "task",
+    "labels": ["docs", "audit"],
+    "claim": True,
 })
-# Task is created with status='open' and no assignee
+```
 
-# Create AND claim a task in one call (set claim=True)
-call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
-    "title": "Fix authentication bug",
-    "priority": 1,
-    "task_type": "bug",
-    "session_id": "<your_session_id>",
-    "claim": True  # Auto-claim: status='in_progress', assignee=session_id
-})
-# Task is now in_progress and assigned to your session
+`create_task` requires `title` and `category`. Valid categories are:
 
-# To claim an EXISTING unclaimed task, use claim_task:
+| Category | Use for |
+| :--- | :--- |
+| `code` | Implementation work. Requires `validation_criteria`. |
+| `config` | Configuration changes. |
+| `docs` | Documentation changes. |
+| `manual` | Manual verification. |
+| `planning` | Design or architecture planning. |
+| `refactor` | Refactoring and test updates emitted by expansion. |
+| `research` | Investigation. |
+| `test` | Test-writing and test infrastructure. |
+
+Valid task types are `task`, `bug`, `feature`, `epic`, `chore`, `refactor`,
+`simple_fix`, `research_spike`, `architecture_doc`, `prd_doc`, and
+`review_anchor`. Some legacy aliases normalize on input, such as `docs` to
+`chore` and `fix` to `simple_fix`.
+
+To claim existing work:
+
+```python
 call_tool(server_name="gobby-tasks", tool_name="claim_task", arguments={
-    "task_id": "gt-abc123",
-    "session_id": "<your_session_id>"
-})
-
-# Complete it
-call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
-    "task_id": "gt-abc123",
-    "reason": "completed"
+    "task_id": "#14390",
 })
 ```
 
-### CLI Commands
+`claim_task` sets canonical ownership for the current session and detects claim
+conflicts. `force=true` overrides another owner and should be reserved for
+explicit recovery situations.
 
-```bash
-# List ready work
-gobby tasks list --ready
+### Close
 
-# Create a task
-gobby tasks create "Fix login bug" -p 1 -t bug
-
-# Update status
-gobby tasks update gt-abc123 --status in_progress
-
-# Close task
-gobby tasks close gt-abc123 --reason "Fixed"
-
-# Sync with git
-gobby tasks sync
-```
-
-## Task Lifecycle
-
-```text
-open → in_progress → needs_review → approved → closed
-                  ↘                            ↗
-                   escalated (human intervention needed)
-```
-
-- **open**: Ready or blocked, not started
-- **in_progress**: Currently being worked on
-- **needs_review**: Agent-complete, awaiting human sign-off (HITL)
-- **approved**: Review gate passed, workflow handles the rest (merge, deploy, etc.)
-- **closed**: Completed with reason
-- **escalated**: Needs human intervention (validation failures, blocked, etc.)
-
-### Review Status (HITL)
-
-Tasks enter `needs_review` status instead of `closed` when:
-- Task has `requires_user_review=true` (explicitly flagged for human approval)
-- Agent uses `override_justification` to bypass validation failures
-
-**Fields:**
-- `requires_user_review`: Boolean flag for mandatory human approval
-- `accepted_by_user`: Audit trail - set to `true` when user closes from review
-
-**Dependency behavior:**
-- Tasks in `review` with `requires_user_review=false` unblock dependents (treated as complete)
-- Tasks in `review` with `requires_user_review=true` keep dependents blocked until user closes
-
-**Workflow condition:**
-- `task_needs_human_review()` - Returns true when session_task is in review AND requires user approval
-
-## Task Types
-
-| Type | Use For |
-|------|---------|
-| `task` | General work items (default) |
-| `bug` | Something broken |
-| `feature` | New functionality |
-| `epic` | Large feature with subtasks |
-| `chore` | Maintenance, dependencies, tooling |
-
-## Priority Levels
-
-| Priority | Meaning |
-|----------|---------|
-| 1 | High (critical bugs, major features) |
-| 2 | Medium (default) |
-| 3 | Low (polish, optimization) |
-
-## Dependencies
-
-Tasks can block other tasks. A blocked task won't appear in `list_ready_tasks` until its blockers are complete.
-
-**Complete for dependency purposes:**
-- Status is `closed`, OR
-- Status is `review` AND `requires_user_review=false`
+Leaf task closure requires a change summary. If the session edited in-repo files,
+the work must be committed and linked before close.
 
 ```python
-# Task A blocks Task B (B depends on A completing first)
+call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
+    "task_id": "#14390",
+    "commit_sha": "abc1234",
+    "changes_summary": "Refreshed the task guide for stage manifests and MCP-first task flow.",
+})
+```
+
+Passing `commit_sha` links the commit and closes in one call. Validation runs
+when the task has validation criteria. Skip-style reasons such as `duplicate`,
+`already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
+no-work or out-of-repo closes; they still require a useful `changes_summary`.
+
+Autonomous stage work may require review instead of direct close. Inspect the
+stage manifest first:
+
+```python
+call_tool(server_name="gobby-tasks", tool_name="get_task_stages", arguments={
+    "task_id": "#14390",
+})
+```
+
+If the current stage has `review_policy="required"`, commit the changes and
+submit that stage:
+
+```python
+call_tool(server_name="gobby-tasks-ops", tool_name="submit_for_review", arguments={
+    "task_id": "#14390",
+    "stage_name": "development",
+    "review_notes": "Refreshed docs/guides/tasks.md against 0.4.0 task behavior.",
+})
+```
+
+## Stage Manifests
+
+Every lifecycle-enabled task can have an ordered manifest of stage rows. The
+current stage is the first row whose state is not `done`.
+
+Common stage tools:
+
+| Server | Tool | Purpose |
+| :--- | :--- | :--- |
+| `gobby-tasks` | `get_task_stages` | Read a task's manifest. |
+| `gobby-tasks` | `list_stages_registry` | Read installed stage definitions. |
+| `gobby-tasks` | `get_task_type_defaults` | Read default stages for a task type. |
+| `gobby-tasks-ops` | `initialize_task_manifest` | Initialize defaults or explicit stages. |
+| `gobby-tasks-ops` | `start_stage` | Move a ready stage to `in_progress`. |
+| `gobby-tasks-ops` | `complete_stage` | Complete a stage according to review policy. |
+| `gobby-tasks-ops` | `fail_stage` | Return failed work to ready or escalate after caps. |
+| `gobby-tasks-ops` | `submit_for_review` | Move `in_progress` to `needs_review`. |
+| `gobby-tasks-ops` | `approve_review` | Move reviewed work to `review_approved`. |
+| `gobby-tasks-ops` | `reject_review` | Return reviewed work for another attempt. |
+
+For CLI inspection:
+
+```bash
+gobby tasks stages #14390
+```
+
+For human stage transitions:
+
+```bash
+gobby tasks advance #14390
+gobby tasks review #14390 --submit
+gobby tasks review #14390 --approve
+gobby tasks review #14390 --reject --reason "Missing validation evidence"
+```
+
+## Dependencies and Ready Work
+
+A `blocks` dependency means the dependent task cannot become ready until the
+blocker is closed. `related` and `discovered-from` are informational links.
+
+```python
 call_tool(server_name="gobby-tasks", tool_name="add_dependency", arguments={
-    "task_id": "gt-taskB",      # The dependent task
-    "depends_on": "gt-taskA",   # The blocker
-    "dep_type": "blocks"
-})
-
-# Create task that BLOCKS other tasks (this task must complete first)
-call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
-    "title": "Implement feature",
-    "blocks": ["gt-parent-epic"],  # This task blocks the parent
-    "session_id": "<your_session_id>"  # Required
-})
-
-# Create task that DEPENDS ON other tasks (those tasks must complete first)
-call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
-    "title": "Integration tests",
-    "depends_on": ["#1", "#2"],  # This task is blocked by #1 and #2
-    "session_id": "<your_session_id>"  # Required
+    "task_id": "#44",
+    "depends_on": "#42",
+    "dep_type": "blocks",
 })
 ```
 
-### Dependency Types
+Readiness is hierarchical. A task appears in ready work when:
 
-| Type | Behavior |
-|------|----------|
-| `blocks` | Hard dependency - prevents task from being "ready" |
-| `related` | Soft link - informational only |
-| `discovered-from` | Task found while working on another |
-
-## Task Expansion Workflow
-
-Gobby provides a two-phase approach to breaking down complex work:
-
-```text
-save_expansion_spec → execute_expansion
-        ↓                    ↓
-  (plan subtasks)    (create atomically)
-```
-
-### Phase 1: Save Expansion Spec
-
-First, plan your subtasks by saving an expansion specification:
+1. The task is not closed or escalated.
+2. Its current stage is `ready` or `in_progress`, or it has no stage manifest.
+3. It has no unresolved external `blocks` dependency.
+4. Its parent chain is also ready.
 
 ```python
-# MCP: Save expansion spec for review/later execution
-call_tool(server_name="gobby-tasks-ops", tool_name="save_expansion_spec", arguments={
-    "task_id": "gt-abc123",
-    "spec": {
-        "subtasks": [
-            {"title": "Design auth API", "description": "..."},
-            {"title": "Implement login endpoint", "depends_on": [0]},
-            {"title": "Add session management", "depends_on": [1]}
-        ]
-    }
+call_tool(server_name="gobby-tasks", tool_name="list_ready_tasks", arguments={
+    "limit": 10,
+})
+
+call_tool(server_name="gobby-tasks", tool_name="list_blocked_tasks", arguments={
+    "limit": 10,
 })
 ```
 
-### Phase 2: Execute Expansion
-
-Then atomically create all subtasks with dependencies:
-
-```python
-# MCP: Execute the saved expansion spec
-call_tool(server_name="gobby-tasks-ops", tool_name="execute_expansion", arguments={
-    "task_id": "gt-abc123"
-})
-```
-
-### Check for Pending Expansion
-
-After session compaction, check if expansion was interrupted:
-
-```python
-# MCP: Check for pending expansion spec
-call_tool(server_name="gobby-tasks-ops", tool_name="get_expansion_spec", arguments={
-    "task_id": "gt-abc123"
-})
-```
-
-For structured planning, use the `/gobby-expand` skill which guides you through this process.
-
-## AI-Powered Task Features
-
-### Suggest Next Task
-
-Get AI-powered suggestion for the best task to work on:
-
-```python
-# Get AI suggestion for next task
-call_tool(server_name="gobby-tasks", tool_name="suggest_next_task", arguments={
-    "session_id": "<your_session_id>"
-})
-
-# Get multiple suggestions with conflict avoidance
-call_tool(server_name="gobby-tasks", tool_name="suggest_next_task", arguments={
-    "session_id": "<your_session_id>",
-    "count": 3  # Returns batch with conflict avoidance (default: 1)
-})
-```
-
-### Complexity Analysis (CLI)
-
-Analyze task complexity from the CLI:
+CLI equivalents:
 
 ```bash
-# Analyze single task
-gobby tasks complexity #42
-
-# Analyze all open tasks
-gobby tasks complexity --all
+gobby tasks ready --limit 10
+gobby tasks blocked --limit 20
+gobby tasks dep add #44 #42
+gobby tasks dep tree #44
+gobby tasks dep cycles
 ```
 
-## Task Validation
+## Search and Listing
 
-Validate task completion with AI assistance. Validation uses actual git diffs to verify real code changes.
-
-### Automatic Validation on Close
-
-When closing a task with `validation_criteria`, the system automatically:
-1. Fetches uncommitted git changes (staged + unstaged)
-2. Passes the actual diff to the validation LLM
-3. Blocks the close if validation fails
+Use `list_tasks` for metadata and current-stage filters:
 
 ```python
-# Close task - validation happens automatically if task has validation_criteria
-call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
-    "task_id": "gt-abc123",
-    "reason": "completed"
-})
-# If validation fails, returns: {"error": "validation_failed", "message": "...", "validation_status": "invalid"}
-
-# Skip validation if needed
-call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
-    "task_id": "gt-abc123",
-    "reason": "completed",
-    "skip_validation": True
+call_tool(server_name="gobby-tasks", tool_name="list_tasks", arguments={
+    "current_stage_state": ["ready", "in_progress"],
+    "priority": 2,
+    "label": "docs",
+    "limit": 20,
 })
 ```
 
-### Generate Validation Criteria
-
-Tasks need `validation_criteria` for validation to run:
+Use `search_tasks` for full-text search across task content:
 
 ```python
-# Generate criteria for a single task
-call_tool(server_name="gobby-tasks", tool_name="generate_validation_criteria", arguments={
-    "task_id": "gt-abc123"
-})
-
-# Or set criteria manually when creating/updating
-call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
-    "title": "Add logout button",
-    "validation_criteria": "- Logout button visible in header\n- Clicking logs user out\n- Redirects to login page",
-    "session_id": "<your_session_id>"  # Required
-})
-```
-
-### Manual Validation
-
-> **Note:** Validation tools (`validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history`) are internal-only Python functions, not available via MCP. Use the CLI commands below or the automatic validation on `close_task` instead.
-
-### CLI Validation Commands
-
-```bash
-# Generate validation criteria
-gobby tasks generate-criteria gt-abc123
-
-# Generate criteria for all open tasks missing it
-gobby tasks generate-criteria --all
-
-# Validate a task
-gobby tasks validate gt-abc123
-
-# Reset validation failure count
-gobby tasks reset-validation gt-abc123
-```
-
-## Git Sync
-
-Tasks automatically sync to `.gobby/tasks.jsonl`:
-
-- **Export**: After task changes (5s debounce)
-- **Import**: On daemon start
-- **Manual**: `gobby tasks sync`
-
-### Git Hook Auto-Sync
-
-Install git hooks for automatic task sync on commits and branch changes:
-
-```bash
-gobby install
-```
-
-**Hooks installed:**
-| Hook | Trigger | Action |
-|------|---------|--------|
-| `pre-commit` | Before each commit | Export tasks to JSONL |
-| `post-merge` | After pull/merge | Import tasks from JSONL |
-| `post-checkout` | On branch switch | Import tasks from JSONL |
-
-The installer chains with existing hooks (preserving pre-commit framework if present) and creates backups before modification.
-
-This ensures tasks stay in sync with your git branches without manual intervention.
-
-### Stealth Mode
-
-Keep tasks out of git (store in `~/.gobby/` instead):
-
-```bash
-gobby tasks config --stealth on
-```
-
-## Search
-
-Find tasks by content using TF-IDF full-text search. Complements `list_tasks` (filters by metadata) with content-based discovery.
-
-### MCP Tools
-
-```python
-# Search tasks by content
 call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
-    "query": "authentication login",
-    "status": "open",           # Optional: filter by status
-    "task_type": "bug",         # Optional: filter by type
-    "priority": 1,              # Optional: filter by priority
-    "limit": 10,                # Optional: max results (default 10)
-    "min_score": 0.1,           # Optional: minimum relevance score
-    "all_projects": False       # Optional: search across all projects
-})
-
-# Rebuild search index (usually automatic)
-call_tool(server_name="gobby-tasks-ops", tool_name="reindex_tasks", arguments={
-    "all_projects": False       # Optional: reindex all projects
+    "query": "stage manifest review",
+    "limit": 10,
 })
 ```
 
-### CLI Commands
+Useful CLI views:
 
 ```bash
-# Search tasks
-gobby tasks search "authentication bug"
-gobby tasks search "login" --status open --type bug --limit 5
-gobby tasks search "OAuth" --all-projects --json
-
-# Rebuild search index
-gobby tasks reindex
-gobby tasks reindex --all-projects
+gobby tasks list --active
+gobby tasks list --stage development --state in_progress
+gobby tasks list --claimed
+gobby tasks list --ready
+gobby tasks search "stage manifest" --limit 5
+gobby tasks show #14390
+gobby tasks stats
 ```
 
-### How It Works
+## Task Expansion
 
-- Uses TF-IDF (Term Frequency-Inverse Document Frequency) for relevance scoring
-- Searches task titles and descriptions
-- Results sorted by relevance score (higher = better match)
-- Index automatically updates when tasks change
-- Same TF-IDF backend as `gobby-memory` search
-
-## Complete MCP Tool Reference
-
-### Task CRUD
-
-| Tool | Description |
-|------|-------------|
-| `create_task` | Create a new task (supports `depends_on` for inline dependencies) |
-| `get_task` | Get task details with dependencies |
-| `update_task` | Update task fields |
-| `close_task` | Close a task with reason |
-| `delete_task` | Delete a task (`cascade` or `unlink` for dependents) |
-| `list_tasks` | List tasks with filters |
-| `add_label` | Add a label to a task |
-| `remove_label` | Remove a label from a task |
-
-### Dependencies
-
-| Tool | Description |
-|------|-------------|
-| `add_dependency` | Create dependency between tasks |
-| `remove_dependency` | Remove a dependency |
-| `get_dependency_tree` | Get blockers/blocking tree |
-| `check_dependency_cycles` | Detect circular dependencies |
-
-### Ready Work
-
-| Tool | Description |
-|------|-------------|
-| `list_ready_tasks` | Tasks with no unresolved blockers |
-| `list_blocked_tasks` | Tasks waiting on others |
-
-### Progressive Discovery
-
-List operations return **brief format** (8 fields) to minimize token usage:
-
-```json
-{"id", "title", "status", "priority", "type", "parent_task_id", "created_at", "updated_at"}
-```
-
-Use `get_task` to retrieve full details (description, validation criteria, commits, etc.):
+Expansion is run-based in 0.4.0. The old saved-spec tools are retired. Use
+`gobby-tasks-ops` expansion run tools or the CLI `expand` subcommands.
 
 ```python
-# Step 1: Discover tasks
-tasks = call_tool(server_name="gobby-tasks", tool_name="list_ready_tasks", arguments={})
+call_tool(server_name="gobby-tasks-ops", tool_name="start_expansion_run", arguments={
+    "task_id": "#42",
+})
 
-# Step 2: Get full details for specific task
-task = call_tool(server_name="gobby-tasks", tool_name="get_task", arguments={"task_id": "gt-abc"})
+call_tool(server_name="gobby-tasks-ops", tool_name="get_expansion_run", arguments={
+    "run_id": "<run_id>",
+})
+
+call_tool(server_name="gobby-tasks-ops", tool_name="validate_expansion_run", arguments={
+    "run_id": "<run_id>",
+})
 ```
 
-### Session Integration
-
-| Tool | Description |
-|------|-------------|
-| `link_task_to_session` | Associate task with session |
-| `get_session_tasks` | Tasks linked to a session |
-| `get_task_sessions` | Sessions that touched a task |
-
-### Git Sync (CLI-only)
-
-> **Note:** Sync tools (`sync_tasks`, `get_sync_status`) are CLI-only, not available via MCP. Use `gobby tasks sync` from the command line.
-
-### Ready Work / Suggestions
-
-| Tool | Description |
-|------|-------------|
-| `suggest_next_task` | AI suggests next task to work on. Use `count` param (default 1) for batch with conflict avoidance. |
-
-### Lifecycle
-
-| Tool | Description |
-|------|-------------|
-| `de_escalate_task` | Return escalated task to open status |
-| `generate_validation_criteria` | Generate validation criteria using LLM |
-| `run_fix_attempt` | Spawn fix agent for validation issues |
-| `validate_and_fix` | Run validation loop with auto-fix |
-
-### Validation (internal-only)
-
-> **Note:** `validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history` are internal-only Python functions, not available via MCP.
-
-### Search
-
-| Tool | Description |
-|------|-------------|
-| `search_tasks` | Full-text search tasks by content (TF-IDF) |
-
-### Task Expansion & Operations (`gobby-tasks-ops`)
-
-| Tool | Description |
-|------|-------------|
-| `save_expansion_spec` | Save expansion spec for later execution |
-| `execute_expansion` | Execute saved expansion atomically |
-| `get_expansion_spec` | Check for pending expansion (resume after compaction) |
-| `validate_expansion_spec` | Validate spec structure and dependencies |
-| `save_expansion_qa_result` | Save QA result for expansion |
-| `check_expansion_qa_result` | Check QA result for expansion |
-| `set_affected_files` | Set affected files for a task |
-| `get_affected_files` | Get affected files for a task |
-| `find_file_overlaps` | Find file contention across tasks |
-| `wire_affected_files_from_spec` | Wire affected files from expansion spec |
-| `import_github_issues` | Import issues from GitHub |
-| `link_task_to_github_issue` | Link a task to a GitHub issue |
-| `reindex_tasks` | Rebuild search index |
-
-## CLI Command Reference
+CLI equivalents:
 
 ```bash
-# Task management
-gobby tasks list [--status S] [--priority N] [--ready] [--blocked] [--json]
-gobby tasks show TASK_ID
-gobby tasks create "Title" [-d DESC] [-p PRIORITY] [-t TYPE]
-gobby tasks update TASK_ID [--status S] [--priority P]
-gobby tasks close TASK_ID --reason "Done"
-gobby tasks reopen TASK_ID
-gobby tasks delete TASK_ID [--cascade]
+gobby tasks expand validate-plan .gobby/plans/feature.md
+gobby tasks expand compile #42 --plan-file .gobby/plans/feature.md
+gobby tasks expand apply <run_id>
+gobby tasks expand status <run_id>
+gobby tasks expand resume <run_id>
+gobby tasks expand reset #42
+```
 
-# Dependencies
-gobby tasks dep add TASK BLOCKER
+See [Task Expansion](./task-expansion.md) for the full run model.
+
+## Git and Validation
+
+Task commits are first-class metadata. Use task-linked commit messages and
+close with the commit SHA:
+
+```bash
+git commit -m "[gobby-#14390] docs: refresh task guide"
+```
+
+```python
+call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
+    "task_id": "#14390",
+    "commit_sha": "abc1234",
+    "changes_summary": "Updated the task guide against current MCP and stage behavior.",
+})
+```
+
+Related MCP tools:
+
+| Tool | Purpose |
+| :--- | :--- |
+| `link_commit` | Link a commit while keeping the task open. |
+| `unlink_commit` | Remove a linked commit. |
+| `auto_link_commits` | Detect commits that mention task refs. |
+| `get_task_diff` | Read the combined linked diff. |
+| `update_observed_files` | Annotate affected files from linked commits. |
+
+Related CLI commands:
+
+```bash
+gobby tasks commit link #14390 abc1234
+gobby tasks commit unlink #14390 abc1234
+gobby tasks commit auto
+gobby tasks diff #14390
+gobby tasks validate #14390 --summary "Updated task guide"
+gobby tasks validation-history #14390
+```
+
+`close_task` validates leaf tasks with `validation_criteria` against the linked
+or current diff. Parent tasks can close when all children are closed. Epics are
+organizational containers and do not require their own commit.
+
+## CLI Reference
+
+The CLI is optimized for humans and operators. Agents should prefer MCP for
+mutating lifecycle actions.
+
+```bash
+# Listing and inspection
+gobby tasks list [--active] [--ready] [--blocked] [--closed] [--escalated]
+gobby tasks list [--stage NAME --state STATE] [--claimed] [--unclaimed]
+gobby tasks ready [--limit N] [--priority N] [--type TYPE] [--json]
+gobby tasks blocked [--limit N] [--json]
+gobby tasks show TASK
+gobby tasks stats
+
+# CRUD
+gobby tasks create "Title" [-d DESCRIPTION] [-p PRIORITY] [-t TYPE] [-D BLOCKER]
+gobby tasks update TASK [--title TITLE] [--priority N] [--parent TASK] [--task-type TYPE]
+gobby tasks close TASK [--reason REASON] [--skip-validation]
+gobby tasks reopen TASK [--reason REASON]
+gobby tasks delete TASK [--cascade | --unlink] [--yes]
+
+# Dependencies, labels, stages, and review
+gobby tasks dep add TASK BLOCKER [--type blocks]
 gobby tasks dep remove TASK BLOCKER
 gobby tasks dep tree TASK
 gobby tasks dep cycles
-
-# Labels
 gobby tasks label add TASK LABEL
 gobby tasks label remove TASK LABEL
+gobby tasks stages TASK
+gobby tasks advance TASK [--stage NAME]
+gobby tasks review TASK --submit
+gobby tasks review TASK --approve
+gobby tasks review TASK --reject --reason REASON
 
-# Commit linking
-gobby tasks commit link TASK SHA
-gobby tasks commit unlink TASK SHA
-gobby tasks commit auto
-gobby tasks diff TASK_ID
-
-# Ready work
-gobby tasks ready [--limit N]
-gobby tasks blocked
-gobby tasks suggest
-
-# Sync
+# Expansion, validation, search, sync, and maintenance
+gobby tasks expand validate-plan PLAN_FILE
+gobby tasks expand compile TASK [--plan-file PLAN_FILE]
+gobby tasks expand apply RUN_ID
+gobby tasks expand status RUN_ID
+gobby tasks expand resume RUN_ID
+gobby tasks expand reset TASK
+gobby tasks validate TASK --summary SUMMARY
+gobby tasks validation-history TASK
+gobby tasks search QUERY [--limit N] [--json]
+gobby tasks reindex
 gobby tasks sync [--import] [--export]
-
-# Search
-gobby tasks search <QUERY> [--status S] [--type T] [--limit N] [--all-projects] [--json]
-gobby tasks reindex [--all-projects]
-
-# Complexity
-gobby tasks complexity TASK_ID [--all]
-
-# Validation
-gobby tasks generate-criteria TASK_ID   # Generate criteria for one task
-gobby tasks generate-criteria --all     # Generate for all open tasks
-gobby tasks validate TASK_ID            # Run validation
-gobby tasks validation-history TASK_ID  # View validation history
-gobby tasks validation-history TASK_ID --clear  # Clear history
-gobby tasks de-escalate TASK_ID         # Return escalated task to open
-
-# Maintenance
-gobby tasks stats
-gobby tasks doctor                      # Validate data integrity
-gobby tasks clean                       # Fix data issues
-gobby tasks compact                     # Compaction commands
+gobby tasks doctor
+gobby tasks repair-lifecycle
 ```
 
-## Data Storage
+## Storage and Sync
 
-- **Database**: `~/.gobby/gobby-hub.db` (SQLite)
-- **Git sync**: `.gobby/tasks.jsonl` (or `~/.gobby/tasks/{project}.jsonl` in stealth mode)
+The canonical task data lives in Gobby's SQLite storage. Tasks can also export to
+JSONL for git-friendly synchronization:
 
-## Task ID Format
+- Project task export: `.gobby/tasks.jsonl`
+- Stealth-mode export: user-level Gobby task storage
+- Manual sync: `gobby tasks sync`
+- Git hook sync: installed by `gobby install`
 
-- Generated: `gt-{6 hex chars}` (e.g., `gt-a1b2c3`)
-- Hierarchical: `gt-a1b2c3.1`, `gt-a1b2c3.2` (subtasks)
-- Prefix matching supported: `gt-a1b` matches `gt-a1b2c3`
+The human-friendly task reference is `#N` within a project. Hierarchical task
+paths are dotted `seq_num` chains such as `14370.14390`. MCP tools accept `#N`,
+plain sequence numbers where the project is known, path refs, UUIDs, and
+unambiguous UUID prefixes.
 
-## Claude Code Task Integration
+## Automation Notes
 
-Gobby transparently intercepts Claude Code's built-in task tools (`TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`) and syncs operations to Gobby's persistent task store.
+Lifecycle automation, build dispatch, and workflow rules operate on semantic
+events such as `turn_start` and `turn_end`. Raw provider/runtime hooks such as
+`before_agent`, `after_agent`, and `stop` are adapter details below the authoring
+API. See [Workflows Overview](./workflows-overview.md) for the event model.
 
-### How It Works
+Agent termination is a separate runtime step. A spawned agent that finishes task
+work should still call `gobby-agents:end_agent_run` so the run is released.
 
-When you use Claude Code's built-in task tools, Gobby:
+Docs leaf tasks may run inside the parent epic's isolation context. Do not infer
+that shared isolation removes task ownership, commit, review, or validation
+requirements.
 
-1. Lets the CC tool execute normally
-2. Syncs the result to Gobby's persistent storage via post-tool-use hooks
-3. Enriches responses with Gobby-specific metadata
+## Related Guides
 
-This gives you the best of both worlds: Claude Code's native task UI + Gobby's persistence and features.
+- [MCP Tools](./mcp-tools.md) for the full task tool inventory.
+- [Task Expansion](./task-expansion.md) for expansion runs and validation.
+- [Workflows Overview](./workflows-overview.md) for lifecycle events.
+- [Worktrees](./worktrees.md) for isolation behavior.
 
-### Using Gobby Features via CC
-
-Pass Gobby options in the `metadata.gobby` field:
-
-```python
-TaskCreate(
-    subject="Implement OAuth",
-    metadata={
-        "gobby": {
-            "task_type": "feature",
-            "priority": 1,
-            "validation_criteria": "All tests pass"
-        }
-    }
-)
-```
-
-### Status Mapping
-
-| Claude Code | Gobby |
-|-------------|-------|
-| `pending` | `open` |
-| `in_progress` | `in_progress` |
-| `completed` | `closed` |
-
-### Dual ID Format
-
-Tasks are addressable by both:
-- **Seq number**: `#47` (human-friendly, project-scoped)
-- **UUID**: `abc123-...` (globally unique)
-
-Both formats work when referencing tasks.
-
-### Response Enrichment
-
-Gobby enriches CC task responses with additional metadata in a `gobby` block:
-
-- `validation_status`: Current validation state
-- `is_expanded`: Whether task has been broken into subtasks
-- `subtask_count`: Number of child tasks
-- `commit_count`: Linked commits
-- `path_cache`: Hierarchical position (e.g., "1.2.3")
-- `task_type`: Gobby task type
-- `priority`: Task priority
-
-### Benefits Over Session-Scoped Tasks
-
-Claude Code's built-in tasks are session-scoped and don't persist across sessions. With Gobby's integration:
-
-- **Persistence**: Tasks survive session restarts and compactions
-- **Commit Linking**: Include `[task-id]` in commit messages for auto-linking
-- **Validation Gates**: Define criteria that must pass before closing
-- **LLM Expansion**: Break complex tasks into subtasks with embedded TDD steps
-- **Git Sync**: Tasks export to `.gobby/tasks.jsonl` for version control
+_Last verified: 2026-05-07_

@@ -1,4 +1,5 @@
 import type { MemoryFilters as MemoryFiltersType, MemoryStats } from '../../hooks/useMemory'
+import { cn } from '../../lib/utils'
 
 interface MemoryFiltersProps {
   filters: MemoryFiltersType
@@ -15,10 +16,15 @@ interface MemoryFiltersProps {
 
 const MEMORY_TYPES = [
   { key: 'fact', label: 'Fact', color: 'var(--accent)' },
-  { key: 'preference', label: 'Preference', color: '#c084fc' },
-  { key: 'pattern', label: 'Pattern', color: '#34d399' },
-  { key: 'context', label: 'Context', color: '#fbbf24' },
+  { key: 'preference', label: 'Preference', color: 'var(--color-info)' },
+  { key: 'pattern', label: 'Pattern', color: 'var(--color-review)' },
+  { key: 'context', label: 'Context', color: 'var(--color-warning-foreground)' },
 ] as const
+
+const CHIP_BASE_CLS =
+  'inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] pointer-coarse:min-h-11 pointer-coarse:py-2'
+const CHIP_ACTIVE_CLS =
+  'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-[var(--text-primary)]'
 
 export function MemoryFilters({
   filters, stats, recentCount, onFiltersChange,
@@ -26,15 +32,16 @@ export function MemoryFilters({
   limitMin = 50, limitMax = 5000, limitStep = 50,
 }: MemoryFiltersProps) {
   return (
-    <div className="memory-filter-bar">
-      <div className="memory-filter-chips">
+    <div className="flex flex-wrap items-center gap-2 pb-2.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         {MEMORY_TYPES.map(t => {
           const count = stats?.by_type?.[t.key] ?? 0
           const isActive = filters.memoryType === t.key
           return (
             <button
               key={t.key}
-              className={`memory-type-chip ${isActive ? 'active' : ''}`}
+              type="button"
+              className={cn(CHIP_BASE_CLS, isActive && CHIP_ACTIVE_CLS)}
               onClick={() =>
                 onFiltersChange({
                   ...filters,
@@ -43,14 +50,18 @@ export function MemoryFilters({
                 })
               }
             >
-              <span className="memory-type-dot" style={{ backgroundColor: t.color }} />
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: t.color }}
+              />
               {t.label}
-              <span className="memory-type-chip-count">{count}</span>
+              <span className="text-[length:var(--text-xs)] tabular-nums text-[var(--text-muted)]">{count}</span>
             </button>
           )
         })}
         <button
-          className={`memory-type-chip ${filters.recentOnly ? 'active' : ''}`}
+          type="button"
+          className={cn(CHIP_BASE_CLS, filters.recentOnly && CHIP_ACTIVE_CLS)}
           onClick={() =>
             onFiltersChange({
               ...filters,
@@ -59,12 +70,19 @@ export function MemoryFilters({
             })
           }
         >
-          <span className="memory-type-dot" style={{ backgroundColor: '#22c55e' }} />
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ backgroundColor: 'var(--color-success-foreground)' }}
+          />
           24H
-          <span className="memory-type-chip-count">{recentCount}</span>
+          <span className="text-[length:var(--text-xs)] tabular-nums text-[var(--text-muted)]">{recentCount}</span>
         </button>
         {viewMode === 'knowledge' && onKnowledgeGraphLimitChange && (
-          <label className="memory-limit-control" htmlFor="knowledge-graph-limit" title="Max nodes to display" style={{ marginLeft: 'auto' }}>
+          <label
+            className="ml-auto flex items-center gap-1 whitespace-nowrap text-[length:var(--text-sm)] text-[var(--text-secondary)]"
+            htmlFor="knowledge-graph-limit"
+            title="Max nodes to display"
+          >
             Limit
             <input
               id="knowledge-graph-limit"
@@ -77,6 +95,7 @@ export function MemoryFilters({
                 const v = Math.max(limitMin, Math.min(limitMax, Number(e.target.value) || limitMin))
                 onKnowledgeGraphLimitChange(v)
               }}
+              className="w-16 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-1.5 py-1 text-right text-[length:var(--text-sm)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11"
             />
           </label>
         )}
@@ -84,7 +103,8 @@ export function MemoryFilters({
 
       {(filters.memoryType !== null || filters.recentOnly) && (
         <button
-          className="memory-filter-clear"
+          type="button"
+          className="cursor-pointer rounded-full border border-[var(--border)] bg-transparent px-2.5 py-1 text-[length:var(--text-sm)] text-[var(--text-muted)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--color-error)] hover:text-[var(--color-error)] pointer-coarse:min-h-11 pointer-coarse:py-2"
           onClick={() =>
             onFiltersChange({ ...filters, memoryType: null, recentOnly: false })
           }

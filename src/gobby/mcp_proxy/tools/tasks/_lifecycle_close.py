@@ -17,8 +17,9 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     validate_leaf_task_with_llm,
     validate_parent_task,
 )
-from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
+from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -307,7 +308,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 except Exception as e:
                     logger.debug(f"Best-effort session linking failed: {e}")
 
-            notify_parent_on_status_change(
+            notify_parent_on_task_state_change(
                 ctx.task_manager.db,
                 resolved_id,
                 "escalated",
@@ -321,15 +322,31 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             }
 
         # All checks passed - close the task with session and commit tracking
-        ctx.task_manager.close_task(
-            resolved_id,
-            reason=reason,
-            closed_in_session_id=resolved_session_id,
-            closed_commit_sha=current_commit_sha,
-            validation_override_reason=override_justification if store_override else None,
-        )
+        try:
+            ctx.task_manager.close_task(
+                resolved_id,
+                reason=reason,
+                closed_in_session_id=resolved_session_id,
+                closed_commit_sha=current_commit_sha,
+                validation_override_reason=override_justification if store_override else None,
+            )
+        except BootstrapLedgerMismatchError as exc:
+            return exc.to_response()
 
-        notify_parent_on_status_change(
+        if is_epic and reason.lower() in {"completed", "obsolete"}:
+            from gobby.hooks.event_handlers._plan import on_epic_terminal
+
+            on_epic_terminal(
+                {
+                    "task_ref": f"#{task.seq_num}" if task.seq_num else resolved_id,
+                    "project_id": task.project_id,
+                    "status": "closed",
+                    "closure_reason": reason.lower(),
+                },
+                db=ctx.task_manager.db,
+            )
+
+        notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
             "closed",

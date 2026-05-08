@@ -104,7 +104,7 @@ def create_clones_registry(
                     branch=base_branch,
                 )
                 if result.success and branch_name != base_branch:
-                    git_manager._run_git(
+                    git_manager.run_git_command(
                         ["checkout", "-b", branch_name],
                         cwd=clone_path,
                         check=True,
@@ -483,7 +483,7 @@ def create_clones_registry(
         # This avoids pushing to origin (which fails on divergent branches).
         clone_storage.mark_syncing(clone_id)
         temp_ref = f"clone-merge/{clone.branch_name}"
-        fetch_result = git_manager._run_git(
+        fetch_result = git_manager.run_git_command(
             ["fetch", str(clone.clone_path), f"{clone.branch_name}:refs/heads/{temp_ref}"],
             cwd=git_manager.repo_path,
             timeout=120,
@@ -503,18 +503,18 @@ def create_clones_registry(
         # Compare stash list before/after to reliably detect if a stash was created
         # (avoids locale-dependent string matching on git stash output)
         stash_created = False
-        stash_list_before = git_manager._run_git(
+        stash_list_before = git_manager.run_git_command(
             ["stash", "list"],
             cwd=git_manager.repo_path,
             timeout=10,
         )
-        stash_result = git_manager._run_git(
+        stash_result = git_manager.run_git_command(
             ["stash", "push", "-m", "gobby-merge-clone: auto-stash sync files", "--", ".gobby/"],
             cwd=git_manager.repo_path,
             timeout=10,
         )
         if stash_result.returncode == 0:
-            stash_list_after = git_manager._run_git(
+            stash_list_after = git_manager.run_git_command(
                 ["stash", "list"],
                 cwd=git_manager.repo_path,
                 timeout=10,
@@ -530,14 +530,14 @@ def create_clones_registry(
             )
         finally:
             # Clean up temp ref regardless of merge outcome
-            git_manager._run_git(
+            git_manager.run_git_command(
                 ["branch", "-D", temp_ref],
                 cwd=git_manager.repo_path,
                 timeout=10,
             )
             # Restore stashed .gobby/ files
             if stash_created:
-                pop_result = git_manager._run_git(
+                pop_result = git_manager.run_git_command(
                     ["stash", "pop"],
                     cwd=git_manager.repo_path,
                     timeout=10,

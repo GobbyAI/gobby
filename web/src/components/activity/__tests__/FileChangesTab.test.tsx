@@ -7,9 +7,17 @@ vi.mock('../../chat/artifacts/ResizeHandle', () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }))
 
-vi.mock('../DiffView', () => ({
-  DiffView: ({ diff, path }: { diff: string; path: string }) => (
-    <div data-testid="diff-view">{path}:{diff}</div>
+vi.mock('../../shared/DiffBlock', () => ({
+  DiffBlock: ({
+    lines,
+    path,
+  }: {
+    lines: { text: string }[]
+    path: string
+  }) => (
+    <div data-testid="diff-view">
+      {path}:{lines.map((l) => l.text).join('\n')}
+    </div>
   ),
 }))
 

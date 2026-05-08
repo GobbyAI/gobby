@@ -90,6 +90,8 @@ class TestFindProjectRoot:
             result = find_project_root(None)
 
             mock_cwd.assert_called_once()
+            assert mock_cwd.call_count == 1
+            assert mock_cwd.call_args is not None
             assert result is None
 
     def test_find_project_root_gobby_dir_exists_but_no_project_json(
@@ -742,6 +744,7 @@ class TestEnsureProjectJsonForIsolation:
         assert result["id"] == "proj-1"
         assert result["name"] == "test"
         assert result["parent_project_path"] == str(repo.resolve())
+        assert result["parent_project_id"] == "proj-1"
 
     def test_augments_existing(self, tmp_path: Path) -> None:
         """Target already has project.json (git-tracked) — overwrites with parent_project_path."""
@@ -759,6 +762,7 @@ class TestEnsureProjectJsonForIsolation:
         result = json.loads((target / ".gobby" / "project.json").read_text())
         assert result["id"] == "proj-1"
         assert result["parent_project_path"] == str(repo.resolve())
+        assert result["parent_project_id"] == "proj-1"
 
     def test_noop_when_source_missing(self, tmp_path: Path) -> None:
         """Source has no project.json — does nothing."""
@@ -787,10 +791,12 @@ class TestEnsureProjectJsonForIsolation:
         gobby_dir.chmod(0o444)
 
         try:
-            # Should not raise
-            ensure_project_json_for_isolation(repo, target)
+            result = ensure_project_json_for_isolation(repo, target)
         finally:
             gobby_dir.chmod(0o755)
+
+        assert result is None
+        assert not (target / ".gobby" / "project.json").exists()
 
 
 class TestBuildAndSetProjectContext:

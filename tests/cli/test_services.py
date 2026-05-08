@@ -1,5 +1,6 @@
 """Tests for service lifecycle utilities."""
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -13,6 +14,8 @@ from gobby.cli.services import (
     get_neo4j_status,
     is_neo4j_healthy,
     is_neo4j_installed,
+    is_qdrant_healthy,
+    try_autoload_embedding_model,
 )
 
 pytestmark = pytest.mark.unit
@@ -47,7 +50,9 @@ def _completed_process(
     stderr: str = "",
 ) -> subprocess.CompletedProcess[str]:
     """Build a completed subprocess result for CLI mocks."""
-    return subprocess.CompletedProcess(args=args, returncode=returncode, stdout=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(
+        args=args, returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 async def _run_inline(func, *args, **kwargs):
@@ -77,8 +82,84 @@ class TestIsNeo4jHealthy:
             assert await is_neo4j_healthy("http://localhost:8474") is False
 
     @pytest.mark.asyncio
+    async def test_server_error_logs_debug_without_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(return_value=httpx.Response(500))
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_neo4j_healthy("http://localhost:8474") is False
+
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Neo4j health check failed: http://localhost:8474 returned 500"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_unhealthy_when_no_url(self) -> None:
         assert await is_neo4j_healthy(None) is False
+
+    @pytest.mark.asyncio
+    async def test_unreachable_probe_does_not_log_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_neo4j_healthy("http://localhost:8474") is False
+
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Neo4j health check failed: http://localhost:8474 unreachable: refused"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+
+class TestIsQdrantHealthy:
+    """Tests for is_qdrant_healthy()."""
+
+    @pytest.mark.asyncio
+    async def test_unreachable_probe_does_not_log_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_qdrant_healthy("http://localhost:6333") is False
+
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Qdrant health check failed: http://localhost:6333/healthz unreachable: refused"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_non_200_response_logs_debug_without_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(return_value=httpx.Response(503))
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_qdrant_healthy("http://localhost:6333") is False
+
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Qdrant health check failed: http://localhost:6333/healthz returned 503"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
 
 
 class TestGetNeo4jStatus:
@@ -137,7 +218,6 @@ class TestEnsureLocalEmbeddingServiceReady:
                 side_effect=[
                     _completed_process(["lms", "server", "status"], returncode=1, stderr="stopped"),
                     _completed_process(["lms", "server", "start"], stdout="started"),
-                    _completed_process(["lms", "load", "model"], stdout="loaded"),
                 ],
             ) as mock_run,
             patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client),
@@ -152,8 +232,63 @@ class TestEnsureLocalEmbeddingServiceReady:
         assert [call.args[0] for call in mock_run.call_args_list] == [
             ["lms", "server", "status"],
             ["lms", "server", "start"],
-            ["lms", "load", "nomic-embed-text-v1.5", "-y"],
         ]
+
+    @pytest.mark.asyncio
+    async def test_loads_lmstudio_model_only_after_failed_health_check(
+        self,
+        mock_async_client: AsyncMock,
+    ) -> None:
+        mock_async_client.get = AsyncMock(return_value=httpx.Response(200))
+        mock_health = AsyncMock(side_effect=[False, True])
+
+        with (
+            patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
+            patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
+            patch(
+                "gobby.cli.services.subprocess.run",
+                side_effect=[
+                    _completed_process(["lms", "server", "status"], stdout="running"),
+                    _completed_process(["lms", "ps"], stdout=""),
+                    _completed_process(["lms", "load", "model"], stdout="loaded"),
+                ],
+            ) as mock_run,
+            patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client),
+            patch("gobby.cli.services.is_embedding_healthy", new=mock_health),
+        ):
+            ready = await ensure_local_embedding_service_ready(
+                model="text-embedding-nomic-embed-text-v1.5@f16",
+                api_base="http://localhost:1234/v1",
+            )
+
+        assert ready is True
+        assert [call.args[0] for call in mock_run.call_args_list] == [
+            ["lms", "server", "status"],
+            ["lms", "ps"],
+            ["lms", "load", "text-embedding-nomic-embed-text-v1.5@f16", "-y"],
+        ]
+        assert mock_health.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_autoload_skips_lmstudio_load_when_model_is_already_loaded(self) -> None:
+        with (
+            patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
+            patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
+            patch(
+                "gobby.cli.services.subprocess.run",
+                return_value=_completed_process(
+                    ["lms", "ps"],
+                    stdout="text-embedding-nomic-embed-text-v1.5@f16",
+                ),
+            ) as mock_run,
+        ):
+            loaded = await try_autoload_embedding_model(
+                model="text-embedding-nomic-embed-text-v1.5@f16",
+                api_base="http://localhost:1234/v1",
+            )
+
+        assert loaded is True
+        assert [call.args[0] for call in mock_run.call_args_list] == [["lms", "ps"]]
 
     @pytest.mark.asyncio
     async def test_returns_failure_on_server_start_error(self) -> None:

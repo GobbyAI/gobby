@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.storage.database import DatabaseProtocol
 
-from ._bootstrap import TitleChangeCallback, _SessionBootstrapMixin
+from ._bootstrap import SessionChangeCallback, TitleChangeCallback, _SessionBootstrapMixin
 from ._bulk_update import _BulkUpdateMixin
 from ._constants import get_logger
 from ._crud import _SessionCRUDMixin
@@ -48,6 +48,7 @@ class SessionManager(
     logger: logging.Logger
     _config: DaemonConfig | None
     _title_listeners: list[TitleChangeCallback]
+    _session_change_listeners: list[SessionChangeCallback]
     _session_mapping: dict[tuple[str, str], str]
     _session_mapping_lock: threading.Lock
     _session_metadata: dict[str, dict[str, Any]]
@@ -78,6 +79,7 @@ class SessionManager(
         self.logger = logger_instance or get_logger()
         self._config = config
         self._title_listeners: list[TitleChangeCallback] = []
+        self._session_change_listeners: list[SessionChangeCallback] = []
         self._session_mapping: dict[tuple[str, str], str] = {}
         self._session_mapping_lock = threading.Lock()
         self._session_metadata: dict[str, dict[str, Any]] = {}
@@ -101,6 +103,7 @@ class SessionManager(
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         agent_depth: int = 0,
+        is_local: bool = False,
         sandbox_enabled: bool | None = None,
     ) -> str:
         """
@@ -134,6 +137,7 @@ class SessionManager(
                 terminal_context=terminal_context,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,
+                is_local=is_local,
                 sandbox_enabled=sandbox_enabled,
             )
 
@@ -154,6 +158,7 @@ class SessionManager(
                     "git_branch": git_branch,
                     "workflow_name": workflow_name,
                     "agent_depth": agent_depth,
+                    "is_local": is_local,
                     "sandbox_enabled": sandbox_enabled,
                 }
 

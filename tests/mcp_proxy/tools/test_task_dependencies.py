@@ -57,6 +57,8 @@ class TestAddDependency:
 
         # Should default to "blocks"
         dep_manager.add_dependency.assert_called_with("task-1", "task-2", "blocks")
+        assert dep_manager.add_dependency.call_count >= 1
+        assert dep_manager.add_dependency.call_args is not None
 
     def test_add_dependency_cycle_error(self, mock_task_registry) -> None:
         """Test add_dependency returns error on cycle detection."""
@@ -296,6 +298,8 @@ class TestEdgeCases:
             dep_manager.reset_mock()
             add_dep(task_id="task-1", depends_on="task-2", dep_type=dep_type)
             dep_manager.add_dependency.assert_called_with("task-1", "task-2", dep_type)
+            assert dep_manager.add_dependency.call_count >= 1
+            assert dep_manager.add_dependency.call_args is not None
 
 
 @pytest.fixture

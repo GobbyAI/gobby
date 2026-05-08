@@ -44,13 +44,22 @@ class VoiceConfig(BaseModel):
         description="TTS sampling randomness (0.1–1.0, Chatterbox).",
     )
     tts_chatterbox_max_generation_tokens: int = Field(
-        default=256,
+        default=1000,
         ge=1,
         le=1000,
         description=(
             "Maximum Turbo speech tokens to generate per utterance. Gobby "
-            "defaults to 256 to keep typical sentence-level synthesis complete "
-            "without paying the upstream 1000-token worst-case latency."
+            "defaults to the upstream 1000-token cap and relies on clause-level "
+            "chunking to bound individual synthesis calls."
+        ),
+    )
+    tts_clause_max_chars: int = Field(
+        default=180,
+        ge=80,
+        le=400,
+        description=(
+            "Maximum text characters per TTS synthesis chunk before splitting on "
+            "clause boundaries or whitespace."
         ),
     )
     tts_device: str = Field(

@@ -87,6 +87,8 @@ async def test_initialize_with_webhook(
                 "secret_token": "test_secret_token",
             },
         )
+        assert mock_post.call_count >= 1
+        assert mock_post.call_args is not None
 
 
 @pytest.mark.asyncio

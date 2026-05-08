@@ -76,6 +76,21 @@ def test_codex_mcp_validation_error_has_no_retry_payload() -> None:
     assert "corrected input" not in result.get("systemMessage", "")
 
 
+def test_codex_permission_request_mcp_validation_error_has_no_unsupported_fields() -> None:
+    result = CodexHooksAdapter().translate_from_hook_response(
+        _mcp_validation_response(),
+        hook_type="PermissionRequest",
+    )
+
+    decision = result["hookSpecificOutput"]["decision"]
+    assert decision["behavior"] == "deny"
+    assert "updatedInput" not in decision
+    assert "updatedPermissions" not in decision
+    assert "interrupt" not in decision
+    assert "decision" not in result
+    assert "reason" not in result
+
+
 def test_gemini_mcp_validation_error_is_plain_block_context() -> None:
     result = GeminiAdapter().translate_from_hook_response(
         _mcp_validation_response(),

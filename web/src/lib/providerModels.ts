@@ -9,6 +9,7 @@ export interface ProviderModelOption {
   hidden?: boolean;
   is_default?: boolean;
   canonical_id?: string;
+  context_length?: number | null;
   reasoning?: ProviderModelReasoning;
 }
 
@@ -40,12 +41,12 @@ interface ResolvedModelOption extends ProviderModelOption {
 const PROVIDER_LABELS: Record<string, string> = {
   claude: "Claude",
   codex: "Codex",
+  droid: "Droid",
   gemini: "Gemini",
   qwen: "Qwen",
   openai: "OpenAI",
 };
 
-const PROVIDER_SORT_ORDER = ["claude", "codex", "gemini", "qwen"] as const;
 const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 export const AUTO_REASONING_EFFORT = "auto";
 
@@ -117,16 +118,12 @@ export function getOrderedProviders(providers: string[]): string[] {
   );
 
   return uniqueProviders.sort((left, right) => {
-    const leftIndex = PROVIDER_SORT_ORDER.indexOf(left as (typeof PROVIDER_SORT_ORDER)[number]);
-    const rightIndex = PROVIDER_SORT_ORDER.indexOf(
-      right as (typeof PROVIDER_SORT_ORDER)[number],
+    const labelOrder = getProviderDisplayName(left).localeCompare(
+      getProviderDisplayName(right),
+      undefined,
+      { sensitivity: "base" },
     );
-    if (leftIndex >= 0 || rightIndex >= 0) {
-      if (leftIndex < 0) return 1;
-      if (rightIndex < 0) return -1;
-      return leftIndex - rightIndex;
-    }
-    return getProviderDisplayName(left).localeCompare(getProviderDisplayName(right));
+    return labelOrder || left.localeCompare(right);
   });
 }
 
@@ -601,9 +598,25 @@ function versionScore(versionParts: number[]): number {
 function formatReasoningLabel(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (normalized === "xhigh") {
-    return "Extra-High";
+    return "XHigh";
+  }
+  if (normalized === "medium") {
+    return "Med";
   }
   return titleCase(normalized);
+}
+
+export function formatModelDisplayLabel(label: string | null | undefined): string {
+  const raw = label?.trim() ?? "";
+  if (!raw) return "";
+  return raw
+    .replace(/\bClaude\s+/g, "")
+    .replace(/\bDroid Core\s+/g, "")
+    .replace(/\s+Mode\b/g, "")
+    .replace(/\[Deprecated\]/g, "[D]")
+    .replace(/[()]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function humanizeFallbackModelLabel(value?: string | null): string {

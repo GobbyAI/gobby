@@ -1,318 +1,83 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { usePipelineExecutions } from "../../hooks/usePipelineExecutions";
 import type { PipelineExecutionRecord } from "../../hooks/usePipelineExecutions";
 import { useAgentRuns } from "../../hooks/useAgentRuns";
 import type { AgentRunRecord, AgentRunDetail } from "../../hooks/useAgentRuns";
-import {
-  StepDisplay,
-  ChevronIcon,
-  AlertIcon,
-  PipelineStatusDot as StatusDot,
-} from "./execution-utils";
-import { formatTime, formatDuration, formatJson } from "./executionFormatters";
+import { PipelineStatusDot as StatusDot } from "./execution-utils";
+import { formatDuration } from "./executionFormatters";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { cn } from "../../lib/utils";
+import { AgentDetail } from "./ReportsPage.AgentDetail";
+import { PipelineDetail } from "./ReportsPage.PipelineDetail";
+import {
+  compareAgents,
+  comparePipelines,
+  formatDateTime,
+  groupBy,
+  normalizeStatus,
+  STATUS_OPTIONS,
+  statusMatchesFilter,
+} from "./ReportsPage.helpers";
+import type {
+  AgentSortColumn,
+  GroupBy,
+  PipelineSortColumn,
+  SortDirection,
+  StatusFilter,
+  SubTab,
+} from "./ReportsPage.helpers";
+import { SortArrow } from "./ReportsPage.icons";
+import { useResizablePanel } from "./ReportsPage.useResizablePanel";
+import {
+  CELL_BASE_CLS,
+  CELL_DURATION_CLS,
+  CELL_ID_CLS,
+  CELL_NAME_CLS,
+  CELL_STATUS_CLS,
+  CELL_TIME_CLS,
+  DETAIL_BACKDROP_CLS,
+  DETAIL_PANEL_BASE_CLS,
+  DETAIL_PANEL_OPEN_CLS,
+  DETAIL_RESIZE_HANDLE_CLS,
+  FILTER_BAR_CLS,
+  FILTER_CHIPS_CLS,
+  GROUP_CLS,
+  GROUP_COUNT_CLS,
+  GROUP_HEADER_CLS,
+  GROUP_LABEL_CLS,
+  GROUP_SELECT_CLS,
+  GROUP_TOGGLE_CLS,
+  LOADING_EMPTY_CLS,
+  PAGE_CLS,
+  ROW_BASE_CLS,
+  ROW_SELECTED_CLS,
+  SEARCH_CLS,
+  STAT_CHIP_ACTIVE_CLS,
+  STAT_CHIP_BASE_CLS,
+  TABLE_CLS,
+  TABLE_CONTAINER_CLS,
+  TH_BASE_CLS,
+  TH_ID_CLS,
+  TH_SORTABLE_CLS,
+  TITLE_CLS,
+  TOOLBAR_CLS,
+  TOOLBAR_LEFT_CLS,
+  TOOLBAR_RIGHT_CLS,
+  TYPE_BADGE_AGENT_CLS,
+  TYPE_BADGE_BASE_CLS,
+} from "./ReportsPage.styles";
 import "./reports-page.css";
-
-// =============================================================================
-// Types
-// =============================================================================
-
-type SubTab = "pipelines" | "agents";
-type StatusFilter = "all" | "running" | "waiting" | "completed" | "failed";
-type PipelineSortColumn = "name" | "time" | "duration" | "status";
-type AgentSortColumn =
-  | "name"
-  | "provider"
-  | "time"
-  | "duration"
-  | "turns"
-  | "status";
-type SortDirection = "asc" | "desc";
-type GroupBy = "none" | "name" | "provider";
-
-function statusMatchesFilter(status: string, filter: StatusFilter): boolean {
-  if (filter === "all") return true;
-  if (filter === "running") return status === "running" || status === "pending";
-  if (filter === "waiting") return status === "waiting_approval";
-  if (filter === "completed")
-    return status === "completed" || status === "success";
-  if (filter === "failed")
-    return (
-      status === "failed" ||
-      status === "error" ||
-      status === "timeout" ||
-      status === "cancelled" ||
-      status === "interrupted"
-    );
-  return true;
-}
-
-function normalizeStatus(status: string): string {
-  return status.replace(/_/g, " ");
-}
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  return (
-    d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
-    " " +
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-  );
-}
-
-const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "running", label: "Running" },
-  { value: "waiting", label: "Waiting" },
-  { value: "completed", label: "Completed" },
-  { value: "failed", label: "Failed" },
-];
-
-// =============================================================================
-// Sorting helpers
-// =============================================================================
-
-function comparePipelines(
-  a: PipelineExecutionRecord,
-  b: PipelineExecutionRecord,
-  col: PipelineSortColumn,
-  dir: SortDirection,
-): number {
-  let cmp = 0;
-  switch (col) {
-    case "name":
-      cmp = a.pipeline_name.localeCompare(b.pipeline_name);
-      break;
-    case "time":
-      cmp = a.created_at.localeCompare(b.created_at);
-      break;
-    case "duration": {
-      const da = a.completed_at
-        ? new Date(a.completed_at).getTime() - new Date(a.created_at).getTime()
-        : 0;
-      const db = b.completed_at
-        ? new Date(b.completed_at).getTime() - new Date(b.created_at).getTime()
-        : 0;
-      cmp = da - db;
-      break;
-    }
-    case "status":
-      cmp = a.status.localeCompare(b.status);
-      break;
-  }
-  return dir === "asc" ? cmp : -cmp;
-}
-
-function compareAgents(
-  a: AgentRunRecord,
-  b: AgentRunRecord,
-  col: AgentSortColumn,
-  dir: SortDirection,
-): number {
-  let cmp = 0;
-  switch (col) {
-    case "name":
-      cmp = (a.workflow_name || "").localeCompare(b.workflow_name || "");
-      break;
-    case "provider":
-      cmp = (a.provider || "").localeCompare(b.provider || "");
-      break;
-    case "time":
-      cmp = a.created_at.localeCompare(b.created_at);
-      break;
-    case "duration": {
-      const da =
-        a.started_at && a.completed_at
-          ? new Date(a.completed_at).getTime() -
-            new Date(a.started_at).getTime()
-          : 0;
-      const db =
-        b.started_at && b.completed_at
-          ? new Date(b.completed_at).getTime() -
-            new Date(b.started_at).getTime()
-          : 0;
-      cmp = da - db;
-      break;
-    }
-    case "turns":
-      cmp = (a.turns_used || 0) - (b.turns_used || 0);
-      break;
-    case "status":
-      cmp = a.status.localeCompare(b.status);
-      break;
-  }
-  return dir === "asc" ? cmp : -cmp;
-}
-
-function SortArrow<T extends string>({
-  column,
-  sortColumn,
-  sortDirection,
-}: {
-  column: T;
-  sortColumn: T;
-  sortDirection: SortDirection;
-}) {
-  if (column !== sortColumn)
-    return <span className="sort-arrow muted">{"\u2195"}</span>;
-  return (
-    <span className="sort-arrow active">
-      {sortDirection === "asc" ? "\u2191" : "\u2193"}
-    </span>
-  );
-}
-
-function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
-  const groups = new Map<string, T[]>();
-  for (const item of items) {
-    const key = keyFn(item) || "Unknown";
-    const arr = groups.get(key) || [];
-    arr.push(item);
-    groups.set(key, arr);
-  }
-  return groups;
-}
-
-// =============================================================================
-// Resize handle for detail sidebar
-// =============================================================================
-
-function useResizablePanel(
-  initialWidth: number,
-  minWidth: number,
-  maxWidth: number,
-) {
-  const [width, setWidth] = useState(initialWidth);
-  const isDragging = useRef(false);
-  const startX = useRef(0);
-  const startWidth = useRef(0);
-  const cleanupRef = useRef<(() => void) | null>(null);
-
-  // Clean up any active listeners on unmount
-  useEffect(() => {
-    return () => {
-      cleanupRef.current?.();
-    };
-  }, []);
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      isDragging.current = true;
-      startX.current = e.clientX;
-      startWidth.current = width;
-
-      const onMove = (ev: MouseEvent) => {
-        if (!isDragging.current) return;
-        const delta = startX.current - ev.clientX;
-        setWidth(
-          Math.max(minWidth, Math.min(maxWidth, startWidth.current + delta)),
-        );
-      };
-      const onUp = () => {
-        isDragging.current = false;
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        cleanupRef.current = null;
-      };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-      cleanupRef.current = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-      };
-    },
-    [width, minWidth, maxWidth],
-  );
-
-  const handleTouchStart = useCallback(
-    (e: React.TouchEvent) => {
-      e.preventDefault();
-      isDragging.current = true;
-      startX.current = e.touches[0].clientX;
-      startWidth.current = width;
-
-      const onMove = (ev: TouchEvent) => {
-        ev.preventDefault();
-        if (!isDragging.current) return;
-        const delta = startX.current - ev.touches[0].clientX;
-        setWidth(
-          Math.max(minWidth, Math.min(maxWidth, startWidth.current + delta)),
-        );
-      };
-      const onEnd = () => {
-        isDragging.current = false;
-        document.removeEventListener("touchmove", onMove);
-        document.removeEventListener("touchend", onEnd);
-        cleanupRef.current = null;
-      };
-      document.addEventListener("touchmove", onMove, { passive: false });
-      document.addEventListener("touchend", onEnd);
-      cleanupRef.current = () => {
-        document.removeEventListener("touchmove", onMove);
-        document.removeEventListener("touchend", onEnd);
-      };
-    },
-    [width, minWidth, maxWidth],
-  );
-
-  return { width, handleMouseDown, handleTouchStart };
-}
-
-// =============================================================================
-// Status dot
-// =============================================================================
-
-
-// =============================================================================
-// Close icon
-// =============================================================================
-
-function CloseIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
-
-function CronIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
-    </svg>
-  );
-}
-
-// =============================================================================
-// ReportsPage
-// =============================================================================
 
 export function ReportsPage({
   projectId,
   onNavigateToTrace,
+  initialPipelineExecutionId,
+  onInitialPipelineExecutionConsumed,
 }: {
   projectId?: string;
   onNavigateToTrace?: (traceId: string) => void;
+  initialPipelineExecutionId?: string | null;
+  onInitialPipelineExecutionConsumed?: () => void;
 }) {
   const [subTab, setSubTab] = useState<SubTab>("pipelines");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -323,18 +88,15 @@ export function ReportsPage({
   >({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Sorting state
   const [pipelineSortCol, setPipelineSortCol] =
     useState<PipelineSortColumn>("time");
   const [pipelineSortDir, setPipelineSortDir] = useState<SortDirection>("desc");
   const [agentSortCol, setAgentSortCol] = useState<AgentSortColumn>("time");
   const [agentSortDir, setAgentSortDir] = useState<SortDirection>("desc");
 
-  // Group-by state
   const [pipelineGroupBy, setPipelineGroupBy] = useState<GroupBy>("none");
   const [agentGroupBy, setAgentGroupBy] = useState<GroupBy>("none");
 
-  // Resizable sidebar
   const {
     width: panelWidth,
     handleMouseDown: onResizeMouseDown,
@@ -377,7 +139,14 @@ export function ReportsPage({
     fetchRunDetail,
   } = useAgentRuns(projectId);
 
-  // Compute counts
+  useEffect(() => {
+    if (!initialPipelineExecutionId) return;
+    setSubTab("pipelines");
+    setStatusFilter("all");
+    setSelectedId(initialPipelineExecutionId);
+    onInitialPipelineExecutionConsumed?.();
+  }, [initialPipelineExecutionId, onInitialPipelineExecutionConsumed]);
+
   const pipelineCounts = useMemo(() => {
     const statuses = pipelineExecutions.map((pe) => pe.status);
     return {
@@ -408,7 +177,6 @@ export function ReportsPage({
 
   const counts = subTab === "pipelines" ? pipelineCounts : agentCounts;
 
-  // Filtered + sorted lists
   const filteredPipelines = useMemo(() => {
     let items = pipelineExecutions.filter((pe) =>
       statusMatchesFilter(pe.status, statusFilter),
@@ -450,7 +218,6 @@ export function ReportsPage({
     );
   }, [agentRuns, statusFilter, searchText, agentSortCol, agentSortDir]);
 
-  // Grouped data
   const pipelineGroups = useMemo(() => {
     if (pipelineGroupBy === "none") return null;
     return groupBy(filteredPipelines, (pe) => pe.pipeline_name);
@@ -463,12 +230,10 @@ export function ReportsPage({
     return groupBy(filteredAgents, (ar) => ar.workflow_name || "Ad-hoc");
   }, [filteredAgents, agentGroupBy]);
 
-  // Clear selection on tab switch
   useEffect(() => {
     setSelectedId(null);
   }, [subTab]);
 
-  // Fetch agent detail when selected
   const handleSelectAgent = useCallback(
     async (id: string) => {
       setSelectedId(id);
@@ -527,42 +292,26 @@ export function ReportsPage({
     subTab === "agents" ? agentRuns.find((ar) => ar.id === selectedId) : null;
 
   return (
-    <main className="reports-page">
-      {/* Toolbar */}
-      <div className="reports-toolbar">
-        <div className="reports-toolbar-left">
-          <h2 className="reports-title">Reports</h2>
-          <div className="flex rounded-md border border-border text-xs">
-            <button
-              className={cn(
-                "px-2 py-1 rounded-l-md transition-colors",
-                subTab === "pipelines"
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-muted",
-              )}
-              onClick={() => setSubTab("pipelines")}
-            >
-              Pipeline Executions
-            </button>
-            <button
-              className={cn(
-                "px-2 py-1 rounded-r-md transition-colors",
-                subTab === "agents"
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-muted",
-              )}
-              onClick={() => setSubTab("agents")}
-            >
-              Agent Runs
-            </button>
-          </div>
+    <main className={PAGE_CLS}>
+      <div className={TOOLBAR_CLS}>
+        <div className={TOOLBAR_LEFT_CLS}>
+          <h1 className={TITLE_CLS}>Reports</h1>
+          <SegmentedControl<SubTab>
+            value={subTab}
+            onChange={setSubTab}
+            options={[
+              { value: "pipelines", label: "Pipeline Executions" },
+              { value: "agents", label: "Agent Runs" },
+            ]}
+            ariaLabel="Report type"
+          />
         </div>
-        <div className="reports-toolbar-right">
-          <div className="reports-group-toggle">
-            <span className="reports-group-label">Group:</span>
+        <div className={TOOLBAR_RIGHT_CLS}>
+          <div className={GROUP_TOGGLE_CLS}>
+            <span className={GROUP_LABEL_CLS}>Group:</span>
             {subTab === "pipelines" ? (
               <select
-                className="reports-group-select"
+                className={GROUP_SELECT_CLS}
                 value={pipelineGroupBy}
                 onChange={(e) => setPipelineGroupBy(e.target.value as GroupBy)}
               >
@@ -571,7 +320,7 @@ export function ReportsPage({
               </select>
             ) : (
               <select
-                className="reports-group-select"
+                className={GROUP_SELECT_CLS}
                 value={agentGroupBy}
                 onChange={(e) => setAgentGroupBy(e.target.value as GroupBy)}
               >
@@ -583,7 +332,7 @@ export function ReportsPage({
           </div>
           <input
             type="text"
-            className="reports-search"
+            className={SEARCH_CLS}
             placeholder={
               subTab === "pipelines"
                 ? "Search pipelines..."
@@ -595,16 +344,15 @@ export function ReportsPage({
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="reports-filter-bar">
-        <div className="reports-filter-chips">
+      <div className={FILTER_BAR_CLS}>
+        <div className={FILTER_CHIPS_CLS}>
           {STATUS_OPTIONS.filter((opt) => {
             if (opt.value === "all") return true;
             return counts[opt.value] > 0;
           }).map((opt) => (
             <button
               key={opt.value}
-              className={`reports-stat-chip ${statusFilter === opt.value ? "active" : ""}`}
+              className={cn(STAT_CHIP_BASE_CLS, statusFilter === opt.value && STAT_CHIP_ACTIVE_CLS)}
               onClick={() =>
                 setStatusFilter(
                   statusFilter === opt.value && opt.value !== "all"
@@ -632,27 +380,26 @@ export function ReportsPage({
         </div>
       </div>
 
-      {/* Content */}
       {isLoading ? (
-        <div className="reports-loading">Loading...</div>
+        <div className={LOADING_EMPTY_CLS}>Loading...</div>
       ) : isEmpty ? (
-        <div className="reports-empty">
+        <div className={LOADING_EMPTY_CLS}>
           No {subTab === "pipelines" ? "pipeline executions" : "agent runs"}{" "}
           found
         </div>
       ) : subTab === "pipelines" ? (
-        <div className="reports-table-container">
+        <div className={TABLE_CONTAINER_CLS}>
           {pipelineGroups ? (
             Array.from(pipelineGroups).map(([group, items]) => (
-              <div key={group} className="reports-group">
-                <div className="reports-group-header">
+              <div key={group} className={GROUP_CLS}>
+                <div className={GROUP_HEADER_CLS}>
                   {group}{" "}
-                  <span className="reports-group-count">({items.length})</span>
+                  <span className={GROUP_COUNT_CLS}>({items.length})</span>
                 </div>
-                <table className="reports-table">
+                <table className={TABLE_CLS}>
                   <thead>
                     <tr>
-                      <th className="reports-th" style={{ width: 28 }}></th>
+                      <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                       <PipelineHeaders
                         onSort={handlePipelineSort}
                         sortCol={pipelineSortCol}
@@ -674,10 +421,10 @@ export function ReportsPage({
               </div>
             ))
           ) : (
-            <table className="reports-table">
+            <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className="reports-th" style={{ width: 28 }}></th>
+                  <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                   <PipelineHeaders
                     onSort={handlePipelineSort}
                     sortCol={pipelineSortCol}
@@ -699,18 +446,18 @@ export function ReportsPage({
           )}
         </div>
       ) : (
-        <div className="reports-table-container">
+        <div className={TABLE_CONTAINER_CLS}>
           {agentGroups ? (
             Array.from(agentGroups).map(([group, items]) => (
-              <div key={group} className="reports-group">
-                <div className="reports-group-header">
+              <div key={group} className={GROUP_CLS}>
+                <div className={GROUP_HEADER_CLS}>
                   {group}{" "}
-                  <span className="reports-group-count">({items.length})</span>
+                  <span className={GROUP_COUNT_CLS}>({items.length})</span>
                 </div>
-                <table className="reports-table">
+                <table className={TABLE_CLS}>
                   <thead>
                     <tr>
-                      <th className="reports-th" style={{ width: 28 }}></th>
+                      <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                       <AgentHeaders
                         onSort={handleAgentSort}
                         sortCol={agentSortCol}
@@ -732,10 +479,10 @@ export function ReportsPage({
               </div>
             ))
           ) : (
-            <table className="reports-table">
+            <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className="reports-th" style={{ width: 28 }}></th>
+                  <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                   <AgentHeaders
                     onSort={handleAgentSort}
                     sortCol={agentSortCol}
@@ -758,19 +505,19 @@ export function ReportsPage({
         </div>
       )}
 
-      {/* Detail sidebar */}
       {selectedId && (selectedPipeline || selectedAgent) && (
         <>
           <div
-            className="reports-detail-backdrop"
+            className={DETAIL_BACKDROP_CLS}
             onClick={() => setSelectedId(null)}
           />
-          <div
-            className={`reports-detail-panel ${selectedId ? "open" : ""}`}
+          <aside
+            className={cn(DETAIL_PANEL_BASE_CLS, selectedId && DETAIL_PANEL_OPEN_CLS)}
             style={{ width: panelWidth }}
+            aria-label={selectedPipeline ? "Pipeline details" : "Agent run details"}
           >
             <div
-              className="reports-detail-resize-handle"
+              className={DETAIL_RESIZE_HANDLE_CLS}
               onMouseDown={onResizeMouseDown}
               onTouchStart={onResizeTouchStart}
             />
@@ -793,16 +540,12 @@ export function ReportsPage({
                 onClose={() => setSelectedId(null)}
               />
             )}
-          </div>
+          </aside>
         </>
       )}
     </main>
   );
 }
-
-// =============================================================================
-// Table headers (extracted for group-by reuse)
-// =============================================================================
 
 function PipelineHeaders({
   onSort,
@@ -816,17 +559,17 @@ function PipelineHeaders({
   return (
     <>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         onClick={() => onSort("name")}
       >
         Name{" "}
         <SortArrow column="name" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
-      <th className="reports-th reports-th--id" style={{ width: 120 }}>
+      <th className={cn(TH_BASE_CLS, TH_ID_CLS)} style={{ width: 120 }}>
         ID
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 140 }}
         onClick={() => onSort("time")}
       >
@@ -834,7 +577,7 @@ function PipelineHeaders({
         <SortArrow column="time" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS, "max-md:hidden")}
         style={{ width: 80 }}
         onClick={() => onSort("duration")}
       >
@@ -846,7 +589,7 @@ function PipelineHeaders({
         />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 100 }}
         onClick={() => onSort("status")}
       >
@@ -873,14 +616,14 @@ function AgentHeaders({
   return (
     <>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         onClick={() => onSort("name")}
       >
         Name{" "}
         <SortArrow column="name" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 80 }}
         onClick={() => onSort("provider")}
       >
@@ -891,11 +634,11 @@ function AgentHeaders({
           sortDirection={sortDir}
         />
       </th>
-      <th className="reports-th reports-th--id" style={{ width: 120 }}>
+      <th className={cn(TH_BASE_CLS, TH_ID_CLS)} style={{ width: 120 }}>
         ID
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 140 }}
         onClick={() => onSort("time")}
       >
@@ -903,7 +646,7 @@ function AgentHeaders({
         <SortArrow column="time" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS, "max-md:hidden")}
         style={{ width: 80 }}
         onClick={() => onSort("duration")}
       >
@@ -915,7 +658,7 @@ function AgentHeaders({
         />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 70 }}
         onClick={() => onSort("turns")}
       >
@@ -927,7 +670,7 @@ function AgentHeaders({
         />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 100 }}
         onClick={() => onSort("status")}
       >
@@ -942,10 +685,6 @@ function AgentHeaders({
   );
 }
 
-// =============================================================================
-// Table rows (extracted for group-by reuse)
-// =============================================================================
-
 function PipelineRow({
   pe,
   selectedId,
@@ -957,25 +696,25 @@ function PipelineRow({
 }) {
   return (
     <tr
-      className={`reports-row ${selectedId === pe.id ? "reports-row--selected" : ""}`}
+      className={cn("reports-row", ROW_BASE_CLS, selectedId === pe.id && ROW_SELECTED_CLS)}
       onClick={() => onSelect(pe.id)}
     >
-      <td className="reports-cell">
+      <td className={CELL_BASE_CLS} data-label="">
         <StatusDot status={pe.status} />
       </td>
-      <td className="reports-cell reports-cell--name">{pe.pipeline_name}</td>
-      <td className="reports-cell reports-cell--id">{pe.id.slice(0, 12)}</td>
-      <td className="reports-cell reports-cell--time">
+      <td className={cn(CELL_BASE_CLS, CELL_NAME_CLS)} data-label="Name">{pe.pipeline_name}</td>
+      <td className={cn(CELL_BASE_CLS, CELL_ID_CLS)} data-label="ID">{pe.id.slice(0, 12)}</td>
+      <td className={cn(CELL_BASE_CLS, CELL_TIME_CLS)} data-label="Time">
         {formatDateTime(pe.created_at)}
       </td>
-      <td className="reports-cell reports-cell--duration">
+      <td className={cn(CELL_BASE_CLS, CELL_DURATION_CLS)} data-label="Duration">
         {pe.completed_at
           ? formatDuration(pe.created_at, pe.completed_at)
           : pe.status === "running"
             ? "..."
             : "—"}
       </td>
-      <td className="reports-cell reports-cell--status-text">
+      <td className={cn(CELL_BASE_CLS, CELL_STATUS_CLS)} data-label="Status">
         {normalizeStatus(pe.status)}
       </td>
     </tr>
@@ -993,442 +732,37 @@ function AgentRow({
 }) {
   return (
     <tr
-      className={`reports-row ${selectedId === ar.id ? "reports-row--selected" : ""}`}
+      className={cn("reports-row", ROW_BASE_CLS, selectedId === ar.id && ROW_SELECTED_CLS)}
       onClick={() => onSelect(ar.id)}
     >
-      <td className="reports-cell">
+      <td className={CELL_BASE_CLS} data-label="">
         <StatusDot status={ar.status} />
       </td>
-      <td className="reports-cell reports-cell--name">
+      <td className={cn(CELL_BASE_CLS, CELL_NAME_CLS)} data-label="Name">
         {ar.workflow_name || ar.prompt?.slice(0, 60) || "Agent Run"}
       </td>
-      <td className="reports-cell">
-        <span className="reports-type-badge reports-type-badge--agent">
+      <td className={CELL_BASE_CLS} data-label="Provider">
+        <span className={cn(TYPE_BADGE_BASE_CLS, TYPE_BADGE_AGENT_CLS)}>
           {ar.provider}
         </span>
       </td>
-      <td className="reports-cell reports-cell--id">{ar.id.slice(0, 12)}</td>
-      <td className="reports-cell reports-cell--time">
+      <td className={cn(CELL_BASE_CLS, CELL_ID_CLS)} data-label="ID">{ar.id.slice(0, 12)}</td>
+      <td className={cn(CELL_BASE_CLS, CELL_TIME_CLS)} data-label="Time">
         {formatDateTime(ar.created_at)}
       </td>
-      <td className="reports-cell reports-cell--duration">
+      <td className={cn(CELL_BASE_CLS, CELL_DURATION_CLS)} data-label="Duration">
         {ar.started_at && ar.completed_at
           ? formatDuration(ar.started_at, ar.completed_at)
           : ar.status === "running"
             ? "..."
             : "—"}
       </td>
-      <td className="reports-cell" style={{ textAlign: "center" }}>
+      <td className={CELL_BASE_CLS} data-label="Turns" style={{ textAlign: "center" }}>
         {ar.turns_used}
       </td>
-      <td className="reports-cell reports-cell--status-text">
+      <td className={cn(CELL_BASE_CLS, CELL_STATUS_CLS)} data-label="Status">
         {normalizeStatus(ar.status)}
       </td>
     </tr>
-  );
-}
-
-// =============================================================================
-// Pipeline Detail Sidebar
-// =============================================================================
-
-function PipelineDetail({
-  execution,
-  actionLoading,
-  onApprove,
-  onReject,
-  onNavigateToTrace,
-  onClose,
-}: {
-  execution: PipelineExecutionRecord;
-  actionLoading: string | null;
-  onApprove: (token: string) => Promise<void>;
-  onReject: (token: string) => Promise<void>;
-  onNavigateToTrace?: (traceId: string) => void;
-  onClose: () => void;
-}) {
-  const [showConfig, setShowConfig] = useState(false);
-  const [showInputs, setShowInputs] = useState(false);
-  const [showOutputs, setShowOutputs] = useState(false);
-  return (
-    <>
-      <div className="reports-detail-header">
-        <div className="reports-detail-header-top">
-          <span className="reports-detail-id">{execution.id}</span>
-          <button className="reports-detail-close" onClick={onClose}>
-            <CloseIcon />
-          </button>
-        </div>
-        <div className="reports-detail-title">{execution.pipeline_name}</div>
-        <div className="reports-detail-status">
-          <StatusDot status={execution.status} />
-          <span className="reports-cell--status-text">
-            {normalizeStatus(execution.status)}
-          </span>
-          {execution.cron_job_name && (
-            <span className="reports-detail-trigger">
-              <CronIcon /> {execution.cron_job_name}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="reports-detail-body">
-        {/* Trace link */}
-        {(execution as any).trace_id && onNavigateToTrace && (
-          <div className="reports-detail-section">
-            <button
-              type="button"
-              className="reports-btn"
-              onClick={() => onNavigateToTrace((execution as any).trace_id)}
-              title="View telemetry trace for this execution"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ marginRight: "6px", verticalAlign: "middle" }}
-              >
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-              </svg>
-              View Trace
-            </button>
-          </div>
-        )}
-
-        {/* Approval banner — actionable, goes first */}
-        {execution.status === "waiting_approval" &&
-          (() => {
-            const waitingStep = execution.steps.find(
-              (s) => s.status === "waiting_approval" && s.approval_token,
-            );
-            return waitingStep?.approval_token ? (
-              <div className="reports-approval">
-                <div className="reports-approval-message">
-                  <AlertIcon />
-                  <span>
-                    Step &ldquo;{waitingStep.step_id}&rdquo; requires approval
-                  </span>
-                </div>
-                <div className="reports-approval-actions">
-                  <button
-                    type="button"
-                    className="reports-btn reports-btn--approve"
-                    onClick={() => onApprove(waitingStep.approval_token!)}
-                    disabled={actionLoading === waitingStep.approval_token}
-                  >
-                    {actionLoading === waitingStep.approval_token
-                      ? "Approving..."
-                      : "Approve"}
-                  </button>
-                  <button
-                    type="button"
-                    className="reports-btn reports-btn--reject"
-                    onClick={() => onReject(waitingStep.approval_token!)}
-                    disabled={actionLoading === waitingStep.approval_token}
-                  >
-                    {actionLoading === waitingStep.approval_token
-                      ? "Rejecting..."
-                      : "Reject"}
-                  </button>
-                </div>
-              </div>
-            ) : null;
-          })()}
-
-        {/* Execution report — the main content */}
-        {execution.steps.length > 0 && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Execution Report</span>
-            <div className="reports-detail-steps">
-              {execution.steps.map((step, index) => (
-                <StepDisplay key={step.id} step={step} index={index} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Error */}
-        {execution.outputs_json &&
-          (() => {
-            try {
-              const outputs = JSON.parse(execution.outputs_json);
-              if (outputs.error) {
-                return (
-                  <div className="reports-detail-error">
-                    Error: {outputs.error}
-                  </div>
-                );
-              }
-            } catch {
-              /* ignore */
-            }
-            return null;
-          })()}
-
-        {/* Collapsible sections for config/inputs/outputs */}
-        {execution.inputs_json && (
-          <div className="reports-detail-section">
-            <button
-              type="button"
-              className="reports-detail-toggle"
-              onClick={() => setShowInputs(!showInputs)}
-            >
-              <ChevronIcon expanded={showInputs} /> Inputs
-            </button>
-            {showInputs && (
-              <div className="reports-detail-code">
-                {formatJson(execution.inputs_json)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {execution.status === "completed" && execution.outputs_json && (
-          <div className="reports-detail-section">
-            <button
-              type="button"
-              className="reports-detail-toggle"
-              onClick={() => setShowOutputs(!showOutputs)}
-            >
-              <ChevronIcon expanded={showOutputs} /> Outputs
-            </button>
-            {showOutputs && (
-              <div className="reports-detail-code">
-                {formatJson(execution.outputs_json)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {execution.definition_json && (
-          <div className="reports-detail-section">
-            <button
-              type="button"
-              className="reports-detail-toggle"
-              onClick={() => setShowConfig(!showConfig)}
-            >
-              <ChevronIcon expanded={showConfig} /> Pipeline Config
-            </button>
-            {showConfig && (
-              <div className="reports-detail-code">
-                {formatJson(execution.definition_json)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {execution.parent_execution_id && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Parent</span>
-            <span className="reports-detail-value reports-detail-mono">
-              {execution.parent_execution_id}
-            </span>
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-// =============================================================================
-// Agent Detail Sidebar
-// =============================================================================
-
-function AgentDetail({
-  run,
-  detail,
-  actionLoading,
-  onCancel,
-  onClose,
-}: {
-  run: AgentRunRecord;
-  detail?: AgentRunDetail;
-  actionLoading: string | null;
-  onCancel: (runId: string) => Promise<void>;
-  onClose: () => void;
-}) {
-  const [showPrompt, setShowPrompt] = useState(false);
-  const [showResult, setShowResult] = useState(false);
-
-  const totalTokens =
-    (run.usage_input_tokens || 0) + (run.usage_output_tokens || 0);
-
-  return (
-    <>
-      <div className="reports-detail-header">
-        <div className="reports-detail-header-top">
-          <span className="reports-detail-id">{run.id}</span>
-          <button className="reports-detail-close" onClick={onClose}>
-            <CloseIcon />
-          </button>
-        </div>
-        <div className="reports-detail-title">
-          {run.workflow_name || run.prompt?.slice(0, 80) || "Agent Run"}
-        </div>
-        <div className="reports-detail-status">
-          <StatusDot status={run.status} />
-          <span className="reports-cell--status-text">
-            {normalizeStatus(run.status)}
-          </span>
-        </div>
-        <div className="reports-detail-tags">
-          <span className="reports-detail-tag">{run.provider}</span>
-          {run.model && <span className="reports-detail-tag">{run.model}</span>}
-          <span className="reports-detail-tag">{run.mode}</span>
-        </div>
-      </div>
-
-      <div className="reports-detail-body">
-        {/* Cancel — actionable, first */}
-        {run.status === "running" && (
-          <div className="reports-detail-section">
-            <button
-              type="button"
-              className="reports-btn reports-btn--cancel"
-              onClick={() => onCancel(run.id)}
-              disabled={actionLoading === run.id}
-            >
-              {actionLoading === run.id ? "Cancelling..." : "Cancel Agent"}
-            </button>
-          </div>
-        )}
-
-        {/* Summary — the execution narrative */}
-        {run.summary_markdown && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Summary</span>
-            <div className="reports-detail-code">{run.summary_markdown}</div>
-          </div>
-        )}
-
-        {/* Error */}
-        {(run.status === "error" || run.status === "timeout") && run.error && (
-          <div className="reports-detail-error">Error: {run.error}</div>
-        )}
-
-        {/* Result */}
-        {run.status === "success" && run.result && (
-          <div className="reports-detail-section">
-            <button
-              type="button"
-              className="reports-detail-toggle"
-              onClick={() => setShowResult(!showResult)}
-            >
-              <ChevronIcon expanded={showResult} /> Result
-            </button>
-            {showResult && (
-              <div className="reports-detail-code">{run.result}</div>
-            )}
-          </div>
-        )}
-
-        {/* Commands — what the agent actually did */}
-        {detail?.commands && detail.commands.length > 0 && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">
-              Commands ({detail.commands.length})
-            </span>
-            <div className="reports-detail-commands">
-              {detail.commands.map((cmd) => (
-                <div key={cmd.id} className="reports-detail-command">
-                  <span className="reports-detail-command-type">
-                    {cmd.command_text}
-                  </span>
-                  <span className="reports-detail-command-time">
-                    {formatTime(cmd.created_at)}
-                  </span>
-                  {cmd.command_text && (
-                    <span className="reports-detail-command-payload">
-                      {cmd.command_text.slice(0, 80)}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Stats — compact, not rehashing row data */}
-        {totalTokens > 0 && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Usage</span>
-            <div className="reports-detail-stats">
-              <div className="reports-detail-stat">
-                <span className="reports-detail-stat-label">Input</span>
-                <span className="reports-detail-stat-value">
-                  {(run.usage_input_tokens || 0).toLocaleString()}
-                </span>
-              </div>
-              <div className="reports-detail-stat">
-                <span className="reports-detail-stat-label">Output</span>
-                <span className="reports-detail-stat-value">
-                  {(run.usage_output_tokens || 0).toLocaleString()}
-                </span>
-              </div>
-              {(run.usage_cache_read_tokens || 0) > 0 && (
-                <div className="reports-detail-stat">
-                  <span className="reports-detail-stat-label">Cache</span>
-                  <span className="reports-detail-stat-value">
-                    {(run.usage_cache_read_tokens || 0).toLocaleString()}
-                  </span>
-                </div>
-              )}
-              <div className="reports-detail-stat">
-                <span className="reports-detail-stat-label">Tools</span>
-                <span className="reports-detail-stat-value">
-                  {run.tool_calls_count}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Prompt — collapsible, not the main focus */}
-        {run.prompt && (
-          <div className="reports-detail-section">
-            <button
-              type="button"
-              className="reports-detail-toggle"
-              onClick={() => setShowPrompt(!showPrompt)}
-            >
-              <ChevronIcon expanded={showPrompt} /> Prompt
-            </button>
-            {showPrompt && (
-              <div className="reports-detail-code">{run.prompt}</div>
-            )}
-          </div>
-        )}
-
-        {/* Context — task, isolation, branch */}
-        {(run.task_id || run.worktree_id || run.clone_id || run.git_branch) && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Context</span>
-            {run.task_id && (
-              <span className="reports-detail-value reports-detail-mono">
-                Task: {run.task_id}
-              </span>
-            )}
-            {run.git_branch && (
-              <span className="reports-detail-value reports-detail-mono">
-                Branch: {run.git_branch}
-              </span>
-            )}
-            {(run.worktree_id || run.clone_id) && (
-              <span className="reports-detail-value">
-                {run.worktree_id
-                  ? `Worktree: ${run.worktree_id}`
-                  : `Clone: ${run.clone_id}`}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-    </>
   );
 }

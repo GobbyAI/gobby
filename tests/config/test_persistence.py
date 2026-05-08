@@ -54,6 +54,8 @@ class TestMemoryConfigDefaults:
         assert config.crossref_threshold == 0.3
         assert config.kg.provider == "claude"
         assert config.kg.model == "haiku"
+        assert config.stale_audit.prompt_path == "memory/stale_audit"
+        assert config.stale_audit.model == "haiku"
 
 
 class TestMemoryConfigCustom:

@@ -128,6 +128,28 @@ async def test_execute_agent_spawn_with_mock_runner(
 
 
 @pytest.mark.asyncio
+async def test_execute_agent_spawn_skips_when_daemon_not_ready(
+    cron_storage: CronJobStorage,
+) -> None:
+    """agent_spawn cron does not spawn while daemon startup is incomplete."""
+    mock_runner = MagicMock()
+    services = MagicMock(startup_ready=False, shutdown_in_progress=False)
+    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner, services=services)
+    job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
+    run = cron_storage.create_run(job.id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        new_callable=AsyncMock,
+    ) as mock_spawn:
+        result = await executor.execute(job, run)
+
+    assert result.status == "completed"
+    assert result.output == "Agent spawn skipped: daemon_startup_not_ready"
+    mock_spawn.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_execute_pipeline_no_executor(
     cron_storage: CronJobStorage, executor: CronExecutor
 ) -> None:

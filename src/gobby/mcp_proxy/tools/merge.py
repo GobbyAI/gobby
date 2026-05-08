@@ -14,18 +14,193 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import re
+import sqlite3
+import subprocess  # nosec B404 # used for a fixed git dry-run fallback.
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+
+import httpx
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 from gobby.storage.merge_resolutions import ConflictStatus
 
 if TYPE_CHECKING:
+    from gobby.storage.database import DatabaseProtocol
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.worktrees.git import WorktreeGitManager
     from gobby.worktrees.merge import MergeResolver
 
 logger = logging.getLogger(__name__)
+
+_GITHUB_TOKEN_ENV_NAMES = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_PERSONAL_ACCESS_TOKEN",
+)
+_GITHUB_TOKEN_SECRET_NAMES = (
+    "github_personal_access_token",
+    "github_token",
+    "gh_token",
+)
+_PROTECTED_PUSH_MARKERS = (
+    "protected branch hook declined",
+    "protected branch",
+    "branch is protected",
+    "required status check",
+    "required status checks",
+    "pull request",
+    "pre-receive hook declined",
+    "gh006",
+)
+_PROTECTION_PROBE_TIMEOUT_SECONDS = 30
+
+
+def _parse_github_remote(remote_url: str) -> tuple[str, str] | None:
+    ssh_match = re.match(r"^git@github\.com:(?P<owner>[^/]+)/(?P<repo>.+?)(?:\.git)?$", remote_url)
+    if ssh_match:
+        return ssh_match.group("owner"), ssh_match.group("repo")
+
+    parsed = urlparse(remote_url)
+    if parsed.netloc.lower() != "github.com":
+        return None
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) < 2:
+        return None
+    repo = parts[1].removesuffix(".git")
+    return parts[0], repo
+
+
+def _github_token(db: DatabaseProtocol | None) -> str | None:
+    for name in _GITHUB_TOKEN_ENV_NAMES:
+        token = os.environ.get(name)
+        if token:
+            return token
+    if db is None:
+        return None
+    try:
+        from gobby.storage.secrets import SecretStore
+
+        store = SecretStore(db)
+        for name in _GITHUB_TOKEN_SECRET_NAMES:
+            token = store.get(name)
+            if token:
+                return token
+    except (LookupError, OSError, RuntimeError, sqlite3.Error):
+        logger.debug("Failed to resolve GitHub token from SecretStore", exc_info=True)
+    return None
+
+
+def _protection_payload(
+    *,
+    owner: str,
+    repo: str,
+    branch: str,
+    source: str,
+    requires_pr: bool,
+    requires_status_checks: list[str] | None = None,
+    requires_up_to_date: bool = False,
+    requires_review_count: int = 0,
+    protection_unknown: bool = False,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "success": True,
+        "owner": owner,
+        "repo": repo,
+        "branch": branch,
+        "source": source,
+        "requires_pr": requires_pr,
+        "requires_status_checks": requires_status_checks or [],
+        "requires_up_to_date": requires_up_to_date,
+        "requires_review_count": requires_review_count,
+        "protection_unknown": protection_unknown,
+        "error": error,
+    }
+
+
+def _parse_protection_response(
+    owner: str,
+    repo: str,
+    branch: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    status_checks = payload.get("required_status_checks") or {}
+    contexts = list(status_checks.get("contexts") or [])
+    for check in status_checks.get("checks") or []:
+        context = check.get("context") if isinstance(check, dict) else None
+        if context:
+            contexts.append(context)
+    review_rule = payload.get("required_pull_request_reviews") or {}
+    return _protection_payload(
+        owner=owner,
+        repo=repo,
+        branch=branch,
+        source="github_api",
+        requires_pr=True,
+        requires_status_checks=sorted(set(contexts)),
+        requires_up_to_date=bool(status_checks.get("strict")),
+        requires_review_count=int(review_rule.get("required_approving_review_count") or 0),
+    )
+
+
+async def _push_dry_run_probe(
+    *,
+    repo_path: str,
+    owner: str,
+    repo: str,
+    branch: str,
+    git_manager: WorktreeGitManager | None,
+    source: str,
+    error: str | None,
+) -> dict[str, Any]:
+    command = ["push", "--dry-run", "origin", f"HEAD:{branch}"]
+    if git_manager is not None:
+        result = await asyncio.to_thread(
+            git_manager.run_git_command,
+            command,
+            cwd=repo_path,
+            # Keep protection probing bounded; GitHub auth/network stalls should degrade.
+            timeout=_PROTECTION_PROBE_TIMEOUT_SECONDS,
+        )
+        returncode = result.returncode
+        output = f"{result.stdout}\n{result.stderr}"
+    else:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["git", *command],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            # Match the WorktreeGitManager probe timeout for direct subprocess fallback.
+            timeout=_PROTECTION_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+        returncode = proc.returncode
+        output = f"{proc.stdout}\n{proc.stderr}"
+
+    lowered = output.lower()
+    looks_protected = any(marker in lowered for marker in _PROTECTED_PUSH_MARKERS)
+    if returncode == 0:
+        requires_pr = False
+        protection_unknown = False
+    else:
+        requires_pr = True
+        protection_unknown = not looks_protected
+    return _protection_payload(
+        owner=owner,
+        repo=repo,
+        branch=branch,
+        source=source,
+        requires_pr=requires_pr,
+        protection_unknown=protection_unknown,
+        error=error or (output.strip() if returncode != 0 else None),
+    )
 
 
 def create_merge_registry(
@@ -33,6 +208,7 @@ def create_merge_registry(
     merge_resolver: MergeResolver,
     git_manager: WorktreeGitManager | None = None,
     worktree_manager: Any | None = None,
+    db: DatabaseProtocol | None = None,
 ) -> InternalToolRegistry:
     """
     Create a merge tool registry with all merge-related tools.
@@ -42,6 +218,7 @@ def create_merge_registry(
         merge_resolver: MergeResolver for AI-powered conflict resolution.
         git_manager: WorktreeGitManager for git operations.
         worktree_manager: LocalWorktreeManager for resolving worktree paths.
+        db: Local database for resolving GitHub tokens.
 
     Returns:
         InternalToolRegistry with all merge tools registered.
@@ -240,14 +417,30 @@ def create_merge_registry(
                     )
                 ]
 
+                worktree_path = None
+                resolution = merge_storage.get_resolution(conflict.resolution_id)
+                if resolution and worktree_manager:
+                    worktree = worktree_manager.get(resolution.worktree_id)
+                    if worktree and worktree.worktree_path:
+                        worktree_path = worktree.worktree_path
+
                 result = await merge_resolver.resolve_file(
                     path=conflict.file_path,
                     conflict_hunks=hunks,
+                    worktree_path=worktree_path,
                 )
 
                 if result.success:
-                    # Get resolved content from result (would be in resolved_files)
-                    resolved = "AI resolved content"  # Placeholder
+                    resolved = result.resolved_content_by_file.get(conflict.file_path)
+                    if not resolved:
+                        return {
+                            "success": False,
+                            "error": (
+                                "AI resolver returned success but produced no content "
+                                f"for {conflict.file_path}"
+                            ),
+                            "needs_human_review": True,
+                        }
                     updated = merge_storage.update_conflict(
                         conflict_id=conflict_id,
                         status=ConflictStatus.RESOLVED.value,
@@ -305,14 +498,76 @@ def create_merge_registry(
             }
 
         try:
-            # Apply resolutions to git (would write files and stage)
-            if git_manager:
-                for conflict in conflicts:
-                    if conflict.resolved_content:
-                        # Would write conflict.resolved_content to conflict.file_path
-                        pass
+            if not git_manager or not worktree_manager:
+                return {
+                    "success": False,
+                    "error": "git_manager or worktree_manager not configured",
+                }
 
-            # Update resolution status
+            worktree = worktree_manager.get(resolution.worktree_id)
+            if not worktree or not worktree.worktree_path:
+                return {
+                    "success": False,
+                    "error": (f"Worktree '{resolution.worktree_id}' not found or has no path"),
+                }
+            wt_path = worktree.worktree_path
+
+            written: list[str] = []
+            for conflict in conflicts:
+                if conflict.resolved_content is None:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Conflict {conflict.id} for {conflict.file_path} has no "
+                            "resolved_content; resolve it before applying"
+                        ),
+                    }
+                target = Path(wt_path) / conflict.file_path
+                await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(
+                    target.write_text, conflict.resolved_content, encoding="utf-8"
+                )
+
+                add_result = await asyncio.to_thread(
+                    git_manager.stage_files,
+                    [conflict.file_path],
+                    cwd=wt_path,
+                )
+                if add_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"git add failed for {conflict.file_path}: {add_result.stderr.strip()}"
+                        ),
+                    }
+                written.append(conflict.file_path)
+
+            unmerged = await asyncio.to_thread(git_manager.get_unmerged_files, cwd=wt_path)
+            if unmerged:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Cannot complete merge: {len(unmerged)} files still have "
+                        "unmerged changes after applying resolutions"
+                    ),
+                    "unmerged_files": unmerged,
+                }
+
+            commit_result = await asyncio.to_thread(
+                git_manager.run_git_command,
+                ["commit", "--no-edit"],
+                cwd=wt_path,
+                timeout=30,
+            )
+            if commit_result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": (
+                        f"git commit failed: "
+                        f"{(commit_result.stderr or commit_result.stdout).strip()}"
+                    ),
+                }
+
             updated = merge_storage.update_resolution(
                 resolution_id=resolution_id,
                 status="resolved",
@@ -323,7 +578,7 @@ def create_merge_registry(
                 "success": True,
                 "resolution": updated.to_dict() if updated else None,
                 "message": "Merge completed successfully",
-                "files_merged": [c.file_path for c in conflicts],
+                "files_merged": written,
             }
 
         except Exception as e:
@@ -376,5 +631,114 @@ def create_merge_registry(
         except Exception as e:
             logger.exception(f"Error aborting merge for resolution_id={resolution_id}")
             return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="probe_branch_protection",
+        description="Probe whether a target branch should be delivered through a GitHub PR.",
+    )
+    async def probe_branch_protection(
+        repo_path: str | None = None,
+        branch: str = "main",
+        worktree_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Probe GitHub branch protection and return PR gating requirements."""
+        effective_repo_path = repo_path
+        if not effective_repo_path and worktree_id and worktree_manager is not None:
+            worktree = worktree_manager.get(worktree_id)
+            if worktree is not None:
+                effective_repo_path = worktree.worktree_path
+                branch = branch or worktree.base_branch
+        if not effective_repo_path:
+            return {
+                "success": False,
+                "error": "repo_path or resolvable worktree_id is required",
+            }
+
+        remote_url: str | None = None
+        if git_manager is not None:
+            remote = await asyncio.to_thread(
+                git_manager.run_git_command,
+                ["remote", "get-url", "origin"],
+                cwd=effective_repo_path,
+                timeout=10,
+            )
+            if remote.returncode == 0:
+                remote_url = remote.stdout.strip()
+        if not remote_url:
+            from gobby.utils.git import get_github_url
+
+            remote_url = get_github_url(effective_repo_path)
+        if not remote_url:
+            return {"success": False, "error": "No origin remote found"}
+
+        parsed = _parse_github_remote(remote_url)
+        if parsed is None:
+            return {
+                "success": False,
+                "error": f"Origin remote is not a github.com repository: {remote_url}",
+            }
+        owner, repo = parsed
+
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        token = _github_token(db)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/branches/{branch}/protection"
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(api_url, headers=headers)
+        except httpx.HTTPError as exc:
+            return await _push_dry_run_probe(
+                repo_path=effective_repo_path,
+                owner=owner,
+                repo=repo,
+                branch=branch,
+                git_manager=git_manager,
+                source="push_dry_run_after_api_error",
+                error=str(exc),
+            )
+
+        if response.status_code == 200:
+            return _parse_protection_response(owner, repo, branch, response.json())
+        if response.status_code == 404:
+            return _protection_payload(
+                owner=owner,
+                repo=repo,
+                branch=branch,
+                source="github_api",
+                requires_pr=False,
+            )
+
+        if response.status_code in {401, 403}:
+            fallback_source = f"push_dry_run_after_{response.status_code}"
+            return await _push_dry_run_probe(
+                repo_path=effective_repo_path,
+                owner=owner,
+                repo=repo,
+                branch=branch,
+                git_manager=git_manager,
+                source=fallback_source,
+                error=response.text.strip(),
+            )
+
+        return await _push_dry_run_probe(
+            repo_path=effective_repo_path,
+            owner=owner,
+            repo=repo,
+            branch=branch,
+            git_manager=git_manager,
+            source=f"push_dry_run_after_{response.status_code}",
+            error=response.text.strip(),
+        )
+
+    register_merge_landscape_tools(
+        registry,
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+    )
 
     return registry

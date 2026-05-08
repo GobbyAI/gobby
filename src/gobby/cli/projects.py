@@ -83,6 +83,8 @@ def show_project(project_ref: str, json_format: bool) -> None:
         click.echo(f"  Repo: {project.github_repo}")
     if project.linear_team_id:
         click.echo(f"  Linear Team: {project.linear_team_id}")
+    if project.linear_project_id:
+        click.echo(f"  Linear Project: {project.linear_project_id}")
     click.echo(f"  Created: {project.created_at}")
     click.echo(f"  Updated: {project.updated_at}")
 
@@ -163,12 +165,14 @@ def delete_project(project_ref: str, confirm: str) -> None:
 @click.option("--github-url", help="GitHub repository URL")
 @click.option("--github-repo", help="GitHub repo in owner/repo format")
 @click.option("--linear-team-id", help="Linear team ID")
+@click.option("--linear-project-id", help="Linear project ID")
 def update_project(
     project_ref: str,
     repo_path: str | None,
     github_url: str | None,
     github_repo: str | None,
     linear_team_id: str | None,
+    linear_project_id: str | None,
 ) -> None:
     """Update project fields.
 
@@ -186,10 +190,13 @@ def update_project(
         fields["github_repo"] = github_repo
     if linear_team_id is not None:
         fields["linear_team_id"] = linear_team_id
+    if linear_project_id is not None:
+        fields["linear_project_id"] = linear_project_id
 
     if not fields:
         click.echo(
-            "No fields to update. Use --repo-path, --github-url, --github-repo, or --linear-team-id."
+            "No fields to update. Use --repo-path, --github-url, --github-repo, "
+            "--linear-team-id, or --linear-project-id."
         )
         return
 

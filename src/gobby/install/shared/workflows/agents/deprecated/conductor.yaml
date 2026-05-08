@@ -1,0 +1,14 @@
+name: conductor
+description: "[DEPRECATED] Replaced by the state-driven dispatcher."
+version: "2.1"
+enabled: false
+deprecated: true
+deprecated_reason: "Replaced by the state-driven dispatcher."
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+
+  This deprecated definition must not be dispatched.

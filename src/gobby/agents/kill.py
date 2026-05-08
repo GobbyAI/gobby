@@ -162,6 +162,21 @@ async def _close_terminal_window(
     return {"success": False, "error": "No terminal close method available"}
 
 
+async def _close_tmux_session(session_name: str) -> dict[str, Any]:
+    """Close a persisted Gobby tmux session and its process groups."""
+    try:
+        from gobby.agents.tmux.session_manager import TmuxSessionManager
+
+        killed = await TmuxSessionManager().kill_session(session_name)
+    except Exception as e:
+        logger.debug("tmux session close failed for %s: %s", session_name, e)
+        return {"success": False, "error": str(e)}
+
+    if not killed:
+        return {"success": False, "error": f"tmux session '{session_name}' not found"}
+    return {"success": True, "method": "tmux_kill_session", "tmux_session_name": session_name}
+
+
 async def kill_agent(
     run: AgentRun,
     db: DatabaseProtocol,
@@ -190,6 +205,11 @@ async def kill_agent(
     session_manager = SessionManager(db) if session_id else None
 
     # Try terminal-specific close
+    if close_terminal and run.tmux_session_name:
+        result = await _close_tmux_session(run.tmux_session_name)
+        if result.get("success"):
+            return result
+
     if close_terminal and session_id:
         result = await _close_terminal_window(
             session_id,

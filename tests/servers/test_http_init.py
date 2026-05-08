@@ -95,6 +95,7 @@ class TestHTTPServerInit:
         server = HTTPServer(services=services, port=8000, test_mode=True)
         after = time.time()
         assert before <= server._start_time <= after
+        assert server.services is services
 
     def test_init_creates_broadcaster(self) -> None:
         """Test that HTTPServer creates broadcaster."""
@@ -106,6 +107,7 @@ class TestHTTPServerInit:
         )
         server = HTTPServer(services=services, port=8000, test_mode=True)
         assert server.broadcaster is not None
+        assert server.services is services
 
     def test_init_with_session_manager(self, session_storage: SessionManager) -> None:
         """Test HTTPServer with session manager."""
@@ -144,6 +146,7 @@ class TestHTTPServerInit:
         )
         server = HTTPServer(services=services, port=8000, test_mode=True)
         assert server._running is False
+        assert server.services is services
 
     def test_init_creates_app(self) -> None:
         """Test that HTTPServer creates FastAPI app."""
@@ -155,6 +158,7 @@ class TestHTTPServerInit:
         )
         server = HTTPServer(services=services, port=8000, test_mode=True)
         assert isinstance(server.app, FastAPI)
+        assert server.services is services
 
     def test_init_with_llm_service(self) -> None:
         """Test HTTPServer with provided LLM service."""
@@ -172,6 +176,7 @@ class TestHTTPServerInit:
             test_mode=True,
         )
         assert server.llm_service is mock_llm
+        assert server.services.llm_service is mock_llm
 
     def test_init_creates_llm_service_from_config(self) -> None:
         """Test HTTPServer creates LLM service from config."""
@@ -221,6 +226,7 @@ class TestHTTPServerInit:
             )
 
             assert server.llm_service is None
+            assert server.services.llm_service is None
 
 
 class TestResolveProjectId:
@@ -366,7 +372,11 @@ class TestRunServer:
             patch("uvicorn.Config", MagicMock()),
             patch("uvicorn.Server", mock_server_class),
         ):
-            await run_server(server)
+            result = await run_server(server)
+        assert result is None
+        mock_server_instance.serve.assert_awaited_once()
+        assert mock_server_instance.serve.await_count == 1
+        assert mock_server_instance.serve.await_args is not None
 
     @pytest.mark.asyncio
     async def test_run_server_handles_system_exit(self) -> None:
@@ -388,4 +398,8 @@ class TestRunServer:
             patch("uvicorn.Config", MagicMock()),
             patch("uvicorn.Server", mock_server_class),
         ):
-            await run_server(server)
+            result = await run_server(server)
+        assert result is None
+        mock_server_instance.serve.assert_awaited_once()
+        assert mock_server_instance.serve.await_count == 1
+        assert mock_server_instance.serve.await_args is not None

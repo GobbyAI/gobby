@@ -1,0 +1,95 @@
+tags: [brevity, gobby, default]
+
+rules:
+  detect-brevity-literal-drift:
+    description: "Persist banned brevity literal matches after an assistant response"
+    event: turn_end
+    enabled: true
+    priority: 30
+    when: >
+      skill_loaded('brevity')
+      and not variables.get('brevity_disabled')
+      and assistant_response_matches_any([
+        'Great question',
+        "I'd be happy to",
+        'Certainly',
+        'Of course',
+        'Let me break this down',
+        "It's worth noting",
+        '综上所述',
+        '值得注意的是',
+        '让我们一起来看看',
+        'In summary',
+        'In conclusion',
+        'Hope this helps',
+        'Feel free to ask',
+        '一句话总结',
+        '简而言之',
+        '总而言之',
+        'If you want, I can also',
+        '如果你愿意，我还可以',
+        'If you tell me',
+        'My next step could be',
+        'in other words',
+        '简单来说',
+        '翻成人话',
+      ])
+    effects:
+      - type: set_variable
+        variable: brevity_last_violation
+        value: >
+          assistant_response_matches_any([
+            'Great question',
+            "I'd be happy to",
+            'Certainly',
+            'Of course',
+            'Let me break this down',
+            "It's worth noting",
+            '综上所述',
+            '值得注意的是',
+            '让我们一起来看看',
+            'In summary',
+            'In conclusion',
+            'Hope this helps',
+            'Feel free to ask',
+            '一句话总结',
+            '简而言之',
+            '总而言之',
+            'If you want, I can also',
+            '如果你愿意，我还可以',
+            'If you tell me',
+            'My next step could be',
+            'in other words',
+            '简单来说',
+            '翻成人话',
+          ])
+      - type: set_variable
+        variable: brevity_last_violation_rule
+        value: "banned literal phrase"
+
+  detect-brevity-contrastive-drift:
+    description: "Persist conservative negation-contrastive matches after an assistant response"
+    event: turn_end
+    enabled: true
+    priority: 31
+    when: >
+      skill_loaded('brevity')
+      and not variables.get('brevity_disabled')
+      and not variables.get('brevity_last_violation')
+      and assistant_response_matches_any([
+        r'\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bbut\b\s+[^.!?\n]{1,120}',
+        r'\bnot\b\s+[^.!?\n,;:]{1,120}?,\s*\bbut\b\s+[^.!?\n]{1,120}',
+        r'\b(?!not\b)[A-Z0-9][^.!?\n,;:]{1,120}?,\s*\bnot\b\s+[^.!?\n]{1,120}',
+      ], regex=true)
+    effects:
+      - type: set_variable
+        variable: brevity_last_violation
+        value: >
+          assistant_response_matches_any([
+            r'\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bbut\b\s+[^.!?\n]{1,120}',
+            r'\bnot\b\s+[^.!?\n,;:]{1,120}?,\s*\bbut\b\s+[^.!?\n]{1,120}',
+            r'\b(?!not\b)[A-Z0-9][^.!?\n,;:]{1,120}?,\s*\bnot\b\s+[^.!?\n]{1,120}',
+          ], regex=true)
+      - type: set_variable
+        variable: brevity_last_violation_rule
+        value: "contrastive framing"

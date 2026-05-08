@@ -14,6 +14,7 @@ from gobby.memory.neo4j_client import Neo4jConnectionError
 from gobby.memory.services.knowledge_graph import (
     Entity,
     KnowledgeGraphService,
+    KnowledgeGraphStatus,
     Relationship,
 )
 
@@ -123,10 +124,7 @@ class TestAddToGraph:
     ) -> None:
         """Concurrent callers should only run schema DDL once."""
 
-        async def _ensure_once() -> None:
-            await asyncio.sleep(0.01)
-
-        mock_neo4j.ensure_memory_graph_schema = AsyncMock(side_effect=_ensure_once)
+        mock_neo4j.ensure_memory_graph_schema = AsyncMock()
 
         await asyncio.gather(*[service._ensure_graph_schema() for _ in range(5)])
 
@@ -158,6 +156,8 @@ class TestAddToGraph:
             "memory/extract_entities",
             {"content": "Josh works at Anthropic"},
         )
+        assert mock_prompt_loader.render.call_count >= 1
+        assert mock_prompt_loader.render.call_args is not None
 
     async def test_add_to_graph_extracts_relationships(
         self,
@@ -185,6 +185,8 @@ class TestAddToGraph:
             "memory/extract_relations",
             {"content": "Josh works on Gobby", "entities": json.dumps(entities)},
         )
+        assert mock_prompt_loader.render.call_count >= 1
+        assert mock_prompt_loader.render.call_args is not None
 
     async def test_add_to_graph_merges_nodes(
         self,
@@ -264,7 +266,11 @@ class TestAddToGraph:
         await service.add_to_graph("Josh is a person")
 
         mock_embed_fn.assert_called()
+        assert mock_embed_fn.call_count >= 1
+        assert mock_embed_fn.call_args is not None
         mock_neo4j.set_node_vector.assert_called_once()
+        assert mock_neo4j.set_node_vector.call_count == 1
+        assert mock_neo4j.set_node_vector.call_args is not None
 
     async def test_add_to_graph_deletes_outdated_relations(
         self,
@@ -321,6 +327,8 @@ class TestAddToGraph:
         await service.add_to_graph("nothing useful")
 
         mock_neo4j.merge_node.assert_not_called()
+        assert mock_neo4j.merge_node.call_count == 0
+        assert not mock_neo4j.merge_node.called
 
 
 # ===========================================================================
@@ -433,8 +441,10 @@ class TestGracefulDegradation:
         )
         mock_neo4j.merge_node = AsyncMock(side_effect=Neo4jConnectionError("refused"))
 
-        # Should not raise
-        await service.add_to_graph("Josh is here")
+        result = await service.add_to_graph("Josh is here")
+
+        assert result.status is KnowledgeGraphStatus.RETRYABLE_FAILURE
+        assert mock_neo4j.merge_node.await_count == 1
 
     async def test_search_graph_returns_empty_when_neo4j_down(
         self,
@@ -461,6 +471,8 @@ class TestGracefulDegradation:
         await service.add_to_graph("some content")
 
         mock_neo4j.merge_node.assert_not_called()
+        assert mock_neo4j.merge_node.call_count == 0
+        assert not mock_neo4j.merge_node.called
 
     async def test_add_to_graph_logs_memory_id_on_entity_extraction_failure(
         self,
@@ -587,6 +599,8 @@ class TestRelatesToCode:
         await service_with_vector_store.add_to_graph("auth module", memory_id="mem-1")
 
         mock_vector_store.search.assert_not_called()
+        assert mock_vector_store.search.call_count == 0
+        assert not mock_vector_store.search.called
 
     async def test_skips_when_no_vector_store(
         self,
@@ -794,7 +808,10 @@ class TestRemoveMemoryFromGraph:
         """remove_memory_from_graph on non-existent ID doesn't raise."""
         mock_neo4j.query.return_value = []
         await service.remove_memory_from_graph("nonexistent")
-        # No error raised — MATCH...DETACH DELETE is a no-op on zero matches
+        delete_calls = [
+            c for c in mock_neo4j.query.call_args_list if "DETACH DELETE m" in c.args[0]
+        ]
+        assert len(delete_calls) == 1
 
     async def test_remove_memory_from_graph_neo4j_unreachable(
         self,
@@ -803,5 +820,5 @@ class TestRemoveMemoryFromGraph:
     ) -> None:
         """remove_memory_from_graph logs warning when Neo4j is unreachable."""
         mock_neo4j.query.side_effect = Neo4jConnectionError("connection refused")
-        # Should not raise
         await service.remove_memory_from_graph("mem-1")
+        assert mock_neo4j.query.await_count == 1

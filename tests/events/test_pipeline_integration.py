@@ -14,6 +14,7 @@ import asyncio
 import pytest
 
 from gobby.workflows.pipeline_state import ExecutionStatus
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.integration
 
@@ -132,13 +133,6 @@ class TestWaitStepExecution:
         # Register the completion event that the wait step will block on
         registry.register("run-abc", subscribers=[])
 
-        # Notify after a short delay
-        async def _notify_soon() -> None:
-            await asyncio.sleep(0.05)
-            await registry.notify("run-abc", {"agent_status": "success", "output": "done"})
-
-        asyncio.create_task(_notify_soon())
-
         pipeline = PipelineDefinition(
             name="test-pipeline",
             steps=[
@@ -146,12 +140,18 @@ class TestWaitStepExecution:
             ],
         )
 
-        result = await executor.execute(
-            pipeline=pipeline,
-            inputs={},
-            project_id="proj-1",
+        task = asyncio.create_task(
+            executor.execute(
+                pipeline=pipeline,
+                inputs={},
+                project_id="proj-1",
+            )
         )
+        await drain_asyncio_tasks()
+        await registry.notify("run-abc", {"agent_status": "success", "output": "done"})
+        result = await task
         assert result.status == ExecutionStatus.COMPLETED
+        assert result.id == "pe-test"
 
     @pytest.mark.asyncio
     async def test_wait_step_timeout_fails_pipeline(self) -> None:
@@ -210,6 +210,7 @@ class TestWaitStepExecution:
                 inputs={},
                 project_id="proj-1",
             )
+        assert mock_em.update_execution_status.call_count >= 1
 
 
 class TestInterruptStaleExecutions:

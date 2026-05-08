@@ -1,10 +1,34 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import * as yaml from 'js-yaml'
+import './RulesTab.css'
 import { useRules } from '../../hooks/useRules'
 import type { RuleSummary, RuleDetail } from '../../hooks/useRules'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { RuleEditForm } from '../rules/RuleEditForm'
 import { DEFAULT_RULE_FORM, type RuleFormData } from '../rules/ruleFormData'
+import {
+  WORKFLOWS_CONTENT_CLS,
+  WORKFLOWS_LOADING_CLS,
+  WORKFLOWS_EMPTY_CLS,
+  WORKFLOWS_GRID_CLS,
+  WORKFLOWS_CARD_TEMPLATE_CLS,
+  WORKFLOWS_CARD_TYPE_CLS,
+  WORKFLOWS_CARD_TYPE_VARIANT_CLS,
+  WORKFLOWS_CARD_BADGES_CLS,
+  WORKFLOWS_CARD_BADGE_CLS,
+  WORKFLOWS_CARD_BADGE_DRIFT_CLS,
+  WORKFLOWS_CARD_FOOTER_CLS,
+  WORKFLOWS_CARD_ACTIONS_CLS,
+  WORKFLOWS_TOGGLE_CLS,
+  WORKFLOWS_TOGGLE_TRACK_CLS,
+  WORKFLOWS_TOGGLE_TRACK_ON_CLS,
+  WORKFLOWS_TOGGLE_KNOB_CLS,
+  WORKFLOWS_TOGGLE_KNOB_ON_CLS,
+  WORKFLOWS_ACTION_BTN_CLS,
+  WORKFLOWS_ACTION_BTN_DRIFT_CLS,
+  WORKFLOWS_ACTION_ICON_CLS,
+  WORKFLOWS_ACTION_ICON_DANGER_CLS,
+} from './workflows-styles'
 
 const NEW_RULE_TEMPLATE = yaml.dump({
   name: 'my-rule',
@@ -363,13 +387,13 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     <div className="rules-tab">
       {ConfirmDialogElement}
       {/* Card grid */}
-      <div className="workflows-content">
+      <div className={WORKFLOWS_CONTENT_CLS}>
         {isLoading ? (
-          <div className="workflows-loading">Loading rules...</div>
+          <div className={WORKFLOWS_LOADING_CLS}>Loading rules...</div>
         ) : filteredRules.length === 0 ? (
-          <div className="workflows-empty">No rules match the current filters.</div>
+          <div className={WORKFLOWS_EMPTY_CLS}>No rules match the current filters.</div>
         ) : (
-          <div className="workflows-grid">
+          <div className={WORKFLOWS_GRID_CLS}>
             {filteredRules.map(rule => (
               <RuleCard
                 key={rule.id}
@@ -445,18 +469,18 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
   const isDeleted = !!(rule as RuleSummary & { deleted_at?: string | null }).deleted_at
 
   return (
-    <div className={`rules-card${isTemplate ? ' workflows-card--template' : ''}${isDeleted ? ' rules-card--deleted' : ''}`}>
+    <div className={`rules-card${isTemplate ? ' ' + WORKFLOWS_CARD_TEMPLATE_CLS : ''}${isDeleted ? ' rules-card--deleted' : ''}`}>
       <div className="rules-card-main" onClick={onCardClick} style={{ cursor: 'pointer' }}>
         <div className="rules-card-header">
           <span className="rules-card-name">{rule.name}</span>
-          <span className="workflows-card-type workflows-card-type--rule">rule</span>
+          <span className={`${WORKFLOWS_CARD_TYPE_CLS} ${WORKFLOWS_CARD_TYPE_VARIANT_CLS.rule}`}>rule</span>
         </div>
 
         {rule.description && (
           <div className="rules-card-desc">{rule.description}</div>
         )}
 
-        <div className="workflows-card-badges" style={{ marginTop: 6 }}>
+        <div className={WORKFLOWS_CARD_BADGES_CLS} style={{ marginTop: 6 }}>
           {rule.tags && rule.tags.length > 0 && rule.tags.map(tag => (
             <span className="rules-card-tag" key={tag}>{tag}</span>
           ))}
@@ -468,30 +492,30 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
           )}
           <span className="rules-card-priority">P{rule.priority}</span>
           {rule.has_template_update && (
-            <span className="workflows-card-badge workflows-card-badge--drift">Template updated</span>
+            <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_DRIFT_CLS}`}>Template updated</span>
           )}
         </div>
       </div>
 
-      <div className="workflows-card-footer">
+      <div className={WORKFLOWS_CARD_FOOTER_CLS}>
         {(isTemplate || isDeleted) ? (
           <>
             <div />
-            <div className="workflows-card-actions">
+            <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
               {devMode ? (
                 <>
                   {isTemplate && (
                     isInstalled
-                      ? <button type="button" className="workflows-action-btn" disabled title="Already installed">Installed</button>
-                      : <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onInstall() }} title="Create an installed copy">Install</button>
+                      ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
+                      : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onInstall() }} title="Create an installed copy">Install</button>
                   )}
-                  <button type="button" className="workflows-action-icon" onClick={e => { e.stopPropagation(); onDuplicate() }} title="Duplicate" aria-label="Duplicate rule">
+                  <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onDuplicate() }} title="Duplicate" aria-label="Duplicate rule">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
                   </button>
-                  <button type="button" className="workflows-action-icon" onClick={e => { e.stopPropagation(); onDownload() }} title="Download YAML" aria-label="Download rule as YAML">
+                  <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onDownload() }} title="Download YAML" aria-label="Download rule as YAML">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                   </button>
-                  <button type="button" className="workflows-action-icon workflows-action-icon--danger" onClick={e => { e.stopPropagation(); onDelete() }} title="Delete rule" aria-label="Delete rule">
+                  <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={e => { e.stopPropagation(); onDelete() }} title="Delete rule" aria-label="Delete rule">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
                   </button>
                 </>
@@ -499,10 +523,10 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
                 <>
                   {isTemplate && (
                     isInstalled
-                      ? <button type="button" className="workflows-action-btn" disabled title="Already installed">Installed</button>
-                      : <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onInstall() }} title="Create an installed copy">Install</button>
+                      ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
+                      : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onInstall() }} title="Create an installed copy">Install</button>
                   )}
-                  <button type="button" className="workflows-action-icon" onClick={e => { e.stopPropagation(); onDownload() }} title="Download YAML" aria-label="Download rule as YAML">
+                  <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onDownload() }} title="Download YAML" aria-label="Download rule as YAML">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                   </button>
                 </>
@@ -512,32 +536,32 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
         ) : (
           <>
             <div
-              className="workflows-toggle"
+              className={WORKFLOWS_TOGGLE_CLS}
               onClick={e => { e.stopPropagation(); onToggle() }}
             >
-              <div className={`workflows-toggle-track ${rule.enabled ? 'workflows-toggle-track--on' : ''}`}>
-                <div className="workflows-toggle-knob" />
+              <div className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${rule.enabled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ''}`}>
+                <div className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${rule.enabled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ''}`} />
               </div>
               <span>{rule.enabled ? 'On' : 'Off'}</span>
             </div>
 
-            <div className="workflows-card-actions">
+            <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
               {rule.source === 'installed' && projectId && (
-                <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onMoveToProject() }} title="Move to current project">To Project</button>
+                <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onMoveToProject() }} title="Move to current project">To Project</button>
               )}
               {rule.source === 'project' && (
-                <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onMoveToGlobal() }} title="Move to global scope">To Global</button>
+                <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onMoveToGlobal() }} title="Move to global scope">To Global</button>
               )}
               {rule.has_template_update && (
-                <button type="button" className="workflows-action-btn workflows-action-btn--drift" onClick={e => { e.stopPropagation(); onRestoreFromTemplate() }} title="Restore to bundled template version">Restore</button>
+                <button type="button" className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_DRIFT_CLS}`} onClick={e => { e.stopPropagation(); onRestoreFromTemplate() }} title="Restore to bundled template version">Restore</button>
               )}
-              <button type="button" className="workflows-action-icon" onClick={e => { e.stopPropagation(); onDuplicate() }} title="Duplicate" aria-label="Duplicate rule">
+              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onDuplicate() }} title="Duplicate" aria-label="Duplicate rule">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
               </button>
-              <button type="button" className="workflows-action-icon" onClick={e => { e.stopPropagation(); onDownload() }} title="Download YAML" aria-label="Download rule as YAML">
+              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onDownload() }} title="Download YAML" aria-label="Download rule as YAML">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
               </button>
-              <button type="button" className="workflows-action-icon workflows-action-icon--danger" onClick={e => { e.stopPropagation(); onDelete() }} title="Delete rule" aria-label="Delete rule">
+              <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={e => { e.stopPropagation(); onDelete() }} title="Delete rule" aria-label="Delete rule">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4.5h11M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M6.5 7v4.5M9.5 7v4.5" /><path d="M3.5 4.5 4 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l.5-8.5" /></svg>
               </button>
             </div>

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.storage.skills._models import Skill, SkillSourceType
 from gobby.utils.id import generate_prefixed_id
@@ -18,6 +18,22 @@ logger = logging.getLogger(__name__)
 _UNSET: Any = object()
 
 
+class _SkillMetadataHost(Protocol):
+    db: DatabaseProtocol
+
+    def _notify_change(
+        self,
+        event_type: str,
+        skill_id: str,
+        skill_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def delete_skill_files(self, skill_id: str) -> int: ...
+
+    def restore_skill_files(self, skill_id: str) -> int: ...
+
+
 class SkillMetadataMixin:
     """Mixin providing skill metadata CRUD operations.
 
@@ -25,6 +41,9 @@ class SkillMetadataMixin:
     """
 
     db: DatabaseProtocol
+
+    def _host(self) -> _SkillMetadataHost:
+        return cast(_SkillMetadataHost, self)
 
     def create_skill(
         self,
@@ -137,7 +156,7 @@ class SkillMetadataMixin:
             )
 
         skill = self.get_skill(skill_id)
-        self._notify_change("create", skill_id, name)  # type: ignore[attr-defined]
+        self._host()._notify_change("create", skill_id, name)
         return skill
 
     def get_skill(self, skill_id: str, include_deleted: bool = False) -> Skill:
@@ -366,7 +385,7 @@ class SkillMetadataMixin:
                 raise ValueError(f"Skill {skill_id} not found")
 
         skill = self.get_skill(skill_id)
-        self._notify_change("update", skill_id, skill.name)  # type: ignore[attr-defined]
+        self._host()._notify_change("update", skill_id, skill.name)
         return skill
 
     def delete_skill(self, skill_id: str) -> bool:
@@ -394,8 +413,9 @@ class SkillMetadataMixin:
             if cursor.rowcount == 0:
                 return False
 
-        self.delete_skill_files(skill_id)  # type: ignore[attr-defined]
-        self._notify_change("delete", skill_id, skill_name)  # type: ignore[attr-defined]
+        host = self._host()
+        host.delete_skill_files(skill_id)
+        host._notify_change("delete", skill_id, skill_name)
         return True
 
     def hard_delete(self, skill_id: str) -> bool:
@@ -418,7 +438,7 @@ class SkillMetadataMixin:
             if cursor.rowcount == 0:
                 return False
 
-        self._notify_change("delete", skill_id, skill_name)  # type: ignore[attr-defined]
+        self._host()._notify_change("delete", skill_id, skill_name)
         return True
 
     def restore(self, skill_id: str) -> Skill:
@@ -442,9 +462,10 @@ class SkillMetadataMixin:
             if cursor.rowcount == 0:
                 raise ValueError(f"Skill {skill_id} not found")
 
-        self.restore_skill_files(skill_id)  # type: ignore[attr-defined]
+        host = self._host()
+        host.restore_skill_files(skill_id)
         skill = self.get_skill(skill_id)
-        self._notify_change("create", skill_id, skill.name)  # type: ignore[attr-defined]
+        host._notify_change("create", skill_id, skill.name)
         return skill
 
     def move_to_project(self, skill_id: str, project_id: str) -> Skill:

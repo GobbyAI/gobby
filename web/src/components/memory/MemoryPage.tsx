@@ -1,5 +1,4 @@
 import { useState, useCallback, useMemo, useEffect, useRef, lazy, Suspense, Component, type ReactNode } from 'react'
-import './MemoryPage.css'
 import { useMemory, useNeo4jStatus } from '../../hooks/useMemory'
 import { useNow } from '../../hooks/useNow'
 import type { GobbyMemory } from '../../hooks/useMemory'
@@ -9,6 +8,7 @@ import { MemoryForm } from './MemoryForm'
 import type { MemoryFormData } from './MemoryForm'
 import { MemoryDetail } from './MemoryDetail'
 import { IS_MOBILE, IS_IOS, WEBGL_CAP } from '../../utils/platform'
+import { cn } from '../../lib/utils'
 
 const DEFAULT_KNOWLEDGE_GRAPH_LIMIT = IS_IOS ? 150 : IS_MOBILE ? 250 : 500
 const GRAPH_LIMIT_MIN = 50
@@ -16,6 +16,11 @@ const KNOWLEDGE_LIMIT_MAX = IS_IOS ? 300 : IS_MOBILE ? 500 : 5000
 const GRAPH_LIMIT_STEP = 50
 
 const KnowledgeGraph = lazy(() => import('./KnowledgeGraph').then(m => ({ default: m.KnowledgeGraph })))
+
+const FALLBACK_BUTTON_CLS =
+  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]'
+const FALLBACK_PRIMARY_BUTTON_CLS =
+  'cursor-pointer rounded border-0 bg-[var(--accent)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--accent-foreground)] hover:opacity-90'
 
 class KnowledgeGraphErrorBoundary extends Component<
   { children: ReactNode; onFallback?: () => void },
@@ -34,19 +39,19 @@ class KnowledgeGraphErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: '2rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+        <div className="p-8 text-center text-[var(--text-secondary)]">
           <div>3D knowledge graph failed to load.</div>
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', marginTop: '0.75rem' }}>
+          <div className="mt-3 flex justify-center gap-2">
             <button
               onClick={() => this.setState({ hasError: false })}
-              style={{ padding: '0.35rem 0.75rem', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '0.8rem' }}
+              className={FALLBACK_BUTTON_CLS}
             >
               Try Again
             </button>
             {this.props.onFallback && (
               <button
                 onClick={this.props.onFallback}
-                style={{ padding: '0.35rem 0.75rem', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}
+                className={FALLBACK_PRIMARY_BUTTON_CLS}
               >
                 Switch to List
               </button>
@@ -103,7 +108,6 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
   } = useMemory(projectId)
   const neo4jStatus = useNeo4jStatus()
 
-  // Configurable graph limits (fetched from backend config, overridable per-session)
   const [knowledgeGraphLimit, setKnowledgeGraphLimit] = useState(DEFAULT_KNOWLEDGE_GRAPH_LIMIT)
 
   useEffect(() => {
@@ -129,8 +133,6 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
   })
   const [showForm, setShowForm] = useState(false)
 
-  // Default to knowledge view when Neo4j is configured and no saved preference
-  // Skip if 3D previously failed (user can manually re-select knowledge view to retry)
   const autoSwitchedRef = useRef(false)
   useEffect(() => {
     if (neo4jStatus?.configured && viewMode === 'list' && !autoSwitchedRef.current) {
@@ -145,7 +147,6 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
     }
   }, [neo4jStatus?.configured, viewMode])
 
-  // Persist view mode
   useEffect(() => {
     try { localStorage.setItem('gobby-memory-view', viewMode) } catch { /* noop */ }
   }, [viewMode])
@@ -166,7 +167,6 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
   const [searchText, setSearchText] = useState('')
   const now = useNow()
 
-  // Apply search and recent filters to memories
   const filteredMemories = useMemo(() => {
     let result = memories
 
@@ -262,52 +262,65 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
   ]
 
   return (
-    <main className="memory-page">
+    <main className="flex flex-1 flex-col overflow-hidden px-6 py-4 max-sm:px-4">
       {errorMessage && (
-        <div className="memory-error-toast" onClick={() => setErrorMessage(null)}>
+        <div
+          className="fixed right-5 top-15 z-[1000] cursor-pointer rounded-md bg-[var(--color-error)] px-4 py-2 text-[length:var(--text-base)] text-[var(--accent-foreground)]"
+          onClick={() => setErrorMessage(null)}
+        >
           {errorMessage}
         </div>
       )}
-      {/* Toolbar */}
-      <div className="memory-toolbar">
-        <div className="memory-toolbar-left">
-          <h2 className="memory-toolbar-title">Memory</h2>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="m-0 text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)]">Memory</h1>
         </div>
-        <div className="memory-toolbar-right">
-          <div className="memory-view-toggle">
-            {viewModes.map(([mode, Icon, title]) => (
-              <button
-                key={mode}
-                className={`memory-view-btn ${viewMode === mode ? 'active' : ''}`}
-                onClick={() => setViewMode(mode)}
-                title={title}
-              >
-                <Icon />
-              </button>
-            ))}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
+          <div className="flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">
+            {viewModes.map(([mode, Icon, title]) => {
+              const isActive = viewMode === mode
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  className={cn(
+                    'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0 text-[var(--text-muted)] transition-[background-color,color] duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11',
+                    isActive && 'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]',
+                  )}
+                  onClick={() => setViewMode(mode)}
+                  title={title}
+                >
+                  <Icon />
+                </button>
+              )
+            })}
           </div>
           <input
-            className="memory-search"
+            className="box-border min-w-0 max-w-[180px] flex-[1_1_140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-[length:var(--text-base)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11"
             type="text"
-            placeholder="Search..."
+            placeholder="Search"
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
           />
           <button
-            className="memory-toolbar-btn"
+            type="button"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0 text-[length:var(--text-base)] text-[var(--text-secondary)] transition-[background-color,color,opacity] duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11"
             onClick={refreshMemories}
             title="Refresh"
             disabled={isLoading}
           >
             &#x21bb;
           </button>
-          <button className="memory-new-btn" onClick={handleCreate}>
+          <button
+            type="button"
+            className="cursor-pointer whitespace-nowrap rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 text-[length:var(--text-base)] font-medium text-[var(--bg-primary)] transition-opacity duration-150 hover:opacity-85 pointer-coarse:min-h-11 pointer-coarse:px-4 pointer-coarse:py-2"
+            onClick={handleCreate}
+          >
             + New
           </button>
         </div>
       </div>
 
-      {/* Filter bar */}
       <MemoryFilters
         filters={filters}
         stats={stats}
@@ -321,22 +334,21 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
         limitStep={GRAPH_LIMIT_STEP}
       />
 
-      {/* Content area */}
-      <div className="memory-content">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {viewMode === 'knowledge' ? (
           !WEBGL_CAP.supported ? (
-            <div style={{ padding: '2rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+            <div className="p-8 text-center text-[var(--text-secondary)]">
               <div>WebGL is not available on this device.</div>
               <button
                 onClick={() => setViewMode('list')}
-                style={{ marginTop: '0.75rem', padding: '0.35rem 0.75rem', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}
+                className={cn('mt-3', FALLBACK_PRIMARY_BUTTON_CLS)}
               >
                 Switch to List
               </button>
             </div>
           ) : (
           <KnowledgeGraphErrorBoundary onFallback={handleKnowledgeGraphError}>
-            <Suspense fallback={<div style={{ padding: '2rem', color: 'var(--text-secondary)' }}>Loading 3D graph...</div>}>
+            <Suspense fallback={<div className="p-8 text-[var(--text-secondary)]">Loading 3D graph...</div>}>
               <KnowledgeGraph
                 fetchKnowledgeGraph={fetchKnowledgeGraph}
                 fetchEntityNeighbors={fetchEntityNeighbors}
@@ -358,7 +370,6 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
         )}
       </div>
 
-      {/* Detail slide-out panel — always rendered */}
       <MemoryDetail
         memory={selectedMemory}
         onEdit={handleDetailEdit}
@@ -366,7 +377,6 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
         onClose={() => setSelectedMemory(null)}
       />
 
-      {/* Create/Edit form modal */}
       {showForm && (
         <MemoryForm
           memory={editMemory}

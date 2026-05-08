@@ -101,6 +101,7 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
 
             assert runner.memory_manager == mock_memory_manager
+            assert runner.memory_sync_manager is None
 
     def test_init_memory_manager_exception(self) -> None:
         """Test that MemoryManager initialization exception is handled."""
@@ -124,9 +125,10 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
             assert runner.memory_manager is None
+            assert runner.memory_sync_manager is None
 
-    def test_init_with_memory_sync_manager(self) -> None:
-        """Test MemorySyncManager initialization when enabled."""
+    def test_init_with_memory_sync_manager_does_not_import_jsonl(self) -> None:
+        """Test MemorySyncManager initializes without automatic JSONL import."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
         mock_config.websocket = None
@@ -155,7 +157,35 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
 
             assert runner.memory_sync_manager == mock_memory_sync_manager
-            mock_memory_sync_manager.import_sync.assert_called_once()
+            assert runner.memory_manager == mock_memory_manager
+            mock_memory_sync_manager.import_sync.assert_not_called()
+
+    def test_init_task_sync_manager_does_not_import_jsonl(self) -> None:
+        """Test TaskSyncManager initializes without automatic JSONL import."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+
+        mock_task_sync_manager = MagicMock()
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "TaskSyncManager" not in str(p)]
+        patches.append(
+            patch("gobby.runner_init.TaskSyncManager", return_value=mock_task_sync_manager)
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.task_sync_manager == mock_task_sync_manager
+            assert runner.memory_sync_manager is None
+            mock_task_sync_manager.import_from_jsonl.assert_not_called()
 
     def test_init_memory_sync_manager_exception(self) -> None:
         """Test MemorySyncManager initialization exception is handled."""
@@ -186,6 +216,7 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
             assert runner.memory_sync_manager is None
+            assert runner.memory_manager == mock_memory_manager
 
     def test_init_with_message_processor(self) -> None:
         """Test SessionMessageProcessor initialization when message_tracking enabled."""
@@ -213,6 +244,7 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
 
             assert runner.message_processor == mock_message_processor
+            assert runner.lifecycle_manager is not None
 
     def test_init_with_task_validator(self) -> None:
         """Test TaskValidator initialization when LLM service and validation enabled."""
@@ -245,6 +277,7 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
 
             assert runner.task_validator == mock_task_validator
+            assert runner.llm_service == mock_llm_service
 
     def test_init_task_validator_exception(self) -> None:
         """Test TaskValidator initialization exception is handled."""
@@ -277,6 +310,7 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
             assert runner.task_validator is None
+            assert runner.llm_service == mock_llm_service
 
     def test_init_agent_runner_exception(self) -> None:
         """Test AgentRunner initialization exception is handled."""
@@ -298,6 +332,7 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
             assert runner.agent_runner is None
+            assert runner.task_sync_manager is not None
 
     def test_init_llm_service_exception(self) -> None:
         """Test LLM service initialization exception is handled."""
@@ -320,6 +355,7 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
             assert runner.llm_service is None
+            assert runner.task_validator is None
 
 
 class TestResolveEmbeddingApiKey:

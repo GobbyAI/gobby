@@ -3,7 +3,24 @@ import ForceGraph3D from 'react-force-graph-3d'
 import SpriteText from 'three-spritetext'
 import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
 import { IS_MOBILE, IS_IOS } from '../../utils/platform'
+import { resolveCssVar, cn } from '../../lib/utils'
 import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from '../../hooks/useMemory'
+
+const CONTAINER_CLS = 'relative flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
+const EMPTY_CLS = 'flex h-full min-h-[300px] flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
+const OVERLAY_STACK_CLS = 'absolute left-2 top-2 z-10 flex flex-col items-start gap-1.5'
+const INFO_CLS = 'rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const LEGEND_CLS = 'absolute bottom-2 left-2 z-10 flex items-center gap-2.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const CONTROLS_CLS = 'absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]'
+const CTRL_BTN_CLS = 'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const CTRL_BTN_ACTIVE_CLS = 'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]'
+const PHYSICS_CLS = 'absolute right-2 top-[42px] z-10 flex min-w-[200px] flex-col gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2'
+const PHYSICS_ROW_CLS = 'flex cursor-default items-center gap-1.5'
+const PHYSICS_LABEL_CLS = 'min-w-[56px] text-[length:var(--text-xs)] text-[var(--text-secondary)]'
+const PHYSICS_VALUE_CLS = 'min-w-[36px] text-right font-[inherit] text-[length:var(--text-2xs)] tabular-nums text-[var(--text-muted)]'
+const PHYSICS_SLIDER_CLS = 'h-1 flex-1 cursor-pointer accent-[var(--accent)]'
+const PHYSICS_RESET_CLS = 'mt-0.5 cursor-pointer self-end rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-secondary)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+const SEARCH_INPUT_CLS = 'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none w-[150px] font-mono pointer-coarse:min-h-11 pointer-coarse:px-2.5 pointer-coarse:py-2 pointer-coarse:text-[length:var(--text-md)]'
 
 interface KnowledgeGraphProps {
   fetchKnowledgeGraph: (limit?: number) => Promise<KnowledgeGraphData | null>
@@ -36,21 +53,31 @@ interface GraphLink {
   color: string
 }
 
-const ENTITY_TYPE_COLORS: Record<string, string> = {
-  function: '#60a5fa',
-  file: '#34d399',
-  class: '#c084fc',
-  concept: '#fbbf24',
-  hook: '#f472b6',
-  module: '#2dd4bf',
-  config: '#fb923c',
-  test: '#a78bfa',
-  route: '#38bdf8',
-  component: '#4ade80',
+// Categorical entity types collapse onto the deutan-safe semantic palette.
+// Multiple types intentionally share a token; the legend disambiguates by name.
+const ENTITY_TYPE_COLOR_VARS: Record<string, string> = {
+  function: '--color-info',
+  file: '--color-success-foreground',
+  class: '--text-muted',
+  concept: '--color-warning-foreground',
+  hook: '--color-error',
+  module: '--color-review',
+  config: '--color-warning-foreground',
+  test: '--text-muted',
+  route: '--color-info',
+  component: '--accent',
+}
+
+function entityColorVar(type: string): string {
+  return ENTITY_TYPE_COLOR_VARS[type.toLowerCase()] ?? '--text-muted'
 }
 
 function getEntityColor(type: string): string {
-  return ENTITY_TYPE_COLORS[type.toLowerCase()] || '#8b8b8b'
+  return resolveCssVar(entityColorVar(type))
+}
+
+function getEntityColorCss(type: string): string {
+  return `var(${entityColorVar(type)})`
 }
 
 function hashToHue(str: string): number {
@@ -62,6 +89,8 @@ function hashToHue(str: string): number {
 }
 
 function edgeColor(relType: string): string {
+  // Open-ended relationship types — hashed hue keeps adjacent edges distinguishable
+  // while staying mid-saturation/mid-lightness to harmonize with the design palette.
   const hue = hashToHue(relType)
   return `hsl(${hue}, 45%, 50%)`
 }
@@ -304,7 +333,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
       // iOS: simple sphere mesh — no canvas textures at all
       if (IS_IOS && sphereGeo) {
         const mat = new MeshLambertMaterial({
-          color: dimmed ? '#333333' : color,
+          color: dimmed ? resolveCssVar('--text-muted') : color,
           transparent: dimmed,
           opacity: dimmed ? 0.4 : 1,
         })
@@ -312,7 +341,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
       }
 
       const sprite = new SpriteText(label)
-      sprite.color = dimmed ? '#444444' : color
+      sprite.color = dimmed ? resolveCssVar('--text-muted') : color
       sprite.fontFace = 'SF Mono, Menlo, monospace'
 
       if (IS_MOBILE) {
@@ -321,17 +350,19 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
       } else {
         // Desktop: full styling
         sprite.textHeight = 3
-        sprite.backgroundColor = dimmed ? 'rgba(20,20,20,0.3)' : 'rgba(20,20,30,0.75)'
+        sprite.backgroundColor = dimmed
+          ? resolveCssVar('--bg-primary', 0.3)
+          : resolveCssVar('--bg-primary', 0.75)
         sprite.borderColor = dimmed ? 'transparent' : color
         sprite.borderWidth = 0.3
         sprite.borderRadius = 3
-        sprite.padding = [2, 4] as any  
+        sprite.padding = [2, 4] as any
       }
       return sprite
     } catch (e) {
       console.error('[KnowledgeGraph] SpriteText creation failed:', e)
       const fallback = new SpriteText('?')
-      fallback.color = '#888'
+      fallback.color = resolveCssVar('--text-muted')
       fallback.textHeight = 3
       return fallback
     }
@@ -348,9 +379,9 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         : link.target
       const srcMatch = String(sourceLabel).toLowerCase().includes(searchLower)
       const tgtMatch = String(targetLabel).toLowerCase().includes(searchLower)
-      if (!srcMatch && !tgtMatch) return 'rgba(60,60,60,0.15)'
+      if (!srcMatch && !tgtMatch) return resolveCssVar('--text-muted', 0.15)
     }
-    return link.color || 'rgba(120,120,120,0.4)'
+    return link.color || resolveCssVar('--text-muted', 0.4)
   }, [isSearchActive, searchLower])
 
   const linkLabel = useCallback((link: any) => link.type as string, [])  
@@ -392,8 +423,8 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Loading state
   if (loading) {
     return (
-      <div className="knowledge-graph-container" ref={containerRef}>
-        <div className="knowledge-graph-empty">Loading knowledge graph...</div>
+      <div className={CONTAINER_CLS} ref={containerRef}>
+        <div className={EMPTY_CLS}>Loading knowledge graph...</div>
       </div>
     )
   }
@@ -401,10 +432,10 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Empty state
   if (!graphData || graphData.entities.length === 0) {
     return (
-      <div className="knowledge-graph-container" ref={containerRef}>
-        <div className="knowledge-graph-empty">
+      <div className={CONTAINER_CLS} ref={containerRef}>
+        <div className={EMPTY_CLS}>
           <div>No entities found</div>
-          <div style={{ fontSize: 'calc(var(--font-size-base) * 0.8)', marginTop: 4 }}>
+          <div className="mt-1 text-[length:var(--text-sm)]">
             Connect a Neo4j instance to explore knowledge graph entities and relationships.
           </div>
         </div>
@@ -413,7 +444,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   }
 
   return (
-    <div className="knowledge-graph-container" ref={containerRef}>
+    <div className={CONTAINER_CLS} ref={containerRef}>
       <ForceGraph3D
         ref={fgRef}
         width={dimensions.width}
@@ -427,8 +458,8 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
             .join('\n')
           return `<div style="text-align:center;font-family:monospace;font-size:11px;line-height:1.4">
             <b>${e.name}</b><br/>
-            <span style="color:${getEntityColor(e.entity_type)};text-transform:uppercase;font-size:9px">${e.entity_type}</span>
-            ${props ? '<br/><span style="color:#888;font-size:9px">' + props.replace(/\n/g, '<br/>') + '</span>' : ''}
+            <span style="color:${getEntityColorCss(e.entity_type)};text-transform:uppercase;font-size:9px">${e.entity_type}</span>
+            ${props ? '<br/><span style="color:var(--text-muted);font-size:9px">' + props.replace(/\n/g, '<br/>') + '</span>' : ''}
           </div>`
         }}
         nodeThreeObject={nodeThreeObject}
@@ -453,45 +484,33 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         {...(IS_MOBILE ? { rendererConfig: { antialias: false, powerPreference: 'low-power' as const } } : {})}
       />
 
-      {/* Expanding indicator */}
-      {expandingNode && (
-        <div className="knowledge-graph-info" style={{ top: 36, color: 'var(--accent)' }}>
-          Expanding {expandingNode}...
+      <div className={OVERLAY_STACK_CLS}>
+        <div className={INFO_CLS}>
+          {forceData.nodes.length} entities &middot; {forceData.links.length} relationships
         </div>
-      )}
-
-      {/* Info overlay (top-left) */}
-      <div className="knowledge-graph-info">
-        {forceData.nodes.length} entities &middot; {forceData.links.length} relationships
-      </div>
-
-      {/* Search overlay */}
-      <div className="knowledge-graph-search">
+        {expandingNode && (
+          <div className={cn(INFO_CLS, 'text-[var(--accent)]')}>
+            Expanding {expandingNode}...
+          </div>
+        )}
         <input
           type="text"
           placeholder="Filter entities..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
-          style={{
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            padding: '3px 8px',
-            fontSize: 'calc(var(--font-size-base) * 0.75)',
-            color: 'var(--text-primary)',
-            outline: 'none',
-            width: 150,
-            fontFamily: 'var(--font-mono)',
-          }}
+          className={SEARCH_INPUT_CLS}
         />
       </div>
 
       {/* Legend overlay (bottom-left) */}
       {legendTypes.length > 0 && (
-        <div className="knowledge-graph-legend">
+        <div className={LEGEND_CLS}>
           {legendTypes.map(type => (
-            <div key={type} className="knowledge-graph-legend-item">
-              <span className="knowledge-graph-legend-dot" style={{ backgroundColor: getEntityColor(type) }} />
+            <div key={type} className="flex items-center gap-1">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: getEntityColorCss(type) }}
+              />
               {type}
             </div>
           ))}
@@ -499,9 +518,10 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
       )}
 
       {/* Controls (top-right) */}
-      <div className="knowledge-graph-controls">
+      <div className={CONTROLS_CLS}>
         <button
-          className="knowledge-graph-ctrl-btn"
+          type="button"
+          className={CTRL_BTN_CLS}
           onClick={() => fgRef.current?.zoomToFit(400)}
           title="Zoom to fit"
         >
@@ -510,7 +530,8 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           </svg>
         </button>
         <button
-          className={`knowledge-graph-ctrl-btn${animateIdle ? ' active' : ''}`}
+          type="button"
+          className={cn(CTRL_BTN_CLS, animateIdle && CTRL_BTN_ACTIVE_CLS)}
           onClick={toggleAnimate}
           title={animateIdle ? 'Pause idle animation' : 'Animate when idle'}
         >
@@ -526,7 +547,8 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           )}
         </button>
         <button
-          className={`knowledge-graph-ctrl-btn${showPhysics ? ' active' : ''}`}
+          type="button"
+          className={cn(CTRL_BTN_CLS, showPhysics && CTRL_BTN_ACTIVE_CLS)}
           onClick={() => setShowPhysics(p => !p)}
           title="Physics controls"
         >
@@ -539,57 +561,61 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
 
       {/* Physics controls panel */}
       {showPhysics && (
-        <div className="knowledge-graph-physics">
-          <label className="knowledge-graph-physics-row">
-            <span className="knowledge-graph-physics-label">Repulsion</span>
+        <div className={PHYSICS_CLS}>
+          <label className={PHYSICS_ROW_CLS}>
+            <span className={PHYSICS_LABEL_CLS}>Repulsion</span>
             <input
               type="range"
               min={-500}
               max={-20}
               step={10}
               value={charge}
+              className={PHYSICS_SLIDER_CLS}
               onChange={e => {
                 const v = Number(e.target.value)
                 setCharge(v)
                 try { localStorage.setItem('gobby-kg-charge', String(v)) } catch { /* noop */ }
               }}
             />
-            <span className="knowledge-graph-physics-value">{charge}</span>
+            <span className={PHYSICS_VALUE_CLS}>{charge}</span>
           </label>
-          <label className="knowledge-graph-physics-row">
-            <span className="knowledge-graph-physics-label">Link dist</span>
+          <label className={PHYSICS_ROW_CLS}>
+            <span className={PHYSICS_LABEL_CLS}>Link dist</span>
             <input
               type="range"
               min={10}
               max={200}
               step={5}
               value={linkDist}
+              className={PHYSICS_SLIDER_CLS}
               onChange={e => {
                 const v = Number(e.target.value)
                 setLinkDist(v)
                 try { localStorage.setItem('gobby-kg-link-dist', String(v)) } catch { /* noop */ }
               }}
             />
-            <span className="knowledge-graph-physics-value">{linkDist}</span>
+            <span className={PHYSICS_VALUE_CLS}>{linkDist}</span>
           </label>
-          <label className="knowledge-graph-physics-row">
-            <span className="knowledge-graph-physics-label">Gravity</span>
+          <label className={PHYSICS_ROW_CLS}>
+            <span className={PHYSICS_LABEL_CLS}>Gravity</span>
             <input
               type="range"
               min={0.005}
               max={0.15}
               step={0.005}
               value={centerStrength}
+              className={PHYSICS_SLIDER_CLS}
               onChange={e => {
                 const v = Number(e.target.value)
                 setCenterStrength(v)
                 try { localStorage.setItem('gobby-kg-center', String(v)) } catch { /* noop */ }
               }}
             />
-            <span className="knowledge-graph-physics-value">{centerStrength.toFixed(3)}</span>
+            <span className={PHYSICS_VALUE_CLS}>{centerStrength.toFixed(3)}</span>
           </label>
           <button
-            className="knowledge-graph-physics-reset"
+            type="button"
+            className={PHYSICS_RESET_CLS}
             onClick={() => {
               setCharge(DEFAULT_CHARGE)
               setLinkDist(DEFAULT_LINK_DIST)

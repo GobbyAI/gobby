@@ -51,13 +51,18 @@ describe('PipelinesTab', () => {
     vi.restoreAllMocks()
   })
 
+  function openFilterDropdown(): void {
+    fireEvent.click(screen.getByRole('button', { name: 'Filter pipelines' }))
+  }
+
   it('defaults the activity filter to All so transient runs remain visible', async () => {
     render(<PipelinesTab projectId="proj-1" />)
 
     await waitFor(() => {
-      expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true')
       expect(screen.getByText('Nightly sync')).toBeInTheDocument()
     })
+    openFilterDropdown()
+    expect(screen.getByRole('option', { name: 'All' })).toHaveAttribute('aria-selected', 'true')
     await screen.findByTestId('resize-handle')
 
     const executionCalls = mockFetch.fn.mock.calls
@@ -68,11 +73,14 @@ describe('PipelinesTab', () => {
     expect(executionCalls[0]).not.toContain('status=running')
   })
 
-  it('renders segmented filter buttons in the expected order', async () => {
+  it('renders dropdown filter options in the expected order', async () => {
     render(<PipelinesTab projectId="proj-1" />)
-
-    const radios = await screen.findAllByRole('radio')
-    expect(radios.map((radio) => radio.textContent)).toEqual(['All', 'Completed', 'Failed', 'Running'])
+    await waitFor(() => {
+      expect(screen.getByText('Nightly sync')).toBeInTheDocument()
+    })
+    openFilterDropdown()
+    const options = screen.getAllByRole('option')
+    expect(options.map((option) => option.textContent)).toEqual(['All', 'Completed', 'Failed', 'Running'])
   })
 
   it('auto-selects the first execution and keeps the detail panel open', async () => {
@@ -85,49 +93,20 @@ describe('PipelinesTab', () => {
     })
   })
 
-  it('switches filters through the segmented control', async () => {
+  it('switches filters through the dropdown', async () => {
     render(<PipelinesTab projectId="proj-1" />)
-
-    const failedButton = await screen.findByRole('radio', { name: 'Failed' })
-    fireEvent.click(failedButton)
-
     await waitFor(() => {
-      expect(failedButton).toHaveAttribute('aria-checked', 'true')
-      expect(failedButton).toHaveAttribute('tabindex', '0')
-      expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('tabindex', '-1')
+      expect(screen.getByText('Nightly sync')).toBeInTheDocument()
     })
-  })
+    openFilterDropdown()
 
-  it('navigates filters with keyboard arrows', async () => {
-    render(<PipelinesTab projectId="proj-1" />)
+    const failedOption = screen.getByRole('option', { name: 'Failed' })
+    fireEvent.click(failedOption)
 
-    const allButton = await screen.findByRole('radio', { name: 'All' })
-    allButton.focus()
-    fireEvent.keyDown(allButton, { key: 'ArrowRight' })
-
+    openFilterDropdown()
     await waitFor(() => {
-      const completedButton = screen.getByRole('radio', { name: 'Completed' })
-      expect(completedButton).toHaveAttribute('aria-checked', 'true')
-      expect(completedButton).toHaveAttribute('tabindex', '0')
-      expect(completedButton).toHaveFocus()
-    })
-
-    const completedButton = screen.getByRole('radio', { name: 'Completed' })
-    fireEvent.keyDown(completedButton, { key: 'End' })
-
-    await waitFor(() => {
-      const runningButton = screen.getByRole('radio', { name: 'Running' })
-      expect(runningButton).toHaveAttribute('aria-checked', 'true')
-      expect(runningButton).toHaveFocus()
-    })
-
-    const runningButton = screen.getByRole('radio', { name: 'Running' })
-    fireEvent.keyDown(runningButton, { key: 'Home' })
-
-    await waitFor(() => {
-      const resetAllButton = screen.getByRole('radio', { name: 'All' })
-      expect(resetAllButton).toHaveAttribute('aria-checked', 'true')
-      expect(resetAllButton).toHaveFocus()
+      expect(screen.getByRole('option', { name: 'Failed' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('option', { name: 'All' })).toHaveAttribute('aria-selected', 'false')
     })
   })
 })

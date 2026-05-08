@@ -10,6 +10,7 @@ from gobby.memory.services.dedup import (
     DedupResult,
     DedupService,
 )
+from gobby.memory.vectorstore import VectorStoreUnavailableError
 
 pytestmark = pytest.mark.unit
 
@@ -213,6 +214,20 @@ class TestProcess:
         )
 
         assert len(result.added) == 1
+
+    @pytest.mark.asyncio
+    async def test_vectorstore_unavailable_does_not_disable_embeddings(
+        self, dedup_service, mock_embed_fn, mock_vector_store
+    ) -> None:
+        """Transient VectorStore upsert failures should not disable future embeddings."""
+        mock_vector_store.upsert.side_effect = VectorStoreUnavailableError()
+
+        await dedup_service._embed_and_upsert("mem-1", "content", "proj-1")
+        await dedup_service._embed_and_upsert("mem-2", "content", "proj-1")
+
+        assert dedup_service._embeddings_available is True
+        assert mock_embed_fn.call_count == 2
+        assert mock_vector_store.upsert.call_count == 2
 
     @pytest.mark.asyncio
     async def test_process_uses_project_filter(

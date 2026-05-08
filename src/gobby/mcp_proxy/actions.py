@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.manager import MCPClientManager, MCPServerConfig
-from gobby.tools.summarizer import generate_server_description
+from gobby.utils.tool_summarizer import generate_server_description
 
 logger = logging.getLogger(__name__)
 

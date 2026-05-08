@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.shutdown_intent import ShutdownIntent
+
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
@@ -40,7 +42,8 @@ if TYPE_CHECKING:
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.cron import CronJobStorage
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.cron_models import CronJob
+    from gobby.storage.database import DatabaseProtocol, LocalDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.prompts import LocalPromptManager
@@ -71,6 +74,64 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+DISPATCHER_CRON_JOB_NAME = "gobby:dispatcher"
+DISPATCHER_CRON_DESCRIPTION = "System dispatcher heartbeat for task lifecycle automation"
+DISPATCHER_CRON_HANDLER = "dispatch.tick"
+DISPATCHER_CRON_INTERVAL_SECONDS = 60
+DISPATCHER_CRON_ACTION_CONFIG: dict[str, Any] = {"handler": DISPATCHER_CRON_HANDLER}
+
+
+def _ensure_dispatcher_project_row(db: DatabaseProtocol, project_id: str) -> None:
+    db.execute(
+        """
+        INSERT OR IGNORE INTO projects (id, name, created_at, updated_at)
+        VALUES (?, ?, datetime('now'), datetime('now'))
+        """,
+        (project_id, f"project:{project_id}"),
+    )
+
+
+def install_dispatcher_cron_row(db: DatabaseProtocol, *, project_id: str) -> CronJob:
+    """Install or reconcile the bundled dispatcher cron row."""
+    from gobby.storage.cron import CronJobStorage
+
+    _ensure_dispatcher_project_row(db, project_id)
+    storage = CronJobStorage(db)
+    existing = storage.get_job_by_name(DISPATCHER_CRON_JOB_NAME)
+    if existing is None:
+        return storage.create_job(
+            project_id=project_id,
+            name=DISPATCHER_CRON_JOB_NAME,
+            description=DISPATCHER_CRON_DESCRIPTION,
+            schedule_type="interval",
+            interval_seconds=DISPATCHER_CRON_INTERVAL_SECONDS,
+            action_type="handler",
+            action_config=DISPATCHER_CRON_ACTION_CONFIG,
+            enabled=True,
+            is_system=True,
+        )
+
+    if not existing.is_system:
+        storage.db.execute(
+            "UPDATE cron_jobs SET is_system = 1 WHERE id = ?",
+            (existing.id,),
+        )
+
+    reconciled = storage.reconcile_system_job_definition(
+        existing.id,
+        description=DISPATCHER_CRON_DESCRIPTION,
+        schedule_type="interval",
+        cron_expr=None,
+        interval_seconds=DISPATCHER_CRON_INTERVAL_SECONDS,
+        run_at=None,
+        timezone="UTC",
+        action_type="handler",
+        action_config=DISPATCHER_CRON_ACTION_CONFIG,
+    )
+    if reconciled is None:
+        raise RuntimeError(f"Dispatcher cron row disappeared during install: {existing.id}")
+    return reconciled
+
 
 class GobbyRunner:
     """Runner for Gobby daemon.
@@ -85,6 +146,7 @@ class GobbyRunner:
     verbose: bool
     machine_id: str | None
     _shutdown_requested: bool
+    _shutdown_intent: ShutdownIntent
     _metrics_cleanup_task: asyncio.Task[None] | None
     _vector_rebuild_task: asyncio.Task[None] | None
     _zombie_messages_task: asyncio.Task[None] | None
@@ -93,12 +155,14 @@ class GobbyRunner:
     _metrics_archive_task: asyncio.Task[None] | None
     _metric_snapshot_task: asyncio.Task[None] | None
     _hook_inbox_task: asyncio.Task[None] | None
+    _bin_freshness_task: asyncio.Task[None] | None
     _code_index_task: asyncio.Task[None] | None
     _code_index_shutdown: asyncio.Event | None
     _sync_worker_task: asyncio.Task[None] | None
     _sync_worker_shutdown: asyncio.Event | None
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
+    _provider_model_refresh_task: asyncio.Task[dict[str, dict[str, Any]]] | None
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
@@ -142,7 +206,6 @@ class GobbyRunner:
     agent_runner: AgentRunner | None
     agent_lifecycle_monitor: AgentLifecycleMonitor | None
     lifecycle_manager: SessionLifecycleManager
-    conductor_manager: object | None
     cron_storage: CronJobStorage | None
     cron_scheduler: CronScheduler | None
     communications_manager: Any | None
@@ -168,6 +231,12 @@ class GobbyRunner:
         from gobby.runner_lifecycle import run_daemon
 
         await run_daemon(self)
+
+    def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
+        """Request daemon shutdown and optionally set the semantic intent."""
+        if intent is not None:
+            self._shutdown_intent = intent
+        self._shutdown_requested = True
 
 
 async def run_gobby(config_path: Path | None = None, verbose: bool = False) -> None:

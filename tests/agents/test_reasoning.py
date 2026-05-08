@@ -72,14 +72,66 @@ def test_resolve_spawn_reasoning_rejects_unsupported_model_effort(
     assert result.message is not None
 
 
-def test_resolve_spawn_reasoning_warns_when_provider_adapter_is_not_wired(
+def test_resolve_spawn_reasoning_applies_claude_opus_xhigh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         "gobby.agents.reasoning._get_provider_models",
         lambda provider, daemon_config: [
             {
-                "value": "gemini-2.5-pro",
+                "value": "opus",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+            }
+        ],
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="claude",
+        model="opus",
+        requested_effort="xhigh",
+        reasoning_required=True,
+    )
+
+    assert result.status == "applied"
+    assert result.effective_effort == "xhigh"
+    assert result.reasoning_required is True
+    assert result.message is None
+
+
+def test_resolve_spawn_reasoning_applies_codex_gpt_55_xhigh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.agents.reasoning._get_provider_models",
+        lambda provider, daemon_config: [
+            {
+                "value": "gpt-5.5",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            }
+        ],
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="codex",
+        model="gpt-5.5",
+        requested_effort="xhigh",
+        reasoning_required=True,
+    )
+
+    assert result.status == "applied"
+    assert result.effective_effort == "xhigh"
+    assert result.reasoning_required is True
+    assert result.message is None
+
+
+def test_resolve_spawn_reasoning_applies_gemini_high(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.agents.reasoning._get_provider_models",
+        lambda provider, daemon_config: [
+            {
+                "value": "gemini-3.1-pro-preview",
                 "reasoning": {"supported_efforts": ["low", "medium", "high"]},
             }
         ],
@@ -87,15 +139,15 @@ def test_resolve_spawn_reasoning_warns_when_provider_adapter_is_not_wired(
 
     result = resolve_spawn_reasoning(
         provider="gemini",
-        model="gemini-2.5-pro",
+        model="gemini-3.1-pro-preview",
         requested_effort="high",
         reasoning_required=False,
     )
 
-    assert result.status == "unsupported_provider"
+    assert result.status == "applied"
     assert result.requested_effort == "high"
-    assert result.effective_effort is None
-    assert result.message is not None
+    assert result.effective_effort == "high"
+    assert result.message is None
 
 
 def test_get_provider_models_reuses_fallback_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,3 +195,4 @@ def test_get_provider_models_rebuilds_fallback_catalog_on_config_change(
     reasoning._get_provider_models("claude", config_b)
 
     assert created_for == [config_a, config_b]
+    assert reasoning._fallback_catalog_config is config_b

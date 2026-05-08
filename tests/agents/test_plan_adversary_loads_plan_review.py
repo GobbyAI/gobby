@@ -82,6 +82,25 @@ class TestAdversarySkillLoading:
         assert "claim_task(task_id=assigned_task_id)" in claim_step.status_message
         assert "force=true" not in ADVERSARY_PATH.read_text()
 
+    def test_claim_step_treats_closed_assigned_task_as_claim_complete(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        claim_step = find_step(agent.steps or [], "claim")
+        assert claim_step is not None
+        mcp_error = getattr(claim_step, "on_mcp_error", []) or []
+        handlers = [
+            (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
+            for entry in mcp_error
+        ]
+        assert ("gobby-tasks", "claim_task", "task_claimed") in handlers
+        claim_handlers = [
+            entry
+            for entry in mcp_error
+            if _field(entry, "server") == "gobby-tasks" and _field(entry, "tool") == "claim_task"
+        ]
+        assert claim_handlers
+        assert _field(claim_handlers[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'
+
 
 class TestAdversaryInstructionsPreserveContracts:
     def test_instructions_reference_plan_review(self, agent: AgentDefinitionBody) -> None:
@@ -95,7 +114,7 @@ class TestAdversaryInstructionsPreserveContracts:
         """Revision rounds should use review rejection; insufficient-context
         halts should use `needs_requirements:`."""
         instructions = agent.instructions or ""
-        assert "mark_task_review_rejected" in instructions
+        assert "reject_review" in instructions
         assert "needs_requirements:" in instructions
 
     def test_round_scoped_findings_header_referenced(self, agent: AgentDefinitionBody) -> None:
@@ -115,7 +134,38 @@ class TestAdversaryInstructionsPreserveContracts:
             (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
             for entry in mcp_success
         ]
-        assert ("gobby-tasks", "mark_task_review_rejected", "review_complete") in triples
+        assert ("gobby-tasks-ops", "reject_review", "review_complete") in triples
+
+    def test_review_step_completes_on_closed_task_review_error(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        review_step = find_step(agent.steps or [], "review")
+        assert review_step is not None
+        mcp_error = getattr(review_step, "on_mcp_error", None) or []
+        triples = [
+            (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
+            for entry in mcp_error
+        ]
+        assert ("gobby-tasks-ops", "approve_review", "review_complete") in triples
+        assert ("gobby-tasks-ops", "reject_review", "review_complete") in triples
+        assert ("gobby-tasks", "escalate_task", "review_complete") in triples
+        for tool in ("approve_review", "reject_review"):
+            matches = [
+                entry
+                for entry in mcp_error
+                if _field(entry, "server") == "gobby-tasks-ops"
+                and _field(entry, "tool") == tool
+            ]
+            assert matches
+            assert _field(matches[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'
+        matches = [
+            entry
+            for entry in mcp_error
+            if _field(entry, "server") == "gobby-tasks"
+            and _field(entry, "tool") == "escalate_task"
+        ]
+        assert matches
+        assert _field(matches[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
         """Worker-safety critical rules must survive the trim."""
@@ -123,7 +173,7 @@ class TestAdversaryInstructionsPreserveContracts:
         for rule in (
             "close_task",
             "reopen_task",
-            "mark_task_needs_review",
+            "submit_for_review",
             "spawn",
             "end_agent_run",
             "uv run",

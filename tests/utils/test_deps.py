@@ -120,21 +120,46 @@ def test_get_codex_cli_version() -> None:
         assert deps.get_codex_cli_version() is None
 
 
-def test_coding_cli_hooks_status(tmp_path) -> None:
+def test_get_qwen_cli_version() -> None:
+    with patch("gobby.utils.deps._run_cmd", return_value="0.15.3"):
+        assert deps.get_qwen_cli_version() == "0.15.3"
+    with patch("gobby.utils.deps._run_cmd", return_value=None):
+        assert deps.get_qwen_cli_version() is None
+
+
+def test_get_droid_cli_version() -> None:
+    with patch("gobby.utils.deps._run_cmd", return_value="droid 0.106.0"):
+        assert deps.get_droid_cli_version() == "0.106.0"
+    with patch("gobby.utils.deps._run_cmd", return_value=None):
+        assert deps.get_droid_cli_version() is None
+
+
+def test_coding_cli_hooks_status(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
+
     with patch.object(Path, "home", return_value=tmp_path):
         claude = tmp_path / ".claude" / "settings.json"
         gemini = tmp_path / ".gemini" / "settings.json"
+        qwen = tmp_path / ".qwen" / "settings.json"
+        droid = tmp_path / ".factory" / "hooks" / "hooks.json"
 
         claude.parent.mkdir()
         gemini.parent.mkdir()
+        qwen.parent.mkdir()
+        droid.parent.mkdir(parents=True)
 
         claude.write_text("ghook --gobby-owned --cli=claude")
         gemini.write_text("other text")
+        qwen.write_text("ghook --gobby-owned --cli=qwen")
+        droid.write_text("ghook --gobby-owned --cli=droid")
 
         result = deps.get_coding_cli_hooks_status()
         assert result["claude"] is True
         assert result["gemini"] is False
         assert result["codex"] is False
+        assert result["qwen"] is True
+        assert result["droid"] is True
 
 
 def test_check_hooks_in_file(tmp_path) -> None:
@@ -427,6 +452,8 @@ def test_collect_all_deps() -> None:
         patch("gobby.utils.deps.get_claude_code_version", return_value="4"),
         patch("gobby.utils.deps.get_gemini_cli_version", return_value="5"),
         patch("gobby.utils.deps.get_codex_cli_version", return_value="6"),
+        patch("gobby.utils.deps.get_droid_cli_version", return_value="6.5"),
+        patch("gobby.utils.deps.get_qwen_cli_version", return_value="6.7"),
         patch("gobby.utils.deps.get_coding_cli_hooks_status", return_value={}),
         patch("gobby.utils.deps.get_tmux_version", return_value="7"),
         patch("gobby.utils.deps.get_docker_version", return_value="8"),
@@ -442,6 +469,8 @@ def test_collect_all_deps() -> None:
         assert res["gobby"]["gobby"] == "1"
         assert res["gobby"]["ghook"] == "3.5"
         assert res["gobby"]["gloc"] == "3.6"
+        assert res["coding_clis"]["droid"] == "6.5"
+        assert res["coding_clis"]["qwen"] == "6.7"
         assert res["dependencies"]["docker_running"] is True
         assert res["dependencies"]["embeddings_provider"] == "lmstudio"
 

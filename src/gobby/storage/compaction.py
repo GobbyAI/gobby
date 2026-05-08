@@ -23,7 +23,7 @@ class TaskCompactor:
         # Query directly since we need custom filtering not exposed by list_tasks
         sql = """
             SELECT * FROM tasks
-            WHERE status = 'closed'
+            WHERE closed_at IS NOT NULL
               AND updated_at < ?
               AND compacted_at IS NULL
             ORDER BY updated_at ASC
@@ -53,7 +53,7 @@ class TaskCompactor:
 
     def get_stats(self) -> dict[str, Any]:
         """Get compaction statistics."""
-        sql_total = "SELECT COUNT(*) as c FROM tasks WHERE status = 'closed'"
+        sql_total = "SELECT COUNT(*) as c FROM tasks WHERE closed_at IS NOT NULL"
         sql_compacted = "SELECT COUNT(*) as c FROM tasks WHERE compacted_at IS NOT NULL"
 
         total = (self.task_manager.db.fetchone(sql_total) or {"c": 0})["c"]

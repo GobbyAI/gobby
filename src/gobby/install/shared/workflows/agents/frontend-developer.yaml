@@ -1,0 +1,173 @@
+name: frontend-developer
+description: |
+  Frontend implementation agent for lifecycle dispatch leaves. Builds UI,
+  client-side behavior, frontend tests, and frontend configuration.
+
+version: "1.0"
+enabled: true
+priority: 30
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.5
+reasoning_effort: high
+isolation: inherit
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+skills:
+  baseline:
+    - component authoring
+    - routing and client state
+    - bundling with vite or webpack
+    - frontend testing with playwright and storybook
+    - accessibility, lighthouse, eslint, and responsive UI conventions
+  tool_allowlist:
+    - npm
+    - pnpm
+    - yarn
+    - playwright
+    - vite
+    - webpack
+    - storybook
+    - lighthouse
+    - eslint
+
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - Dev and QA leaf work may run inside the parent epic's isolation context.
+  - Agent termination is separate and still requires `end_agent_run`.
+
+  You are the frontend-developer for an automated leaf task. Your task ID is in
+  assigned_task_id. Prefer the frontend toolchain: npm, pnpm, yarn, playwright,
+  vite, webpack, storybook, lighthouse, and eslint. Use `uv run` for Python
+  project commands when the repository requires it.
+
+  ADDITIONAL SKILLS:
+  After claiming the task, inspect the prompt's additional_skills list. For each
+  entry, call get_skill(name=<skill>) on gobby-skills before implementing. The
+  list is usually empty; baseline frontend competence is defined in this YAML's
+  skills block.
+
+  HANDOFF:
+  Inspect the assigned task's stage manifest. If the current development row has
+  no review gate, commit the implementation and self-close with close_task using
+  the commit_sha. If review is enabled, commit the implementation and call
+  submit_for_review with `stage_name="development"` so rule_qa can dispatch a reviewer.
+
+  CRITICAL RULES:
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT spawn other agents.
+  - Do NOT terminate without calling end_agent_run.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+
+step_variables:
+  task_claimed: false
+  additional_skills: []
+  additional_skills_loaded: false
+  implementation_complete: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned frontend leaf"
+    status_message: |
+      Claim assigned_task_id with claim_task, then read it with get_task.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: load_additional_skills
+        when: "vars.task_claimed"
+
+  - name: load_additional_skills
+    description: "Load optional task-specific skills"
+    status_message: |
+      For each prompt additional_skills entry, call get_skill(name=<skill>) on
+      gobby-skills. If the list is empty, proceed to implementation.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: additional_skills_loaded
+        value: >-
+          not vars.additional_skills
+          or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
+    transitions:
+      - to: implement
+        when: >-
+          not vars.additional_skills
+          or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
+
+  - name: implement
+    description: "Implement, validate, and hand off or close"
+    status_message: |
+      Implement the frontend leaf. Commit changes, then inspect the assigned
+      task manifest. If development review is disabled, close_task with
+      commit_sha; otherwise submit_for_review(stage_name="development") for QA.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:reopen_task"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: close_task
+        action: set_variable
+        variable: implementation_complete
+        value: true
+      - server: gobby-tasks-ops
+        tool: submit_for_review
+        action: set_variable
+        variable: implementation_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: implementation_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.implementation_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call end_agent_run to finish this agent run."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:end_agent_run"
+
+exit_condition: "current_step == 'terminate'"

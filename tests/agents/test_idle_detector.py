@@ -169,7 +169,9 @@ class TestClearState:
         assert state.reprompt_count == 0
 
     def test_clear_nonexistent_is_noop(self) -> None:
-        self.detector.clear_state("no-such-run")  # should not raise
+        result = self.detector.clear_state("no-such-run")
+        assert result is None
+        assert "no-such-run" not in self.detector._states
 
 
 class TestStatusBarFiltering:

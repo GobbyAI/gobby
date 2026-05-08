@@ -363,8 +363,9 @@ def register_pipeline_tools(
     @registry.tool(
         name="list_pipeline_executions",
         description=(
-            "List pipeline executions with optional filters. Returns execution summaries "
-            "with status distribution. Use brief=True (default) for compact output."
+            "List pipeline executions with optional filters and offset pagination. "
+            "Returns a page of executions plus a filter-scoped total and status_summary. "
+            "Use brief=True (default) for compact output."
         ),
     )
     def _list_pipeline_executions(
@@ -373,6 +374,7 @@ def register_pipeline_tools(
         session_id: str | None = None,
         parent_execution_id: str | None = None,
         limit: int = 50,
+        offset: int = 0,
         brief: bool = True,
         include_steps: bool = False,
     ) -> dict[str, Any]:
@@ -386,6 +388,7 @@ def register_pipeline_tools(
             session_id=session_id,
             parent_execution_id=parent_execution_id,
             limit=limit,
+            offset=offset,
             brief=brief,
             include_steps=include_steps,
         )
@@ -393,8 +396,9 @@ def register_pipeline_tools(
     @registry.tool(
         name="search_pipeline_executions",
         description=(
-            "Search pipeline executions by text. Matches pipeline names and optionally "
-            "step error messages. Combine with status filter to narrow results."
+            "Search pipeline executions by text with offset pagination. Matches "
+            "pipeline names and optionally step error messages. Combine with status "
+            "filter to narrow results. Returns a page plus a filter-scoped total."
         ),
     )
     def _search_pipeline_executions(
@@ -403,6 +407,7 @@ def register_pipeline_tools(
         search_outputs: bool = False,
         status: str | None = None,
         limit: int = 20,
+        offset: int = 0,
         include_steps: bool = False,
     ) -> dict[str, Any]:
         em = _get_execution_manager()
@@ -415,6 +420,7 @@ def register_pipeline_tools(
             search_outputs=search_outputs,
             status=status,
             limit=limit,
+            offset=offset,
             include_steps=include_steps,
         )
 

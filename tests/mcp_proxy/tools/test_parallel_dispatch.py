@@ -296,7 +296,7 @@ class TestSuggestNextTasks:
         tm.list_ready_tasks.return_value = [ready_task, ip_task]
 
         def list_tasks_side(**kwargs):
-            if kwargs.get("status") == "in_progress":
+            if kwargs.get("current_stage_state") == "in_progress":
                 return [ip_task]
             return []
 

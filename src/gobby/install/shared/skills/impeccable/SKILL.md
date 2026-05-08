@@ -16,11 +16,10 @@ Based on Anthropic's frontend-design skill (Copyright 2025 Anthropic, PBC, Apach
 See NOTICE.md in this directory for attribution.
 
 Upstream: https://github.com/pbakaus/impeccable
-Only the `impeccable` skill is vendored here. The 18 companion "steering commands"
-(shape, audit, polish, distill, animate, etc.) are not shipped — references to
-`shape` below point at an upstream command that is not available in this install.
-Adjust craft mode accordingly (confirm the design brief with the user directly
-instead of running `shape`).
+The `impeccable` skill ships with all 17 steering-command reference files
+(shape, audit, polish, distill, animate, etc.) bundled under `references/`.
+The dispatch table below loads them via `get_skill_file(name="impeccable",
+path="references/<cmd>.md")` on `gobby-skills`.
 -->
 
 This skill guides creation of distinctive, production-grade frontend interfaces that avoid generic "AI slop" aesthetics. Implement real working code with exceptional attention to aesthetic details and creative choices.

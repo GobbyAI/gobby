@@ -24,6 +24,37 @@ def _as_tuples(records):
     ]
 
 
+class _RecordingStorage:
+    def __init__(self, *, update_error: Exception | None = None) -> None:
+        self.db = MagicMock()
+        self.status_updates: list[tuple[str, str]] = []
+        self.update_error = update_error
+
+    def update_status(self, session_id: str, status: str) -> None:
+        if self.update_error is not None:
+            raise self.update_error
+        self.status_updates.append((session_id, status))
+
+
+class _RecordingProcessor:
+    def __init__(self) -> None:
+        self.unregistered: list[str] = []
+
+    def unregister_session(self, session_id: str) -> None:
+        self.unregistered.append(session_id)
+
+
+class _SummaryDispatch:
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.calls: list[tuple[str, bool, object | None]] = []
+        self.error = error
+
+    def __call__(self, session_id: str, background: bool, done_event: object | None) -> None:
+        if self.error is not None:
+            raise self.error
+        self.calls.append((session_id, background, done_event))
+
+
 @pytest.fixture
 def mock_session_storage():
     storage = MagicMock()
@@ -114,6 +145,7 @@ class TestCheckSessions:
 
         mock_dispatch_fn.assert_not_called()
         mock_session_storage.update_status.assert_not_called()
+        assert monitor._recently_handled == {}
 
     @pytest.mark.asyncio
     async def test_skips_recently_handled(self, monitor, mock_session_storage, mock_dispatch_fn):
@@ -128,6 +160,7 @@ class TestCheckSessions:
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_not_called()
+        assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
     async def test_handles_missing_parent_pid(
@@ -141,6 +174,7 @@ class TestCheckSessions:
         await monitor._check_sessions()
 
         mock_dispatch_fn.assert_not_called()
+        assert monitor._recently_handled == {}
 
     @pytest.mark.asyncio
     async def test_handles_invalid_json(self, monitor, mock_session_storage, mock_dispatch_fn):
@@ -152,6 +186,7 @@ class TestCheckSessions:
         await monitor._check_sessions()
 
         mock_dispatch_fn.assert_not_called()
+        assert monitor._recently_handled == {}
 
     @pytest.mark.asyncio
     async def test_handles_empty_results(self, monitor, mock_session_storage, mock_dispatch_fn):
@@ -161,6 +196,7 @@ class TestCheckSessions:
         await monitor._check_sessions()
 
         mock_dispatch_fn.assert_not_called()
+        assert monitor._recently_handled == {}
 
     @pytest.mark.asyncio
     async def test_multiple_sessions_mixed(self, monitor, mock_session_storage, mock_dispatch_fn):
@@ -178,6 +214,7 @@ class TestCheckSessions:
 
         mock_dispatch_fn.assert_called_once_with("dead", False, None)
         mock_session_storage.update_status.assert_called_once_with("dead", "expired")
+        assert set(monitor._recently_handled) == {"dead"}
 
     @pytest.mark.asyncio
     async def test_recently_handled_ttl_expiry(
@@ -198,6 +235,7 @@ class TestCheckSessions:
 
         # TTL expired, so s1 should be processed again
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
+        assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
     async def test_dead_pid_live_tmux_pane_expires(
@@ -303,6 +341,7 @@ class TestCheckSessions:
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
         mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
     async def test_tmux_command_failure_falls_back_to_live_pid(
@@ -328,6 +367,7 @@ class TestCheckSessions:
 
         mock_dispatch_fn.assert_not_called()
         mock_session_storage.update_status.assert_not_called()
+        assert monitor._recently_handled == {}
 
     @pytest.mark.asyncio
     async def test_dead_pid_no_tmux_pane_expires(
@@ -346,6 +386,7 @@ class TestCheckSessions:
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
         mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        assert set(monitor._recently_handled) == {"s1"}
 
     @pytest.mark.asyncio
     async def test_legacy_pane_only_live_tmux_pane_retained(
@@ -369,6 +410,7 @@ class TestCheckSessions:
         mock_dispatch_fn.assert_not_called()
         mock_session_storage.update_status.assert_not_called()
         mock_session_storage.touch.assert_called_once_with("s1")
+        assert monitor._recently_handled == {}
 
     @pytest.mark.asyncio
     async def test_legacy_pane_only_missing_tmux_pane_expires(
@@ -392,49 +434,67 @@ class TestCheckSessions:
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
         mock_session_storage.update_status.assert_called_once_with("s1", "expired")
         mock_session_storage.touch.assert_not_called()
+        assert set(monitor._recently_handled) == {"s1"}
 
 
 class TestExpireSession:
     """Tests for _expire_session."""
 
     @pytest.mark.asyncio
-    async def test_dispatches_summaries_and_expires(
-        self, monitor, mock_session_storage, mock_dispatch_fn, mock_processor
-    ):
+    async def test_dispatches_summaries_and_expires(self):
         """Full expire flow: dispatch summaries, update status, unregister."""
+        storage = _RecordingStorage()
+        dispatch = _SummaryDispatch()
+        processor = _RecordingProcessor()
+        monitor = SessionLivenessMonitor(
+            session_storage=storage,
+            dispatch_summaries_fn=dispatch,
+            message_processor=processor,
+        )
+
         await monitor._expire_session("s1")
 
-        mock_dispatch_fn.assert_called_once_with("s1", False, None)
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
-        mock_processor.unregister_session.assert_called_once_with("s1")
+        assert dispatch.calls == [("s1", False, None)]
+        assert storage.status_updates == [("s1", "expired")]
+        assert processor.unregistered == ["s1"]
 
     @pytest.mark.asyncio
-    async def test_summary_dispatch_failure_continues(
-        self, monitor, mock_session_storage, mock_dispatch_fn
-    ):
+    async def test_summary_dispatch_failure_continues(self):
         """If summary dispatch fails, session is still expired."""
-        mock_dispatch_fn.side_effect = Exception("LLM down")
+        storage = _RecordingStorage()
+        dispatch = _SummaryDispatch(error=Exception("LLM down"))
+        monitor = SessionLivenessMonitor(
+            session_storage=storage,
+            dispatch_summaries_fn=dispatch,
+        )
 
         await monitor._expire_session("s1")
 
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        assert dispatch.calls == []
+        assert storage.status_updates == [("s1", "expired")]
 
     @pytest.mark.asyncio
-    async def test_status_update_failure_logged(
-        self, monitor, mock_session_storage, mock_dispatch_fn
-    ):
+    async def test_status_update_failure_logged(self):
         """If status update fails, no crash."""
-        mock_session_storage.update_status.side_effect = Exception("DB error")
+        storage = _RecordingStorage(update_error=Exception("DB error"))
+        dispatch = _SummaryDispatch()
+        monitor = SessionLivenessMonitor(
+            session_storage=storage,
+            dispatch_summaries_fn=dispatch,
+        )
 
         # Should not raise
         await monitor._expire_session("s1")
+        assert dispatch.calls == [("s1", False, None)]
+        assert storage.status_updates == []
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_generate_fn(self, mock_session_storage, mock_processor):
+    async def test_falls_back_to_generate_fn(self, mock_processor):
         """Uses generate_summaries_fn when dispatch_summaries_fn is not available."""
+        storage = _RecordingStorage()
         gen_fn = AsyncMock()
         mon = SessionLivenessMonitor(
-            session_storage=mock_session_storage,
+            session_storage=storage,
             dispatch_summaries_fn=None,
             generate_summaries_fn=gen_fn,
             message_processor=mock_processor,
@@ -443,13 +503,14 @@ class TestExpireSession:
         await mon._expire_session("s1")
 
         gen_fn.assert_awaited_once_with("s1")
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        assert storage.status_updates == [("s1", "expired")]
 
     @pytest.mark.asyncio
-    async def test_no_summary_fn_still_expires(self, mock_session_storage, mock_processor):
+    async def test_no_summary_fn_still_expires(self, mock_processor):
         """If neither summary function is available, session is still expired."""
+        storage = _RecordingStorage()
         mon = SessionLivenessMonitor(
-            session_storage=mock_session_storage,
+            session_storage=storage,
             dispatch_summaries_fn=None,
             generate_summaries_fn=None,
             message_processor=mock_processor,
@@ -457,7 +518,7 @@ class TestExpireSession:
 
         await mon._expire_session("s1")
 
-        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+        assert storage.status_updates == [("s1", "expired")]
 
 
 class TestIsPidAlive:

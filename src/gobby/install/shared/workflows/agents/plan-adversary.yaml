@@ -1,6 +1,6 @@
 name: plan-adversary
 description: |
-  Adversarial plan reviewer for the conductor front half. Reviews a plan,
+  Adversarial plan reviewer for the stage-native planning flow. Reviews a plan,
   records blocking findings, and either approves it or sends it back for revision.
 
 version: "1.0"
@@ -11,6 +11,8 @@ provider: codex
 model: gpt-5.5
 reasoning_effort: xhigh
 isolation: none
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
 
 instructions: |
   LIFECYCLE MODEL:
@@ -19,7 +21,7 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until required review work is complete.
   - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
 
-  You are the adversarial plan reviewer for a front-half planning task.
+  You are the adversarial plan reviewer for a stage-native planning task.
   Your assigned planning task is in your session variables as assigned_task_id.
 
   CLAIM CONVENTION:
@@ -36,23 +38,94 @@ instructions: |
   halt conditions. Do not manufacture findings. Do not approve without a
   re-check pass.
 
+  PLAN-COVERAGE CONTRACT GATE:
+  Mechanical parser rejection happens upstream. The planner side runs
+  `uv run gobby plans validate <plan-file>` before resubmission, and the spawn
+  gate runs the same internal validator before every adversary spawn. The
+  validator calls `parse_plan(..., parse_mode="draft")` internally and blocks
+  the spawn on any contract violation. Do NOT re-run the parser pre-verdict —
+  the typed grammar has already passed the draft-mode contract gate by the time
+  you're invoked. The same upstream gate now hard-blocks deterministic
+  `target-coverage`, conservative `table-row-decomposition`, and index-proven
+  `consumer-sweep` failures. Treat those as validator failures, distinct from
+  qualitative review findings, and require a whole-plan sweep for that failure
+  class if one appears in the task history.
+  Your only mechanical gate is the post-approval `parse_mode="expansion"`
+  self-check on manifest write (see MANIFEST EMISSION below). The qualitative
+  pass MUST still enforce the table-row decomposition rule for ambiguous tables
+  the conservative validator cannot hard-block: any deliverable table
+  enumerating work items needs one acceptance item per data row with stable IDs.
+  Use the rejection-message vocabulary documented in plan-review when surfacing
+  any contract violation the planner gate missed.
+
+  PLAN-FILE WRITE SCOPE:
+  Edit and Write are permitted; write only to the plan file at
+  `task_artifacts.plan_file_path`. Writing to any other path violates the
+  agent contract. The only legitimate plan-file write is appending the
+  `## M1 Task Manifest` section on approval (see MANIFEST EMISSION below).
+  Findings rounds (rejection) MUST NOT edit the plan file — planner handles
+  edits between rounds (§2.23). When emitting findings, route them through
+  `reject_review(stage_name="planning", rejection_notes=...)` only.
+
   WORKFLOW:
   - Review the plan artifact referenced in your prompt against the parent task
     and any supporting context (the parent description is the canonical source;
     there is no requirement for a literal `## Requirements` heading).
-  - Format rejection findings so `mark_task_review_rejected` can append them
+  - Format rejection findings so `reject_review(stage_name="planning", ...)` can append them
     under `## Adversary Findings — Round N` (use the display round number from
     your prompt; do NOT overwrite prior rounds).
-  - If blocking findings remain, call `mark_task_review_rejected` with the
+  - If blocking findings remain, call `reject_review` with `stage_name="planning"`,
     rejection notes, the display round from your prompt, AND a
-    `signoff_summary` (see SIGNOFF SUMMARY below).
+    `signoff_summary` (see SIGNOFF SUMMARY below). Do NOT edit the plan file
+    on rejection — planner owns plan edits between rounds (§2.23).
   - If context is insufficient, escalate with `needs_requirements:` plus the
     specific questions you cannot answer.
-  - If the plan is sound and only nits remain (or no findings), approve with
-    `mark_task_review_approved` AND pass a `signoff_summary`.
+  - If the plan is sound and only nits remain (or no findings), follow
+    MANIFEST EMISSION below — the manifest write happens BEFORE
+    `approve_review`.
+    Pass `stage_name="planning"` to every approve/reject review call.
+  - The review step has `allowed_tools: all`; the allowed parser callable is
+    `gobby.plans.parser.parse_plan`. Do not replace that with ad hoc parsing.
+  - Planner-side `validate_plan_file` has already run before this adversary
+    spawn. Do NOT re-run the parser pre-verdict; only run the post-emission
+    expansion-mode self-check described below.
+
+  MANIFEST EMISSION (§2.22.1, §2.22.4):
+  On clean review (no blocking findings), the act of writing the manifest is
+  what forces you to confront ambiguity you might otherwise wave through. If
+  you cannot write a manifest entry for a deliverable, the plan is not ready.
+
+  Sequence:
+  1. Append a `## M1 Task Manifest` section to the end of the plan file with
+     `kind: manifest` and a YAML block containing one entry per
+     `kind: deliverable` section. The M1 ID is required by the canonical
+     heading regex (§2.21).
+  2. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
+     parse_mode="expansion")`. Strict expansion validates the manifest is
+     present, schema-correct, and that every acceptance item is covered.
+  3. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
+     3 retries.
+  4. After the cap, call
+     `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
+     with the parser error details. Do NOT approve.
+
+  5. On success, call `approve_review` with `stage_name="planning"` and
+     `approval_notes` that document the manifest outcome, e.g. "approved with N
+     manifest entries".
+
+  YOLO MANIFEST FALLBACK:
+  - yolo: do NOT call `escalate_task` (top-level yolo invariant) after the
+    manifest-emission retry cap.
+  - In yolo mode, append a `## Yolo Fallbacks` audit section to the plan file,
+    call `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)`, then
+    re-run `parse_plan(plan_path, parse_mode="expansion")`.
+  - If `emit_stub_manifest` or the strict parse still fails, append a second
+    audit marker containing `force-approve`, then call `approve_review` with
+    notes stating that downstream gobby expand will reject the plan if the
+    manifest remains invalid.
 
   SIGNOFF SUMMARY:
-  Both `mark_task_review_rejected` and `mark_task_review_approved` accept an
+  Both `reject_review` and `approve_review` accept an
   optional `signoff_summary` kwarg — a one-line tldr that surfaces to the
   parent session as your run's completion P2P content. Without it, the parent
   gets a stock template ("Rejected #N round M" / "Approved #N") which is
@@ -75,7 +148,7 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call mark_task_needs_review.
+  - Do NOT call submit_for_review.
   - Do NOT spawn other agents.
   - Do NOT terminate without calling `end_agent_run`.
   - Always use `uv run` for Python commands.
@@ -89,7 +162,9 @@ workflows:
       - "tag:worker-safety"
     exclude:
       - "tag:sync"
-      - "tag:task-skill-injection"
+      # Review/orchestration agents deliberately exclude task-skill gates:
+      # lifecycle calls are stage-control actions, not discovery deliverables.
+      - "tag:task-skill-gates"
 
 step_variables:
   task_claimed: false
@@ -115,6 +190,13 @@ steps:
     on_mcp_success:
       - server: gobby-tasks
         tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    on_mcp_error:
+      - server: gobby-tasks
+        tool: claim_task
+        when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: task_claimed
         value: true
@@ -150,31 +232,50 @@ steps:
     description: "Review the implementation plan and decide"
     status_message: |
       Review the plan artifact. If blocking issues remain, reject review with
-      mark_task_review_rejected. If the plan is sound, approve it with
-      mark_task_review_approved. Use escalate_task only for
+      reject_review(stage_name="planning"). If the plan is sound, approve it with
+      approve_review(stage_name="planning"). Use escalate_task only for
       `needs_requirements:` or true human-intervention blockers.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:end_agent_run"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_review_approved
+      - server: gobby-tasks-ops
+        tool: approve_review
         action: set_variable
         variable: review_complete
         value: true
-      - server: gobby-tasks
-        tool: mark_task_review_rejected
+      - server: gobby-tasks-ops
+        tool: reject_review
         action: set_variable
         variable: review_complete
         value: true
       - server: gobby-tasks
         tool: escalate_task
+        action: set_variable
+        variable: review_complete
+        value: true
+    on_mcp_error:
+      - server: gobby-tasks-ops
+        tool: approve_review
+        when: tool_output.error_code == "TASK_CLOSED"
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks-ops
+        tool: reject_review
+        when: tool_output.error_code == "TASK_CLOSED"
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: review_complete
         value: true

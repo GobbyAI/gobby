@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.storage.tasks import Task
+from gobby.tasks.state_semantics import is_task_closed
 
 if TYPE_CHECKING:
     from gobby.config.tasks import TaskValidationConfig
@@ -103,7 +104,7 @@ def validate_parent_task(
     children = ctx.task_manager.list_tasks(parent_task_id=task_id, limit=1000)
 
     if children:
-        open_children = [c for c in children if c.status != "closed"]
+        open_children = [c for c in children if not is_task_closed(c)]
         if open_children:
             open_titles = [f"- {c.id}: {c.title}" for c in open_children[:5]]
             remaining = len(open_children) - 5 if len(open_children) > 5 else 0

@@ -34,7 +34,10 @@ from gobby.cli.tasks.crud import (
 from gobby.cli.tasks.deps import dep_cmd
 from gobby.cli.tasks.expand import expand_cmd
 from gobby.cli.tasks.labels import label_cmd
+from gobby.cli.tasks.repair import repair_lifecycle_cmd
+from gobby.cli.tasks.review import review_cmd
 from gobby.cli.tasks.search import reindex_tasks, search_tasks
+from gobby.cli.tasks.stages import advance_cmd, stages_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,10 @@ tasks.add_command(suggest_cmd)
 # Register search commands
 tasks.add_command(search_tasks)
 tasks.add_command(reindex_tasks)
+tasks.add_command(stages_cmd)
+tasks.add_command(advance_cmd)
+tasks.add_command(review_cmd)
+tasks.add_command(repair_lifecycle_cmd)
 
 
 @tasks.command("sync")

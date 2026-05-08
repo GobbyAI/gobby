@@ -1,0 +1,57 @@
+tags: [brevity, gobby, default]
+
+rules:
+  opt-out-brevity:
+    description: "Allow exact user prompts to disable brevity for the session"
+    event: turn_start
+    enabled: true
+    priority: 18
+    when: >
+      ((event.data.get('prompt') or event.data.get('user_prompt') or '').strip().lower())
+      in ('stop brevity', 'normal mode')
+    effects:
+      - type: set_variable
+        variable: brevity_disabled
+        value: true
+
+  load-brevity-on-turn-start:
+    description: "Load brevity while it is enabled"
+    event: turn_start
+    enabled: true
+    priority: 20
+    when: "not variables.get('brevity_disabled') and not skill_loaded('brevity')"
+    effects:
+      - type: load_skill
+        skill: brevity
+
+  inject-brevity-drift-feedback:
+    description: "Carry the last brevity drift match into the next turn"
+    event: turn_start
+    enabled: true
+    priority: 21
+    when: >
+      skill_loaded('brevity')
+      and not variables.get('brevity_disabled')
+      and variables.get('brevity_last_violation')
+    effects:
+      - type: inject_context
+        template: >
+          Brevity drift detected last turn: {{ brevity_last_violation_rule }}
+          matched `{{ brevity_last_violation }}`. Answer directly; remove filler
+          and contrastive framing.
+      - type: set_variable
+        variable: brevity_last_violation
+        value: ""
+      - type: set_variable
+        variable: brevity_last_violation_rule
+        value: ""
+
+  remind-brevity-on-turn-start:
+    description: "Reinforce brevity on every turn after the skill is loaded"
+    event: turn_start
+    enabled: true
+    priority: 22
+    when: "skill_loaded('brevity') and not variables.get('brevity_disabled')"
+    effects:
+      - type: inject_context
+        template: "Brevity reminder: answer first; keep context tight."

@@ -520,19 +520,14 @@ class TestAgentsListCommand:
     ) -> None:
         """Test list with no agent runs."""
         mock_manager = MagicMock()
-        mock_manager.list_running.return_value = []
+        mock_manager.list_by_status.return_value = []
         mock_get_manager.return_value = mock_manager
 
-        # Need to mock the database query for the default case
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = []
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list"])
-
-            assert result.exit_code == 0
-            assert "No agent runs found" in result.output
+        assert result.exit_code == 0
+        assert "No agent runs found" in result.output
+        mock_manager.list_by_status.assert_called_once_with(status=None, limit=20)
 
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_list_with_runs(
@@ -543,38 +538,16 @@ class TestAgentsListCommand:
     ) -> None:
         """Test list displays agent runs."""
         mock_manager = MagicMock()
+        mock_manager.list_by_status.return_value = [mock_agent_run]
         mock_get_manager.return_value = mock_manager
 
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = [
-                {
-                    "id": mock_agent_run.id,
-                    "parent_session_id": mock_agent_run.parent_session_id,
-                    "child_session_id": mock_agent_run.child_session_id,
-                    "workflow_name": mock_agent_run.workflow_name,
-                    "provider": mock_agent_run.provider,
-                    "model": mock_agent_run.model,
-                    "status": mock_agent_run.status,
-                    "prompt": mock_agent_run.prompt,
-                    "result": mock_agent_run.result,
-                    "error": mock_agent_run.error,
-                    "tool_calls_count": mock_agent_run.tool_calls_count,
-                    "turns_used": mock_agent_run.turns_used,
-                    "started_at": mock_agent_run.started_at,
-                    "completed_at": mock_agent_run.completed_at,
-                    "created_at": mock_agent_run.created_at,
-                    "updated_at": mock_agent_run.updated_at,
-                }
-            ]
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list"])
-
-            assert result.exit_code == 0
-            assert "Found 1 agent run" in result.output
-            assert "ar-abc123def" in result.output  # Truncated ID (12 chars)
-            assert "running" in result.output
+        assert result.exit_code == 0
+        assert "Found 1 agent run" in result.output
+        assert "ar-abc123def" in result.output  # Truncated ID (12 chars)
+        assert "running" in result.output
+        mock_manager.list_by_status.assert_called_once_with(status=None, limit=20)
 
     @patch("gobby.cli.agents.resolve_session_id")
     @patch("gobby.cli.agents.get_agent_run_manager")
@@ -625,36 +598,14 @@ class TestAgentsListCommand:
     ) -> None:
         """Test list filtered by non-running status."""
         mock_manager = MagicMock()
+        mock_manager.list_by_status.return_value = [mock_completed_run]
         mock_get_manager.return_value = mock_manager
 
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = [
-                {
-                    "id": mock_completed_run.id,
-                    "parent_session_id": mock_completed_run.parent_session_id,
-                    "child_session_id": mock_completed_run.child_session_id,
-                    "workflow_name": mock_completed_run.workflow_name,
-                    "provider": mock_completed_run.provider,
-                    "model": mock_completed_run.model,
-                    "status": mock_completed_run.status,
-                    "prompt": mock_completed_run.prompt,
-                    "result": mock_completed_run.result,
-                    "error": mock_completed_run.error,
-                    "tool_calls_count": mock_completed_run.tool_calls_count,
-                    "turns_used": mock_completed_run.turns_used,
-                    "started_at": mock_completed_run.started_at,
-                    "completed_at": mock_completed_run.completed_at,
-                    "created_at": mock_completed_run.created_at,
-                    "updated_at": mock_completed_run.updated_at,
-                }
-            ]
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list", "--status", "success"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list", "--status", "success"])
-
-            assert result.exit_code == 0
-            assert "success" in result.output
+        assert result.exit_code == 0
+        assert "success" in result.output
+        mock_manager.list_by_status.assert_called_once_with(status="success", limit=20)
 
     @patch("gobby.cli.agents.resolve_session_id")
     @patch("gobby.cli.agents.get_agent_run_manager")
@@ -687,19 +638,13 @@ class TestAgentsListCommand:
     ) -> None:
         """Test list with custom limit."""
         mock_manager = MagicMock()
+        mock_manager.list_by_status.return_value = []
         mock_get_manager.return_value = mock_manager
 
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = []
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list", "--limit", "5"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list", "--limit", "5"])
-
-            assert result.exit_code == 0
-            # Verify limit was passed
-            query, params = mock_db.fetchall.call_args[0]
-            assert 5 in params
+        assert result.exit_code == 0
+        mock_manager.list_by_status.assert_called_once_with(status=None, limit=5)
 
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_list_json_output(
@@ -710,39 +655,16 @@ class TestAgentsListCommand:
     ) -> None:
         """Test list with JSON output."""
         mock_manager = MagicMock()
+        mock_manager.list_by_status.return_value = [mock_agent_run]
         mock_get_manager.return_value = mock_manager
 
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = [
-                {
-                    "id": mock_agent_run.id,
-                    "parent_session_id": mock_agent_run.parent_session_id,
-                    "child_session_id": mock_agent_run.child_session_id,
-                    "workflow_name": mock_agent_run.workflow_name,
-                    "provider": mock_agent_run.provider,
-                    "model": mock_agent_run.model,
-                    "status": mock_agent_run.status,
-                    "prompt": mock_agent_run.prompt,
-                    "result": mock_agent_run.result,
-                    "error": mock_agent_run.error,
-                    "tool_calls_count": mock_agent_run.tool_calls_count,
-                    "turns_used": mock_agent_run.turns_used,
-                    "started_at": mock_agent_run.started_at,
-                    "completed_at": mock_agent_run.completed_at,
-                    "created_at": mock_agent_run.created_at,
-                    "updated_at": mock_agent_run.updated_at,
-                }
-            ]
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list", "--json"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list", "--json"])
-
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert isinstance(data, list)
-            assert len(data) == 1
-            assert data[0]["id"] == mock_agent_run.id
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["id"] == mock_agent_run.id
 
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_list_status_icons(
@@ -765,34 +687,17 @@ class TestAgentsListCommand:
         ]
 
         for status, _icon in statuses:
-            with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-                mock_db = MagicMock()
-                mock_db.fetchall.return_value = [
-                    {
-                        "id": f"ar-{status}",
-                        "parent_session_id": "sess-123",
-                        "child_session_id": None,
-                        "workflow_name": None,
-                        "provider": "claude",
-                        "model": None,
-                        "status": status,
-                        "prompt": "Test",
-                        "result": None,
-                        "error": None,
-                        "tool_calls_count": 0,
-                        "turns_used": 0,
-                        "started_at": None,
-                        "completed_at": None,
-                        "created_at": "2024-01-01",
-                        "updated_at": "2024-01-01",
-                    }
-                ]
-                mock_db_cls.return_value = mock_db
+            run = MagicMock()
+            run.id = f"ar-{status}"
+            run.status = status
+            run.provider = "claude"
+            run.prompt = "Test"
+            mock_manager.list_by_status.return_value = [run]
 
-                result = runner.invoke(cli, ["agents", "runs", "list"])
+            result = runner.invoke(cli, ["agents", "runs", "list"])
 
-                assert result.exit_code == 0
-                assert status in result.output
+            assert result.exit_code == 0
+            assert status in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_list_truncates_long_prompts(
@@ -805,37 +710,19 @@ class TestAgentsListCommand:
         mock_get_manager.return_value = mock_manager
 
         long_prompt = "A" * 100  # 100 characters
+        run = MagicMock()
+        run.id = "ar-long"
+        run.status = "running"
+        run.provider = "claude"
+        run.prompt = long_prompt
+        mock_manager.list_by_status.return_value = [run]
 
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = [
-                {
-                    "id": "ar-long",
-                    "parent_session_id": "sess-123",
-                    "child_session_id": None,
-                    "workflow_name": None,
-                    "provider": "claude",
-                    "model": None,
-                    "status": "running",
-                    "prompt": long_prompt,
-                    "result": None,
-                    "error": None,
-                    "tool_calls_count": 0,
-                    "turns_used": 0,
-                    "started_at": None,
-                    "completed_at": None,
-                    "created_at": "2024-01-01",
-                    "updated_at": "2024-01-01",
-                }
-            ]
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list"])
-
-            assert result.exit_code == 0
-            # Should truncate to 40 chars + ...
-            assert "..." in result.output
-            assert "A" * 40 in result.output
+        assert result.exit_code == 0
+        # Should truncate to 40 chars + ...
+        assert "..." in result.output
+        assert "A" * 40 in result.output
 
 
 # ==============================================================================
@@ -1693,7 +1580,11 @@ class TestHelperFunctions:
         result = get_agent_run_manager()
 
         mock_db_cls.assert_called_once()
+        assert mock_db_cls.call_count == 1
+        assert mock_db_cls.call_args is not None
         mock_manager_cls.assert_called_once_with(mock_db)
+        assert mock_manager_cls.call_count == 1
+        assert mock_manager_cls.call_args is not None
         assert result == mock_manager
 
     @patch("gobby.config.app.load_config")
@@ -1726,41 +1617,24 @@ class TestEdgeCases:
     ) -> None:
         """Test list handles prompts with newlines."""
         mock_manager = MagicMock()
+        run = MagicMock()
+        run.id = "ar-multiline"
+        run.status = "running"
+        run.provider = "claude"
+        run.prompt = "Line 1\nLine 2\nLine 3"
+        mock_manager.list_by_status.return_value = [run]
         mock_get_manager.return_value = mock_manager
 
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = [
-                {
-                    "id": "ar-multiline",
-                    "parent_session_id": "sess-123",
-                    "child_session_id": None,
-                    "workflow_name": None,
-                    "provider": "claude",
-                    "model": None,
-                    "status": "running",
-                    "prompt": "Line 1\nLine 2\nLine 3",
-                    "result": None,
-                    "error": None,
-                    "tool_calls_count": 0,
-                    "turns_used": 0,
-                    "started_at": None,
-                    "completed_at": None,
-                    "created_at": "2024-01-01",
-                    "updated_at": "2024-01-01",
-                }
-            ]
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list"])
-
-            assert result.exit_code == 0
-            # Prompt in the list output should not contain raw newlines (they are replaced)
-            # The output should have "Line 1 Line 2 Line 3" on a single row, not multiple lines
-            lines = result.output.strip().split("\n")
-            # Find the line with the agent run info
-            run_lines = [line for line in lines if "ar-multiline" in line]
-            assert len(run_lines) == 1  # Should be on a single line
+        assert result.exit_code == 0
+        mock_manager.list_by_status.assert_called_once_with(status=None, limit=20)
+        # Prompt in the list output should not contain raw newlines (they are replaced)
+        # The output should have "Line 1 Line 2 Line 3" on a single row, not multiple lines
+        lines = result.output.strip().split("\n")
+        # Find the line with the agent run info
+        run_lines = [line for line in lines if "ar-multiline" in line]
+        assert len(run_lines) == 1  # Should be on a single line
 
     @patch("gobby.cli.agents.resolve_agent_run_id")
     @patch("gobby.cli.agents.get_agent_run_manager")

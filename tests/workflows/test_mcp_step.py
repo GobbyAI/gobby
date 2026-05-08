@@ -244,12 +244,16 @@ class TestExecuteMCPStep:
             "list_pipeline_executions",
             session_id="pipeline-session-123",
         )
+        assert mock_tool_proxy.get_tool_schema.call_count == 1
+        assert mock_tool_proxy.get_tool_schema.call_args is not None
         mock_tool_proxy.call_tool.assert_called_once_with(
             "gobby-workflows",
             "list_pipeline_executions",
             {},
             session_id="pipeline-session-123",
         )
+        assert mock_tool_proxy.call_tool.call_count == 1
+        assert mock_tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_mcp_step_no_arguments(self, mock_tool_proxy) -> None:
@@ -263,9 +267,13 @@ class TestExecuteMCPStep:
         await execute_mcp_step(step, context, lambda: mock_tool_proxy)
 
         mock_tool_proxy.get_tool_schema.assert_not_called()
+        assert mock_tool_proxy.get_tool_schema.call_count == 0
+        assert not mock_tool_proxy.get_tool_schema.called
         mock_tool_proxy.call_tool.assert_called_once_with(
             "gobby-agents", "wait_for_agent", {}, session_id=None
         )
+        assert mock_tool_proxy.call_tool.call_count == 1
+        assert mock_tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_mcp_step_raises_without_tool_proxy_getter(self) -> None:
@@ -429,7 +437,11 @@ class TestMCPStepInPipelineExecute:
         await executor.execute(pipeline=pipeline, inputs={}, project_id="proj-123")
 
         mock_tool_proxy.call_tool.assert_called_once()
+        assert mock_tool_proxy.call_tool.call_count == 1
+        assert mock_tool_proxy.call_tool.call_args is not None
         mock_execution_manager.create_step_execution.assert_called_once()
+        assert mock_execution_manager.create_step_execution.call_count == 1
+        assert mock_execution_manager.create_step_execution.call_args is not None
 
 
 # =============================================================================

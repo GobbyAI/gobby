@@ -1,5 +1,6 @@
 import type { ToolCall, ToolResult } from '../../types/chat'
 import { classifyTool } from '../../types/chat'
+import { extractImageSrc } from '../../lib/imageSources'
 
 const FILE_TOOL_TYPES = new Set(['read', 'edit'])
 const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob', 'protocol'])
@@ -22,8 +23,6 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
   rs: 'rust', go: 'go', rb: 'ruby', java: 'java', c: 'c', cpp: 'cpp',
   h: 'c', hpp: 'cpp', toml: 'toml', xml: 'xml', svg: 'xml',
 }
-const DATA_URI_RE = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/
-
 export function formatToolName(fullName: string): string {
   const parts = fullName.split('__')
   return parts[parts.length - 1] || fullName
@@ -69,7 +68,7 @@ export function getToolDisplayName(call: ToolCall): string {
 function isTypedResult(result: unknown): result is ToolResult {
   if (typeof result !== 'object' || result === null) return false
   const obj = result as Record<string, unknown>
-  return 'content' in obj && 'content_type' in obj
+  return 'content' in obj && 'kind' in obj
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -161,6 +160,18 @@ export function extractResultMetadata(
 ): Record<string, unknown> | undefined {
   if (!isTypedResult(result)) return normalizeDisplayResult(result).metadata
   return normalizeDisplayResult(result.content, result.metadata).metadata
+}
+
+export function extractShellOutputContent(content: unknown): unknown {
+  const parsedContent = typeof content === 'string' ? tryParseJsonValue(content) : content
+  if (!isRecord(parsedContent)) return content
+
+  const keys = Object.keys(parsedContent)
+  if (keys.length === 1 && typeof parsedContent.output === 'string') {
+    return parsedContent.output
+  }
+
+  return content
 }
 
 export function getToolSummary(call: ToolCall): string | null {
@@ -272,7 +283,7 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
       j++
     }
 
-    if (j - i >= 2) {
+    if (j - i >= 3) {
       const calls = toolCalls.slice(i, j)
       segments.push({
         kind: 'group',
@@ -284,7 +295,9 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
         hasInFlight: calls.some((entry) => entry.status === 'calling'),
       })
     } else {
-      segments.push({ kind: 'single', call })
+      for (let k = i; k < j; k++) {
+        segments.push({ kind: 'single', call: toolCalls[k] })
+      }
     }
 
     i = j
@@ -411,41 +424,186 @@ export function computeLineDiff(
 }
 
 export function extractBase64Image(result: unknown): string | null {
-  if (typeof result === 'string' && DATA_URI_RE.test(result)) return result
-  if (typeof result !== 'object' || result === null) return null
+  return extractImageSrc(result)
+}
 
-  const obj = result as Record<string, unknown>
-  if (obj.type === 'image' && typeof obj.source === 'object' && obj.source !== null) {
-    const src = obj.source as Record<string, unknown>
-    if (
-      src.type === 'base64' &&
-      typeof src.data === 'string' &&
-      typeof src.media_type === 'string'
-    ) {
-      return `data:${src.media_type};base64,${src.data}`
+export interface GsqzMetadata {
+  chunkId?: string
+  wallTimeSeconds?: number
+  exitCode?: number
+  tokenCount?: number
+  strategy?: string
+  reduction?: string
+}
+
+const GSQZ_FALLBACK_RE =
+  /^\[Output compressed by gsqz\s*[—-]\s*([A-Za-z0-9_-]+)(?:,\s*([\d.]+%\s*reduction))?\][^\n]*\n\[gsqz:[^\]]+\]\n/
+const CHUNK_HEADER_RE =
+  /^Chunk ID:\s*([^\n]+)\n((?:[A-Za-z][^\n]*\n)*?)Output:\n/
+
+export function parseGsqzWrapper(
+  text: string,
+): { metadata: GsqzMetadata; body: string } | null {
+  if (typeof text !== 'string' || text.length === 0) return null
+
+  const fallback = text.match(GSQZ_FALLBACK_RE)
+  if (fallback) {
+    return {
+      metadata: {
+        strategy: fallback[1],
+        reduction: fallback[2],
+      },
+      body: text.slice(fallback[0].length),
     }
   }
 
-  if (Array.isArray(result)) {
-    for (const item of result) {
-      const found = extractBase64Image(item)
-      if (found) return found
+  const chunk = text.match(CHUNK_HEADER_RE)
+  if (chunk) {
+    const metadata: GsqzMetadata = { chunkId: chunk[1].trim() }
+    const headerLines = chunk[2].split('\n').filter((line) => line.length > 0)
+    for (const line of headerLines) {
+      const wallTime = line.match(/^Wall time:\s*([\d.]+)/i)
+      if (wallTime) {
+        metadata.wallTimeSeconds = parseFloat(wallTime[1])
+        continue
+      }
+      const exit = line.match(/^Process exited with code\s+(-?\d+)/i)
+      if (exit) {
+        metadata.exitCode = parseInt(exit[1], 10)
+        continue
+      }
+      const tokens = line.match(/^Original token count:\s*(\d+)/i)
+      if (tokens) {
+        metadata.tokenCount = parseInt(tokens[1], 10)
+        continue
+      }
+    }
+    return { metadata, body: text.slice(chunk[0].length) }
+  }
+
+  return null
+}
+
+const PRIMARY_ENVELOPE_FIELDS = ['output', 'content', 'text', 'stdout'] as const
+
+export interface McpEnvelopeUnwrap {
+  primary: string
+  meta: Record<string, unknown>
+}
+
+export function unwrapMcpResultEnvelope(value: unknown): McpEnvelopeUnwrap | null {
+  const parsed = typeof value === 'string' ? tryParseJsonValue(value) : value
+  if (!isRecord(parsed)) return null
+
+  if (Array.isArray(parsed.content) && parsed.content.length > 0) {
+    const first = parsed.content[0]
+    if (isRecord(first) && first.type === 'text' && typeof first.text === 'string') {
+      const { content: _content, ...rest } = parsed
+      return { primary: first.text, meta: rest }
+    }
+  }
+
+  for (const field of PRIMARY_ENVELOPE_FIELDS) {
+    const candidate = parsed[field]
+    if (typeof candidate === 'string') {
+      const { [field]: _drop, ...rest } = parsed
+      return { primary: candidate, meta: rest }
     }
   }
 
   return null
 }
 
-export function buildChainSummary(toolCalls: ToolCall[]): string {
-  const counts = new Map<string, number>()
-  for (const toolCall of toolCalls) {
-    const name = getToolDisplayName(toolCall)
-    counts.set(name, (counts.get(name) || 0) + 1)
+const READ_ONLY_FIRST_WORDS = new Set([
+  'cat', 'head', 'tail', 'less', 'more',
+  'ls', 'll', 'la', 'tree',
+  'find', 'locate',
+  'grep', 'rg', 'ag', 'ack',
+  'awk', 'sort', 'uniq', 'wc',
+  'file', 'stat', 'du', 'df', 'ps', 'top',
+  'echo', 'printf', 'pwd', 'whoami', 'uname',
+  'nl', 'gcode', 'jq', 'which',
+])
+
+const READ_ONLY_MULTI_WORD_PREFIXES = new Set([
+  'sed -n',
+  'git status', 'git diff', 'git log', 'git show',
+  'git branch', 'git remote', 'git config',
+  'npm list', 'npm view', 'npm outdated',
+  'uv pip', 'uv tree',
+  'gh api',
+  'gh pr view', 'gh pr list',
+  'gh issue view', 'gh issue list',
+])
+
+const SHELL_REDIRECT_RE = /(?:^|[^0-9])>>?\s*[^\s|&;]/
+
+function isReadOnlySingleCommand(cmd: string): boolean {
+  const words = cmd.trim().split(/\s+/)
+  if (words.length === 0 || !words[0]) return false
+  if (READ_ONLY_FIRST_WORDS.has(words[0])) return true
+  for (let n = Math.min(words.length, 3); n >= 2; n--) {
+    const prefix = words.slice(0, n).join(' ')
+    if (READ_ONLY_MULTI_WORD_PREFIXES.has(prefix)) return true
+  }
+  return false
+}
+
+export function isReadOnlyBash(cmd: string | null | undefined): boolean {
+  if (!cmd) return false
+  const trimmed = cmd.trim()
+  if (!trimmed) return false
+  if (SHELL_REDIRECT_RE.test(trimmed)) return false
+
+  const segments = trimmed
+    .split(/\|\||&&|;|&|\|/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (segments.length === 0) return false
+  return segments.every(isReadOnlySingleCommand)
+}
+
+const READ_ONLY_MCP_EXACT = new Set([
+  'outline', 'symbol', 'symbols', 'summary', 'imports', 'usages',
+  'callers', 'tree', 'blast_radius', 'query', 'authenticate',
+])
+const READ_ONLY_MCP_PREFIXES = [
+  'list_', 'get_', 'search_', 'read_', 'recommend_',
+  'find_', 'lookup_', 'inspect_', 'describe_',
+  'view_', 'show_', 'peek_', 'check_',
+]
+
+export function isReadOnlyMcp(fullName: string | null | undefined): boolean {
+  if (!fullName) return false
+  const tail = formatToolName(fullName).toLowerCase()
+  if (READ_ONLY_MCP_EXACT.has(tail)) return true
+  return READ_ONLY_MCP_PREFIXES.some((prefix) => tail.startsWith(prefix))
+}
+
+export function defaultExpandedForCall(call: ToolCall): boolean {
+  if (call.status === 'pending_approval') return true
+
+  const toolType = resolveToolType(call)
+  if (toolType === 'edit') return true
+  if (
+    toolType === 'read' ||
+    toolType === 'grep' ||
+    toolType === 'glob' ||
+    toolType === 'protocol'
+  ) {
+    return false
   }
 
-  return Array.from(counts.entries())
-    .map(([name, count]) => (count > 1 ? `${count} ${name}` : name))
-    .join(', ')
+  if (toolType === 'bash') {
+    const cmd = getShellCommand(call.arguments || {})
+    return !isReadOnlyBash(cmd)
+  }
+
+  if (toolType === 'mcp') {
+    return !isReadOnlyMcp(call.tool_name)
+  }
+
+  return false
 }
 
 export { COMPACT_HEADER_NAMES, COMPACT_HEADER_TOOL_TYPES, FILE_TOOL_TYPES }

@@ -113,7 +113,7 @@ def test_top_level_call_tool_session_ref_does_not_create_modified_input(
     assert response.auto_approve is False
 
 
-def test_nested_call_tool_session_ref_creates_modified_input(
+def test_nested_call_tool_session_ref_does_not_create_modified_input(
     manager_with_mocks: HookManager,
     make_before_tool_event: Callable[[dict], HookEvent],
 ) -> None:
@@ -130,9 +130,112 @@ def test_nested_call_tool_session_ref_creates_modified_input(
 
     response = manager._handle_internal(event)
 
-    assert response.modified_input == {
+    assert event.data["tool_input"] == {
         "server_name": "gobby-sessions",
         "tool_name": "get_session",
         "arguments": {"session_id": "target-session-uuid"},
     }
-    assert response.auto_approve is True
+    assert response.modified_input is None
+    assert response.auto_approve is False
+    assert "_session_refs_resolved" not in event.metadata
+
+
+def test_top_level_list_tools_session_ref_does_not_create_modified_input(
+    manager_with_mocks: HookManager,
+) -> None:
+    manager = manager_with_mocks
+    _prepare_manager_for_before_tool(manager)
+    manager._session_manager.resolve_session_reference.return_value = "wrapper-session-uuid"
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-external-id",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__list_tools",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "session_id": "#3",
+            },
+        },
+        machine_id="test-machine",
+    )
+    event.project_id = "proj-1"
+
+    response = manager._handle_internal(event)
+
+    assert event.data["tool_input"]["session_id"] == "wrapper-session-uuid"
+    assert response.modified_input is None
+    assert response.auto_approve is False
+    assert "_session_refs_resolved" not in event.metadata
+
+
+def test_no_session_ref_leaves_response_unmodified(
+    manager_with_mocks: HookManager,
+    make_before_tool_event: Callable[[dict], HookEvent],
+) -> None:
+    manager = manager_with_mocks
+    _prepare_manager_for_before_tool(manager)
+    event = make_before_tool_event(
+        {
+            "server_name": "gobby-sessions",
+            "tool_name": "get_session",
+            "arguments": {"session_id": "target-session-uuid"},
+        }
+    )
+
+    response = manager._handle_internal(event)
+
+    assert event.data["tool_input"]["arguments"]["session_id"] == "target-session-uuid"
+    assert response.modified_input is None
+    assert response.auto_approve is False
+    assert "_session_refs_resolved" not in event.metadata
+
+
+def test_session_ref_resolution_does_not_set_metadata_flag(
+    manager_with_mocks: HookManager,
+    make_before_tool_event: Callable[[dict], HookEvent],
+) -> None:
+    manager = manager_with_mocks
+    manager._session_manager.resolve_session_reference.return_value = "target-session-uuid"
+    event = make_before_tool_event(
+        {
+            "server_name": "gobby-sessions",
+            "tool_name": "get_session",
+            "arguments": {"session_id": "#3"},
+        }
+    )
+
+    manager._resolve_session_refs_in_tool_input(event)
+
+    assert event.data["tool_input"]["arguments"]["session_id"] == "target-session-uuid"
+    assert "_session_refs_resolved" not in event.metadata
+
+
+def test_top_level_set_variable_preserves_session_ref(
+    manager_with_mocks: HookManager,
+) -> None:
+    manager = manager_with_mocks
+    _prepare_manager_for_before_tool(manager)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-external-id",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__set_variable",
+            "tool_input": {
+                "name": "loaded_skills",
+                "value": "brevity",
+                "session_id": "#3",
+            },
+        },
+        machine_id="test-machine",
+    )
+    event.project_id = "proj-1"
+
+    response = manager._handle_internal(event)
+
+    assert event.data["tool_input"]["session_id"] == "#3"
+    assert response.modified_input is None
+    manager._session_manager.resolve_session_reference.assert_not_called()

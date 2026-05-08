@@ -493,11 +493,6 @@ class TestWorktreeUpdate:
         )
         original_updated_at = worktree.updated_at
 
-        # Small delay to ensure timestamp difference
-        import time
-
-        time.sleep(0.01)
-
         updated = worktree_manager.update(worktree.id, status=WorktreeStatus.STALE.value)
         assert updated.updated_at != original_updated_at
 

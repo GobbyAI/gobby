@@ -26,7 +26,7 @@ Discover skills with progressive discovery too:
 
 <code_search>
 If the project has a code index, use `gcode` via Bash for fast symbol-level search and retrieval.
-Key commands: `gcode search "query"`, `gcode outline path/to/file`, `gcode symbol <id>`.
+Key commands: `gcode search "query"`, `gcode outline path/to/file`, `gcode symbol <full-uuid>` with a UUID from search or outline output.
 Use these instead of reading entire files — saves 90%+ tokens on large files.
 Run `gcode --help` for all available commands.
 </code_search>

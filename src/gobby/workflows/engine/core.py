@@ -73,7 +73,7 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
 
 
 def _is_pipeline_direct_mcp_event(event: HookEvent) -> bool:
-    """Return True for synthetic direct MCP calls emitted by pipeline sessions."""
+    """Return True for direct MCP calls emitted by pipeline sessions."""
     if event.source != SessionSource.PIPELINE:
         return False
 
@@ -430,7 +430,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 agent_type = variables.get("_agent_type")
                 rules = self._filter_by_agent_scope(rules, agent_type)
 
-                # 4. Filter by active rules (selector-based)
+                # 4. Filter by audience
+                rules = self._filter_by_audience(rules, variables)
+
+                # 5. Filter by active rules (selector-based)
                 rules = self._filter_by_active_rules(rules, variables)
 
                 if span.is_recording():
@@ -461,7 +464,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                 # 4c. Step-level tool enforcement (preempts declarative rules)
                 if is_before_tool:
-                    step_block = self._check_step_tool_enforcement(event, session_id)
+                    step_block = self._check_step_tool_enforcement(event, session_id, variables)
                     if step_block is not None:
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
@@ -863,6 +866,35 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 and ("*" in body.agent_scope or agent_type in body.agent_scope)
             )
         ]
+
+    def _filter_by_audience(
+        self,
+        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        variables: dict[str, Any],
+    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+        """Filter rules by broad runtime audience."""
+        return [(row, body) for row, body in rules if self._audience_matches(body, variables)]
+
+    def _audience_matches(
+        self,
+        body: RuleDefinitionBody,
+        variables: dict[str, Any],
+    ) -> bool:
+        audience = body.audience
+        if audience is None or audience == "all":
+            return True
+
+        explicit = variables.get("_audience")
+        agent_type = variables.get("_agent_type")
+        is_spawned = bool(variables.get("is_spawned_agent"))
+
+        if audience == explicit or audience == agent_type:
+            return True
+        if audience == "autonomous":
+            return is_spawned or agent_type == "autonomous"
+        if audience == "interactive":
+            return not is_spawned and agent_type in (None, "default", "interactive")
+        return False
 
     def _filter_by_active_rules(
         self,

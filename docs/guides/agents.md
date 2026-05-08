@@ -1,92 +1,91 @@
 # Agents
 
-Agents are reusable worker definitions that Gobby can apply to the current
-session or use to spawn child sessions. The model is **CLI agnostic**:
-the same agent definition system is used across Claude, Codex, and Gemini
-integrations.
+Agents are workflow definitions that describe either a current-session persona or
+a spawned worker session. The same definition model works across supported CLIs;
+provider-specific hooks are normalized before workflow rules evaluate.
 
-Current Gobby splits agents into two concerns:
+For the broader control-plane model, see [Workflows Overview](./workflows-overview.md).
 
-- **Definition management** on `gobby-workflows`
-- **Runtime execution** on `gobby-agents`
+## Usage Surfaces
 
-For the broader architecture, see [Workflows Overview](./workflows-overview.md).
+Agent definitions have explicit `surfaces`:
 
-## Two Ways Agents Are Used
+| Surface | Runtime tool | What happens |
+| --- | --- | --- |
+| `persona` | `gobby-agents:apply_persona` | Updates the current session's persona and active skill selection for the next user turn. |
+| `spawn` | `gobby-agents:spawn_agent` or `dispatch_batch` | Starts a child session, records an agent run, and optionally creates or reuses isolation. |
 
-### Apply A Persona To The Current Session
+`apply_persona` is intentionally narrow. It sets prompt-facing persona state,
+skill selection, and reinjection flags; it does not change provider, model,
+isolation, active rules, tool restrictions, or inline step workflow state.
 
-Use `gobby-agents:apply_persona` when you want the current session to adopt an
-agent definition without creating a child process.
+Spawned runs use the full runtime path. They can inherit or override execution
+settings, register inline step workflows, receive task/session variables, and
+publish completion state back to waiting parents.
 
-That applies:
+## Definition Storage
 
-- prompt fields such as `role` and `instructions`
-- matching rules and skills
-- workflow variables
-- inline step workflow state, if the agent defines steps
+Agent definitions are stored in `workflow_definitions` with
+`workflow_type='agent'` and are managed through `gobby-workflows`.
 
-This is how baseline interactive personas such as `default` are applied.
+Bundled definitions live in:
 
-### Spawn A Child Agent
+```text
+src/gobby/install/shared/workflows/agents/
+```
 
-Use `gobby-agents:spawn_agent` or `dispatch_batch` when you want a separate
-worker session, optionally in a worktree or clone.
+The bundled directory includes enabled definitions for planning, review,
+writing, analysis, image generation, maintenance, merge work, and default
+interactive use. It also includes disabled deprecated tombstones under
+`deprecated/`; those files preserve migration history and should not be used as
+current agent names.
 
-That creates:
+Use these tools to inspect or change definitions:
 
-- a child session
-- optional isolation (`none`, `worktree`, or `clone`)
-- an agent run record
-- a completion event that parents can wait on
+- `gobby-workflows:list_agent_definitions`
+- `gobby-workflows:get_agent_definition`
+- `gobby-workflows:create_agent_definition`
+- `gobby-workflows:toggle_agent_definition`
+- `gobby-workflows:delete_agent_definition`
+- `gobby-workflows:update_agent_rules`
+- `gobby-workflows:update_agent_variables`
+- `gobby-workflows:update_agent_steps`
 
-## Agent Definition Shape
+## Definition Shape
 
-Agent definitions live in `workflow_definitions` with `workflow_type='agent'`
-and are managed through `gobby-workflows`.
-
-### Core Fields
+The current `AgentDefinitionBody` schema accepts these primary fields:
 
 | Field | Purpose |
 | --- | --- |
 | `name` | Unique definition name |
 | `description` | Human-readable summary |
-| `role` | `## Role` block in the generated preamble |
-| `goal` | `## Goal` block in the generated preamble |
-| `personality` | `## Personality` block in the generated preamble |
-| `instructions` | `## Instructions` block in the generated preamble |
-| `provider` | Preferred provider, or `inherit` |
+| `sources` | Optional CLI-source filter |
+| `surfaces` | `spawn`, `persona`, or both |
+| `role` / `goal` / `personality` / `instructions` | Prompt blocks used for persona or run context |
+| `provider` | Provider override or `inherit` |
 | `model` | Optional model override |
-| `fallback_agent` | Optional fallback definition |
-| `api_base` / `api_token` | Optional custom endpoint configuration |
+| `reasoning_effort` | Optional normalized reasoning effort string |
+| `reasoning_required` | Whether unsupported reasoning should fail instead of warn |
+| `fallback_agent` | Optional fallback definition for provider rotation |
+| `api_base` / `api_token` | Optional custom model endpoint configuration |
 | `isolation` | `none`, `worktree`, `clone`, or `inherit` |
-| `base_branch` | Branch to isolate from, or `inherit` |
-| `timeout` | Max run time in seconds/minutes as configured by runtime |
-| `max_turns` | Turn cap (`0` means unlimited) |
-| `blocked_tools` / `blocked_mcp_tools` | Agent-level tool restrictions |
-| `workflows` | Rule selectors, skill selectors, variable selectors, and seeded variables |
+| `base_branch` | Branch used for new isolation, or `inherit` |
+| `timeout` / `max_turns` | Runtime limits; `0` means unlimited |
+| `workflows` | Rule, skill, variable, and pipeline selectors |
+| `skills` | Metadata for baseline and allow-listed skill families |
+| `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
 | `steps` | Optional inline step workflow |
-| `step_variables` | Initial variables for the inline step workflow |
-| `exit_condition` | Optional terminal condition for the workflow |
-| `enabled` | Whether the definition is active |
-| `sources` | Optional session-source filter |
+| `step_variables` | Initial variables for inline steps |
+| `exit_condition` | Workflow-level completion condition |
+| `enabled` / `deprecated` / `deprecated_reason` | Definition lifecycle metadata |
 
-### Important Current Detail
+Older YAML may contain a `mode` field. The schema ignores extra fields for
+compatibility, but new definitions should use `surfaces` plus the runtime tool
+choice instead.
 
-Older drafts and examples sometimes refer to a `mode` field such as `self`,
-`interactive`, or `autonomous`. That is **not part of the current
-`AgentDefinitionBody` schema**. New agent definitions should not rely on it.
+## Strict Execution Fields
 
-The practical split now is:
-
-- `apply_persona` for current-session application
-- `spawn_agent` / `dispatch_batch` for child-session execution
-
-### Validation Tightening In `v0.4.0`
-
-The agent definition schema now validates several execution fields more
-strictly. The following fields must already be the correct YAML types and are no
-longer coerced from loosely-typed values:
+Several execution fields use strict YAML types:
 
 - `model`
 - `reasoning_effort`
@@ -95,13 +94,7 @@ longer coerced from loosely-typed values:
 - `api_base`
 - `api_token`
 
-Practical impact:
-
-- values that used to be accepted after implicit coercion now fail validation
-- string fields must be real YAML strings
-- `reasoning_required` must be a real YAML boolean (`true` / `false`)
-
-Before:
+Invalid:
 
 ```yaml
 model: 1234
@@ -112,37 +105,37 @@ api_base: 12345
 api_token: false
 ```
 
-After:
+Valid:
 
 ```yaml
-model: "1234"
-reasoning_effort: "medium"
+model: "gpt-5.5"
+reasoning_effort: high
 reasoning_required: false
-fallback_agent: "backup-agent"
+fallback_agent: "qa-reviewer"
 api_base: "http://localhost:1234/v1"
 api_token: "${LM_STUDIO_API_KEY}"
 ```
 
-If you have older YAML that relied on coercion, quote string-like values and
-convert boolean-like strings to explicit YAML booleans. This validation is
-enforced by the current `AgentDefinitionBody` field types and validator logic.
+`reasoning_effort` is normalized by the agent reasoning layer. Use the same
+strings accepted by the current provider/model routing code.
 
-## Minimal Example
+## Minimal Definition
 
 ```yaml
-name: developer
-description: Implements a claimed task and submits it for review
+name: docs-worker
+description: Documentation implementation worker
+surfaces: [spawn, persona]
+provider: inherit
+isolation: inherit
+timeout: 1200
+max_turns: 0
 
 role: >
-  You are a focused implementation agent working inside a Gobby-managed session.
+  You write and verify Gobby documentation against the local source tree.
 
 instructions: |
-  Claim the assigned task, implement the change, run targeted validation,
-  then submit the task for review.
-
-provider: inherit
-isolation: worktree
-timeout: 1200
+  Claim the assigned docs task, audit the guide against code-owned sources,
+  make a scoped docs change, run focused verification, commit, and hand off.
 
 workflows:
   rule_selectors:
@@ -160,6 +153,7 @@ steps:
   - name: claim
     allowed_tools:
       - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
@@ -178,97 +172,90 @@ steps:
   - name: implement
     allowed_tools: "all"
     blocked_mcp_tools:
-      - "gobby-tasks:close_task"
-      - "gobby-agents:kill_agent"
+      - "gobby-tasks:reopen_task"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_needs_review
+      - server: gobby-tasks-ops
+        tool: submit_for_review
         action: set_variable
         variable: review_submitted
         value: true
     transitions:
-      - to: terminate
+      - to: finish
         when: "vars.review_submitted"
 
-  - name: terminate
+  - name: finish
     allowed_tools:
       - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 ```
 
 ## Inline Step Workflows
 
-Inline `steps` are how you constrain phased agent behavior.
-
-Each step can define:
+Inline `steps` constrain phased behavior for spawned runs. Each step can define:
 
 | Field | Purpose |
 | --- | --- |
 | `name` | Step identifier |
 | `description` | Human-readable summary |
-| `status_message` | Step-specific guidance shown to the agent |
-| `allowed_tools` | Allow-list of native tools, or `"all"` |
-| `blocked_tools` | Explicitly blocked native tools |
-| `allowed_mcp_tools` | Allow-list of MCP tools like `gobby-tasks:claim_task`, or `"all"` |
-| `blocked_mcp_tools` | Explicitly blocked MCP tools |
-| `on_enter` / `on_exit` | Actions to run entering or leaving the step |
-| `on_mcp_success` / `on_mcp_error` | Handlers that react to MCP outcomes |
-| `transitions` | Automatic transitions driven by variables |
-| `exit_when` | Optional condition for leaving the step |
+| `status_message` | Step-specific guidance shown to the session |
+| `allowed_tools` / `blocked_tools` | Native tool restrictions |
+| `allowed_mcp_tools` / `blocked_mcp_tools` | MCP tool restrictions such as `gobby-tasks:claim_task` |
+| `on_enter` / `on_exit` | Actions around step boundaries |
+| `on_mcp_before` / `on_mcp_success` / `on_mcp_error` | Handlers for MCP attempts or outcomes |
+| `transitions` | Variable-driven step transitions |
+| `exit_when` | Optional per-step exit condition |
 
-Rules still apply while a step workflow is active. Step restrictions are
-additional guardrails, not a replacement for the rule engine.
+Step restrictions are additive with the rule engine. A tool must satisfy both
+the current step and the active rules.
 
-## Isolation Modes
+## Lifecycle Model
 
-Isolation is a runtime choice that matters most for spawned agents.
+Rules should be authored against semantic workflow events:
 
-| Isolation | Behavior | Typical use |
-| --- | --- | --- |
-| `none` | Work in the current repo and branch | Review, merge, or read-only helper sessions |
-| `worktree` | Create or reuse a git worktree with a separate branch | Default isolated implementation flow |
-| `clone` | Use a separate clone when full isolation is needed | Environments that cannot share a worktree safely |
-| `inherit` | Follow the caller/runtime default | Definitions that should stay portable |
+- `turn_start`
+- `turn_end`
 
-Keep provider-specific notes limited to real operational differences. For
-example, some launcher environments work better with clone isolation, but that
-does not change the agent model itself.
+Raw `before_agent`, `after_agent`, and `stop` events are normalized runtime
+details. Use them only when the distinction is the subject of the rule. In the
+workflow engine, `turn_start` resolves from the pre-turn boundary, while
+`turn_end` resolves from post-turn and stop boundaries.
+
+Ending a chat turn is separate from ending a spawned agent run. A spawned worker
+that has completed its workflow should call `gobby-agents:end_agent_run` so the
+run is marked successful and completion subscribers are notified.
+
+Use `gobby-agents:stop_agent` when a parent wants to cancel a pending or running
+run. Use `gobby-agents:kill_agent` for targeted process termination and runtime
+cleanup. `kill_agent` can also self-terminate with a status, but normal workflow
+success should use `end_agent_run`.
 
 ## Runtime Tools
 
-### Definition Management (`gobby-workflows`)
+`gobby-agents` owns run execution, inspection, termination, persona application,
+messaging, and command coordination.
 
-Use these to inspect or change agent definitions:
-
-- `list_agent_definitions`
-- `get_agent_definition`
-- `create_agent_definition`
-- `toggle_agent_definition`
-- `delete_agent_definition`
-- `update_agent_rules`
-- `update_agent_variables`
-- `update_agent_steps`
-
-### Runtime Control (`gobby-agents`)
-
-Use these to run or coordinate agents:
+Run tools:
 
 - `spawn_agent`
 - `dispatch_batch`
 - `apply_persona`
+- `get_agent_result`
 - `list_agent_runs`
 - `list_running_agents`
 - `get_running_agent`
-- `get_agent_result`
 - `stop_agent`
 - `kill_agent`
+- `end_agent_run`
+- `can_spawn_agent`
+- `evaluate_spawn`
+- `running_agent_stats`
+- `unregister_agent`
 
-### Inter-Agent Coordination (`gobby-agents`)
-
-Current messaging and command tools are:
+Coordination tools:
 
 - `send_message`
 - `send_command`
@@ -278,22 +265,43 @@ Current messaging and command tools are:
 - `wait_for_command`
 - `get_inter_session_messages`
 
-Those are useful for orchestration flows that need parent/child coordination
-without forcing everything into one monolithic prompt.
+Spawn requests can pass `agent`, `task_id`, isolation fields, provider/model
+overrides, reasoning fields, runtime limits, parent session, and project path.
+`dispatch_batch` uses the same spawn machinery for multiple task suggestions.
+
+## Isolation
+
+Isolation is a runtime setting for spawned runs:
+
+| Isolation | Behavior |
+| --- | --- |
+| `none` | Work in the caller's current repository context |
+| `worktree` | Create or reuse a git worktree with separate branch state |
+| `clone` | Use a separate clone for stronger filesystem isolation |
+| `inherit` | Defer to caller/runtime defaults |
+
+Docs leaf work may run inside a parent epic's existing isolation context. In
+that case the agent definition can keep `isolation: inherit`, and dispatch
+provides the concrete worktree or clone context.
 
 ## Recommended Patterns
 
-- Keep the definition small and declarative. Put broad invariants in rules.
-- Use `workflows.rule_selectors` to opt into rule bundles by tag or name.
-- Seed only the variables the agent genuinely owns.
-- Use inline step workflows for lifecycle phases such as claim, implement,
-  review, and terminate.
-- Treat `kill_agent` as the runtime termination path for spawned workers.
-- Use `apply_persona` when you want the current session to behave like an
-  agent, rather than spawning yet another worker.
+- Put reusable safety policy in rules; keep agent definitions focused on role,
+  selectors, runtime settings, and step flow.
+- Use `surfaces` to make persona-capable definitions explicit.
+- Seed only variables the agent owns, such as `assigned_task_id` or
+  stage-specific gates.
+- Use inline steps for lifecycle phases: claim, load required skills,
+  implement, review handoff, finish.
+- Use `end_agent_run` as the explicit successful termination path for spawned
+  workflows.
+- Treat deprecated tombstones as migration records, not runnable definitions.
 
 ## Related Guides
 
+- [Workflow Rules](./workflow-rules.md) for semantic rule events
 - [Rules](./rules.md) for hook-time enforcement
-- [Pipelines](./pipelines.md) for deterministic orchestration
-- [Orchestration](./orchestration.md) for multi-agent coordination
+- [Pipelines](./pipelines.md) for deterministic automation
+- [Orchestration](./orchestration.md) for stage dispatch and review flow
+
+_Last verified: 2026-05-07_

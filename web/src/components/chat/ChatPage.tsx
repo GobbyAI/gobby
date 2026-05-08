@@ -20,6 +20,7 @@ import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
+import type { SessionsFilters } from "../activity/sessionsFilters";
 import { VoiceStatusBar } from "./VoiceStatusBar";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
@@ -61,6 +62,10 @@ interface ChatPageProps {
   paletteActions?: CommandPaletteAction[];
   allProjectSessions?: GobbySession[];
   allProjectSessionsLoading?: boolean;
+  activitySessions?: GobbySession[];
+  activitySessionsLoading?: boolean;
+  sessionsFilters?: SessionsFilters;
+  onSessionsFiltersChange?: (filters: SessionsFilters) => void;
   onSttEnabledChange?: (enabled: boolean) => void;
   onTtsEnabledChange?: (enabled: boolean) => void;
 }
@@ -84,6 +89,10 @@ export function ChatPage({
   paletteActions = [],
   allProjectSessions = [],
   allProjectSessionsLoading = false,
+  activitySessions,
+  activitySessionsLoading,
+  sessionsFilters,
+  onSessionsFiltersChange,
   onSttEnabledChange,
   onTtsEnabledChange,
 }: ChatPageProps) {
@@ -164,12 +173,24 @@ export function ChatPage({
   const handleFocusSessionHandled = useCallback(() => {
     setFocusSessionId(null);
   }, []);
+  const prevIsMobileRef = useRef(isMobile);
+  const isPinnedRef = useRef(isPinned);
+  const onSendRef = useRef(onSend);
 
   useEffect(() => {
-    if (isMobile && isPinned) {
+    isPinnedRef.current = isPinned;
+  }, [isPinned]);
+
+  useEffect(() => {
+    onSendRef.current = onSend;
+  }, [onSend]);
+
+  useEffect(() => {
+    if (!prevIsMobileRef.current && isMobile && isPinnedRef.current) {
       setIsPinned(false);
     }
-  }, [isMobile, isPinned, setIsPinned]);
+    prevIsMobileRef.current = isMobile;
+  }, [isMobile, setIsPinned]);
 
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
@@ -204,7 +225,7 @@ export function ChatPage({
         return;
       }
 
-      chat.viewSession?.(target.sessionId);
+      chat.viewSession?.(target.sessionId, { forceRefresh: true });
       chat.observeSession?.(target.sessionId, "observe");
       if (isMobile && isPinned) {
         setIsPinned(false);
@@ -316,8 +337,18 @@ export function ChatPage({
     : chat.isContinuingSession
       ? "Message input — resuming session"
       : undefined;
+  // Anchor the activity-panel session list to whichever session is currently
+  // showing in the main area. Observe-terminal mode is the exception: it
+  // keeps the anchor on the user's primary web chat so the terminal stays
+  // visible in the panel while they read along. For every other swap mode,
+  // the swapped session IS the main view and must be filtered out of the
+  // panel to avoid the "S appears in main and in the panel" duplication.
   const activityPanelChatSessionId =
-    isReadOnlySession ? chat.viewingSessionId ?? chat.dbSessionId : chat.dbSessionId;
+    chat.viewingSessionId || chat.attachedSessionId
+      ? isSwappedTerminal && chat.sessionInteractionMode === "observe"
+        ? chat.dbSessionId
+        : chat.viewingSessionId ?? chat.attachedSessionId ?? chat.dbSessionId
+      : chat.dbSessionId;
 
   const handleResumeViewedSession = useCallback(() => {
     if (
@@ -503,10 +534,25 @@ export function ChatPage({
   const [pendingPlanArtifactId, setPendingPlanArtifactId] = useState<
     string | null
   >(null);
+  const planArtifactIdRef = useRef<string | null>(null);
+  const lastPlanArtifactContentRef = useRef<string | null>(null);
 
-  // Clear artifacts and plan state on session switch / new chat
+  useEffect(() => {
+    planArtifactIdRef.current = planArtifactId;
+  }, [planArtifactId]);
+
+  // Reset plan state on session switch / new chat. Render-time comparison
+  // avoids cascading setState-in-effect renders.
+  const [prevSwitchKey, setPrevSwitchKey] = useState(chat.conversationSwitchKey);
+  if (prevSwitchKey !== chat.conversationSwitchKey) {
+    setPrevSwitchKey(chat.conversationSwitchKey);
+    setPlanArtifactId(null);
+    setPendingPlanArtifactId(null);
+  }
   useEffect(() => {
     clearArtifacts();
+    planArtifactIdRef.current = null;
+    lastPlanArtifactContentRef.current = null;
   }, [chat.conversationSwitchKey, clearArtifacts]);
 
   useEffect(() => {
@@ -538,15 +584,17 @@ export function ChatPage({
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {
       createArtifact("code", content, language, title);
+      showTab("artifacts");
     },
-    [createArtifact],
+    [createArtifact, showTab],
   );
 
   const openFileAsArtifact = useCallback(
     (type: ArtifactType, language: string, content: string, title?: string) => {
       createArtifact(type, content, language, title);
+      showTab("artifacts");
     },
-    [createArtifact],
+    [createArtifact, showTab],
   );
 
   // Wire plan content to artifact panel when plan_pending_approval arrives.
@@ -555,23 +603,33 @@ export function ChatPage({
   const onPlanReady = useCallback(
     (content: string | null) => {
       if (!content) return;
+      const existingArtifactId = planArtifactIdRef.current;
+      if (existingArtifactId && content === lastPlanArtifactContentRef.current) {
+        setPendingPlanArtifactId(existingArtifactId);
+        openArtifact(existingArtifactId);
+        showTab("plans");
+        return;
+      }
+
       const headingMatch = content.match(/^#\s+(.+)$/m);
       const title = headingMatch?.[1]?.trim() || "Implementation Plan";
-      let nextArtifactId = planArtifactId;
+      let nextArtifactId = existingArtifactId;
 
-      if (planArtifactId && artifacts.has(planArtifactId)) {
-        updateArtifact(planArtifactId, content);
-        openArtifact(planArtifactId);
+      if (existingArtifactId && artifacts.has(existingArtifactId)) {
+        updateArtifact(existingArtifactId, content);
+        openArtifact(existingArtifactId);
       } else {
         nextArtifactId = createArtifact("text", content, "markdown", title, {
           isPlan: true,
         });
       }
+      planArtifactIdRef.current = nextArtifactId;
+      lastPlanArtifactContentRef.current = content;
       setPlanArtifactId(nextArtifactId);
       setPendingPlanArtifactId(nextArtifactId);
       showTab("plans");
     },
-    [artifacts, createArtifact, openArtifact, planArtifactId, showTab, updateArtifact],
+    [artifacts, createArtifact, openArtifact, showTab, updateArtifact],
   );
 
   useEffect(() => {
@@ -583,9 +641,10 @@ export function ChatPage({
     (type: string, content: string, language?: string, title?: string) => {
       if (VALID_ARTIFACT_TYPES.has(type)) {
         createArtifact(type as ArtifactType, content, language, title);
+        showTab("artifacts");
       }
     },
-    [createArtifact],
+    [createArtifact, showTab],
   );
 
   useEffect(() => {
@@ -607,9 +666,9 @@ export function ChatPage({
   // Add file to chat from Files tab (right-click "Add to chat")
   const handleAddFileToChat = useCallback(
     (filePath: string) => {
-      onSend?.(`Read and reference this file: ${filePath}`);
+      onSendRef.current?.(`Read and reference this file: ${filePath}`);
     },
-    [onSend],
+    [],
   );
 
   const handleApprovePlan = useCallback(() => {
@@ -684,9 +743,10 @@ export function ChatPage({
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
+      <h1 className="sr-only">Chat</h1>
       {ConfirmDialogElement}
       {/* Main chat column */}
-      <div className="flex flex-col flex-1 min-w-[400px]">
+      <div className="chat-column flex flex-col flex-1 min-w-[320px]">
         {/* Command Bar */}
         <CommandBar
           sessionRef={effectiveSessionRef}
@@ -696,7 +756,8 @@ export function ChatPage({
           }
           sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
           onOpenPalette={() => setShowCommandPalette(true)}
-          onNewChat={handleNewChat}
+          onTogglePanel={togglePanel}
+          isPanelPinned={isPinned}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
           agentProjectDefs={agentProjectDefs}
@@ -753,8 +814,7 @@ export function ChatPage({
               canControlViewedSession ? handleResumeViewedSession : undefined
             }
             onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
-            onTogglePanel={togglePanel}
-            isPanelPinned={isPinned}
+            onNewChat={() => handleNewChat()}
           />
 
           {/* Chat input */}
@@ -828,6 +888,7 @@ export function ChatPage({
               proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
               attachmentsDisabled={isProxyAttached}
+              isAttached={isProxyAttached}
             />
           )}
         </ArtifactContext.Provider>
@@ -860,8 +921,10 @@ export function ChatPage({
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
         projectId={projectId}
-        sessions={allProjectSessions}
-        sessionsLoading={allProjectSessionsLoading}
+        sessions={activitySessions ?? allProjectSessions}
+        sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
+        sessionsFilters={sessionsFilters}
+        onSessionsFiltersChange={onSessionsFiltersChange}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
         chatSessionId={activityPanelChatSessionId}

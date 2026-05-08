@@ -1,0 +1,181 @@
+/* Button system. See .impeccable.md.
+ *
+ * Usage: combine `.btn` with one variant + optional size + optional `.btn-icon`.
+ *   <button class="btn btn-secondary btn-sm">Resume</button>
+ *   <button class="btn btn-primary">Send</button>
+ *   <button class="btn btn-ghost btn-icon" title="Close">×</button>
+ *
+ * Reserve `.btn-primary` (solid accent fill) for genuine call-to-action.
+ * Default to `.btn-secondary` for normal action buttons.
+ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0 0.75rem;
+  min-height: 1.875rem;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease,
+    border-color 0.1s ease;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- Sizes ---------- */
+
+.btn-xs {
+  min-height: 1.5rem;
+  padding: 0 0.5rem;
+  font-size: var(--text-2xs);
+  border-radius: 0.25rem;
+  gap: 0.25rem;
+}
+
+.btn-sm {
+  min-height: 1.75rem;
+  padding: 0 0.625rem;
+  font-size: var(--text-xs);
+}
+
+.btn-md {
+  min-height: 2rem;
+  padding: 0 0.875rem;
+  font-size: var(--text-sm);
+}
+
+.btn-lg {
+  min-height: 2.5rem;
+  padding: 0 1.125rem;
+  font-size: var(--text-base);
+  gap: 0.5rem;
+}
+
+/* ---------- Variants ---------- */
+
+/* Primary — solid brand accent. CTA only (Send, Submit, Confirm). */
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  border-color: var(--accent);
+}
+.btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* Secondary — bordered, transparent. Default for ordinary action buttons. */
+.btn-secondary {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+/* Ghost — borderless, transparent. For tertiary actions in dense rows. */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+.btn-ghost:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* Accent — tinted accent fill. Use when the action is meaningful but not
+   the page's primary CTA — e.g. toggling an active mode within a row. */
+.btn-accent {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.btn-accent:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* Destructive — for delete / kill actions. Hover reveals the magenta error
+   surface so the action's weight is clear before commit. */
+.btn-destructive {
+  background: transparent;
+  color: var(--color-error);
+  border-color: transparent;
+}
+.btn-destructive:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--color-error-soft);
+}
+
+/* ---------- Modifiers ---------- */
+
+/* Icon — square aspect; pair with btn-ghost or btn-secondary for chrome.
+   Compact icon variants (xs/sm) floor at 32px to clear WCAG 2.2 AA target
+   sizing for fine pointers; coarse pointers (touch) bump to 44px so the
+   target meets the Apple HIG / Material touch-target floor. */
+.btn-icon {
+  width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+}
+.btn-icon.btn-xs {
+  width: 2rem;
+  min-height: 2rem;
+}
+.btn-icon.btn-sm {
+  width: 2rem;
+  min-height: 2rem;
+}
+.btn-icon.btn-md {
+  width: 2rem;
+  min-height: 2rem;
+}
+.btn-icon.btn-lg {
+  width: 2.5rem;
+  min-height: 2.5rem;
+}
+
+@media (pointer: coarse) {
+  .btn-icon,
+  .btn-icon.btn-xs,
+  .btn-icon.btn-sm,
+  .btn-icon.btn-md {
+    width: 2.75rem;
+    min-height: 2.75rem;
+  }
+  .btn-icon.btn-lg {
+    width: 3rem;
+    min-height: 3rem;
+  }
+}
+
+/* Block — full-width. */
+.btn-block {
+  display: flex;
+  width: 100%;
+}

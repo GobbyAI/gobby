@@ -22,7 +22,7 @@ class TestProviderConfig:
 
     def test_lmstudio_config(self) -> None:
         cfg = _PROVIDER_CONFIG["lmstudio"]
-        assert cfg["model"] == "text-embedding-nomic-embed-text-v1.5@q8_0"
+        assert cfg["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
         assert cfg["api_base"] == "http://localhost:1234/v1"
         assert cfg["dim"] == 768
 
@@ -72,7 +72,7 @@ class TestInstallEmbedding:
         result = install_embedding(provider="lmstudio")
         assert result["success"] is True
         assert result["provider"] == "lmstudio"
-        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@q8_0"
+        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
         assert result["dim"] == 768
         assert result["health_check"] is True
         mock_setup.assert_called_once()
@@ -129,7 +129,13 @@ class TestSetupLMStudio:
         mock_run.side_effect = [
             MagicMock(returncode=0, stderr="", stdout="The server is running on port 1234."),
             MagicMock(
-                returncode=0, stderr="", stdout="IDENTIFIER  MODEL\nnomic-embed  nomic  LOADED"
+                returncode=0,
+                stderr="",
+                stdout=(
+                    "IDENTIFIER  MODEL\n"
+                    "text-embedding-nomic-embed-text-v1.5@f16  "
+                    "text-embedding-nomic-embed-text-v1.5@f16"
+                ),
             ),
         ]
         result = _setup_lmstudio()
@@ -177,7 +183,7 @@ class TestSetupLMStudio:
         mock_run.side_effect = [
             MagicMock(returncode=0, stderr="", stdout="stopped"),
             MagicMock(returncode=0, stderr="", stdout="started"),
-            MagicMock(returncode=0, stderr="", stdout="nomic LOADED"),
+            MagicMock(returncode=0, stderr="", stdout="text-embedding-nomic-embed-text-v1.5@f16"),
         ]
         result = _setup_lmstudio()
         assert result["success"] is True
@@ -279,7 +285,7 @@ class TestPersistEmbeddingConfig:
         mock_store_class.return_value = mock_store
 
         _persist_embedding_config(
-            model="text-embedding-nomic-embed-text-v1.5@q8_0",
+            model="text-embedding-nomic-embed-text-v1.5@f16",
             api_base="http://localhost:1234/v1",
             dim=768,
             provider="lmstudio",
@@ -289,7 +295,7 @@ class TestPersistEmbeddingConfig:
         entries = mock_store.set_many.call_args.args[0]
         # Only unified embeddings.* namespace
         assert entries == {
-            "embeddings.model": "text-embedding-nomic-embed-text-v1.5@q8_0",
+            "embeddings.model": "text-embedding-nomic-embed-text-v1.5@f16",
             "embeddings.api_base": "http://localhost:1234/v1",
             "embeddings.dim": 768,
         }
@@ -330,6 +336,8 @@ class TestPersistEmbeddingConfig:
             "embeddings.dim": 0,
         }
         mock_db.__exit__.assert_called_once()
+        assert mock_db.__exit__.call_count == 1
+        assert mock_db.__exit__.call_args is not None
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
@@ -407,6 +415,8 @@ class TestPersistEmbeddingConfig:
             "embeddings.dim": 1536,
         }
         mock_db.__exit__.assert_called_once()
+        assert mock_db.__exit__.call_count == 1
+        assert mock_db.__exit__.call_args is not None
 
 
 class TestHealthCheck:

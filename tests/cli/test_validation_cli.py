@@ -34,7 +34,9 @@ class TestValidateCommandWithNewFlags:
         task.seq_num = 1
         task.title = "Test task"
         task.description = "Test description"
-        task.status = "in_progress"
+        task.closed_at = None
+        task.is_escalated = False
+        task.stages = ({"stage_name": "development", "position": 0, "state": "in_progress"},)
         task.project_id = "proj-123"
         task.validation_criteria = "Tests pass"
         task.validation_fail_count = 0
@@ -93,6 +95,7 @@ class TestValidateCommandWithNewFlags:
         # We're testing the CLI accepts the flag, not the implementation
         # Exit code 2 means Click rejected the flag as unrecognized
         assert result.exit_code != 2, f"Flag --max-iterations was rejected: {result.output}"
+        assert "No such option" not in result.output
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -138,6 +141,7 @@ class TestValidateCommandWithNewFlags:
         )
 
         assert result.exit_code == 0
+        assert result.exception is None
         # Should show recurring issues info
         assert "recurring" in result.output.lower() or "no recurring" in result.output.lower()
 
@@ -181,7 +185,7 @@ class TestDeEscalateCommand:
         """Test de-escalate with valid arguments."""
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
-        mock_task.status = "escalated"
+        mock_task.is_escalated = True
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
@@ -194,6 +198,7 @@ class TestDeEscalateCommand:
         )
 
         assert result.exit_code == 0
+        assert result.exception is None
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -206,7 +211,7 @@ class TestDeEscalateCommand:
         """Test de-escalate fails for non-escalated task."""
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
-        mock_task.status = "open"  # Not escalated
+        mock_task.is_escalated = False
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
@@ -221,6 +226,7 @@ class TestDeEscalateCommand:
         assert "not escalated" in result.output.lower(), (
             f"Expected 'not escalated' message for non-escalated task, got: {result.output}"
         )
+        assert result.exit_code == 0
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -233,7 +239,7 @@ class TestDeEscalateCommand:
         """Test de-escalate with --reset-validation flag."""
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
-        mock_task.status = "escalated"
+        mock_task.is_escalated = True
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
@@ -249,23 +255,23 @@ class TestDeEscalateCommand:
         assert result.exit_code == 0, (
             f"Expected exit code 0 for valid de-escalate command, got {result.exit_code}: {result.output}"
         )
+        assert result.exception is None
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
-    def test_de_escalate_with_target_status(
+    def test_de_escalate_rejects_legacy_target_status(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test de-escalate can target needs_review explicitly."""
+        """Stage-native de-escalation preserves the current stage."""
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
-        mock_task.status = "escalated"
+        mock_task.is_escalated = True
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
-        mock_manager.update_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(
@@ -281,13 +287,9 @@ class TestDeEscalateCommand:
             ],
         )
 
-        assert result.exit_code == 0
-        mock_manager.de_escalate_task.assert_called_once_with(
-            "gt-test123",
-            reason="Resume review",
-            target_status="needs_review",
-            reset_validation=False,
-        )
+        assert result.exit_code == 2
+        assert "No such option: --target-status" in result.output
+        mock_manager.de_escalate_task.assert_not_called()
 
 
 class TestValidationHistoryCommand:
@@ -331,6 +333,7 @@ class TestValidationHistoryCommand:
         )
 
         assert result.exit_code == 0
+        assert result.exception is None
 
     def test_validation_history_clear_flag_exists(self, runner: CliRunner) -> None:
         """Test that validation-history --clear flag exists."""
@@ -410,39 +413,52 @@ class TestValidationHistoryCommand:
 
 
 class TestListTasksEscalatedFilter:
-    """Tests for gobby tasks list --status escalated filter."""
+    """Tests for gobby tasks list --escalated filter."""
 
     @pytest.fixture
     def runner(self) -> CliRunner:
         """Create a CLI test runner."""
         return CliRunner()
 
-    def test_list_accepts_escalated_status(self, runner: CliRunner) -> None:
-        """Test that list command accepts --status escalated."""
+    def test_list_accepts_escalated_filter(self, runner: CliRunner) -> None:
+        """Test that list command accepts --escalated."""
         result = runner.invoke(cli, ["tasks", "list", "--help"])
         assert result.exit_code == 0
-        # Help should mention status filter
-        assert "--status" in result.output
+        assert "--escalated" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
-    def test_list_with_escalated_status_filter(
+    def test_list_with_escalated_filter(
         self,
         mock_get_manager: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test list --status escalated filters correctly."""
+        """Test list --escalated filters via canonical escalation fields."""
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
         mock_task.seq_num = 1
         mock_task.title = "Escalated task"
-        mock_task.status = "escalated"
         mock_task.priority = 2
         mock_task.task_type = "task"
         mock_task.parent_task_id = None
+        mock_task.closed_at = None
+        mock_task.closed_reason = None
+        mock_task.closed_in_session_id = None
+        mock_task.closed_commit_sha = None
+        mock_task.escalated_at = "2025-01-01T00:00:00Z"
+        mock_task.escalation_reason = "recurring_issues"
+        mock_task.is_escalated = True
+        mock_task.assignee = None
+        mock_task.claimed_by_session_id = None
+        mock_task.stages = ({"stage_name": "development", "position": 0, "state": "ready"},)
+        mock_task.active_blocked_by = set()
         mock_task.to_dict.return_value = {
             "id": "gt-test123",
             "title": "Escalated task",
-            "status": "escalated",
+            "state": {
+                "is_escalated": True,
+                "escalated_at": "2025-01-01T00:00:00Z",
+                "escalation_reason": "recurring_issues",
+            },
         }
 
         mock_manager = MagicMock()
@@ -451,14 +467,13 @@ class TestListTasksEscalatedFilter:
 
         result = runner.invoke(
             cli,
-            ["tasks", "list", "--status", "escalated"],
+            ["tasks", "list", "--escalated", "--json"],
         )
 
         assert result.exit_code == 0
-        # Should have called list_tasks with status filter
         mock_manager.list_tasks.assert_called()
         call_kwargs = mock_manager.list_tasks.call_args.kwargs
-        assert call_kwargs.get("status") == "escalated"
+        assert call_kwargs.get("closed") is False
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     def test_list_escalated_shows_escalation_reason(
@@ -471,17 +486,27 @@ class TestListTasksEscalatedFilter:
         mock_task.id = "gt-test123"
         mock_task.seq_num = 1
         mock_task.title = "Escalated task"
-        mock_task.status = "escalated"
         mock_task.escalation_reason = "recurring_issues"
         mock_task.escalated_at = "2025-01-01T00:00:00Z"
+        mock_task.is_escalated = True
+        mock_task.closed_at = None
+        mock_task.closed_reason = None
+        mock_task.closed_in_session_id = None
+        mock_task.closed_commit_sha = None
+        mock_task.assignee = None
+        mock_task.claimed_by_session_id = None
+        mock_task.stages = ({"stage_name": "development", "position": 0, "state": "ready"},)
+        mock_task.active_blocked_by = set()
         mock_task.priority = 2
         mock_task.task_type = "task"
         mock_task.parent_task_id = None
         mock_task.to_dict.return_value = {
             "id": "gt-test123",
             "title": "Escalated task",
-            "status": "escalated",
-            "escalation_reason": "recurring_issues",
+            "state": {
+                "is_escalated": True,
+                "escalation_reason": "recurring_issues",
+            },
         }
 
         mock_manager = MagicMock()
@@ -490,12 +515,11 @@ class TestListTasksEscalatedFilter:
 
         result = runner.invoke(
             cli,
-            ["tasks", "list", "--status", "escalated"],
+            ["tasks", "list", "--escalated", "--json"],
         )
 
         assert result.exit_code == 0
-        # Escalated tasks should display their escalation reason
-        assert "escalat" in result.output.lower() or "recurring" in result.output.lower()
+        assert "recurring_issues" in result.output
 
 
 class TestValidateFlagCombinations:
@@ -533,7 +557,9 @@ class TestValidateFlagCombinations:
         mock_task = MagicMock()
         mock_task.id = "gt-test123"
         mock_task.title = "Test"
-        mock_task.status = "in_progress"
+        mock_task.closed_at = None
+        mock_task.is_escalated = False
+        mock_task.stages = ({"stage_name": "development", "position": 0, "state": "in_progress"},)
         mock_task.validation_fail_count = 0
         mock_resolve.return_value = mock_task
 
@@ -557,6 +583,7 @@ class TestValidateFlagCombinations:
 
         # All flags should be accepted without error
         assert result.exit_code != 2  # 2 is Click's usage error
+        assert "No such option" not in result.output
 
 
 class TestValidateTaskNotFound:

@@ -304,6 +304,8 @@ async def test_reload_skipped_during_cooldown() -> None:
             )
 
     mock_reload.assert_not_awaited()
+    assert mock_reload.await_count == 0
+    assert mock_reload.await_args is None
 
 
 @pytest.mark.asyncio
@@ -324,12 +326,13 @@ async def test_reload_failure_raises() -> None:
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        patch("gobby.cli.services.try_autoload_embedding_model", return_value=False),
+        patch("gobby.cli.services.try_autoload_embedding_model", return_value=False) as mock_reload,
     ):
         with pytest.raises(RuntimeError, match="Embedding generation failed"):
             await generate_embedding(
                 "test", model="nomic-embed-text", api_base="http://localhost:1234/v1"
             )
+    assert mock_reload.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -390,3 +393,5 @@ async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_o
             )
 
     mock_ready.assert_not_awaited()
+    assert mock_ready.await_count == 0
+    assert mock_ready.await_args is None

@@ -21,10 +21,10 @@ VALID_WORKFLOW_YAML = """\
 name: test-workflow
 description: A test workflow
 version: "1.0"
-type: step
+type: pipeline
 steps:
-  - name: work
-    description: Do work
+  - id: work
+    exec: echo work
 """
 
 VALID_PIPELINE_YAML = """\
@@ -39,9 +39,10 @@ steps:
 
 INVALID_YAML_NO_NAME = """\
 description: Missing name field
-type: step
+type: pipeline
 steps:
-  - name: work
+  - id: work
+    exec: echo work
 """
 
 INVALID_YAML_BAD_PIPELINE = """\
@@ -218,10 +219,10 @@ class TestUpdateWorkflow:
 name: test-workflow
 description: Replaced definition
 version: "3.0"
-type: step
+type: pipeline
 steps:
-  - name: new-step
-    description: New step
+  - id: new-step
+    exec: echo new
 """
         result = update_workflow_definition(
             def_manager, loader, name="test-workflow", yaml_content=new_yaml
@@ -270,6 +271,20 @@ steps:
 
         assert result["success"] is False
         assert "required" in result["error"]
+
+    def test_update_yaml_replacement_rejects_step_type(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        """Regression: `type: step` used to silently rewrite workflow_type to
+        'pipeline' via _LEGACY_TYPE_MAP. Now it must error."""
+        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+
+        rogue_yaml = "name: test-workflow\ntype: step\nsteps:\n  - name: claim\n"
+        result = update_workflow_definition(
+            def_manager, loader, name="test-workflow", yaml_content=rogue_yaml
+        )
+        assert result["success"] is False
+        assert "Invalid type" in result["error"]
 
 
 # =============================================================================
@@ -450,6 +465,52 @@ class TestRegistryIntegration:
         tool_names = [t["name"] for t in registry.list_tools()]
 
         assert "create_pipeline" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_evaluate_workflow_uses_internal_mcp_inventory(self) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+        from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
+
+        class FakeInternalRegistry:
+            name = "gobby-tasks"
+
+            @staticmethod
+            def list_tools() -> list[dict[str, str]]:
+                return [{"name": "get_task"}]
+
+        class FakeInternalManager:
+            @staticmethod
+            def list_servers() -> list[dict[str, object]]:
+                return [{"name": "gobby-tasks"}]
+
+            @staticmethod
+            def get_all_registries() -> list[FakeInternalRegistry]:
+                return [FakeInternalRegistry()]
+
+        class FakeLoader:
+            @staticmethod
+            async def load_workflow(name: str, project_path: str | None = None):
+                return WorkflowDefinition(
+                    name=name,
+                    type="step",
+                    steps=[
+                        WorkflowStep(
+                            name="start",
+                            allowed_mcp_tools=["gobby-tasks:missing_tool"],
+                        )
+                    ],
+                )
+
+        registry = create_workflows_registry(
+            loader=FakeLoader(),
+            internal_manager=FakeInternalManager(),
+        )
+
+        result = await registry.call("evaluate_workflow", {"name": "inventory-test"})
+
+        codes = {item["code"] for item in result["items"]}
+        assert "SEMANTIC_CHECKS_SKIPPED" not in codes
+        assert "UNKNOWN_MCP_TOOL" in codes
 
 
 # =============================================================================

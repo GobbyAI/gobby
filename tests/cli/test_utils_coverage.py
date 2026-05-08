@@ -193,6 +193,7 @@ def test_stop_daemon_no_pid_file(tmp_path: Path) -> None:
         result = stop_daemon(quiet=True)
     assert result is True
     mock_ui.assert_called_once_with(quiet=True)
+    assert mock_ui.call_count == 1
 
 
 def test_stop_daemon_stale_pid(tmp_path: Path) -> None:
@@ -202,6 +203,7 @@ def test_stop_daemon_stale_pid(tmp_path: Path) -> None:
     pid_file.write_text("999999")
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils.stop_ui_server"),
         patch("gobby.cli.utils._is_process_alive", return_value=False),
@@ -209,6 +211,7 @@ def test_stop_daemon_stale_pid(tmp_path: Path) -> None:
     ):
         result = stop_daemon(quiet=False)
     assert result is True
+    assert not pid_file.exists()
 
 
 def test_stop_daemon_bad_pid_file(tmp_path: Path) -> None:
@@ -218,6 +221,7 @@ def test_stop_daemon_bad_pid_file(tmp_path: Path) -> None:
     pid_file.write_text("not-a-pid")
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils.stop_ui_server"),
         patch(
@@ -228,6 +232,7 @@ def test_stop_daemon_bad_pid_file(tmp_path: Path) -> None:
         result = stop_daemon(quiet=False)
     # Bad PID file + no service running = daemon not running = success
     assert result is True
+    assert not pid_file.exists()
 
 
 def test_stop_daemon_not_gobby_process(tmp_path: Path) -> None:
@@ -240,6 +245,7 @@ def test_stop_daemon_not_gobby_process(tmp_path: Path) -> None:
     mock_proc.cmdline.return_value = ["node", "server.js"]
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils.stop_ui_server"),
         patch("gobby.cli.utils._is_process_alive", return_value=True),
@@ -248,6 +254,7 @@ def test_stop_daemon_not_gobby_process(tmp_path: Path) -> None:
     ):
         result = stop_daemon(quiet=False)
     assert result is True
+    assert not pid_file.exists()
 
 
 def test_stop_daemon_process_lookup_error(tmp_path: Path) -> None:
@@ -260,14 +267,20 @@ def test_stop_daemon_process_lookup_error(tmp_path: Path) -> None:
     mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils.stop_ui_server"),
         patch("gobby.cli.utils._is_process_alive", return_value=True),
         patch("gobby.cli.utils.psutil.Process", return_value=mock_proc),
         patch("gobby.cli.utils.os.kill", side_effect=ProcessLookupError),
+        patch(
+            "gobby.cli.installers.service.get_service_status",
+            return_value={"installed": False, "running": False},
+        ),
     ):
         result = stop_daemon(quiet=False)
     assert result is True
+    assert not pid_file.exists()
 
 
 def test_stop_daemon_permission_error(tmp_path: Path) -> None:
@@ -294,6 +307,7 @@ def test_stop_daemon_permission_error(tmp_path: Path) -> None:
     ):
         result = stop_daemon(quiet=False)
     assert result is False
+    assert pid_file.exists()
 
 
 # --- load_full_config_from_db ---
@@ -375,6 +389,7 @@ def test_resolve_project_ref_by_uuid() -> None:
         result = resolve_project_ref("uuid-abc")
     assert result == "uuid-abc"
     mock_db.close.assert_called_once()
+    assert mock_db.close.call_count == 1
 
 
 def test_resolve_project_ref_by_name() -> None:
@@ -395,6 +410,7 @@ def test_resolve_project_ref_by_name() -> None:
     ):
         result = resolve_project_ref("my-project")
     assert result == "uuid-from-name"
+    assert mock_db.close.call_count == 1
 
 
 def test_resolve_project_ref_not_found_returns_none() -> None:
@@ -412,6 +428,7 @@ def test_resolve_project_ref_not_found_returns_none() -> None:
     ):
         result = resolve_project_ref("nonexistent", exit_on_not_found=False)
     assert result is None
+    assert mock_db.close.call_count == 1
 
 
 def test_resolve_project_ref_not_found_exits() -> None:
@@ -430,6 +447,7 @@ def test_resolve_project_ref_not_found_exits() -> None:
     ):
         resolve_project_ref("nonexistent", exit_on_not_found=True)
     mock_db.close.assert_called_once()
+    assert mock_db.close.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +539,7 @@ def test_resolve_session_id_with_ref() -> None:
     ):
         result = resolve_session_id("#5")
     assert result == "uuid-resolved"
+    assert mock_db.close.call_count == 1
 
 
 def test_resolve_session_id_value_error() -> None:
@@ -538,6 +557,7 @@ def test_resolve_session_id_value_error() -> None:
         pytest.raises(click.ClickException, match="ambiguous"),
     ):
         resolve_session_id("abc")
+    assert mock_db.close.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +583,7 @@ def test_list_project_names() -> None:
         result = list_project_names()
     assert result == ["alpha", "beta"]
     mock_db.close.assert_called_once()
+    assert mock_db.close.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +754,7 @@ def test_kill_all_gobby_daemons_no_processes() -> None:
 
         result = kill_all_gobby_daemons()
     assert result == 0
+    assert mock_proc_cls.call_count == 1
 
 
 def test_kill_all_gobby_daemons_config_fallback() -> None:
@@ -751,6 +773,7 @@ def test_kill_all_gobby_daemons_config_fallback() -> None:
 
         result = kill_all_gobby_daemons()
     assert result == 0
+    assert mock_proc_cls.call_count == 1
 
 
 def test_kill_all_gobby_daemons_kills_runner_process() -> None:
@@ -785,6 +808,7 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
         result = kill_all_gobby_daemons()
     assert result == 1
     fake_proc.send_signal.assert_called_once_with(signal.SIGTERM)
+    assert fake_proc.wait.call_count == 1
 
 
 def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
@@ -819,6 +843,7 @@ def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
         result = kill_all_gobby_daemons()
     assert result == 1
     fake_proc.kill.assert_called_once()
+    assert fake_proc.wait.call_count == 2
 
 
 def test_kill_all_gobby_daemons_port_match() -> None:
@@ -856,6 +881,7 @@ def test_kill_all_gobby_daemons_port_match() -> None:
     ):
         result = kill_all_gobby_daemons()
     assert result == 1
+    assert fake_proc.net_connections.call_count == 1
 
 
 def test_kill_all_gobby_daemons_skips_self() -> None:
@@ -884,6 +910,7 @@ def test_kill_all_gobby_daemons_skips_self() -> None:
     ):
         result = kill_all_gobby_daemons()
     assert result == 0
+    assert fake_proc.cmdline.call_count == 0
 
 
 def test_kill_all_gobby_daemons_handles_process_error() -> None:
@@ -913,6 +940,7 @@ def test_kill_all_gobby_daemons_handles_process_error() -> None:
     ):
         result = kill_all_gobby_daemons()
     assert result == 0
+    assert fake_proc.cmdline.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -943,8 +971,10 @@ def test_kill_port_holder_finds_process() -> None:
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
         patch("gobby.cli.utils.psutil.wait_procs", return_value=([], [])),
     ):
-        _kill_port_holder(5173)
+        result = _kill_port_holder(5173)
 
+    assert result is None
+    assert parent_proc.children.call_count == 1
     parent_proc.terminate.assert_called_once()
     child.terminate.assert_called_once()
 
@@ -962,7 +992,10 @@ def test_kill_port_holder_no_match() -> None:
     fake_proc.net_connections.return_value = [conn]
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
-        _kill_port_holder(5173)  # No error, just no-op
+        result = _kill_port_holder(5173)
+        assert result is None
+        fake_proc.net_connections.assert_called_once()
+        assert fake_proc.net_connections.call_count == 1
 
 
 def test_kill_port_holder_access_denied() -> None:
@@ -973,7 +1006,9 @@ def test_kill_port_holder_access_denied() -> None:
     fake_proc.net_connections.side_effect = psutil.AccessDenied(55555)
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
-        _kill_port_holder(5173)  # Should not raise
+        result = _kill_port_holder(5173)
+        assert result is None
+        fake_proc.net_connections.assert_called_once()
 
 
 def test_kill_port_holder_kills_alive_procs() -> None:
@@ -1001,8 +1036,10 @@ def test_kill_port_holder_kills_alive_procs() -> None:
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
         patch("gobby.cli.utils.psutil.wait_procs", return_value=([], [alive_proc])),
     ):
-        _kill_port_holder(5173)
+        result = _kill_port_holder(5173)
+    assert result is None
     alive_proc.kill.assert_called_once()
+    assert alive_proc.kill.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1066,6 +1103,7 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
         result = stop_ui_server(quiet=False)
     assert result is True
     mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+    assert not pid_file.exists()
 
 
 def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
@@ -1144,6 +1182,7 @@ def test_stop_ui_server_generic_exception(tmp_path: Path) -> None:
     ):
         result = stop_ui_server(quiet=False)
     assert result is False
+    assert pid_file.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1236,6 +1275,11 @@ def test_stop_daemon_psutil_nosuchprocess_on_verify(tmp_path: Path) -> None:
     pid_file.write_text("12345")
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
+        patch(
+            "gobby.cli.installers.service.get_service_status",
+            return_value={"installed": False, "running": False},
+        ),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils.stop_ui_server"),
         patch("gobby.cli.utils._is_process_alive", return_value=True),
@@ -1245,6 +1289,7 @@ def test_stop_daemon_psutil_nosuchprocess_on_verify(tmp_path: Path) -> None:
     ):
         result = stop_daemon(quiet=False)
     assert result is True
+    assert not pid_file.exists()
 
 
 def test_stop_daemon_graceful_shutdown(tmp_path: Path) -> None:
@@ -1279,6 +1324,7 @@ def test_stop_daemon_graceful_shutdown(tmp_path: Path) -> None:
         result = stop_daemon(quiet=False)
     assert result is True
     mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+    assert not pid_file.exists()
 
 
 def test_stop_daemon_writes_shutdown_source_inside_safe_gobby_home(
@@ -1394,6 +1440,7 @@ def test_stop_daemon_force_kill_fails(tmp_path: Path) -> None:
     ):
         result = stop_daemon(quiet=False)
     assert result is False
+    assert pid_file.exists()
 
 
 def test_stop_daemon_generic_exception(tmp_path: Path) -> None:
@@ -1422,6 +1469,7 @@ def test_stop_daemon_generic_exception(tmp_path: Path) -> None:
     ):
         result = stop_daemon(quiet=False)
     assert result is False
+    assert pid_file.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1509,6 +1557,7 @@ def test_stop_daemon_falls_back_to_sigterm_on_service_stop_failure(tmp_path: Pat
     assert result is True
     # Should have fallen back to SIGTERM
     mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+    assert not pid_file.exists()
 
 
 # ---------------------------------------------------------------------------

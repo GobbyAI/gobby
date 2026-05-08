@@ -18,4 +18,5 @@ def test_live_diagnose_output_validates_against_schema(spec) -> None:
     runner = SandboxRunner(spec)
     result = runner.run_diagnose()
 
-    validate_diagnose_payload(result.payload)
+    assert validate_diagnose_payload(result.payload) is None
+    assert result.spec is spec

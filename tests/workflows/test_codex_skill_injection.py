@@ -1,11 +1,12 @@
-"""End-to-end integration test for Codex MCP skill loading directives.
+"""End-to-end integration test for Codex MCP skill-loading gates.
 
 Codex CLI's experimental hooks don't fire PreToolUse/PostToolUse for MCP
-tool calls; SessionMessageProcessor synthesizes BEFORE_TOOL/AFTER_TOOL
-HookEvents from the rollout JSONL instead. This test verifies that a
-synthesized AFTER_TOOL event for `mcp__gobby__get_tool_schema(server_name=
-'gobby-tasks', tool_name='create_task')` causes the bundled
-`inject-task-creation-on-schema` rule to emit an on-demand skill directive.
+tool calls; SessionMessageProcessor synthesizes BEFORE_TOOL and AFTER_TOOL
+HookEvents from the rollout JSONL instead. These tests verify that a
+synthesized BEFORE_TOOL event for `mcp__gobby__get_tool_schema(server_name=
+'gobby-tasks', tool_name='create_task')` is blocked by the bundled
+`require-task-creation-skill-on-schema` rule until `loaded_skills` records the
+required skill.
 """
 
 from __future__ import annotations
@@ -27,22 +28,21 @@ from gobby.workflows.observers import detect_mcp_call
 pytestmark = pytest.mark.integration
 
 
-# Mirrors the bundled YAML at
-# src/gobby/install/shared/workflows/rules/task-enforcement/inject-task-creation-on-schema.yaml.
-_INJECT_TASK_CREATION_ON_SCHEMA = RuleDefinitionBody(
-    event=RuleEvent.AFTER_TOOL,
+# Mirrors the bundled task-creation schema gate.
+_REQUIRE_TASK_CREATION_ON_SCHEMA = RuleDefinitionBody(
+    event=RuleEvent.BEFORE_TOOL,
     when=(
         "(event.data.get('mcp_tool') == 'get_tool_schema'\n"
         " or event.data.get('tool_name') in ('get_tool_schema', "
         "'mcp__gobby__get_tool_schema'))\n"
-        "and tool_input.get('server_name') == 'gobby-tasks'\n"
-        "and tool_input.get('tool_name') in ('create_task', 'claim_task')\n"
+        "and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'\n"
+        "and (tool_input.get('tool_name') or tool_input.get('tool')) == 'create_task'\n"
         "and not skill_loaded('task-creation')\n"
     ),
     effects=[
         RuleEffect(
-            type="inject_context",
-            template='Call get_skill(name="task-creation") on gobby-skills, then continue.',
+            type="block",
+            reason='Call get_skill(name="task-creation") on gobby-skills, then continue.',
         ),
     ],
 )
@@ -69,20 +69,24 @@ def _install_rule(
         name=name,
         definition_json=body.model_dump_json(),
         workflow_type="rule",
-        priority=25,
+        priority=23,
         enabled=True,
         sources=None,
     )
 
 
 @pytest.mark.asyncio
-async def test_synthesized_after_tool_emits_task_creation_directive(
+async def test_synthesized_before_tool_blocks_for_task_creation_skill(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
-    _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
+    _install_rule(
+        manager,
+        "require-task-creation-skill-on-schema",
+        _REQUIRE_TASK_CREATION_ON_SCHEMA,
+    )
 
     tool_event = ParsedToolEvent(
-        phase="end",
+        phase="begin",
         call_id="call_hJqEH1DUthWw8MWcBZK1E2iQ",  # real call_id from the #2995 rollout
         server="gobby",
         tool="get_tool_schema",
@@ -93,8 +97,6 @@ async def test_synthesized_after_tool_emits_task_creation_directive(
         },
         timestamp=datetime(2026, 4, 20, 4, 5, 7, 591000, tzinfo=UTC),
         raw_json={},
-        result={"content": [{"type": "text", "text": "{...}"}]},
-        duration_ns=18_695_333,
     )
 
     hook_event = SessionMessageProcessor._build_codex_hook_event(
@@ -113,9 +115,9 @@ async def test_synthesized_after_tool_emits_task_creation_directive(
 
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
-    assert response.decision == "allow"
-    assert (
-        response.context == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+    assert response.decision == "block"
+    assert 'Call get_skill(name="task-creation") on gobby-skills, then continue.' in (
+        response.reason or ""
     )
     assert "loaded_skills" not in variables
 
@@ -124,7 +126,11 @@ async def test_synthesized_after_tool_emits_task_creation_directive(
 async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_prompt(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
-    _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
+    _install_rule(
+        manager,
+        "require-task-creation-skill-on-schema",
+        _REQUIRE_TASK_CREATION_ON_SCHEMA,
+    )
 
     variables: dict[str, object] = {}
     detect_mcp_call(
@@ -147,14 +153,13 @@ async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_pr
     )
 
     tool_event = ParsedToolEvent(
-        phase="end",
+        phase="begin",
         call_id="call_2",
         server="gobby",
         tool="get_tool_schema",
-        arguments={"server_name": "gobby-tasks", "tool_name": "claim_task"},
+        arguments={"server_name": "gobby-tasks", "tool_name": "create_task"},
         timestamp=datetime.now(UTC),
         raw_json={},
-        result={"ok": True},
     )
     hook_event = SessionMessageProcessor._build_codex_hook_event(
         {
@@ -171,7 +176,7 @@ async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_pr
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
     assert variables["loaded_skills"] == ["task-creation"]
-    assert response.context is None
+    assert response.decision == "allow"
 
 
 @pytest.mark.asyncio
@@ -179,17 +184,20 @@ async def test_synthesized_event_skipped_when_skill_already_loaded(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     """The rule's canonical loaded_skills idempotency guard applies."""
-    _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
+    _install_rule(
+        manager,
+        "require-task-creation-skill-on-schema",
+        _REQUIRE_TASK_CREATION_ON_SCHEMA,
+    )
 
     tool_event = ParsedToolEvent(
-        phase="end",
+        phase="begin",
         call_id="call_2",
         server="gobby",
         tool="get_tool_schema",
-        arguments={"server_name": "gobby-tasks", "tool_name": "claim_task"},
+        arguments={"server_name": "gobby-tasks", "tool_name": "create_task"},
         timestamp=datetime.now(UTC),
         raw_json={},
-        result={"ok": True},
     )
     hook_event = SessionMessageProcessor._build_codex_hook_event(
         {
@@ -206,26 +214,29 @@ async def test_synthesized_event_skipped_when_skill_already_loaded(
     variables: dict[str, object] = {"loaded_skills": ["task-creation"]}
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
-    assert response.context is None
+    assert response.decision == "allow"
     assert variables["loaded_skills"] == ["task-creation"]
 
 
 @pytest.mark.asyncio
-async def test_synthesized_event_skipped_when_skill_legacy_injected(
+async def test_synthesized_event_not_skipped_when_skill_legacy_injected(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
-    """Existing sessions with injected_skills still satisfy skill_loaded()."""
-    _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
+    """Legacy injected_skills no longer satisfies skill_loaded()."""
+    _install_rule(
+        manager,
+        "require-task-creation-skill-on-schema",
+        _REQUIRE_TASK_CREATION_ON_SCHEMA,
+    )
 
     tool_event = ParsedToolEvent(
-        phase="end",
+        phase="begin",
         call_id="call_legacy",
         server="gobby",
         tool="get_tool_schema",
-        arguments={"server_name": "gobby-tasks", "tool_name": "claim_task"},
+        arguments={"server_name": "gobby-tasks", "tool_name": "create_task"},
         timestamp=datetime.now(UTC),
         raw_json={},
-        result={"ok": True},
     )
     hook_event = SessionMessageProcessor._build_codex_hook_event(
         {
@@ -242,24 +253,58 @@ async def test_synthesized_event_skipped_when_skill_legacy_injected(
     variables: dict[str, object] = {"injected_skills": ["task-creation"]}
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
-    assert response.context is None
+    assert response.decision == "block"
+    assert 'Call get_skill(name="task-creation") on gobby-skills, then continue.' in (
+        response.reason or ""
+    )
+
+
+def test_synthesized_event_requires_non_empty_external_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tool_event = ParsedToolEvent(
+        phase="begin",
+        call_id="call_missing_external",
+        server="gobby",
+        tool="get_tool_schema",
+        arguments={"server_name": "gobby-tasks", "tool_name": "create_task"},
+        timestamp=datetime.now(UTC),
+        raw_json={},
+    )
+    caplog.set_level("WARNING", logger="gobby.sessions.processor")
+
+    hook_event = SessionMessageProcessor._build_codex_hook_event(
+        {
+            "external_id": "",
+            "machine_id": "machine-xyz",
+            "project_id": "project-abc",
+            "platform_session_id": "platform-sid",
+        },
+        tool_event,
+    )
+
+    assert hook_event is None
+    assert "without external_id" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_synthesized_event_for_unrelated_server_does_not_fire(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
-    _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
+    _install_rule(
+        manager,
+        "require-task-creation-skill-on-schema",
+        _REQUIRE_TASK_CREATION_ON_SCHEMA,
+    )
 
     tool_event = ParsedToolEvent(
-        phase="end",
+        phase="begin",
         call_id="call_3",
         server="gobby",
         tool="get_tool_schema",
         arguments={"server_name": "gobby-memory", "tool_name": "create_memory"},
         timestamp=datetime.now(UTC),
         raw_json={},
-        result={"ok": True},
     )
     hook_event = SessionMessageProcessor._build_codex_hook_event(
         {
@@ -276,5 +321,5 @@ async def test_synthesized_event_for_unrelated_server_does_not_fire(
     variables: dict[str, object] = {}
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
-    assert response.context is None
+    assert response.decision == "allow"
     assert "loaded_skills" not in variables

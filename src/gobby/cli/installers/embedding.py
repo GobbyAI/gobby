@@ -17,11 +17,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_LMSTUDIO_MODEL_ID = "text-embedding-nomic-embed-text-v1.5@f16"
 
 # Provider configuration table
 _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
     "lmstudio": {
-        "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
+        "model": _LMSTUDIO_MODEL_ID,
         "api_base": "http://localhost:1234/v1",
         "dim": 768,
     },
@@ -179,7 +180,7 @@ def _setup_lmstudio() -> dict[str, Any]:
     # 3. Check if nomic is already loaded
     try:
         ps_result = subprocess.run(["lms", "ps"], capture_output=True, text=True, timeout=10)
-        if ps_result.returncode == 0 and "nomic" in ps_result.stdout.lower():
+        if ps_result.returncode == 0 and _LMSTUDIO_MODEL_ID.lower() in ps_result.stdout.lower():
             return {"success": True, "action": "already_loaded"}
     except (subprocess.TimeoutExpired, OSError) as e:
         return {"success": False, "error": f"lms ps failed: {e}"}
@@ -213,7 +214,7 @@ def _setup_lmstudio() -> dict[str, Any]:
     # Load the model
     try:
         load_result = subprocess.run(
-            ["lms", "load", _LMSTUDIO_MODEL_KEY, "-y"],
+            ["lms", "load", _LMSTUDIO_MODEL_ID, "-y"],
             capture_output=True,
             text=True,
             timeout=120,

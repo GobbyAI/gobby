@@ -5,6 +5,8 @@ Provides a FastAPI-based HTTP server for REST endpoints, MCP tool proxying,
 and session management. Local-first version: no platform auth, no remote sync.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+    from gobby.runner import GobbyRunner
     from gobby.servers.websocket.server import WebSocketServer
     from gobby.utils.tool_metrics import ToolMetricsManager
 
@@ -46,7 +49,7 @@ class HTTPServer:
 
     def __init__(
         self,
-        services: "ServiceContainer",
+        services: ServiceContainer,
         port: int = 8000,
         test_mode: bool = False,
         codex_client: Any | None = None,
@@ -100,8 +103,10 @@ class HTTPServer:
         self._running = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._daemon: Any = None  # Set externally by daemon
+        # Assigned by runner_init.py after GobbyRunner construction; nullable until then.
+        self._runner: GobbyRunner | None = None
 
-    def _init_mcp_subsystems(self, services: "ServiceContainer", port: int) -> None:
+    def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""
         assert services.mcp_manager is not None, "caller must check services.mcp_manager"
         # Determine WebSocket port
@@ -129,8 +134,8 @@ class HTTPServer:
 
             merge_storage = MergeResolutionManager(self.services.mcp_db_manager.db)
             merge_resolver = MergeResolver()
-            merge_resolver._llm_service = services.llm_service
-            merge_resolver._config = services.config.merge_resolution if services.config else None
+            merge_resolver.llm_service = services.llm_service
+            merge_resolver.config = services.config.merge_resolution if services.config else None
             inter_session_message_manager = InterSessionMessageManager(
                 self.services.mcp_db_manager.db
             )
@@ -181,15 +186,18 @@ class HTTPServer:
             completion_registry=services.completion_registry,
             agent_lifecycle_monitor=services.agent_lifecycle_monitor,
             cron_scheduler=services.cron_scheduler,
+            mcp_manager=services.mcp_manager,
             transcript_reader=services.transcript_reader,
             communications_manager=services.communications_manager,
+            web_chat_session_registry=services.web_chat_session_registry,
+            code_index=services.code_indexer,
         )
         registry_count = len(self._internal_manager)
         logger.debug(f"Internal registries initialized: {registry_count} registries")
 
         # Initialize tool summarizer config
         if services.config:
-            from gobby.tools.summarizer import init_summarizer_config
+            from gobby.utils.tool_summarizer import init_summarizer_config
 
             init_summarizer_config(
                 services.config.tool_summarizer,
@@ -258,7 +266,7 @@ class HTTPServer:
 
     # Property accessors for services (delegate to container)
     @property
-    def config(self) -> "DaemonConfig | None":
+    def config(self) -> DaemonConfig | None:
         return self.services.config
 
     @property
@@ -278,19 +286,19 @@ class HTTPServer:
         self.services.task_manager = value
 
     @property
-    def mcp_manager(self) -> "MCPClientManager | None":
+    def mcp_manager(self) -> MCPClientManager | None:
         return self.services.mcp_manager
 
     @mcp_manager.setter
-    def mcp_manager(self, value: "MCPClientManager | None") -> None:
+    def mcp_manager(self, value: MCPClientManager | None) -> None:
         self.services.mcp_manager = value
 
     @property
-    def llm_service(self) -> "LLMService | None":
+    def llm_service(self) -> LLMService | None:
         return self.services.llm_service
 
     @llm_service.setter
-    def llm_service(self, value: "LLMService | None") -> None:
+    def llm_service(self, value: LLMService | None) -> None:
         self.services.llm_service = value
 
     @property
@@ -310,11 +318,11 @@ class HTTPServer:
         self.services.message_processor = value
 
     @property
-    def metrics_manager(self) -> "ToolMetricsManager | None":
+    def metrics_manager(self) -> ToolMetricsManager | None:
         return self.services.metrics_manager
 
     @metrics_manager.setter
-    def metrics_manager(self, value: "ToolMetricsManager | None") -> None:
+    def metrics_manager(self, value: ToolMetricsManager | None) -> None:
         self.services.metrics_manager = value
 
     @property
@@ -521,6 +529,14 @@ class HTTPServer:
                 extra={"duration_seconds": duration_seconds},
             )
 
+        except asyncio.CancelledError:
+            duration_seconds = time.perf_counter() - start_time
+
+            logger.info(
+                "Shutdown processing cancelled during graceful shutdown",
+                extra={"duration_seconds": duration_seconds},
+            )
+
         except Exception as e:
             duration_seconds = time.perf_counter() - start_time
             inc_counter("shutdown_failed_total")
@@ -533,7 +549,7 @@ class HTTPServer:
 
 
 async def create_server(
-    services: "ServiceContainer",
+    services: ServiceContainer,
     port: int = 60887,
     test_mode: bool = False,
 ) -> HTTPServer:

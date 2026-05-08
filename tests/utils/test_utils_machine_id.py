@@ -218,5 +218,8 @@ class TestClearCache:
         """Test that clear_cache uses lock."""
         # The function uses _cache_lock internally
         # Just verify it doesn't raise any exceptions
-        clear_cache()
-        clear_cache()  # Multiple calls should be safe
+        first = clear_cache()
+        second = clear_cache()
+
+        assert first is None
+        assert second is None

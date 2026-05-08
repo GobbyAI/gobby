@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
 
-from gobby.cli.installers.hook_commands import is_gobby_hook_command
 from gobby.config.bootstrap import load_bootstrap
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
@@ -143,6 +142,24 @@ def get_codex_cli_version() -> str | None:
     return None
 
 
+def get_qwen_cli_version() -> str | None:
+    """Get Qwen CLI version."""
+    output = _run_cmd(["qwen", "--version"])
+    if output:
+        match = re.search(r"(\d+\.\d+\.\d+)", output)
+        return match.group(1) if match else output
+    return None
+
+
+def get_droid_cli_version() -> str | None:
+    """Get Factory Droid CLI version."""
+    output = _run_cmd(["droid", "--version"])
+    if output:
+        match = re.search(r"(\d+\.\d+\.\d+)", output)
+        return match.group(1) if match else output
+    return None
+
+
 def get_coding_cli_hooks_status() -> dict[str, bool]:
     """Check which coding CLIs have gobby hooks installed.
 
@@ -163,7 +180,24 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     codex_hooks = Path.home() / ".codex" / "hooks.json"
     result["codex"] = _check_hooks_in_file(codex_hooks)
 
+    # Qwen: ~/.qwen/settings.json
+    qwen_settings = Path.home() / ".qwen" / "settings.json"
+    result["qwen"] = _check_hooks_in_file(qwen_settings)
+
+    # Factory Droid: ~/.factory/hooks/hooks.json
+    droid_hooks = _droid_hooks_file()
+    result["droid"] = _check_hooks_in_file(droid_hooks)
+
     return result
+
+
+def _droid_hooks_file() -> Path:
+    """Return the Droid hooks path used by status and test overrides."""
+    if override := os.environ.get("GOBBY_DROID_HOOKS_FILE"):
+        return Path(override).expanduser()
+    if hooks_dir := os.environ.get("GOBBY_HOOKS_DIR"):
+        return Path(hooks_dir).expanduser() / "hooks.json"
+    return Path.home() / ".factory" / "hooks" / "hooks.json"
 
 
 def _check_hooks_in_file(path: Path) -> bool:
@@ -171,6 +205,8 @@ def _check_hooks_in_file(path: Path) -> bool:
     if not path.exists():
         return False
     try:
+        from gobby.cli.installers.hook_commands import is_gobby_hook_command
+
         content = path.read_text()
         return is_gobby_hook_command(content)
     except Exception:
@@ -489,6 +525,8 @@ def collect_all_deps() -> dict[str, Any]:
             "claude": get_claude_code_version(),
             "gemini": get_gemini_cli_version(),
             "codex": get_codex_cli_version(),
+            "droid": get_droid_cli_version(),
+            "qwen": get_qwen_cli_version(),
             "hooks": get_coding_cli_hooks_status(),
         },
         "dependencies": {

@@ -19,6 +19,14 @@ import { useSessionCatalog } from "./hooks/useSessionCatalog";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
 import type { GobbySession } from "./types/sessions";
+import {
+  defaultSessionsFilters,
+  deserializeFromStorage,
+  serializeForStorage,
+  type SessionsFilters,
+} from "./components/activity/sessionsFilters";
+
+const SESSIONS_FILTERS_STORAGE_KEY = "gobby-sessions-filters";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPage } from "./components/chat/ChatPage";
@@ -30,6 +38,7 @@ import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
 import { Button } from "./components/chat/ui/Button";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
+import { GobbyLogo } from "./components/shared/GobbyLogo";
 import {
   ComingSoonPage,
   ConfigurationPage,
@@ -48,21 +57,10 @@ import {
 import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
 import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
 import { useAppKeyboardShortcuts } from "./components/app/useAppKeyboardShortcuts";
+import { useReasoningPreferences } from "./components/app/useReasoningPreferences";
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
 import { HamburgerIcon } from "./components/icons";
 import { FilesProvider } from "./contexts/FilesContext";
-import {
-  buildReasoningPreferenceKey,
-  fetchProviderModelCatalog,
-  getPreferredModelForProvider,
-  getPreferredReasoningEffort,
-  resolveModelValueForProvider,
-  type ProviderModelEntry,
-} from "./lib/providerModels";
-import {
-  loadReasoningPreferences,
-  REASONING_PREFERENCES_STORAGE_KEY,
-} from "./lib/sessionPersistence";
 import { cn } from "./lib/utils";
 
 const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
@@ -92,6 +90,7 @@ export default function App() {
     contextUsage,
     sendMessage,
     sendMode,
+    sendAttachedSessionMode,
     sendProjectChange,
     setProjectIdRef,
     sendWorktreeChange,
@@ -109,6 +108,7 @@ export default function App() {
     continueSessionInChat,
     setOnModeChanged,
     setOnPlanReady,
+    setOnArtifactEvent,
     addSystemMessage,
     viewSession,
     clearViewingSession,
@@ -148,12 +148,6 @@ export default function App() {
     updateVoiceInputMode,
     resetSettings,
   } = useSettings();
-  const [providerModelCatalog, setProviderModelCatalog] = useState<
-    ProviderModelEntry[]
-  >([]);
-  const [reasoningPreferences, setReasoningPreferences] = useState<
-    Record<string, string>
-  >(() => loadReasoningPreferences());
   const voice = useVoice(
     wsRef,
     conversationId,
@@ -196,6 +190,9 @@ export default function App() {
     null,
   );
   const [initialTraceId, setInitialTraceId] = useState<string | null>(null);
+  const [initialPipelineExecutionId, setInitialPipelineExecutionId] = useState<
+    string | null
+  >(null);
   const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
@@ -207,6 +204,14 @@ export default function App() {
     setInitialTraceId(traceId);
     setActiveTab("traces");
   }, []);
+
+  const handleNavigateToPipelineExecution = useCallback(
+    (executionId: string) => {
+      setInitialPipelineExecutionId(executionId);
+      setActiveTab("reports");
+    },
+    [],
+  );
 
   useAppKeyboardShortcuts({ activeTab, setQuickCaptureOpen });
 
@@ -246,7 +251,42 @@ export default function App() {
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
+  const [sessionsFilters, setSessionsFilters] = useState<SessionsFilters>(
+    () => {
+      try {
+        return deserializeFromStorage(
+          localStorage.getItem(SESSIONS_FILTERS_STORAGE_KEY),
+        );
+      } catch {
+        return defaultSessionsFilters();
+      }
+    },
+  );
+
+  // Persist sessions-filter state so a reload restores the user's narrowed
+  // view. The filter badge on the SessionsTab funnel button is the visible
+  // cue that something is filtering.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SESSIONS_FILTERS_STORAGE_KEY,
+        JSON.stringify(serializeForStorage(sessionsFilters)),
+      );
+    } catch {
+      // Best-effort — disabled storage just means filters are per-tab-load.
+    }
+  }, [sessionsFilters]);
+
+  // Two catalog instances: the unfiltered one feeds the resume modal, web-chat
+  // sidebar list, and session-reconciliation hook (consumers that must see
+  // every session regardless of the activity panel's filter narrowing); the
+  // filtered one feeds the activity panel's Sessions tab so date/provider/etc.
+  // filters reach the historical tail via server-side predicates.
   const sessionCatalog = useSessionCatalog(effectiveProjectId);
+  const activitySessionCatalog = useSessionCatalog(
+    effectiveProjectId,
+    sessionsFilters,
+  );
   const confirmSessionDeleted = sessionCatalog.confirmSessionDeleted;
   const markSessionDeleting = sessionCatalog.markSessionDeleting;
   const restoreSession = sessionCatalog.restoreSession;
@@ -254,104 +294,17 @@ export default function App() {
     surfaceFilter: "persona",
   });
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchProviderModelCatalog()
-      .then((catalog) => {
-        if (!cancelled) {
-          setProviderModelCatalog(catalog);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProviderModelCatalog([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        REASONING_PREFERENCES_STORAGE_KEY,
-        JSON.stringify(reasoningPreferences),
-      );
-    } catch {
-      // Best-effort local preference cache
-    }
-  }, [reasoningPreferences]);
-
-  useEffect(() => {
-    const activeProvider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
-    const selectedModelForProvider = resolveModelValueForProvider(
-      providerModelCatalog,
-      activeProvider,
-      settings.model,
-    );
-    const persistedModelForProvider = resolveModelValueForProvider(
-      providerModelCatalog,
-      activeProvider,
-      mainSessionMeta?.model ?? null,
-    );
-
-    const nextModel =
-      selectedModelForProvider ??
-      persistedModelForProvider ??
-      getPreferredModelForProvider(providerModelCatalog, activeProvider, null);
-
-    if (nextModel && nextModel !== settings.model) {
-      updateModel(nextModel);
-    }
-  }, [
-    mainSessionMeta?.model,
-    mainSessionMeta?.source,
-    providerModelCatalog,
-    selectedProvider,
-    settings.model,
-    updateModel,
-  ]);
-
-  const updateReasoningPreference = useCallback(
-    (
-      provider: string | null | undefined,
-      model: string | null | undefined,
-      reasoningEffort: string | null | undefined,
-    ) => {
-      const key = buildReasoningPreferenceKey(provider, model);
-      if (!key || !reasoningEffort) {
-        return;
-      }
-      setReasoningPreferences((prev) => {
-        if (prev[key] === reasoningEffort) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [key]: reasoningEffort,
-        };
-      });
-    },
-    [],
-  );
-
-  const currentMainReasoning = useMemo(() => {
-    const provider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
-    const preferenceKey = buildReasoningPreferenceKey(provider, settings.model);
-    return getPreferredReasoningEffort(
-      providerModelCatalog,
-      provider,
-      settings.model,
-      preferenceKey ? reasoningPreferences[preferenceKey] : null,
-    );
-  }, [
-    mainSessionMeta?.source,
-    providerModelCatalog,
+  const {
     reasoningPreferences,
+    updateReasoningPreference,
+    currentMainReasoning,
+  } = useReasoningPreferences({
+    mainSessionSource: mainSessionMeta?.source,
     selectedProvider,
-    settings.model,
-  ]);
+    currentModel: settings.model,
+    persistedSessionModel: mainSessionMeta?.model,
+    updateModel,
+  });
 
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {
@@ -438,9 +391,10 @@ export default function App() {
     async (
       content: string,
       files?: QueuedFile[],
-      options?: { reasoningEffort?: string | null },
+      options?: { reasoningEffort?: string | null; ttsEnabled?: boolean },
     ) => {
       const reasoningEffort = options?.reasoningEffort ?? currentMainReasoning;
+      const ttsEnabled = options?.ttsEnabled ?? settings.ttsEnabled;
       const parsed = parseColonCommand(content);
       if (parsed) {
         const ctx = await resolveInjectContext(parsed);
@@ -453,6 +407,7 @@ export default function App() {
           effectiveProjectId,
           ctx ?? undefined,
           reasoningEffort,
+          ttsEnabled,
         );
       } else {
         sendMessage(
@@ -462,6 +417,7 @@ export default function App() {
           effectiveProjectId,
           undefined,
           reasoningEffort,
+          ttsEnabled,
         );
       }
     },
@@ -469,6 +425,7 @@ export default function App() {
       currentMainReasoning,
       sendMessage,
       settings.model,
+      settings.ttsEnabled,
       effectiveProjectId,
       parseColonCommand,
       resolveInjectContext,
@@ -705,8 +662,8 @@ export default function App() {
           >
             <HamburgerIcon />
           </Button>
-          <img src="/logo.png" alt="Gobby logo" className="h-9 w-auto" />
-          <span className="truncate text-lg font-semibold text-foreground">Gobby</span>
+          <GobbyLogo size={44} />
+          <span className="truncate text-3xl font-semibold text-foreground">Gobby</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
           {projectOptions.length > 0 && (
@@ -719,7 +676,7 @@ export default function App() {
           )}
           <Badge
             variant={isConnected ? "success" : "error"}
-            className="gap-2 px-3 py-1 uppercase tracking-[0.05em]"
+            className="h-9 gap-2 px-3 py-1 uppercase tracking-[0.05em]"
           >
             <span
               aria-hidden="true"
@@ -803,6 +760,7 @@ export default function App() {
                   onApprovePlan: approvePlan,
                   onRequestPlanChanges: requestPlanChanges,
                   setOnPlanReady,
+                  setOnArtifactEvent,
                   canvasSurfaces,
                   canvasPanel,
                   onCanvasInteraction,
@@ -820,6 +778,9 @@ export default function App() {
                   proxyDeliveryNotice,
                   onAttachToViewed: attachToViewed,
                   onDetachFromSession: detachFromSession,
+                  onAttachedModeChange: attachedSessionId
+                    ? (mode) => sendAttachedSessionMode(attachedSessionId, mode)
+                    : undefined,
                   activeAgent,
                   onAgentChange: sendAgentChange,
                   provider: selectedProvider,
@@ -830,6 +791,10 @@ export default function App() {
                 }}
                 allProjectSessions={allProjectSessions}
                 allProjectSessionsLoading={sessionCatalog.isLoading}
+                activitySessions={activitySessionCatalog.sessions}
+                activitySessionsLoading={activitySessionCatalog.isLoading}
+                sessionsFilters={sessionsFilters}
+                onSessionsFiltersChange={setSessionsFilters}
                 conversations={{
                   sessions: webChatSessions,
                   activeSessionId: dbSessionId,
@@ -883,7 +848,10 @@ export default function App() {
             ) : activeTab === "memory" ? (
               <MemoryPage projectId={effectiveProjectId} />
             ) : activeTab === "cron" ? (
-              <CronJobsPage projectId={effectiveProjectId} />
+              <CronJobsPage
+                projectId={effectiveProjectId}
+                onNavigateToPipelineExecution={handleNavigateToPipelineExecution}
+              />
             ) : activeTab === "traces" ? (
               <TracesPage
                 projectId={effectiveProjectId || undefined}
@@ -901,6 +869,10 @@ export default function App() {
               <ReportsPage
                 projectId={effectiveProjectId}
                 onNavigateToTrace={handleNavigateToTrace}
+                initialPipelineExecutionId={initialPipelineExecutionId}
+                onInitialPipelineExecutionConsumed={() =>
+                  setInitialPipelineExecutionId(null)
+                }
               />
             ) : activeTab === "configuration" ? (
               <ConfigurationPage />
@@ -954,14 +926,20 @@ export default function App() {
             effectiveProjectId,
             context,
             currentMainReasoning,
+            settings.ttsEnabled,
           );
         }}
       />
 
       {toastMessage && (
-        <div className="app-toast" onClick={() => setToastMessage(null)}>
+        <button
+          type="button"
+          className="app-toast"
+          onClick={() => setToastMessage(null)}
+          aria-label={`Dismiss notification: ${toastMessage}`}
+        >
           {toastMessage}
-        </div>
+        </button>
       )}
     </div>
   );

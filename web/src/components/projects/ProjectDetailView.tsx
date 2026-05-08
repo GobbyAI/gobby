@@ -1,6 +1,23 @@
 import type { ProjectWithStats, ProjectSubTab } from '../../hooks/useProjects'
 import { ProjectSummary } from './ProjectSummary'
 import { ProjectSettings } from './ProjectSettings'
+import { cn } from '../../lib/utils'
+
+const DETAIL_CLS = 'flex flex-1 flex-col overflow-hidden'
+const HEADER_CLS = 'flex shrink-0 items-center gap-2 pb-3'
+const BACK_CLS =
+  'flex cursor-pointer items-center gap-1 border-0 bg-transparent px-0 py-0.5 text-[length:var(--text-base)] text-[var(--accent)] hover:underline pointer-coarse:min-h-11'
+const SEPARATOR_CLS = 'text-[var(--text-muted)]'
+const NAME_CLS = 'text-[length:var(--text-lg)] font-semibold text-[var(--text-primary)]'
+const GITHUB_LINK_CLS = 'text-[var(--text-muted)] opacity-70 transition-opacity duration-150 hover:opacity-100'
+
+const TABS_CLS = 'flex shrink-0 border-b border-[var(--border)]'
+const TAB_CLS =
+  'flex cursor-pointer items-center gap-1.5 border-0 border-b-2 border-b-transparent bg-transparent px-4 py-2 text-[length:var(--text-sm)] text-[var(--text-muted)] transition-[color,border-color] duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const TAB_ACTIVE_CLS = 'border-b-[var(--accent)] text-[var(--accent)]'
+
+const CONTENT_CLS = 'flex-1 overflow-y-auto pt-4'
+const EMPTY_CLS = 'flex items-center justify-center p-12 text-[var(--text-muted)]'
 
 interface ProjectDetailViewProps {
   project: ProjectWithStats
@@ -9,7 +26,6 @@ interface ProjectDetailViewProps {
   onBack: () => void
   onSave: (fields: Record<string, string | string[] | null>) => Promise<boolean>
   onDelete: () => Promise<boolean>
-  /** Render prop for the Code tab (FilesPage scoped to project) */
   renderCodeTab?: () => React.ReactNode
 }
 
@@ -29,19 +45,19 @@ export function ProjectDetailView({
   renderCodeTab,
 }: ProjectDetailViewProps) {
   return (
-    <div className="projects-detail">
-      <div className="projects-detail-header">
-        <button className="projects-detail-back" onClick={onBack}>
+    <div className={DETAIL_CLS}>
+      <div className={HEADER_CLS}>
+        <button className={BACK_CLS} onClick={onBack}>
           <BackIcon /> Projects
         </button>
-        <span className="projects-detail-separator">/</span>
-        <span className="projects-detail-name">{project.display_name}</span>
+        <span className={SEPARATOR_CLS}>/</span>
+        <span className={NAME_CLS}>{project.display_name}</span>
         {project.github_url && (
           <a
             href={project.github_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="projects-detail-github"
+            className={GITHUB_LINK_CLS}
             title="Open on GitHub"
           >
             <GithubSmallIcon />
@@ -49,11 +65,11 @@ export function ProjectDetailView({
         )}
       </div>
 
-      <div className="projects-detail-tabs">
+      <div className={TABS_CLS}>
         {TABS.map(tab => (
           <button
             key={tab.key}
-            className={`projects-detail-tab ${activeTab === tab.key ? 'projects-detail-tab--active' : ''}`}
+            className={cn(TAB_CLS, activeTab === tab.key && TAB_ACTIVE_CLS)}
             onClick={() => onTabChange(tab.key)}
           >
             {tab.label}
@@ -61,11 +77,11 @@ export function ProjectDetailView({
         ))}
       </div>
 
-      <div className="projects-detail-content">
+      <div className={CONTENT_CLS}>
         {activeTab === 'overview' && <ProjectSummary project={project} />}
         {activeTab === 'code' && (
           renderCodeTab ? renderCodeTab() : (
-            <div className="projects-detail-empty">
+            <div className={EMPTY_CLS}>
               {project.repo_path
                 ? 'Loading code explorer...'
                 : 'No repository path configured for this project.'}

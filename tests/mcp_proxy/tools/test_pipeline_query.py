@@ -52,6 +52,9 @@ def mock_em() -> MagicMock:
     em = MagicMock()
     em.list_executions.return_value = []
     em.search_executions.return_value = []
+    em.count_executions.return_value = 0
+    em.count_search_executions.return_value = 0
+    em.status_summary_for_executions.return_value = {}
     em.count_by_status.return_value = {}
     em.get_steps_for_executions.return_value = {}
     return em
@@ -63,12 +66,15 @@ class TestListPipelineExecutions:
     def test_basic_list(self, mock_em) -> None:
         execs = [_make_execution(), _make_execution(id="pe-def456", status=ExecutionStatus.FAILED)]
         mock_em.list_executions.return_value = execs
-        mock_em.count_by_status.return_value = {"completed": 1, "failed": 1}
+        mock_em.count_executions.return_value = 2
+        mock_em.status_summary_for_executions.return_value = {"completed": 1, "failed": 1}
 
         result = list_pipeline_executions(mock_em)
 
         assert result["success"] is True
-        assert result["count"] == 2
+        assert result["total"] == 2
+        assert result["limit"] == 50
+        assert result["offset"] == 0
         assert len(result["executions"]) == 2
         assert result["status_summary"] == {"completed": 1, "failed": 1}
 
@@ -121,6 +127,7 @@ class TestListPipelineExecutions:
             session_id="sess-1",
             parent_execution_id="pe-parent",
             limit=10,
+            offset=5,
         )
 
         mock_em.list_executions.assert_called_once_with(
@@ -129,14 +136,51 @@ class TestListPipelineExecutions:
             session_id="sess-1",
             parent_execution_id="pe-parent",
             limit=10,
+            offset=5,
         )
+        assert mock_em.list_executions.call_count == 1
+        assert mock_em.list_executions.call_args is not None
+        mock_em.count_executions.assert_called_once_with(
+            status=ExecutionStatus.RUNNING,
+            pipeline_name="deploy",
+            session_id="sess-1",
+            parent_execution_id="pe-parent",
+        )
+        assert mock_em.count_executions.call_count == 1
+        assert mock_em.count_executions.call_args is not None
+        mock_em.status_summary_for_executions.assert_called_once_with(
+            pipeline_name="deploy",
+            session_id="sess-1",
+            parent_execution_id="pe-parent",
+        )
+        assert mock_em.status_summary_for_executions.call_count == 1
+        assert mock_em.status_summary_for_executions.call_args is not None
 
     def test_empty_results(self, mock_em) -> None:
         result = list_pipeline_executions(mock_em)
 
         assert result["success"] is True
-        assert result["count"] == 0
+        assert result["total"] == 0
+        assert result["limit"] == 50
+        assert result["offset"] == 0
         assert result["executions"] == []
+
+    def test_invalid_pagination_returns_error_envelope(self, mock_em) -> None:
+        mock_em.list_executions.side_effect = ValueError("limit must be > 0, got 0")
+
+        result = list_pipeline_executions(mock_em, limit=0)
+
+        assert result["success"] is False
+        assert "Invalid pagination" in result["error"]
+
+    def test_offset_progression_distinct_calls(self, mock_em) -> None:
+        list_pipeline_executions(mock_em, limit=10, offset=0)
+        list_pipeline_executions(mock_em, limit=10, offset=10)
+
+        calls = mock_em.list_executions.call_args_list
+        assert len(calls) == 2
+        assert calls[0].kwargs["offset"] == 0
+        assert calls[1].kwargs["offset"] == 10
 
 
 class TestSearchPipelineExecutions:
@@ -144,11 +188,14 @@ class TestSearchPipelineExecutions:
 
     def test_basic_search(self, mock_em) -> None:
         mock_em.search_executions.return_value = [_make_execution()]
+        mock_em.count_search_executions.return_value = 1
 
         result = search_pipeline_executions(mock_em, query="deploy")
 
         assert result["success"] is True
-        assert result["count"] == 1
+        assert result["total"] == 1
+        assert result["limit"] == 20
+        assert result["offset"] == 0
         assert result["query"] == "deploy"
 
     def test_empty_query_error(self, mock_em) -> None:
@@ -173,6 +220,7 @@ class TestSearchPipelineExecutions:
             search_outputs=True,
             status="failed",
             limit=5,
+            offset=2,
         )
 
         mock_em.search_executions.assert_called_once_with(
@@ -181,7 +229,26 @@ class TestSearchPipelineExecutions:
             search_outputs=True,
             status=ExecutionStatus.FAILED,
             limit=5,
+            offset=2,
         )
+        assert mock_em.search_executions.call_count == 1
+        assert mock_em.search_executions.call_args is not None
+        mock_em.count_search_executions.assert_called_once_with(
+            query="deploy",
+            search_errors=False,
+            search_outputs=True,
+            status=ExecutionStatus.FAILED,
+        )
+        assert mock_em.count_search_executions.call_count == 1
+        assert mock_em.count_search_executions.call_args is not None
+
+    def test_search_invalid_pagination_returns_error_envelope(self, mock_em) -> None:
+        mock_em.search_executions.side_effect = ValueError("offset must be >= 0, got -1")
+
+        result = search_pipeline_executions(mock_em, query="deploy", offset=-1)
+
+        assert result["success"] is False
+        assert "Invalid pagination" in result["error"]
 
     def test_include_steps(self, mock_em) -> None:
         ex = _make_execution()

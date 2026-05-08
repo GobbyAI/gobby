@@ -1,9 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { relativeTime } from '../../utils/formatTime'
-
-// =============================================================================
-// Types
-// =============================================================================
+import { cn } from '../../lib/utils'
 
 interface Comment {
   id: string
@@ -20,16 +17,47 @@ interface ThreadedComment extends Comment {
   replies: ThreadedComment[]
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
+const ROOT_CLS = 'flex flex-col gap-2'
+const STATE_TEXT_CLS = 'py-1 text-[length:var(--text-sm)] text-[var(--text-muted)]'
+const COUNT_CLS = 'pt-1 text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const LIST_CLS = 'flex flex-col gap-0.5'
+const EMPTY_CLS = 'py-1 text-[length:var(--text-sm)] text-[var(--text-muted)]'
+
+const NODE_CLS = 'border-b border-[var(--border)] py-1.5 last:border-b-0'
+const NODE_NESTED_CLS = 'ml-4 border-b-0 pl-2'
+
+const HEADER_CLS = 'mb-[3px] flex items-center gap-1.5'
+const AUTHOR_ICON_CLS = 'text-[length:var(--text-sm)]'
+const AUTHOR_CLS = 'text-[length:var(--text-sm)] font-semibold text-[var(--text-primary)]'
+const TIME_CLS = 'ml-auto text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+const BODY_CLS = 'whitespace-pre-wrap break-words text-[length:var(--text-sm)] leading-[1.5] text-[var(--text-secondary)]'
+const MENTION_CLS =
+  'rounded-sm bg-[color-mix(in_srgb,var(--color-info)_10%,transparent)] px-0.5 font-semibold text-[var(--color-info)]'
+const ACTIONS_CLS = 'mt-[3px]'
+const REPLY_BTN_CLS =
+  'cursor-pointer border-0 bg-transparent p-0 text-[length:var(--text-xs)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+const REPLIES_CLS = 'mt-1'
+
+const COMPOSE_CLS = 'mt-1 flex items-end gap-1.5'
+const INPUT_WRAPPER_CLS = 'relative flex-1'
+const TEXTAREA_CLS =
+  'block min-h-9 w-full resize-y rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none'
+const SEND_BTN_CLS =
+  'cursor-pointer whitespace-nowrap rounded border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[var(--color-info-soft)] px-3 py-[5px] font-[inherit] text-[length:var(--text-xs)] text-[var(--color-info)] enabled:hover:bg-[color-mix(in_srgb,var(--color-info)_22%,transparent)] disabled:cursor-default disabled:opacity-40 pointer-coarse:min-h-11'
+
+const SUGGESTIONS_CLS =
+  'absolute bottom-full left-0 z-50 mb-1 min-w-[180px] rounded border border-[var(--border)] bg-[var(--bg-primary)] p-[3px] shadow-[var(--shadow-md)]'
+const SUGGESTION_CLS =
+  'flex w-full cursor-pointer items-center gap-1.5 rounded-sm border-0 bg-transparent px-2 py-1 text-left font-[inherit] text-[length:var(--text-sm)] text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const SUGGESTION_LABEL_CLS = 'flex-1'
+const SUGGESTION_ID_CLS = 'font-[inherit] text-[length:var(--text-2xs)] text-[var(--text-muted)]'
 
 function getBaseUrl(): string {
   return ''
 }
 
 function authorIcon(type: string): string {
-  if (type === 'agent') return '\u2699'
+  if (type === 'agent') return '⚙'
   if (type === 'human') return '\u{1F464}'
   return '\u{1F4BB}'
 }
@@ -39,7 +67,6 @@ function shortAuthor(author: string): string {
   return author.length > 16 ? author.slice(0, 12) + '...' : author
 }
 
-/** Build threaded tree from flat comment list */
 function buildThreads(comments: Comment[]): ThreadedComment[] {
   const map = new Map<string, ThreadedComment>()
   const roots: ThreadedComment[] = []
@@ -60,7 +87,6 @@ function buildThreads(comments: Comment[]): ThreadedComment[] {
   return roots
 }
 
-/** Parse @mentions from text */
 function renderWithMentions(text: string): (string | JSX.Element)[] {
   const parts: (string | JSX.Element)[] = []
   const regex = /@(\w[\w.-]*)/g
@@ -72,7 +98,7 @@ function renderWithMentions(text: string): (string | JSX.Element)[] {
       parts.push(text.slice(lastIndex, match.index))
     }
     parts.push(
-      <span key={match.index} className="task-comment-mention">@{match[1]}</span>
+      <span key={match.index} className={MENTION_CLS}>@{match[1]}</span>
     )
     lastIndex = match.index + match[0].length
   }
@@ -83,10 +109,6 @@ function renderWithMentions(text: string): (string | JSX.Element)[] {
 
   return parts
 }
-
-// =============================================================================
-// MentionInput - textarea with @mention autocomplete
-// =============================================================================
 
 interface KnownAuthor {
   id: string
@@ -123,7 +145,6 @@ function MentionInput({
     onChange(v)
     setCursorPos(pos)
 
-    // Detect @mention trigger
     const before = v.slice(0, pos)
     const mentionMatch = before.match(/@(\w*)$/)
     if (mentionMatch) {
@@ -155,10 +176,10 @@ function MentionInput({
   }
 
   return (
-    <div className="task-comment-input-wrapper">
+    <div className={INPUT_WRAPPER_CLS}>
       <textarea
         ref={textareaRef}
-        className="task-comment-textarea"
+        className={TEXTAREA_CLS}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -166,15 +187,15 @@ function MentionInput({
         rows={2}
       />
       {showSuggestions && filtered.length > 0 && (
-        <div className="task-comment-suggestions">
+        <div className={SUGGESTIONS_CLS}>
           {filtered.map(a => (
             <button
               key={a.id}
-              className="task-comment-suggestion"
+              className={SUGGESTION_CLS}
               onMouseDown={e => { e.preventDefault(); insertMention(a) }}
             >
-              <span className="task-comment-suggestion-label">{a.label}</span>
-              <span className="task-comment-suggestion-id">{shortAuthor(a.id)}</span>
+              <span className={SUGGESTION_LABEL_CLS}>{a.label}</span>
+              <span className={SUGGESTION_ID_CLS}>{shortAuthor(a.id)}</span>
             </button>
           ))}
         </div>
@@ -182,10 +203,6 @@ function MentionInput({
     </div>
   )
 }
-
-// =============================================================================
-// CommentNode (recursive)
-// =============================================================================
 
 function CommentNode({
   comment,
@@ -209,18 +226,18 @@ function CommentNode({
   }
 
   return (
-    <div className={`task-comment-node ${depth > 0 ? 'task-comment-node--nested' : ''}`}>
-      <div className="task-comment-header">
-        <span className="task-comment-author-icon">{authorIcon(comment.author_type)}</span>
-        <span className="task-comment-author">{shortAuthor(comment.author)}</span>
-        <span className="task-comment-time">{relativeTime(comment.created_at)}</span>
+    <div className={cn(NODE_CLS, depth > 0 && NODE_NESTED_CLS)}>
+      <div className={HEADER_CLS}>
+        <span className={AUTHOR_ICON_CLS}>{authorIcon(comment.author_type)}</span>
+        <span className={AUTHOR_CLS}>{shortAuthor(comment.author)}</span>
+        <span className={TIME_CLS}>{relativeTime(comment.created_at)}</span>
       </div>
-      <div className="task-comment-body">
+      <div className={BODY_CLS}>
         {renderWithMentions(comment.body)}
       </div>
-      <div className="task-comment-actions">
+      <div className={ACTIONS_CLS}>
         <button
-          className="task-comment-reply-btn"
+          className={REPLY_BTN_CLS}
           onClick={() => setShowReply(!showReply)}
         >
           {showReply ? 'Cancel' : 'Reply'}
@@ -228,7 +245,7 @@ function CommentNode({
       </div>
 
       {showReply && (
-        <div className="task-comment-reply-form">
+        <div className={COMPOSE_CLS}>
           <MentionInput
             value={replyText}
             onChange={setReplyText}
@@ -237,7 +254,7 @@ function CommentNode({
             authors={authors}
           />
           <button
-            className="task-comment-send-btn"
+            className={SEND_BTN_CLS}
             onClick={handleSubmitReply}
             disabled={!replyText.trim()}
           >
@@ -247,7 +264,7 @@ function CommentNode({
       )}
 
       {comment.replies.length > 0 && (
-        <div className="task-comment-replies">
+        <div className={REPLIES_CLS}>
           {comment.replies.map(reply => (
             <CommentNode
               key={reply.id}
@@ -262,10 +279,6 @@ function CommentNode({
     </div>
   )
 }
-
-// =============================================================================
-// TaskComments
-// =============================================================================
 
 interface TaskCommentsProps {
   taskId: string
@@ -362,18 +375,17 @@ export function TaskComments({ taskId }: TaskCommentsProps) {
   const threads = useMemo(() => buildThreads(comments), [comments])
 
   if (isLoading && comments.length === 0) {
-    return <div className="task-comments-loading">Loading comments...</div>
+    return <div className={STATE_TEXT_CLS}>Loading comments...</div>
   }
 
   if (error && comments.length === 0) {
-    return <div className="task-comments-error">{error}</div>
+    return <div className={STATE_TEXT_CLS}>{error}</div>
   }
 
   return (
-    <div className="task-comments">
-      {/* Thread list */}
+    <div className={ROOT_CLS}>
       {threads.length > 0 ? (
-        <div className="task-comments-list">
+        <div className={LIST_CLS}>
           {threads.map(thread => (
             <CommentNode
               key={thread.id}
@@ -385,11 +397,10 @@ export function TaskComments({ taskId }: TaskCommentsProps) {
           ))}
         </div>
       ) : (
-        <div className="task-comments-empty">No comments yet</div>
+        <div className={EMPTY_CLS}>No comments yet</div>
       )}
 
-      {/* New comment input */}
-      <div className="task-comment-compose">
+      <div className={COMPOSE_CLS}>
         <MentionInput
           value={newComment}
           onChange={setNewComment}
@@ -398,7 +409,7 @@ export function TaskComments({ taskId }: TaskCommentsProps) {
           authors={authors}
         />
         <button
-          className="task-comment-send-btn"
+          className={SEND_BTN_CLS}
           onClick={handleNewComment}
           disabled={!newComment.trim()}
         >
@@ -406,7 +417,7 @@ export function TaskComments({ taskId }: TaskCommentsProps) {
         </button>
       </div>
 
-      <span className="task-comments-count">{comments.length} comment{comments.length !== 1 ? 's' : ''}</span>
+      <span className={COUNT_CLS}>{comments.length} comment{comments.length !== 1 ? 's' : ''}</span>
     </div>
   )
 }

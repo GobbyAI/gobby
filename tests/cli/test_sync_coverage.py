@@ -141,6 +141,7 @@ class TestSyncDevMode:
         mock_sync.return_value = {"total_synced": 0, "errors": ["something failed"]}
         result = runner.invoke(sync, [], catch_exceptions=False)
         assert result.exit_code == 1
+        assert "Warning: something failed" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +228,7 @@ class TestSyncProductionMode:
 
         result = runner.invoke(sync, ["--verify-only"], catch_exceptions=False)
         assert result.exit_code == 0
+        assert "All bundled content is clean" in result.output
 
     @patch("gobby.sync.integrity.get_dirty_content_types", return_value={"skills"})
     @patch("gobby.sync.integrity.verify_bundled_integrity")
@@ -249,6 +251,7 @@ class TestSyncProductionMode:
 
         result = runner.invoke(sync, ["--verify-only"], catch_exceptions=False)
         assert result.exit_code == 1
+        assert "Blocking tampered content types: skills" in result.output
 
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
@@ -267,6 +270,7 @@ class TestSyncProductionMode:
 
         result = runner.invoke(sync, ["--verify-only", "--verbose"], catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Git not available" in result.output
 
 
 # ---------------------------------------------------------------------------

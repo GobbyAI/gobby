@@ -77,16 +77,17 @@ class TestPlanDraftContent:
         for pattern in ("[TDD]", "[IMPL]", "[REF]"):
             assert pattern in body, f"TDD-forbidden pattern not called out: {pattern}"
         assert "Write tests for" in body
+        assert "duplicate TDD-wrapper" in body
+        assert "standalone `category: test`" in body
+        assert "parity regression suite" in body
 
     # --- phase heading syntax ----------------------------------------------
 
     def test_canonical_phase_syntax_documented(self, body: str) -> None:
-        """The canonical form is `## Phase N: Name`; tolerated variants are
-        dashes. expand-task parser silently skips anything else — the skill
-        must warn about this."""
-        assert "## Phase N: Name" in body
-        # At least one tolerated variant documented
-        assert ("em-dash" in body) or ("—" in body)
+        """The canonical form is `## P<N>: Name`; old Phase headings are skipped."""
+        assert "## P<N>: Name" in body
+        assert "## Phase 1: Setup" in body
+        assert "silently fail" in body
 
     # --- self-contained-sections rule --------------------------------------
 

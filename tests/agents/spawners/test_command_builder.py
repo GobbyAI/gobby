@@ -40,6 +40,15 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("gemini", model="gemini-1.5-pro", prompt="hello")
         assert cmd == ["gemini", "--model", "gemini-1.5-pro", "hello"]
 
+    def test_gemini_reasoning_uses_model_settings_without_extra_flag(self):
+        cmd, _env = build_cli_command(
+            "gemini",
+            model="gemini-3.1-pro-preview",
+            reasoning_effort="high",
+            prompt="hello",
+        )
+        assert cmd == ["gemini", "--model", "gemini-3.1-pro-preview", "hello"]
+
     def test_codex_basic(self):
         cmd, _env = build_cli_command("codex", prompt="hello")
         assert cmd == ["codex", "hello"]
@@ -86,6 +95,66 @@ class TestBuildCliCommand:
     def test_codex_with_reasoning_effort(self):
         cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
         assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
+
+    def test_codex_config_overrides_precede_prompt(self):
+        cmd, _env = build_cli_command(
+            "codex",
+            prompt="hello",
+            config_overrides=[
+                'mcp_servers.gobby.command="uv"',
+                'mcp_servers.gobby.args=["run","--project","/repo","gobby","mcp-server"]',
+                "mcp_servers.gobby.startup_timeout_sec=120",
+            ],
+        )
+        assert cmd == [
+            "codex",
+            "-c",
+            'mcp_servers.gobby.command="uv"',
+            "-c",
+            'mcp_servers.gobby.args=["run","--project","/repo","gobby","mcp-server"]',
+            "-c",
+            "mcp_servers.gobby.startup_timeout_sec=120",
+            "hello",
+        ]
+
+    def test_droid_agent_command(self):
+        cmd, _env = build_cli_command(
+            "droid",
+            prompt="hello",
+            working_directory="/tmp/wt",
+            model="claude-opus-4-7",
+            reasoning_effort="high",
+            auto_approve=True,
+        )
+        assert cmd == [
+            "droid",
+            "exec",
+            "--input-format",
+            "stream-json",
+            "--cwd",
+            "/tmp/wt",
+            "--model",
+            "claude-opus-4-7",
+            "--reasoning-effort",
+            "high",
+            "--auto",
+            "high",
+            "hello",
+        ]
+        assert "--worktree" not in cmd
+        assert "--session-id" not in cmd
+
+    def test_droid_auto_approve_false_uses_low_autonomy(self):
+        cmd, _env = build_cli_command("droid", auto_approve=False, prompt="hello")
+        assert cmd == [
+            "droid",
+            "exec",
+            "--input-format",
+            "stream-json",
+            "--auto",
+            "low",
+            "hello",
+        ]
 
     def test_generic_sandbox_args(self):
         cmd, _env = build_cli_command("claude", prompt="hello", sandbox_args=["--sandbox"])

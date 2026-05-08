@@ -2,7 +2,7 @@ name: merge-clone
 type: pipeline
 version: "1.0"
 description: |
-  Thin dispatch pipeline: spawns a merge agent for a clone merge.
+  Thin dispatch pipeline: spawns a merge-worker agent for a clone merge.
   Usable standalone or invoked from coordinator/orchestrator.
 
 enabled: true
@@ -32,7 +32,7 @@ steps:
       tool: spawn_agent
       arguments:
         prompt: "Merge clone ${{ inputs.clone_id }} into ${{ inputs.target_branch }}. Call merge_clone with target_branch=${{ inputs.target_branch }}."
-        agent: merge
+        agent: merge-worker
         clone_id: "${{ inputs.clone_id }}"
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"

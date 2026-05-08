@@ -57,6 +57,8 @@ class TestWakeDispatcherSdkResume:
         await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
+        assert sdk_resumer.await_count == 1
+        assert sdk_resumer.await_args is not None
 
     @pytest.mark.asyncio
     async def test_sdk_fallback_to_ism_on_failure(self) -> None:
@@ -81,7 +83,11 @@ class TestWakeDispatcherSdkResume:
         await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
+        assert sdk_resumer.await_count == 1
+        assert sdk_resumer.await_args is not None
         ism_mgr.create_message.assert_called_once()
+        assert ism_mgr.create_message.call_count == 1
+        assert ism_mgr.create_message.call_args is not None
 
     @pytest.mark.asyncio
     async def test_tmux_tried_before_sdk(self) -> None:
@@ -106,7 +112,11 @@ class TestWakeDispatcherSdkResume:
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
         tmux_sender.assert_awaited_once_with("agent-1", CONTINUE_WAKE_SIGNAL)
+        assert tmux_sender.await_count == 1
+        assert tmux_sender.await_args is not None
         sdk_resumer.assert_not_awaited()
+        assert sdk_resumer.await_count == 0
+        assert sdk_resumer.await_args is None
 
     @pytest.mark.asyncio
     async def test_tmux_fail_tries_sdk_then_ism(self) -> None:
@@ -133,8 +143,14 @@ class TestWakeDispatcherSdkResume:
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
         tmux_sender.assert_awaited_once_with("agent-1", CONTINUE_WAKE_SIGNAL)
+        assert tmux_sender.await_count == 1
+        assert tmux_sender.await_args is not None
         sdk_resumer.assert_awaited_once_with("sdk-999", CONTINUE_WAKE_SIGNAL)
+        assert sdk_resumer.await_count == 1
+        assert sdk_resumer.await_args is not None
         ism_mgr.create_message.assert_called_once()
+        assert ism_mgr.create_message.call_count == 1
+        assert ism_mgr.create_message.call_args is not None
 
 
 class TestRegistryWakeCallback:
@@ -260,6 +276,7 @@ class TestAutoSubscribeLineage:
 
         subs = registry.get_subscribers("pe-lin-1")
         assert "sess-child" in subs
+        assert set(subs) == {"sess-child", "sess-mid", "sess-root"}
 
 
 class TestStartupRecovery:

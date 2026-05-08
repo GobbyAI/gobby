@@ -12,6 +12,7 @@ from gobby.hooks.event_handlers._session import (
     SessionEventHandlerMixin,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 
 pytestmark = pytest.mark.unit
 
@@ -147,6 +148,7 @@ class TestFindGeminiTranscript:
 
             result = handler._find_gemini_transcript({"cwd": cwd}, "abcdefgh-1234")
             assert result == "/fake/session-20240101-abcdefgh.json"
+            assert "abcdefgh" in result
 
     def test_fallback_most_recent(self, tmp_path) -> None:
         """When prefix doesn't match, falls back to most recent."""
@@ -418,7 +420,11 @@ class TestSessionStartAndHelpers:
             handler.handle_session_start(event)
 
             mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
+            assert mock_cis_cls.return_value.get_project_stats.call_count == 1
+            assert mock_cis_cls.return_value.get_project_stats.call_args is not None
             mock_sv_mgr.set_variable.assert_any_call("new-sess-1", "code_index_available", True)
+            assert mock_sv_mgr.set_variable.call_count >= 1
+            assert mock_sv_mgr.set_variable.call_args is not None
 
     def test_handle_session_start_no_index_skips_variable(self) -> None:
         """When project has no indexed symbols, code_index_available is NOT set."""
@@ -442,6 +448,8 @@ class TestSessionStartAndHelpers:
             handler.handle_session_start(event)
 
             mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
+            assert mock_cis_cls.return_value.get_project_stats.call_count == 1
+            assert mock_cis_cls.return_value.get_project_stats.call_args is not None
             # set_variable should NOT be called for code_index_available
             for call in mock_sv_mgr.set_variable.call_args_list:
                 assert call[0][1] != "code_index_available"
@@ -531,44 +539,6 @@ class TestSessionStartAndHelpers:
             assert skills == {"skill1"}
 
 
-class TestSelectAndFormatAgentSkills:
-    """Tests for select_and_format_agent_skills standalone unit."""
-
-    def test_select_and_format_agent_skills(self) -> None:
-        from gobby.hooks.event_handlers._session import select_and_format_agent_skills
-
-        mock_agent = MagicMock()
-        mock_agent.workflows.skill_format = "full"
-
-        mock_skill = MagicMock()
-        mock_skill.name = "test-skill"
-        mock_skill.enabled = True
-
-        with (
-            patch(
-                "gobby.hooks.skill_manager._db_skill_to_parsed",
-                return_value=MagicMock(name="test-skill"),
-            ),
-            patch("gobby.skills.injector.SkillInjector.select_skills") as mock_select,
-            patch(
-                "gobby.skills.formatting.render_skills_for_context",
-                return_value="formatted-content",
-            ),
-        ):
-            mock_select.return_value = [(mock_skill, "full")]
-
-            formatted, count, names = select_and_format_agent_skills(
-                agent_body=mock_agent,
-                all_skills=[mock_skill],
-                active_skills={"test-skill"},
-                cli_source="claude",
-            )
-
-            assert formatted == "formatted-content"
-            assert count == 1
-            assert names == ["test-skill"]
-
-
 class TestSessionMoreCoverage:
     """Extra tests for hitting the rest of the lines in _session.py."""
 
@@ -589,10 +559,6 @@ class TestSessionMoreCoverage:
                 return_value={},
             ),
             patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
-            patch(
-                "gobby.hooks.event_handlers._session_start.select_and_format_agent_skills",
-                return_value=("formatted", 1, ["skill1"]),
-            ),
         ):
             mock_agent = MagicMock()
             mock_agent.name = "test-agent"
@@ -636,7 +602,11 @@ class TestSessionMoreCoverage:
         ) as mock_pre:
             handler.handle_session_start(event)
             handler._session_manager.update.assert_called_once()
+            assert handler._session_manager.update.call_count == 1
+            assert handler._session_manager.update.call_args is not None
             mock_pre.assert_called_once()
+            assert mock_pre.call_count == 1
+            assert mock_pre.call_args is not None
 
     def test_handle_session_start_codex_terminal(self) -> None:
         """Codex now joins the late-link path: SessionStart fires with the native
@@ -721,8 +691,12 @@ class TestSessionMoreCoverage:
                 agent_depth=0,
                 sandbox_enabled=None,
             )
+            assert handler._session_manager.register_session.call_count >= 1
+            assert handler._session_manager.register_session.call_args is not None
             # Should mark parent expired
             handler._session_manager.mark_session_expired.assert_called_with("parent-1")
+            assert handler._session_manager.mark_session_expired.call_count >= 1
+            assert handler._session_manager.mark_session_expired.call_args is not None
 
             # Should have handed off task
             handler._task_manager.claim_task.assert_called_with(
@@ -730,6 +704,8 @@ class TestSessionMoreCoverage:
                 session_id="new-sess-1",
                 force=True,
             )
+            assert handler._task_manager.claim_task.call_count >= 1
+            assert handler._task_manager.claim_task.call_args is not None
 
     def test_empty_parent_backoff(self) -> None:
         handler = _TestHandler()
@@ -753,6 +729,8 @@ class TestSessionMoreCoverage:
             mock_svm_cls.return_value.get_variables.return_value = {}
             handler.handle_session_start(event)
             mock_sleep.assert_called()
+            assert mock_sleep.call_count >= 1
+            assert mock_sleep.call_args is not None
 
 
 # ---------------------------------------------------------------------------
@@ -946,7 +924,7 @@ class TestClaimedTaskHelpers:
         assert result == [("#55", "needs_review", "Review the patch")]
         handler._task_manager.list_tasks.assert_called_once_with(
             claimed_by_session_id="sess-1",
-            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
+            current_stage_state=list(ACTIVE_STAGE_STATES),
             project_id="proj-1",
         )
         mock_svm.set_variable.assert_any_call("sess-1", "task_claimed", True)

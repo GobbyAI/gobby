@@ -6,7 +6,7 @@ gobby plan document. It is consumed from two places:
   - the autonomous plan-adversary.yaml agent (load_skill step before reviewing).
 
 These tests guard content drift: the review-rejection contract matches
-plan-adversary.yaml/front-half expectations, the round-scoped heading matches
+plan-adversary.yaml/stage-native planning expectations, the round-scoped heading matches
 what the interactive planner extracts from the task description, and the
 attitude-vs-quota guidance is deliberately the opposite of BMAD's "at least
 10 findings" instruction so adversary approval is a valid outcome on clean
@@ -108,11 +108,11 @@ class TestPlanReviewContent:
     # --- escalation ---------------------------------------------------------
 
     def test_blocking_findings_use_review_rejection(self, body: str) -> None:
-        """Routine revision rounds should use mark_task_review_rejected and
+        """Routine revision rounds should use reject_review and
         return the planning task to open."""
-        assert "mark_task_review_rejected" in body
+        assert "reject_review" in body
         assert "round_number" in body
-        assert "returns the task to `open`" in body
+        assert "returns the anchor to `open`" in body
 
     def test_halt_condition_uses_needs_requirements_prefix(self, body: str) -> None:
         """Insufficient-context halt uses the same prefix the autonomous
@@ -124,7 +124,7 @@ class TestPlanReviewContent:
         assert "session_id" not in body
 
     def test_autonomous_exit_allows_review_rejection_before_end_agent_run(self, body: str) -> None:
-        assert "mark_task_review_rejected" in body
+        assert "reject_review" in body
 
     def test_nits_do_not_block_approval(self, body: str) -> None:
         """Severity distinction: blocking vs nit. Nits alone approve."""

@@ -1,8 +1,21 @@
-export type TaskLifecycleStage = 'in_progress' | 'needs_review' | 'review_approved'
+import {
+  currentStage as selectCurrentStage,
+  type LifecycleTask,
+  type StageState5,
+  type StageStateView,
+} from './stageActions'
+
+export type TaskDisplayState =
+  | 'ready'
+  | 'in_progress'
+  | 'needs_review'
+  | 'blocked'
+  | 'review_approved'
+  | 'closed'
 
 export interface CanonicalTaskState {
   owner_session_id: string | null
-  lifecycle_stage: TaskLifecycleStage | null
+  current_stage: StageStateView | null
   is_claimed: boolean
   is_closed: boolean
   is_escalated: boolean
@@ -17,32 +30,24 @@ export interface CanonicalTaskState {
 }
 
 export interface TaskCompatProjection {
-  status?: string | null
   assignee?: string | null
 }
 
 export interface TaskStateLike {
-  status?: string | null
   assignee?: string | null
   claimed_by_session_id?: string | null
-  lifecycle_stage?: string | null
   closed_at?: string | null
   closed_reason?: string | null
   closed_in_session_id?: string | null
   closed_commit_sha?: string | null
   escalated_at?: string | null
   escalation_reason?: string | null
+  is_blocked?: boolean | null
+  current_stage?: StageStateView | null
+  stages?: StageStateView[] | null
   state?: Partial<CanonicalTaskState> | null
   compat?: TaskCompatProjection | null
 }
-
-export type TaskBucket =
-  | 'ready'
-  | 'in_progress'
-  | 'review'
-  | 'blocked'
-  | 'merge_ready'
-  | 'closed'
 
 export interface TaskStateBadgeToken {
   key: string
@@ -51,75 +56,84 @@ export interface TaskStateBadgeToken {
   background: string
 }
 
-export const TASK_BUCKET_ORDER: TaskBucket[] = [
+export const TASK_STATE_ORDER: TaskDisplayState[] = [
   'ready',
   'in_progress',
-  'review',
+  'needs_review',
   'blocked',
-  'merge_ready',
+  'review_approved',
   'closed',
 ]
 
-export const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
+export const TASK_STATE_LABELS: Record<TaskDisplayState | StageState5, string> = {
   ready: 'Ready',
   in_progress: 'In Progress',
-  review: 'Needs Review',
+  needs_review: 'Needs Review',
   blocked: 'Blocked',
-  merge_ready: 'Merge Ready',
+  review_approved: 'Review Approved',
+  done: 'Done',
   closed: 'Closed',
 }
 
-export const TASK_BUCKET_COLORS: Record<TaskBucket, string> = {
-  ready: '#60a5fa',
-  in_progress: '#fb923c',
-  review: '#c084fc',
-  blocked: '#f87171',
-  merge_ready: '#2dd4bf',
-  closed: '#9ca3af',
+export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
+  ready: 'var(--color-info)',
+  in_progress: 'var(--color-warning-foreground)',
+  needs_review: 'var(--color-info)',
+  blocked: 'var(--color-error)',
+  review_approved: 'var(--color-review)',
+  closed: 'var(--text-muted)',
 }
 
-export const TASK_BUCKET_BG: Record<TaskBucket, string> = {
-  ready: 'rgba(96, 165, 250, 0.15)',
-  in_progress: 'rgba(251, 146, 60, 0.15)',
-  review: 'rgba(192, 132, 252, 0.15)',
-  blocked: 'rgba(248, 113, 113, 0.15)',
-  merge_ready: 'rgba(45, 212, 191, 0.15)',
-  closed: 'rgba(156, 163, 175, 0.15)',
+export const TASK_STATE_BG: Record<TaskDisplayState, string> = {
+  ready: 'var(--color-info-soft)',
+  in_progress: 'var(--color-warning-soft)',
+  needs_review: 'var(--color-info-soft)',
+  blocked: 'var(--color-error-soft)',
+  review_approved: 'var(--color-review-soft)',
+  closed: 'color-mix(in srgb, var(--text-muted) 15%, transparent)',
 }
 
-function normalizeLifecycleStage(stage: string | null | undefined): TaskLifecycleStage | null {
-  if (!stage || stage === 'open') return null
-  if (stage === 'in_progress' || stage === 'needs_review' || stage === 'review_approved') {
-    return stage
-  }
-  return null
+function deriveCurrentStage(task: TaskStateLike): StageStateView | null {
+  const direct = task.state?.current_stage ?? task.current_stage ?? null
+  if (direct) return direct
+
+  const stages = task.stages ?? []
+  if (stages.length === 0) return null
+
+  return selectCurrentStage({
+    id: '',
+    title: '',
+    task_type: 'task',
+    stages,
+  } satisfies LifecycleTask)
 }
 
 export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
-  const compatStatus = task.compat?.status ?? task.status ?? null
   const compatAssignee = task.compat?.assignee ?? task.assignee ?? null
   const ownerSessionId =
     task.state?.owner_session_id ??
     task.claimed_by_session_id ??
     compatAssignee ??
     null
-  const lifecycleStage = normalizeLifecycleStage(
-    task.state?.lifecycle_stage ?? task.lifecycle_stage ?? compatStatus
-  )
-  const isClosed = (task.state?.is_closed ?? Boolean(task.closed_at)) || compatStatus === 'closed'
+  const current = deriveCurrentStage(task)
+  const currentState = current?.state ?? null
+  const isClosed =
+    (task.state?.is_closed ?? Boolean(task.closed_at)) || currentState === 'done'
   const isEscalated =
     !isClosed &&
-    ((task.state?.is_escalated ?? Boolean(task.escalated_at)) || compatStatus === 'escalated')
-  const isBlocked = task.state?.is_blocked ?? isEscalated
+    (task.state?.is_escalated ?? Boolean(task.escalated_at))
+  const isBlocked = !isClosed && (task.state?.is_blocked ?? task.is_blocked ?? isEscalated)
   const isMergeReady =
     !isClosed &&
     !isEscalated &&
-    (task.state?.is_merge_ready ?? lifecycleStage === 'review_approved')
+    (task.state?.is_merge_ready ?? currentState === 'review_approved')
 
   return {
     owner_session_id: ownerSessionId,
-    lifecycle_stage: lifecycleStage,
-    is_claimed: task.state?.is_claimed ?? Boolean(ownerSessionId),
+    current_stage: current,
+    is_claimed: task.state?.is_claimed ?? (
+      Boolean(ownerSessionId)
+    ),
     is_closed: Boolean(isClosed),
     is_escalated: Boolean(isEscalated),
     is_blocked: Boolean(isBlocked),
@@ -133,28 +147,38 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
   }
 }
 
-export function getTaskBucket(task: TaskStateLike): TaskBucket {
+export function getTaskDisplayState(task: TaskStateLike): TaskDisplayState {
   const state = getCanonicalTaskState(task)
   if (state.is_closed) return 'closed'
-  if (state.is_blocked) return 'blocked'
-  if (state.is_merge_ready) return 'merge_ready'
-  if (state.lifecycle_stage === 'needs_review') return 'review'
-  if (state.is_claimed || state.lifecycle_stage === 'in_progress') return 'in_progress'
+  if (state.is_blocked || state.is_escalated) return 'blocked'
+  if (state.is_merge_ready || state.current_stage?.state === 'review_approved') {
+    return 'review_approved'
+  }
+  if (state.current_stage?.state === 'needs_review') return 'needs_review'
+  if (state.current_stage?.state === 'in_progress' || state.is_claimed) return 'in_progress'
+
   return 'ready'
 }
 
 export function isTaskClosed(task: TaskStateLike): boolean {
-  return getTaskBucket(task) === 'closed'
+  return getTaskDisplayState(task) === 'closed'
 }
 
-export function getTaskBucketLabel(task: TaskStateLike): string {
-  return TASK_BUCKET_LABELS[getTaskBucket(task)]
+export function getTaskStateLabel(task: TaskStateLike): string {
+  const displayState = getTaskDisplayState(task)
+  const state = getCanonicalTaskState(task)
+  const stage = state.current_stage
+
+  if (displayState === 'closed' || displayState === 'blocked' || !stage) {
+    return TASK_STATE_LABELS[displayState]
+  }
+
+  return `${stage.display_name}: ${TASK_STATE_LABELS[stage.state]}`
 }
 
 export function getTaskStateSummary(task: TaskStateLike): string {
-  const bucket = getTaskBucket(task)
   const state = getCanonicalTaskState(task)
-  const parts = [TASK_BUCKET_LABELS[bucket]]
+  const parts = [getTaskStateLabel(task)]
 
   if (!state.is_closed && state.is_escalated) {
     parts.push('Escalated')
@@ -167,14 +191,14 @@ export function getTaskStateSummary(task: TaskStateLike): string {
 }
 
 export function getTaskStateTokens(task: TaskStateLike): TaskStateBadgeToken[] {
-  const bucket = getTaskBucket(task)
+  const displayState = getTaskDisplayState(task)
   const state = getCanonicalTaskState(task)
   const tokens: TaskStateBadgeToken[] = [
     {
-      key: bucket,
-      label: TASK_BUCKET_LABELS[bucket],
-      color: TASK_BUCKET_COLORS[bucket],
-      background: TASK_BUCKET_BG[bucket],
+      key: displayState,
+      label: getTaskStateLabel(task),
+      color: TASK_STATE_COLORS[displayState],
+      background: TASK_STATE_BG[displayState],
     },
   ]
 
@@ -182,8 +206,8 @@ export function getTaskStateTokens(task: TaskStateLike): TaskStateBadgeToken[] {
     tokens.push({
       key: 'claimed',
       label: 'Claimed',
-      color: '#94a3b8',
-      background: 'rgba(148, 163, 184, 0.14)',
+      color: 'var(--text-secondary)',
+      background: 'color-mix(in srgb, var(--text-secondary) 14%, transparent)',
     })
   }
 
@@ -191,56 +215,56 @@ export function getTaskStateTokens(task: TaskStateLike): TaskStateBadgeToken[] {
     tokens.push({
       key: 'escalated',
       label: 'Escalated',
-      color: '#f87171',
-      background: 'rgba(248, 113, 113, 0.15)',
+      color: 'var(--color-error)',
+      background: 'var(--color-error-soft)',
     })
   }
 
   return tokens
 }
 
-export function countTasksByBucket(tasks: TaskStateLike[]): Record<TaskBucket, number> {
-  const counts: Record<TaskBucket, number> = {
+export function countTasksByState(tasks: TaskStateLike[]): Record<TaskDisplayState, number> {
+  const counts: Record<TaskDisplayState, number> = {
     ready: 0,
     in_progress: 0,
-    review: 0,
+    needs_review: 0,
     blocked: 0,
-    merge_ready: 0,
+    review_approved: 0,
     closed: 0,
   }
 
   for (const task of tasks) {
-    counts[getTaskBucket(task)] += 1
+    counts[getTaskDisplayState(task)] += 1
   }
 
   return counts
 }
 
-export function matchesTaskBucketFilter(task: TaskStateLike, filter: string | null): boolean {
+export function matchesTaskStateFilter(task: TaskStateLike, filter: string | null): boolean {
   if (!filter) return true
 
-  const bucket = getTaskBucket(task)
+  const displayState = getTaskDisplayState(task)
   switch (filter) {
     case 'recently_done':
     case 'closed':
-      return bucket === 'closed'
+      return displayState === 'closed'
     case 'in_review':
-      return bucket === 'review' || bucket === 'merge_ready'
+      return displayState === 'needs_review' || displayState === 'review_approved'
     case 'open':
     case 'ready':
-      return bucket === 'ready'
-    case 'needs_review':
+      return displayState === 'ready'
     case 'review':
-      return bucket === 'review'
-    case 'review_approved':
+    case 'needs_review':
+      return displayState === 'needs_review'
     case 'merge_ready':
-      return bucket === 'merge_ready'
+    case 'review_approved':
+      return displayState === 'review_approved'
     case 'escalated':
     case 'blocked':
-      return bucket === 'blocked'
+      return displayState === 'blocked'
     case 'in_progress':
-      return bucket === 'in_progress'
+      return displayState === 'in_progress'
     default:
-      return bucket === filter
+      return displayState === filter || getCanonicalTaskState(task).current_stage?.name === filter
   }
 }

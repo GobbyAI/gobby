@@ -1,0 +1,15 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-python-skill:
+    description: "Block first Python write/edit until python coding standards are loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('python')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').endswith('.py')
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="python") on gobby-skills, then continue.'

@@ -68,6 +68,8 @@ class TestHandleAskUserResponse:
         await host._handle_ask_user_response(websocket, data)
 
         session.provide_answer.assert_called_once_with({"Which auth?": "OAuth"})
+        assert session.provide_answer.call_count == 1
+        assert session.provide_answer.call_args is not None
 
     @pytest.mark.asyncio
     async def test_missing_conversation_id_logs_warning(

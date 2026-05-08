@@ -76,5 +76,11 @@ async def test_close_task_does_not_mutate_worktree_status(
 
     assert result == {"success": True}
     mock_wt_instance.get_by_task.assert_not_called()
+    assert mock_wt_instance.get_by_task.call_count == 0
+    assert not mock_wt_instance.get_by_task.called
     mock_wt_instance.mark_merged.assert_not_called()
+    assert mock_wt_instance.mark_merged.call_count == 0
+    assert not mock_wt_instance.mark_merged.called
     mock_wt_instance.mark_abandoned.assert_not_called()
+    assert mock_wt_instance.mark_abandoned.call_count == 0
+    assert not mock_wt_instance.mark_abandoned.called

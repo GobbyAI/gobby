@@ -288,6 +288,7 @@ export function useChat() {
         projectId?: string | null,
         injectContext?: string,
         reasoningEffort?: string | null,
+        ttsEnabled?: boolean,
       ) => boolean)
     | null
   >(null);
@@ -526,6 +527,7 @@ export function useChat() {
       model?: string | null;
       projectId?: string | null;
       reasoningEffort?: string | null;
+      ttsEnabled?: boolean;
     }[]
   >([]);
 
@@ -744,6 +746,7 @@ export function useChat() {
     deleteConversation,
     stopStreaming,
     sendMode,
+    sendAttachedSessionMode,
     sendProjectChange,
     sendAgentChange,
     sendWorktreeChange,
@@ -950,6 +953,7 @@ export function useChat() {
     attachedSessionMeta,
     sessionInteractionMode,
     proxyDeliveryNotice,
+    sendAttachedSessionMode,
     wsRef,
     handleVoiceMessageRef,
     handleBinaryMessageRef,

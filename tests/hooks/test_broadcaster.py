@@ -92,6 +92,8 @@ async def test_broadcast_disabled(mock_websocket_server, disabled_config, sample
     await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
 
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -105,6 +107,8 @@ async def test_broadcast_filtered_event(mock_websocket_server, default_config, s
     await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
 
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -125,8 +129,9 @@ async def test_broadcast_no_server(default_config, sample_input):
     """Test safe handling when websocket server is None."""
     broadcaster = HookEventBroadcaster(None, default_config)
 
-    await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
-    # Should just return without error
+    result = await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
+    assert result is None
+    assert broadcaster.websocket_server is None
 
 
 @pytest.mark.asyncio
@@ -138,6 +143,8 @@ async def test_broadcast_no_config(mock_websocket_server, sample_input):
 
     # Should return early without broadcasting
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -408,6 +415,8 @@ async def test_broadcast_event_unknown_type(mock_websocket_server, default_confi
 
     # Should not broadcast unknown events
     mock_websocket_server.broadcast.assert_not_called()
+    assert mock_websocket_server.broadcast.call_count == 0
+    assert not mock_websocket_server.broadcast.called
 
 
 @pytest.mark.asyncio
@@ -426,8 +435,9 @@ async def test_broadcast_event_no_websocket(default_config):
         data={"external_id": "test-session", "transcript_path": "/tmp", "source": "startup"},
     )
 
-    # Should return early without error
-    await broadcaster.broadcast_event(event)
+    result = await broadcaster.broadcast_event(event)
+    assert result is None
+    assert broadcaster.websocket_server is None
 
 
 @pytest.mark.asyncio
@@ -478,6 +488,8 @@ async def test_broadcast_event_subagent_id_fallback(mock_websocket_server, defau
     await broadcaster.broadcast_event(event)
 
     mock_websocket_server.broadcast.assert_called_once()
+    assert mock_websocket_server.broadcast.call_count == 1
+    assert mock_websocket_server.broadcast.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -487,8 +499,9 @@ async def test_broadcast_exception_handling(mock_websocket_server, default_confi
 
     broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
 
-    # Should handle exception gracefully
-    await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
+    result = await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
+    assert result is None
+    assert mock_websocket_server.broadcast.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -512,8 +525,10 @@ async def test_broadcast_event_exception_handling(mock_websocket_server, default
         },
     )
 
-    # Should handle validation error gracefully
-    await broadcaster.broadcast_event(event)
+    result = await broadcaster.broadcast_event(event)
+    assert result is None
+    payload = mock_websocket_server.broadcast.call_args.args[0]
+    assert payload["data"]["source"] == "startup"
 
 
 @pytest.mark.asyncio
@@ -566,6 +581,8 @@ async def test_broadcast_with_response_context_dict(mock_websocket_server, defau
     await broadcaster.broadcast_event(event, response)
 
     mock_websocket_server.broadcast.assert_called_once()
+    assert mock_websocket_server.broadcast.call_count == 1
+    assert mock_websocket_server.broadcast.call_args is not None
 
 
 @pytest.mark.asyncio

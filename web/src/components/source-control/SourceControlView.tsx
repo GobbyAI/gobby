@@ -154,7 +154,7 @@ export function SourceControlView({
         </td>
         <td className="sc-table__cell--resources">
           {hasWt && <span className="sc-badge sc-badge--sm sc-badge--blue">worktree</span>}
-          {hasClone && <span className="sc-badge sc-badge--sm sc-badge--purple">clone</span>}
+          {hasClone && <span className="sc-badge sc-badge--sm sc-badge--accent">clone</span>}
         </td>
         <td className="sc-text-muted">
           {b.last_commit_date ? new Date(b.last_commit_date).toLocaleDateString() : ''}

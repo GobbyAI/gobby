@@ -70,6 +70,8 @@ class TestLocalLLMProviderInit:
             base_url="http://localhost:1234/v1",
             api_key="not-needed",
         )
+        assert mock_cls.call_count == 1
+        assert mock_cls.call_args is not None
 
     def test_api_key_passthrough(self) -> None:
         config = DaemonConfig(
@@ -88,6 +90,8 @@ class TestLocalLLMProviderInit:
             base_url="http://localhost:1234/v1",
             api_key="my-secret-key",
         )
+        assert mock_cls.call_count == 1
+        assert mock_cls.call_args is not None
 
 
 # ═══════════════════════════════════════════════════════════════════════

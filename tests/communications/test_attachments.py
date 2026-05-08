@@ -291,6 +291,7 @@ async def test_telegram_send_attachment(tmp_path: Path) -> None:
 
     result = await adapter.send_attachment(msg, att, file)
     assert result == "42"
+    assert adapter._client.post.await_args.args[0].endswith("/sendDocument")
 
 
 @pytest.mark.asyncio
@@ -351,6 +352,7 @@ async def test_slack_send_attachment(tmp_path: Path) -> None:
     ):
         result = await adapter.send_attachment(msg, att, file)
     assert result == "1234567890.123456"
+    assert adapter._client.post.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -387,6 +389,7 @@ async def test_discord_send_attachment(tmp_path: Path) -> None:
 
     result = await adapter.send_attachment(msg, att, file)
     assert result == "999888777"
+    assert adapter._route_buckets == {}
 
 
 @pytest.mark.asyncio
@@ -485,6 +488,9 @@ async def test_sms_send_attachment_with_url() -> None:
 
     result = await adapter.send_attachment(msg, att, Path("/tmp/photo.jpg"))
     assert result == "SM123abc"
+    assert adapter._client.post.await_args.kwargs["data"]["MediaUrl"] == (
+        "https://media.example.com/photo.jpg"
+    )
 
 
 @pytest.mark.asyncio

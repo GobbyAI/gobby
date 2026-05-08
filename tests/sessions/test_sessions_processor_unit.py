@@ -5,16 +5,15 @@ Tests edge cases, error handling, and branch coverage not covered
 by integration tests.
 """
 
-import asyncio
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.hooks.events import HookEventType, SessionSource
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedMessage
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -182,8 +181,10 @@ class TestProcessingLoop:
 
         await processor.start()
 
-        # Give the loop time to execute and encounter the error
-        await asyncio.sleep(0.15)
+        await wait_for_async_condition(
+            lambda: "Error in SessionMessageProcessor loop" in caplog.text,
+            description="processor loop error log",
+        )
 
         assert "Error in SessionMessageProcessor loop" in caplog.text
         assert processor._running  # Loop should continue
@@ -231,6 +232,8 @@ class TestProcessSession:
 
         # get_state should not be called since we returned early
         processor.message_manager.get_state.assert_not_called()
+        assert processor.message_manager.get_state.call_count == 0
+        assert not processor.message_manager.get_state.called
 
     @pytest.mark.asyncio
     async def test_process_session_no_parser(self, processor, tmp_path):
@@ -247,6 +250,8 @@ class TestProcessSession:
 
         # store_messages should not be called since we returned early (no parser)
         processor.message_manager.store_messages.assert_not_called()
+        assert processor.message_manager.store_messages.call_count == 0
+        assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
     async def test_process_session_read_error(self, processor, tmp_path, caplog):
@@ -265,6 +270,7 @@ class TestProcessSession:
                 await processor._process_session("session-1", str(transcript))
 
         assert "Error reading transcript" in caplog.text
+        assert processor.message_manager.store_messages.call_count == 0
 
     @pytest.mark.asyncio
     async def test_process_session_incomplete_line(self, processor, tmp_path):
@@ -284,6 +290,8 @@ class TestProcessSession:
 
         # Should not store any messages (line is incomplete)
         processor.message_manager.store_messages.assert_not_called()
+        assert processor.message_manager.store_messages.call_count == 0
+        assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
     async def test_process_session_no_new_lines(self, processor, tmp_path):
@@ -300,6 +308,8 @@ class TestProcessSession:
 
         # Should not call store_messages
         processor.message_manager.store_messages.assert_not_called()
+        assert processor.message_manager.store_messages.call_count == 0
+        assert not processor.message_manager.store_messages.called
 
     @pytest.mark.asyncio
     async def test_process_session_no_parsed_messages(self, processor, tmp_path):
@@ -537,6 +547,8 @@ class TestModelExtraction:
         mock_session_manager.update_model.assert_called_once_with(
             "session-1", "claude-opus-4-5-20251101"
         )
+        assert mock_session_manager.update_model.call_count == 1
+        assert mock_session_manager.update_model.call_args is not None
 
     @pytest.mark.asyncio
     async def test_process_session_skips_model_update_when_none(self, mock_db, tmp_path) -> None:
@@ -579,6 +591,8 @@ class TestModelExtraction:
 
         # Verify session model was NOT updated
         mock_session_manager.update_model.assert_not_called()
+        assert mock_session_manager.update_model.call_count == 0
+        assert not mock_session_manager.update_model.called
 
 
 class TestInitialization:
@@ -713,6 +727,8 @@ class TestProcessJsonSession:
 
         # Should not call get_state since we skipped
         processor.message_manager.get_state.assert_not_called()
+        assert processor.message_manager.get_state.call_count == 0
+        assert not processor.message_manager.get_state.called
 
     @pytest.mark.asyncio
     async def test_process_json_session_incremental(self, mock_db, tmp_path) -> None:
@@ -765,6 +781,8 @@ class TestProcessJsonSession:
 
         await processor._process_json_session("session-1", "/nonexistent/file.json")
         processor.message_manager.get_state.assert_not_called()
+        assert processor.message_manager.get_state.call_count == 0
+        assert not processor.message_manager.get_state.called
 
     @pytest.mark.asyncio
     async def test_process_json_session_invalid_json(self, mock_db, tmp_path, caplog) -> None:
@@ -841,34 +859,15 @@ def _codex_event_msg(payload_type: str, **payload_extra) -> str:
     )
 
 
-def _fake_session_manager(
-    *,
-    external_id: str = "external-sid",
-    machine_id: str = "machine-xyz",
-    project_id: str = "project-abc",
-) -> MagicMock:
-    """Session manager stub that resolves 'sid' to a composite-key session."""
-    row = MagicMock(
-        external_id=external_id,
-        machine_id=machine_id,
-        project_id=project_id,
-    )
-    mgr = MagicMock()
-    mgr.get.return_value = row
-    return mgr
-
-
-class TestCodexMcpHookSynthesis:
-    """Synthesis of BEFORE/AFTER_TOOL hook events from Codex rollout tail."""
+class TestCodexMcpTranscriptProcessing:
+    """Codex MCP transcript records are parsed for history without hook dispatch."""
 
     @pytest.mark.asyncio
-    async def test_dispatches_before_and_after_tool_for_mcp_call(self, mock_db, tmp_path) -> None:
+    async def test_mcp_begin_and_end_do_not_dispatch_workflow_hooks(
+        self, mock_db, tmp_path
+    ) -> None:
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(
-            mock_db,
-            hook_manager=hook_manager,
-            session_manager=_fake_session_manager(),
-        )
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
 
         transcript = tmp_path / "rollout.jsonl"
         invocation = {
@@ -895,42 +894,15 @@ class TestCodexMcpHookSynthesis:
 
         await processor._process_session("sid", str(transcript))
 
-        assert hook_manager.handle.call_count == 2
-        before, after = (call.args[0] for call in hook_manager.handle.call_args_list)
-
-        assert before.event_type == HookEventType.BEFORE_TOOL
-        assert before.source == SessionSource.CODEX
-        # session_id is the external_id (what HookManager's resolver expects);
-        # the platform UUID is stashed in metadata for downstream consumers.
-        assert before.session_id == "external-sid"
-        assert before.machine_id == "machine-xyz"
-        assert before.project_id == "project-abc"
-        assert before.metadata["_platform_session_id"] == "sid"
-        assert before.data["tool_name"] == "mcp__gobby__get_tool_schema"
-        # mcp_server/mcp_tool reflect the proxy boundary; the rule keys for
-        # inject-task-creation-on-schema actually read `tool_input.server_name`
-        # and `tool_input.tool_name` (see the bundled YAML), so those are the
-        # contract that must be preserved exactly.
-        assert before.data["mcp_server"] == "gobby"
-        assert before.data["mcp_tool"] == "get_tool_schema"
-        assert before.data["tool_input"]["server_name"] == "gobby-tasks"
-        assert before.data["tool_input"]["tool_name"] == "create_task"
-        assert before.data["call_id"] == "call_1"
-        assert before.metadata["_synthesized_from"] == "codex_rollout"
-
-        assert after.event_type == HookEventType.AFTER_TOOL
-        assert after.data["tool_response"] == {"content": [{"type": "text", "text": "{...}"}]}
-        assert "is_error" not in after.data
-        assert after.data["duration_ns"] == 18_695_333
+        hook_manager.handle.assert_not_called()
+        assert processor._byte_offsets["sid"] == transcript.stat().st_size
 
     @pytest.mark.asyncio
-    async def test_byte_offset_prevents_double_fire_on_retail(self, mock_db, tmp_path) -> None:
+    async def test_byte_offset_prevents_reprocessing_mcp_lifecycle_lines(
+        self, mock_db, tmp_path
+    ) -> None:
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(
-            mock_db,
-            hook_manager=hook_manager,
-            session_manager=_fake_session_manager(),
-        )
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
 
         transcript = tmp_path / "rollout.jsonl"
         invocation = {
@@ -945,63 +917,20 @@ class TestCodexMcpHookSynthesis:
         processor.register_session("sid", str(transcript), source="codex")
 
         await processor._process_session("sid", str(transcript))
-        assert hook_manager.handle.call_count == 1
+        first_offset = processor._byte_offsets["sid"]
 
-        # Re-tail without appending: offset must guard against re-firing.
-        await processor._process_session("sid", str(transcript))
-        assert hook_manager.handle.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_non_codex_source_does_not_synthesize(self, mock_db, tmp_path) -> None:
-        """Synthesis runs only for codex sessions; claude has its own pre/post-tool path."""
-        hook_manager = MagicMock()
-        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
-
-        transcript = tmp_path / "rollout.jsonl"
-        # Empty file is fine; no codex source means no synthesis path is exercised.
-        transcript.write_text("")
-
-        processor.register_session("sid", str(transcript), source="claude")
         await processor._process_session("sid", str(transcript))
 
         hook_manager.handle.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_no_hook_manager_is_noop(self, mock_db, tmp_path) -> None:
-        """Processor without a HookManager wired up just skips synthesis silently."""
-        processor = SessionMessageProcessor(mock_db, hook_manager=None)
-
-        transcript = tmp_path / "rollout.jsonl"
-        transcript.write_text(
-            _codex_event_msg(
-                "mcp_tool_call_begin",
-                call_id="call_1",
-                invocation={
-                    "server": "gobby",
-                    "tool": "get_tool_schema",
-                    "arguments": {"server_name": "gobby-tasks", "tool_name": "create_task"},
-                },
-            )
-        )
-
-        processor.register_session("sid", str(transcript), source="codex")
-
-        # Should not raise.
-        await processor._process_session("sid", str(transcript))
+        assert processor._byte_offsets["sid"] == first_offset
 
     @pytest.mark.asyncio
     async def test_registration_survives_missing_transcript_then_picks_up(
         self, mock_db, tmp_path
     ) -> None:
-        """Codex writes its rollout slightly after session_start fires.
-        Register must not skip on a missing file; the next poll catches up.
-        """
+        """Codex writes its rollout slightly after session_start fires."""
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(
-            mock_db,
-            hook_manager=hook_manager,
-            session_manager=_fake_session_manager(),
-        )
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
 
         transcript = tmp_path / "future-rollout.jsonl"
         assert not transcript.exists()
@@ -1009,11 +938,9 @@ class TestCodexMcpHookSynthesis:
         processor.register_session("sid", str(transcript), source="codex")
         assert "sid" in processor._active_sessions
 
-        # First poll: file still absent — must be a silent no-op.
         await processor._process_session("sid", str(transcript))
         hook_manager.handle.assert_not_called()
 
-        # Codex finally writes the rollout.
         transcript.write_text(
             _codex_event_msg(
                 "mcp_tool_call_begin",
@@ -1027,19 +954,14 @@ class TestCodexMcpHookSynthesis:
         )
 
         await processor._process_session("sid", str(transcript))
-        assert hook_manager.handle.call_count == 1
-        event = hook_manager.handle.call_args.args[0]
-        assert event.event_type == HookEventType.BEFORE_TOOL
-        assert event.data["tool_input"]["server_name"] == "gobby-tasks"
+
+        hook_manager.handle.assert_not_called()
+        assert processor._byte_offsets["sid"] == transcript.stat().st_size
 
     @pytest.mark.asyncio
-    async def test_after_tool_with_err_marks_error(self, mock_db, tmp_path) -> None:
+    async def test_mcp_end_error_does_not_dispatch_workflow_hooks(self, mock_db, tmp_path) -> None:
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(
-            mock_db,
-            hook_manager=hook_manager,
-            session_manager=_fake_session_manager(),
-        )
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
 
         transcript = tmp_path / "rollout.jsonl"
         invocation = {
@@ -1059,9 +981,5 @@ class TestCodexMcpHookSynthesis:
         processor.register_session("sid", str(transcript), source="codex")
         await processor._process_session("sid", str(transcript))
 
-        assert hook_manager.handle.call_count == 1
-        event = hook_manager.handle.call_args.args[0]
-        assert event.event_type == HookEventType.AFTER_TOOL
-        assert event.data["error"] == "transport closed"
-        assert event.data["is_error"] is True
-        assert "tool_response" not in event.data
+        hook_manager.handle.assert_not_called()
+        assert processor._byte_offsets["sid"] == transcript.stat().st_size

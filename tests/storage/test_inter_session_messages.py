@@ -302,9 +302,7 @@ class TestInterSessionMessageManagerCreateMessage:
 class TestInterSessionMessageManagerGetMessages:
     """TDD tests for get_messages method."""
 
-    def test_has_completion_notification_matches_metadata(
-        self, temp_db: LocalDatabase
-    ) -> None:
+    def test_has_completion_notification_matches_metadata(self, temp_db: LocalDatabase) -> None:
         """Completion notification lookup checks stable metadata IDs."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -559,18 +557,14 @@ class TestInterSessionMessageManagerListMessages:
 
         mgr = InterSessionMessageManager(temp_db)
 
-        import time
-
         # alpha → beta (inbox for beta, sent for alpha)
         m1 = mgr.create_message(from_session=s_alpha.id, to_session=s_beta.id, content="msg-1")
-        time.sleep(0.01)
         m2 = mgr.create_message(
             from_session=s_alpha.id,
             to_session=s_beta.id,
             content="msg-2",
             message_type="command_result",
         )
-        time.sleep(0.01)
         # beta → alpha (inbox for alpha, sent for beta)
         m3 = mgr.create_message(from_session=s_beta.id, to_session=s_alpha.id, content="msg-3")
 

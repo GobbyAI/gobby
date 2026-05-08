@@ -7,7 +7,9 @@
   gap: 0.375rem;
   padding: 0.25rem 0.5rem;
   cursor: pointer;
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
   transition: background 0.1s;
 }
 
@@ -32,10 +34,12 @@
 }
 
 .file-tree-size {
-  font-size: calc(var(--font-size-base) * 0.65);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-normal);
   color: var(--text-muted);
   margin-left: auto;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .file-tree-rename-input {
@@ -83,7 +87,10 @@
   color: var(--text-secondary);
   font-size: calc(var(--font-size-base) * 0.7);
   cursor: pointer;
-  transition: all 0.1s;
+  transition:
+    color 0.1s,
+    background-color 0.1s,
+    border-color 0.1s;
 }
 
 .file-viewer-action:hover {
@@ -104,22 +111,24 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background: #0a0a0a;
+  background: var(--bg-primary);
 }
 
 .files-code-viewer > div {
   min-height: 100%;
 }
 
-/* Tree items (matches FilesPage.css) */
-.files-tree-arrow {
-  flex-shrink: 0;
-  width: 10px;
-  font-size: 10px;
-  color: var(--text-muted);
-  text-align: center;
+/* The file preview body renders upright. Italic remains intentional only
+   on the line-number gutter (set via lineNumberStyle in codeBlockTheme.ts)
+   and on the syntax-highlighter token classes that opt into italic for
+   tokens like comments. */
+.files-code-viewer pre,
+.files-code-viewer pre > code,
+.files-markdown-viewer {
+  font-style: normal;
 }
 
+/* Tree items (matches FilesPage.css) */
 .files-tree-item {
   display: flex;
   align-items: center;
@@ -127,7 +136,8 @@
   padding: 0.1875rem 0.5rem;
   cursor: pointer;
   user-select: none;
-  font-size: calc(var(--font-size-base) * 0.8125);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
   transition: background 0.1s;
 }
@@ -145,7 +155,7 @@
 
 .files-tree-loading {
   padding: 0.25rem 0.5rem;
-  font-size: calc(var(--font-size-base) * 0.75);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -162,20 +172,20 @@
 
 .files-tree-name--modified,
 .files-tree-name--M {
-  color: #e5c07b;
+  color: var(--color-warning-foreground);
 }
 
 .files-tree-name--A {
-  color: #4ade80;
+  color: var(--color-success-foreground);
 }
 
 .files-tree-name--D {
-  color: #f87171;
+  color: var(--color-error);
   text-decoration: line-through;
 }
 
 .files-tree-name--untracked {
-  color: #737373;
+  color: var(--text-muted);
 }
 
 /* Markdown viewer */
@@ -199,7 +209,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 0.375rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
   padding: 0.25rem;
   min-width: 140px;
 }
@@ -223,11 +233,11 @@
 }
 
 .file-ctx-item--danger {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .file-ctx-item--danger:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 /* ── File Changes Tab ── */
@@ -237,7 +247,7 @@
   justify-content: center;
   width: 1.25rem;
   height: 1.25rem;
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   font-weight: 700;
   font-family: var(--font-mono, monospace);
   border-radius: 0.25rem;
@@ -245,23 +255,23 @@
 }
 
 .file-status-modified {
-  background: color-mix(in srgb, #eab308 20%, transparent);
-  color: #eab308;
+  background: color-mix(in srgb, var(--color-warning-foreground) 20%, transparent);
+  color: var(--color-warning-foreground);
 }
 
 .file-status-added {
-  background: color-mix(in srgb, #22c55e 20%, transparent);
-  color: #22c55e;
+  background: color-mix(in srgb, var(--color-success-foreground) 20%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .file-status-deleted {
-  background: color-mix(in srgb, #ef4444 20%, transparent);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
 }
 
 .file-status-renamed {
-  background: color-mix(in srgb, #3b82f6 20%, transparent);
-  color: #3b82f6;
+  background: color-mix(in srgb, var(--color-info) 20%, transparent);
+  color: var(--color-info);
 }
 
 .file-status-untracked {
@@ -269,42 +279,3 @@
   color: var(--text-muted);
 }
 
-/* ── Diff View ── */
-.diff-line {
-  padding: 0 0.75rem;
-  white-space: pre;
-  min-height: 1.25rem;
-}
-
-.diff-add {
-  background: color-mix(in srgb, #22c55e 12%, transparent);
-  color: #4ade80;
-}
-
-.diff-remove {
-  background: color-mix(in srgb, #ef4444 12%, transparent);
-  color: #f87171;
-}
-
-.diff-hunk {
-  background: color-mix(in srgb, #3b82f6 8%, transparent);
-  color: #60a5fa;
-}
-
-.diff-meta {
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-[data-theme="light"] .diff-add {
-  background: color-mix(in srgb, #16a34a 10%, transparent);
-  color: #15803d;
-}
-[data-theme="light"] .diff-remove {
-  background: color-mix(in srgb, #dc2626 10%, transparent);
-  color: #b91c1c;
-}
-[data-theme="light"] .diff-hunk {
-  background: color-mix(in srgb, #2563eb 8%, transparent);
-  color: #1d4ed8;
-}

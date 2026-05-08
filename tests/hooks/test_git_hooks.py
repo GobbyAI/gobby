@@ -229,8 +229,8 @@ class TestRunPreMergeHooks:
 class TestRunPostMergeHooks:
     def test_no_hooks(self) -> None:
         mgr = MergeHookManager()
-        # Should not raise
         mgr.run_post_merge_hooks("res1", True)
+        assert mgr.post_merge_hook_count == 0
 
     def test_calls_all_hooks(self) -> None:
         mgr = MergeHookManager()
@@ -287,8 +287,8 @@ class TestRunPostMergeHooks:
 
         mgr.register_post_merge(bad1)
         mgr.register_post_merge(bad2)
-        # Should not raise
         mgr.run_post_merge_hooks("res1", True)
+        assert mgr.post_merge_hook_count == 2
 
 
 # =============================================================================

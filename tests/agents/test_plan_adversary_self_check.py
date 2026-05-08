@@ -1,0 +1,100 @@
+"""Wiring tests for plan-adversary.yaml self-check + retry + fallback (§2.22.4).
+
+After writing the ``## M1 Task Manifest``, the adversary must validate the
+plan via ``parse_plan(parse_mode="expansion")``. On failure the adversary
+retries up to 3 times. After the cap is exhausted, behavior splits:
+
+  - non-yolo: escalate with ``needs_human:manifest_emission_failure:...``
+  - yolo: NEVER escalate; write a ``## Yolo Fallbacks`` audit, fall back to
+    ``emit_stub_manifest(plan_path)`` from §2.21a, re-run the strict parse.
+    If the stub also fails, append a second audit marker and force-approve
+    with ``approve_review``.
+
+Pre-verdict draft-mode parsing happens upstream in ``validate_plan_file``
+before each adversary spawn; the adversary itself does NOT re-parse
+pre-verdict and only runs the parser as the post-emission expansion-mode
+self-check (§2.21.3).
+"""
+
+from __future__ import annotations
+
+import re
+from importlib.resources import files
+
+import pytest
+import yaml
+
+from gobby.workflows.definitions import AgentDefinitionBody
+
+pytestmark = pytest.mark.unit
+
+ADVERSARY_PATH = files("gobby").joinpath("install/shared/workflows/agents/plan-adversary.yaml")
+
+
+@pytest.fixture(scope="module")
+def agent() -> AgentDefinitionBody:
+    with ADVERSARY_PATH.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return AgentDefinitionBody.model_validate(data)
+
+
+class TestSelfCheckGate:
+    """Post-emission strict self-check uses parse_plan(parse_mode='expansion')."""
+
+    def test_self_check_uses_parse_plan_expansion_mode(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "parse_plan" in instructions
+        assert 'parse_mode="expansion"' in instructions or "parse_mode='expansion'" in instructions
+
+    def test_pre_verdict_parsing_delegated_upstream(self, agent: AgentDefinitionBody) -> None:
+        """Adversary does NOT re-parse pre-verdict — that's the planner-side
+        ``validate_plan_file`` gate, run before every adversary spawn (§2.21.3).
+        """
+        instructions = agent.instructions or ""
+        assert "validate_plan_file" in instructions
+        assert "Do NOT re-run the parser pre-verdict" in instructions
+
+
+class TestRetryAndCap:
+    def test_retry_capped_at_three(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert re.search(
+            r"\b3\s+retr(?:y|ies)\b|retr(?:y|ies)\D{0,15}\b3\b",
+            instructions,
+            re.IGNORECASE,
+        ), "expected explicit '3 retries' cap in adversary instructions"
+
+
+class TestNonYoloEscalates:
+    def test_non_yolo_escalates_with_needs_human_prefix(self, agent: AgentDefinitionBody) -> None:
+        """After cap exhausted, non-yolo calls escalate_task with the
+        documented manifest-emission-failure prefix."""
+        instructions = agent.instructions or ""
+        assert "escalate_task" in instructions
+        assert "needs_human:manifest_emission_failure" in instructions
+
+
+class TestYoloFallback:
+    """yolo NEVER calls escalate_task on this path (top-level invariant)."""
+
+    def test_yolo_never_escalates_after_cap(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        lowered = instructions.lower()
+        # Contract: "- yolo: do NOT call `escalate_task` (top-level yolo invariant"
+        expected = "yolo: do not call `escalate_task` (top-level yolo invariant"
+        assert expected in lowered
+
+    def test_yolo_falls_back_to_stub_emitter(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "emit_stub_manifest" in instructions
+
+    def test_yolo_writes_yolo_fallbacks_audit(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "Yolo Fallbacks" in instructions
+
+    def test_force_approve_when_stub_also_fails(self, agent: AgentDefinitionBody) -> None:
+        """If even the stub-emitter fallback fails, append a second audit
+        marker and approve the plan with approve_review."""
+        instructions = agent.instructions or ""
+        assert "force-approve" in instructions or "force_approve" in instructions
+        assert "downstream gobby expand will reject" in instructions

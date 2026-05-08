@@ -216,3 +216,4 @@ class TestPipelineExecutorNotifiesRegistry:
             project_id="proj-1",
         )
         assert result.status == ExecutionStatus.COMPLETED
+        assert result.id == "pe-noreg"

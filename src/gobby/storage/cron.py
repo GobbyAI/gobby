@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -18,6 +19,51 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
+
+MIN_CRON_INTERVAL_SECONDS = 60
+CRON_JOB_NAME_PRIORITIES = {
+    "gobby:pipeline-heartbeat": 0,
+    "gobby:dispatcher": 1,
+}
+DEFAULT_CRON_JOB_PRIORITY = 2
+
+
+SYSTEM_ROW_UPDATE_ALLOWED_FIELDS = frozenset(
+    {
+        "enabled",
+        "schedule_type",
+        "cron_expr",
+        "interval_seconds",
+        "run_at",
+        "timezone",
+    }
+)
+
+
+class SystemRowProtected(ValueError):
+    """Raised when operator-facing code tries to mutate a system cron row."""
+
+
+class _Unset:
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = _Unset()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _normalize_interval_seconds(schedule_type: str, interval_seconds: int | None) -> int | None:
+    if schedule_type != "interval" or interval_seconds is None:
+        return interval_seconds
+    return max(interval_seconds, MIN_CRON_INTERVAL_SECONDS)
+
+
+def _cron_job_priority(job: CronJob) -> int:
+    return CRON_JOB_NAME_PRIORITIES.get(job.name, DEFAULT_CRON_JOB_PRIORITY)
 
 
 def compute_next_run(job: CronJob) -> datetime | None:
@@ -53,9 +99,10 @@ def compute_next_run(job: CronJob) -> datetime | None:
     elif job.schedule_type == "interval":
         if not job.interval_seconds:
             return None
+        interval_seconds = max(job.interval_seconds, MIN_CRON_INTERVAL_SECONDS)
         # Always compute from now to prevent double-fire when last_run_at
         # is stale (close to current time after execution).
-        next_interval: datetime = now + timedelta(seconds=job.interval_seconds)
+        next_interval: datetime = now + timedelta(seconds=interval_seconds)
         return next_interval.astimezone(ZoneInfo("UTC"))
 
     elif job.schedule_type == "once":
@@ -93,7 +140,7 @@ class CronJobStorage:
         project_id: str,
         name: str,
         schedule_type: Literal["cron", "interval", "once"],
-        action_type: Literal["agent_spawn", "pipeline", "shell", "handler"],
+        action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
         action_config: dict[str, Any],
         description: str | None = None,
         cron_expr: str | None = None,
@@ -101,10 +148,13 @@ class CronJobStorage:
         run_at: str | None = None,
         timezone: str = "UTC",
         enabled: bool = True,
+        is_system: bool = False,
     ) -> CronJob:
         """Create a new cron job."""
         job_id = generate_prefixed_id("cj", length=12)
         now = datetime.now(UTC).isoformat()
+
+        interval_seconds = _normalize_interval_seconds(schedule_type, interval_seconds)
 
         job = CronJob(
             id=job_id,
@@ -121,6 +171,7 @@ class CronJobStorage:
             run_at=run_at,
             timezone=timezone,
             enabled=enabled,
+            is_system=is_system,
         )
 
         # Compute initial next_run_at
@@ -133,11 +184,11 @@ class CronJobStorage:
             INSERT INTO cron_jobs (
                 id, project_id, name, description, schedule_type,
                 cron_expr, interval_seconds, run_at, timezone,
-                action_type, action_config, enabled, next_run_at,
+                action_type, action_config, enabled, is_system, next_run_at,
                 last_run_at, last_status, consecutive_failures,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.id,
@@ -152,6 +203,7 @@ class CronJobStorage:
                 job.action_type,
                 json.dumps(job.action_config),
                 1 if job.enabled else 0,
+                1 if job.is_system else 0,
                 job.next_run_at,
                 job.last_run_at,
                 job.last_status,
@@ -184,6 +236,7 @@ class CronJobStorage:
         self,
         project_id: str | None = None,
         enabled: bool | None = None,
+        is_system: bool | None = None,
         limit: int = 50,
     ) -> list[CronJob]:
         """List cron jobs with optional filters."""
@@ -196,6 +249,9 @@ class CronJobStorage:
         if enabled is not None:
             conditions.append("enabled = ?")
             params.append(1 if enabled else 0)
+        if is_system is not None:
+            conditions.append("is_system = ?")
+            params.append(1 if is_system else 0)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
@@ -230,6 +286,54 @@ class CronJobStorage:
             "updated_at",
         }
     )
+    _SYSTEM_BOOKKEEPING_FIELDS = frozenset(
+        {
+            "next_run_at",
+            "last_run_at",
+            "last_status",
+            "consecutive_failures",
+        }
+    )
+
+    def _update_job_fields(self, job_id: str, **fields: Any) -> CronJob | None:
+        """Update trusted cron row fields without the public operator policy."""
+        if not fields:
+            return self.get_job(job_id)
+
+        invalid_fields = set(fields.keys()) - self._VALID_UPDATE_FIELDS
+        if invalid_fields:
+            raise ValueError(f"Invalid field names: {invalid_fields}")
+
+        if "action_config" in fields and isinstance(fields["action_config"], dict):
+            fields["action_config"] = json.dumps(fields["action_config"])
+
+        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
+        values = list(fields.values()) + [job_id]
+        self.db.execute(
+            f"UPDATE cron_jobs SET {set_clause} WHERE id = ?",  # nosec B608
+            tuple(values),
+        )
+
+        return self.get_job(job_id)
+
+    def _normalize_update_fields(self, job: CronJob, fields: dict[str, Any]) -> None:
+        schedule_type = str(fields.get("schedule_type", job.schedule_type))
+        should_normalize = schedule_type == "interval" and (
+            "schedule_type" in fields
+            or "interval_seconds" in fields
+            or (
+                job.schedule_type == "interval"
+                and job.interval_seconds is not None
+                and job.interval_seconds < MIN_CRON_INTERVAL_SECONDS
+            )
+        )
+        if not should_normalize:
+            return
+        interval_seconds = fields.get("interval_seconds", job.interval_seconds)
+        fields["interval_seconds"] = _normalize_interval_seconds(
+            schedule_type,
+            interval_seconds,
+        )
 
     def update_job(self, job_id: str, **fields: Any) -> CronJob | None:
         """Update cron job fields."""
@@ -240,24 +344,124 @@ class CronJobStorage:
         if invalid_fields:
             raise ValueError(f"Invalid field names: {invalid_fields}")
 
-        fields["updated_at"] = datetime.now(UTC).isoformat()
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if job.is_system:
+            disallowed_fields = set(fields.keys()) - SYSTEM_ROW_UPDATE_ALLOWED_FIELDS
+            if disallowed_fields:
+                field = sorted(disallowed_fields)[0]
+                raise SystemRowProtected(
+                    f"Cron row {job_id} is a gobby-managed system-managed row; "
+                    "operator update rejected "
+                    f"for field {field!r}. Use update_system_job_bookkeeping for "
+                    "scheduler state or reconcile_system_job_definition for bundled "
+                    "action repair."
+                )
 
-        # Serialize action_config to JSON if present
-        if "action_config" in fields and isinstance(fields["action_config"], dict):
-            fields["action_config"] = json.dumps(fields["action_config"])
+        self._normalize_update_fields(job, fields)
+        fields["updated_at"] = _utc_now_iso()
 
-        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
-        values = list(fields.values()) + [job_id]
+        return self._update_job_fields(job_id, **fields)
 
-        self.db.execute(
-            f"UPDATE cron_jobs SET {set_clause} WHERE id = ?",  # nosec B608
-            tuple(values),
-        )
+    def update_system_job_bookkeeping(
+        self,
+        job_id: str,
+        *,
+        next_run_at: object = UNSET,
+        last_run_at: object = UNSET,
+        last_status: object = UNSET,
+        consecutive_failures: object = UNSET,
+        **invalid_fields: object,
+    ) -> CronJob | None:
+        """Update scheduler-owned fields on a system cron job."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; update_system_job_bookkeeping "
+                "is reserved for gobby-managed system cron rows."
+            )
 
-        return self.get_job(job_id)
+        if invalid_fields:
+            field = sorted(invalid_fields)[0]
+            raise SystemRowProtected(
+                f"Cron row {job_id} is a gobby-managed system-managed row; "
+                "system bookkeeping update "
+                f"rejected field {field!r}. Only scheduler state fields are allowed."
+            )
+
+        fields = {
+            "next_run_at": next_run_at,
+            "last_run_at": last_run_at,
+            "last_status": last_status,
+            "consecutive_failures": consecutive_failures,
+        }
+        update_fields = {key: value for key, value in fields.items() if value is not UNSET}
+
+        return self._update_job_fields(job_id, **update_fields)
+
+    def reconcile_system_job_definition(
+        self,
+        job_id: str,
+        *,
+        action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
+        action_config: dict[str, Any],
+        description: str | None | _Unset = UNSET,
+        schedule_type: Literal["cron", "interval", "once"] | _Unset = UNSET,
+        cron_expr: str | None | _Unset = UNSET,
+        interval_seconds: int | None | _Unset = UNSET,
+        run_at: str | None | _Unset = UNSET,
+        timezone: str | _Unset = UNSET,
+    ) -> CronJob | None:
+        """Repair bundled definition fields on an existing system cron job."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; reconcile_system_job_definition "
+                "is reserved for gobby-managed system cron rows."
+            )
+
+        fields: dict[str, Any] = {}
+        desired: dict[str, Any] = {
+            "action_type": action_type,
+            "action_config": action_config,
+        }
+        optional = {
+            "description": description,
+            "schedule_type": schedule_type,
+            "cron_expr": cron_expr,
+            "interval_seconds": interval_seconds,
+            "run_at": run_at,
+            "timezone": timezone,
+        }
+        desired.update({key: value for key, value in optional.items() if value is not UNSET})
+        self._normalize_update_fields(job, desired)
+        for key, value in desired.items():
+            if getattr(job, key) != value:
+                fields[key] = value
+
+        if not fields:
+            return job
+
+        candidate = replace(job, **fields)
+        next_run = compute_next_run(candidate) if candidate.enabled else None
+        fields["next_run_at"] = next_run.isoformat() if next_run else None
+        fields["updated_at"] = _utc_now_iso()
+        return self._update_job_fields(job_id, **fields)
 
     def delete_job(self, job_id: str) -> bool:
         """Delete a cron job and its runs."""
+        job = self.get_job(job_id)
+        if job is not None and job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is a gobby-managed system-managed row; "
+                "operator delete rejected."
+            )
+
         with self.db.transaction() as conn:
             # Delete runs first (foreign key)
             conn.execute("DELETE FROM cron_runs WHERE cron_job_id = ?", (job_id,))
@@ -283,6 +487,19 @@ class CronJobStorage:
         else:
             updates["next_run_at"] = None
 
+        if job.is_system:
+            updated = self._update_job_fields(
+                job_id,
+                enabled=updates["enabled"],
+                updated_at=_utc_now_iso(),
+            )
+            if updated is None:
+                return None
+            return self.update_system_job_bookkeeping(
+                job_id,
+                next_run_at=updates["next_run_at"],
+            )
+
         return self.update_job(job_id, **updates)
 
     def get_due_jobs(self) -> list[CronJob]:
@@ -292,11 +509,20 @@ class CronJobStorage:
             """
             SELECT * FROM cron_jobs
             WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
-            ORDER BY next_run_at ASC
+            ORDER BY next_run_at ASC, created_at ASC
             """,
             (now,),
         )
-        return [CronJob.from_row(row) for row in rows]
+        jobs = [CronJob.from_row(row) for row in rows]
+        return sorted(
+            jobs,
+            key=lambda job: (
+                _cron_job_priority(job),
+                job.next_run_at or "",
+                job.created_at,
+                job.id,
+            ),
+        )
 
     # --- CronRun methods ---
 
@@ -391,6 +617,42 @@ class CronJobStorage:
         """Count currently running cron runs."""
         row = self.db.fetchone("SELECT COUNT(*) as cnt FROM cron_runs WHERE status = 'running'")
         return row["cnt"] if row else 0
+
+    def has_running_run(self, cron_job_id: str) -> bool:
+        """Return whether a cron job already has an active run."""
+        row = self.db.fetchone(
+            """
+            SELECT 1
+              FROM cron_runs
+             WHERE cron_job_id = ?
+               AND status = 'running'
+             LIMIT 1
+            """,
+            (cron_job_id,),
+        )
+        return row is not None
+
+    def fail_stale_running_runs(self, timeout_seconds: int) -> int:
+        """Mark stale running cron runs failed so they stop consuming scheduler slots."""
+        timeout_seconds = max(timeout_seconds, MIN_CRON_INTERVAL_SECONDS)
+        now = datetime.now(UTC)
+        cutoff = (now - timedelta(seconds=timeout_seconds)).isoformat()
+        cursor = self.db.execute(
+            """
+            UPDATE cron_runs
+               SET status = 'failed',
+                   completed_at = ?,
+                   error = ?
+             WHERE status = 'running'
+               AND COALESCE(started_at, triggered_at, created_at) < ?
+            """,
+            (
+                now.isoformat(),
+                f"Cron run exceeded running timeout ({timeout_seconds}s)",
+                cutoff,
+            ),
+        )
+        return cursor.rowcount
 
     def cleanup_old_runs(self, days: int) -> int:
         """Delete runs older than the given number of days."""

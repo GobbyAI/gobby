@@ -9,6 +9,10 @@ from gobby.storage.skills import LocalSkillManager
 
 pytestmark = pytest.mark.unit
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BUNDLED_SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
+REMOVED_BUNDLED_SKILLS = ("orchestrate", "automate", "test-battery")
+
 
 class TestSyncBundledSkills:
     """Test sync_bundled_skills function."""
@@ -80,6 +84,59 @@ class TestSyncBundledSkills:
         assert skill is not None
         assert skill.name == "memory"
         assert len(skill.content) > 0
+
+    def test_removed_bundled_skill_directories_do_not_sync(
+        self, db: LocalDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        for skill_name in REMOVED_BUNDLED_SKILLS:
+            assert not (BUNDLED_SKILLS_DIR / skill_name).exists()
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is True
+        for skill_name in REMOVED_BUNDLED_SKILLS:
+            assert skill_manager.get_by_name(skill_name) is None
+
+    def test_removed_bundled_skill_rows_are_orphaned_on_sync(
+        self, db: LocalDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        for skill_name in REMOVED_BUNDLED_SKILLS:
+            skill_manager.create_skill(
+                name=skill_name,
+                description=f"Old bundled {skill_name} skill",
+                content=f"# {skill_name}\nOld bundled content.",
+                metadata={"gobby": {"audience": "all"}},
+                source="installed",
+                source_type="filesystem",
+            )
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is True
+        assert result["orphaned"] == len(REMOVED_BUNDLED_SKILLS)
+        for skill_name in REMOVED_BUNDLED_SKILLS:
+            assert skill_manager.get_by_name(skill_name) is None
+            orphaned = skill_manager.get_by_name(skill_name, include_deleted=True)
+            assert orphaned is not None
+            assert orphaned.deleted_at is not None
+
+    def test_sync_bundled_skills_includes_triage_judgment(
+        self, db: LocalDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        """GitHub triage methodology skill should parse and sync."""
+        from gobby.skills.sync import sync_bundled_skills
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is True
+        skill = skill_manager.get_by_name("triage-judgment")
+        assert skill is not None
+        assert skill.source == "installed"
+        assert "Return structured JSON only" in skill.content
 
     def test_sync_bundled_skills_is_idempotent(
         self, db: LocalDatabase, skill_manager: LocalSkillManager

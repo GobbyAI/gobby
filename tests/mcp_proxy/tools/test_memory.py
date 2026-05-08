@@ -9,6 +9,7 @@ Focuses on:
 - search_knowledge_graph edge cases
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -663,3 +664,96 @@ class TestSearchKnowledgeGraph:
 
         assert result["success"] is False
         assert "KG down" in result["error"]
+
+
+# ─── cleanup / audit ────────────────────────────────────────────────────
+
+
+class TestMemoryCleanupTools:
+    """Tests for audit_memories and cleanup_memories MCP wrappers."""
+
+    @pytest.mark.asyncio
+    async def test_audit_passes_stale_classifier_inputs(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        stale_audit_config = SimpleNamespace(prompt_path="memory/stale_audit")
+        config = SimpleNamespace(memory=SimpleNamespace(stale_audit=stale_audit_config))
+        registry = create_memory_registry(
+            mock_memory_manager,
+            llm_service=mock_llm_service,
+            config=config,
+        )
+
+        with patch(
+            "gobby.memory.services.maintenance.execute_cleanup",
+            new_callable=AsyncMock,
+            return_value={"dry_run": True, "total_found": 0, "total_deleted": 0},
+        ) as execute_cleanup:
+            result = await registry.call(
+                "audit_memories",
+                {
+                    "max_stale_age_days": 60,
+                    "max_stale_access_count": 2,
+                    "stale_confidence_threshold": 0.9,
+                    "limit_per_category": 25,
+                    "use_stale_classifier": False,
+                    "categories": ["stale"],
+                },
+            )
+
+        assert result["success"] is True
+        kwargs = execute_cleanup.await_args.kwargs
+        assert kwargs["dry_run"] is True
+        assert kwargs["max_stale_age_days"] == 60
+        assert kwargs["max_stale_access_count"] == 2
+        assert kwargs["stale_confidence_threshold"] == 0.9
+        assert kwargs["limit_per_category"] == 25
+        assert kwargs["use_stale_classifier"] is False
+        assert kwargs["llm_service"] is mock_llm_service
+        assert kwargs["stale_audit_config"] is stale_audit_config
+
+    @pytest.mark.asyncio
+    async def test_cleanup_passes_stale_classifier_inputs(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        stale_audit_config = SimpleNamespace(prompt_path="memory/stale_audit")
+        config = SimpleNamespace(memory=SimpleNamespace(stale_audit=stale_audit_config))
+        registry = create_memory_registry(
+            mock_memory_manager,
+            llm_service=mock_llm_service,
+            config=config,
+        )
+
+        with patch(
+            "gobby.memory.services.maintenance.execute_cleanup",
+            new_callable=AsyncMock,
+            return_value={"dry_run": False, "total_found": 0, "total_deleted": 0},
+        ) as execute_cleanup:
+            result = await registry.call(
+                "cleanup_memories",
+                {
+                    "dry_run": False,
+                    "max_stale_age_days": 45,
+                    "max_stale_access_count": 3,
+                    "stale_confidence_threshold": 0.88,
+                    "similarity_threshold": 0.97,
+                    "limit_per_category": 30,
+                    "use_stale_classifier": True,
+                    "categories": ["stale", "duplicates"],
+                },
+            )
+
+        assert result["success"] is True
+        kwargs = execute_cleanup.await_args.kwargs
+        assert kwargs["dry_run"] is False
+        assert kwargs["max_stale_age_days"] == 45
+        assert kwargs["max_stale_access_count"] == 3
+        assert kwargs["stale_confidence_threshold"] == 0.88
+        assert kwargs["similarity_threshold"] == 0.97
+        assert kwargs["limit_per_category"] == 30
+        assert kwargs["use_stale_classifier"] is True
+        assert kwargs["categories"] == ["stale", "duplicates"]

@@ -1,45 +1,70 @@
 # Sandbox Compatibility
 
-This guide is the internal reference for the daemon-owned sandbox model that
-landed under the sandbox epic. It is intentionally split into two layers:
+This guide is the internal compatibility reference for Gobby's daemon-owned
+sandbox model and `ghook --diagnose` contract. It stays separate from
+[sandboxing.md](./sandboxing.md) because that guide explains operator-facing
+configuration, while this guide owns the test matrix that proves runtime
+translation and installed hook binaries still agree.
 
-1. Runtime behavior that Gobby owns directly.
-2. Local compatibility checks for the installed `ghook` + CLI binaries.
+The compatibility surface has two layers:
 
-The local runner suite assumes prerelease binaries are installed on the
-machine already. It does not assume GitHub Releases or crates.io are live.
+1. Runtime behavior that Gobby owns directly for web chat and spawned agents.
+2. Local and public-artifact checks for the installed `ghook` and CLI binaries.
 
-Separate from that local suite, Gobby now has an opt-in public-artifact
-validation entrypoint for `ghook`. It installs a specific released version
-from GitHub Releases or crates.io and then runs the same diagnose/sandbox
-contract against that installed binary.
+The hook runner names below use provider/runtime hook labels because they test
+installed binary compatibility. Workflow rules are authored against semantic
+events such as `turn_start` and `turn_end`; raw lifecycle labels such as
+`before_agent`, `after_agent`, and `stop` are normalized runtime details, not
+the primary rule-authoring API.
+
+The local runner suite assumes the relevant CLI binaries and a compatible
+`ghook` are already installed on the machine. The public-artifact validator is
+opt-in: it installs a named released `ghook` from GitHub Releases or crates.io
+inside a temporary `HOME`, then runs the same diagnose contract against that
+installed binary.
 
 ## Current Contract
 
-Gobby now owns sandbox policy at the daemon layer instead of exposing
-provider-specific product settings.
+Gobby owns sandbox policy at the daemon layer. The provider-specific CLI flags
+are implementation details produced from the daemon model.
 
-- `web_chat_sandbox` controls daemon-owned web chat runtimes.
-- `agent_sandbox` controls daemon-owned spawned terminal runtimes.
-- Web chat policy changes are tracked by `sandbox_policy_hash`; a mismatch
-  forces continue-in-new-chat instead of SDK resume.
+- `web_chat_sandbox` controls daemon-owned web chat runtimes and defaults to
+  enabled.
+- `agent_sandbox` controls daemon-owned spawned agent runtimes and defaults to
+  enabled.
+- Both config fields expose only `enabled`, `extra_read_paths`, and
+  `extra_write_paths`. The daemon-owned resolver fixes `mode` to `permissive`,
+  enables network access, and preserves explicit extra read/write paths.
+- Web chat policy is snapshotted at runtime-manager startup and tracked by
+  `sandbox_policy_hash`; a mismatch forces continue-in-new-chat instead of SDK
+  resume.
 - `compute_sandbox_paths()` always keeps the active workspace writable and
-  always grants read access to `~/.gobby` so sandboxed runtimes can still
-  resolve required daemon state such as `machine_id`.
-- Repo, worktree, and clone sessions all inherit the same rule: the launched
+  always grants read access to `~/.gobby` so sandboxed runtimes can resolve
+  required daemon state such as `machine_id`.
+- Linked worktree Git metadata directories from `git rev-parse --git-dir` and
+  `--git-common-dir` are writable so sandboxed agents can commit from worktree
+  isolation.
+- Repo, worktree, and clone sessions inherit the same path rule: the launched
   workspace root is writable; extra paths must be explicitly added.
+- Agent process termination is separate from sandbox compatibility. Spawned
+  automation must still call `end_agent_run` to release agent-run resources.
 
 ## Coverage Map
 
-These tests cover the daemon-owned behavior directly:
+These tests cover daemon-owned runtime behavior:
 
+- `tests/config/test_daemon_sandbox.py`
+  Verifies daemon config defaults and the supported override shape for
+  `web_chat_sandbox` and `agent_sandbox`.
 - `tests/servers/websocket/chat/test_runtime_manager.py`
-  Verifies daemon-owned web-chat defaults and provider translation layers.
+  Verifies daemon-owned web chat defaults, provider translation layers, Codex
+  app-server thread sandboxing, and the Gemini/Qwen ACP startup caveat.
 - `tests/servers/test_session_control.py`
   Verifies policy-hash mismatch behavior during continue-in-chat.
 - `tests/agents/test_sandbox.py`
   Verifies resolved sandbox paths, including workspace write access and
-  required `~/.gobby` readability.
+  required `~/.gobby` readability, plus linked-worktree Git metadata write
+  access.
 
 These tests cover the local hook binary contract:
 
@@ -47,22 +72,37 @@ These tests cover the local hook binary contract:
   Verifies the shared runner wiring and schema location.
 - `tests/integration/sandbox/test_diagnose_schema.py`
   Validates live `ghook --diagnose` output against the mirrored schema.
-- `tests/integration/sandbox/run_{codex,claude,gemini,qwen}_sandbox.py`
+- `tests/integration/sandbox/run_{claude,codex,gemini,qwen}_sandbox.py`
   Verifies the installed Gobby-managed hook command rewrites cleanly into the
   current `ghook --diagnose` branch for each supported CLI.
+- `tests/integration/sandbox/test_public_ghook_install.py`
+  Installs a released public `ghook` artifact in a temporary home directory and
+  runs the same diagnose matrix against it.
 
 ## Runtime Matrix
 
 | Surface | CLI | Current mapping | Key invariant |
 | --- | --- | --- | --- |
-| Web chat | Claude | Managed sandbox settings JSON | Resume blocked on policy-hash mismatch |
+| Web chat | Claude | `--settings` sandbox JSON | Resume blocked on policy-hash mismatch |
 | Web chat | Codex | Codex app-server sandbox policy derived from daemon config | Default daemon-owned sandbox stays enabled |
-| Web chat | Gemini | `-s` plus `SEATBELT_PROFILE` | Required daemon state remains readable via `~/.gobby` |
-| Web chat | Qwen | Same contract as Gemini | Required daemon state remains readable via `~/.gobby` |
-| Spawned agents | Claude | `--settings` sandbox payload | Agent runtime metadata records `sandbox_enabled` |
-| Spawned agents | Codex | `--sandbox <mode>` | Workspace boundary follows repo/worktree/clone root |
+| Web chat | Gemini | Shared ACP backend; daemon policy is tracked, but the ACP process is not wrapped in Gobby Seatbelt | ACP startup remains reliable on macOS |
+| Web chat | Qwen | Same ACP caveat as Gemini | ACP startup remains reliable on macOS |
+| Web chat | Droid | Per-session stream-jsonrpc backend; daemon policy is tracked, but no Gobby sandbox translation is applied | Droid availability and session metadata stay consistent |
+| Spawned agents | Claude | `--settings` sandbox JSON | Sandbox stays enabled without unsandboxed fallback |
+| Spawned agents | Codex | `--sandbox <mode>` plus `--add-dir` for extra write paths | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Gemini | `-s` plus `SEATBELT_PROFILE` | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Qwen | `-s` plus `SEATBELT_PROFILE` | Workspace boundary follows repo/worktree/clone root |
+| Spawned agents | Droid | No daemon sandbox resolver; Droid uses its own `droid exec --auto high` permission path | Sandbox state is recorded, but no provider sandbox flags are emitted |
+
+Claude's sandbox payload is intentionally conservative: Gobby enables the
+sandbox, uses managed permission rules only, disables unsandboxed command
+fallback, and does not invent undocumented outbound-network wildcard settings.
+Codex maps permissive daemon mode to `workspace-write` and restrictive mode to
+`read-only`. Gemini and Qwen share the Seatbelt profile naming contract:
+`permissive-open`, `permissive-proxied`, `restrictive-open`, or
+`restrictive-proxied`. That Seatbelt contract applies to spawned Gemini/Qwen
+agents and hook-binary diagnostics; daemon-owned Gemini/Qwen web chat does not
+launch ACP under full-process Seatbelt.
 
 ## Running The Local Compatibility Suite
 
@@ -87,7 +127,8 @@ uv run mypy tests/integration/sandbox
 
 Use the public-artifact validator when you want to prove the released
 `gobby-hooks` package installs and behaves correctly through Gobby's own
-installer path.
+installer path. The version is intentionally supplied by the caller so this
+test can validate any released artifact without editing the test.
 
 GitHub Releases:
 
@@ -123,6 +164,8 @@ The runner suite uses the same Gobby-managed hook command that installers
 prefer locally today, then rewrites the `--gobby-owned` branch into
 `--diagnose`. That keeps the check aligned to the currently installed `ghook`
 binary and the mirrored `schemas/diagnose-output.v2.schema.json` contract.
+The provider hook names in these runners are compatibility inputs only; rule
+templates should continue to target semantic workflow events.
 
 If the Rust-side diagnose schema changes:
 
@@ -130,3 +173,5 @@ If the Rust-side diagnose schema changes:
    frozen for compatibility.
 2. Update the runner expectations in `tests/integration/sandbox/runner.py`.
 3. Re-run `uv run pytest tests/integration/sandbox/ -v --run-sandbox`.
+
+_Last verified: 2026-05-07_

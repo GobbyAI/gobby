@@ -36,6 +36,10 @@ const DEFAULT_SETTINGS: Settings = {
 }
 
 const STORAGE_KEY = 'gobby-settings'
+const DARK_LOGO_PATH = '/logo.png'
+const LIGHT_LOGO_PATH = '/logo-light.png'
+const ICON_CACHE_PARAM = 'v=2'
+const [ICON_CACHE_KEY = 'v', ICON_CACHE_VALUE = ''] = ICON_CACHE_PARAM.split('=')
 
 /** Keys persisted to the backend (excludes per-conversation chatMode). */
 type PersistableKey =
@@ -116,6 +120,44 @@ async function saveUISettings(settings: Settings): Promise<void> {
   }
 }
 
+function logoPathForTheme(theme: 'dark' | 'light'): string {
+  return theme === 'light' ? LIGHT_LOGO_PATH : DARK_LOGO_PATH
+}
+
+export function cacheBustedIconHref(path: string): string {
+  const fragmentIndex = path.indexOf('#')
+  const pathWithoutFragment = fragmentIndex >= 0 ? path.slice(0, fragmentIndex) : path
+  const fragment = fragmentIndex >= 0 ? path.slice(fragmentIndex) : ''
+  const queryIndex = pathWithoutFragment.indexOf('?')
+  const basePath = queryIndex >= 0 ? pathWithoutFragment.slice(0, queryIndex) : pathWithoutFragment
+  const query = queryIndex >= 0 ? pathWithoutFragment.slice(queryIndex + 1) : ''
+  const params = new URLSearchParams(query)
+  params.delete(ICON_CACHE_KEY)
+  params.append(ICON_CACHE_KEY, ICON_CACHE_VALUE)
+  const queryString = params.toString()
+  return `${basePath}${queryString ? `?${queryString}` : ''}${fragment}`
+}
+
+function upsertIconLinks(rel: string, href: string, type?: string): void {
+  const links = Array.from(document.head.querySelectorAll<HTMLLinkElement>(`link[rel="${rel}"]`))
+  if (links.length === 0) {
+    const link = document.createElement('link')
+    link.setAttribute('rel', rel)
+    document.head.appendChild(link)
+    links.push(link)
+  }
+  for (const link of links) {
+    if (type) link.setAttribute('type', type)
+    link.setAttribute('href', href)
+  }
+}
+
+function updateDocumentIcons(theme: 'dark' | 'light'): void {
+  const href = cacheBustedIconHref(logoPathForTheme(theme))
+  upsertIconLinks('icon', href, 'image/png')
+  upsertIconLinks('apple-touch-icon', href)
+}
+
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(() => {
     // Immediate render from localStorage; API fetch overwrites in useEffect
@@ -152,6 +194,7 @@ export function useSettings() {
   useEffect(() => {
     const applyTheme = (resolved: 'dark' | 'light') => {
       document.documentElement.setAttribute('data-theme', resolved)
+      updateDocumentIcons(resolved)
     }
 
     if (settings.theme === 'system') {

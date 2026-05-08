@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -30,6 +30,7 @@ def _make_memory(
     access_count: int = 0,
     created_at: str = "2025-01-01T00:00:00+00:00",
     updated_at: str = "2025-01-01T00:00:00+00:00",
+    last_accessed_at: str | None = None,
     source_session_id: str | None = None,
     project_id: str | None = None,
     tags: list[str] | None = None,
@@ -41,6 +42,7 @@ def _make_memory(
     m.access_count = access_count
     m.created_at = created_at
     m.updated_at = updated_at
+    m.last_accessed_at = last_accessed_at
     m.source_session_id = source_session_id
     m.project_id = project_id
     m.tags = tags or []
@@ -94,25 +96,25 @@ def _row(**kwargs) -> _FakeRow:
 
 
 class TestFindStaleMemories:
-    def test_finds_old_unaccessed_memories(self) -> None:
+    def test_finds_old_low_access_memories(self) -> None:
         old_date = (datetime.now(UTC) - timedelta(days=120)).isoformat()
         db = MagicMock()
-        db.fetchall.return_value = [_row(memory_id="stale-1", created_at=old_date)]
+        db.fetchall.return_value = [_row(memory_id="stale-1", created_at=old_date, access_count=1)]
 
         result = find_stale_memories(db, max_age_days=30)
 
         assert len(result) == 1
         assert result[0].id == "stale-1"
-        # Verify the SQL queries access_count = 0
         call_args = db.fetchall.call_args
-        assert "access_count = 0" in call_args[0][0]
+        assert "access_count <= ?" in call_args[0][0]
+        assert call_args[0][1][0] == 1
 
     def test_skips_accessed_memories(self) -> None:
-        """Memories with access_count > 0 should not appear (filtered by SQL)."""
+        """Memories above max_access_count should not appear (filtered by SQL)."""
         db = MagicMock()
         db.fetchall.return_value = []  # SQL filters them out
 
-        result = find_stale_memories(db, max_age_days=30)
+        result = find_stale_memories(db, max_age_days=30, max_access_count=1)
 
         assert len(result) == 0
 
@@ -123,7 +125,7 @@ class TestFindStaleMemories:
         find_stale_memories(db, max_age_days=45)
 
         call_args = db.fetchall.call_args
-        cutoff_param = call_args[0][1][0]  # First positional param
+        cutoff_param = call_args[0][1][1]  # Second positional param after max_access_count
         # Cutoff should be ~45 days ago
         cutoff_dt = datetime.fromisoformat(cutoff_param)
         expected = datetime.now(UTC) - timedelta(days=45)
@@ -138,6 +140,16 @@ class TestFindStaleMemories:
         call_args = db.fetchall.call_args
         sql = call_args[0][0]
         assert "project_id = ?" in sql
+
+    def test_uses_updated_and_last_accessed_for_candidate_selection(self) -> None:
+        db = MagicMock()
+        db.fetchall.return_value = []
+
+        find_stale_memories(db)
+
+        sql = db.fetchall.call_args[0][0]
+        assert "COALESCE(updated_at, created_at) < ?" in sql
+        assert "last_accessed_at IS NULL OR last_accessed_at < ?" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +236,7 @@ class TestFindDuplicateMemories:
         )
 
         assert len(result) == 0
+        assert vector_store.search.await_count == 1
 
     @pytest.mark.asyncio
     async def test_empty_store(self) -> None:
@@ -364,7 +377,12 @@ class TestExecuteCleanup:
         old_date = (datetime.now(UTC) - timedelta(days=120)).isoformat()
         mgr.db.fetchall.return_value = [_row(memory_id="stale-1", created_at=old_date)]
 
-        report = await execute_cleanup(mgr, dry_run=True, categories=["stale"])
+        report = await execute_cleanup(
+            mgr,
+            dry_run=True,
+            categories=["stale"],
+            use_stale_classifier=False,
+        )
 
         assert report["dry_run"] is True
         assert report["total_found"] >= 1
@@ -379,7 +397,12 @@ class TestExecuteCleanup:
         mgr.db.fetchall.return_value = [stale_row]
         mgr.storage.get_memory.return_value = _make_memory(memory_id="stale-1", access_count=0)
 
-        report = await execute_cleanup(mgr, dry_run=False, categories=["stale"])
+        report = await execute_cleanup(
+            mgr,
+            dry_run=False,
+            categories=["stale"],
+            use_stale_classifier=False,
+        )
 
         assert report["total_deleted"] == 1
         mgr.delete_memory.assert_called_once_with("stale-1")
@@ -393,7 +416,12 @@ class TestExecuteCleanup:
         # Memory was accessed since scan
         mgr.storage.get_memory.return_value = _make_memory(memory_id="stale-1", access_count=3)
 
-        report = await execute_cleanup(mgr, dry_run=False, categories=["stale"])
+        report = await execute_cleanup(
+            mgr,
+            dry_run=False,
+            categories=["stale"],
+            use_stale_classifier=False,
+        )
 
         assert report["total_deleted"] == 0
         mgr.delete_memory.assert_not_called()
@@ -417,6 +445,7 @@ class TestExecuteCleanup:
             mgr,
             dry_run=False,
             categories=["stale", "code_derivable", "orphaned"],
+            use_stale_classifier=False,
         )
 
         # Should appear in total_found once
@@ -455,3 +484,104 @@ class TestExecuteCleanup:
         assert "duplicates" in report
         assert "code_derivable" in report
         assert "orphaned" in report
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_delete_verdict_allows_cleanup(self) -> None:
+        mgr = self._make_manager()
+        old_date = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        mgr.db.fetchall.return_value = [_row(memory_id="stale-1", created_at=old_date)]
+        mgr.storage.get_memory.return_value = _make_memory(
+            memory_id="stale-1",
+            access_count=1,
+            updated_at=old_date,
+        )
+        llm_service = MagicMock()
+        llm_service.call_feature = AsyncMock(
+            return_value=(
+                '{"memories":[{"id":"stale-1","verdict":"delete",'
+                '"confidence":0.92,"reason":"One-time obsolete note."}]}'
+            )
+        )
+
+        with patch("gobby.prompts.loader.PromptLoader") as loader_cls:
+            loader_cls.return_value.render.return_value = "rendered prompt"
+            report = await execute_cleanup(
+                mgr,
+                dry_run=False,
+                categories=["stale"],
+                llm_service=llm_service,
+                stale_confidence_threshold=0.85,
+            )
+
+        assert report["stale"]["classifier_mode"] == "llm"
+        assert report["stale"]["delete_candidates"] == 1
+        assert report["total_found"] == 1
+        assert report["total_deleted"] == 1
+        mgr.delete_memory.assert_called_once_with("stale-1")
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_low_confidence_delete_goes_to_review(self) -> None:
+        mgr = self._make_manager()
+        old_date = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        mgr.db.fetchall.return_value = [_row(memory_id="stale-1", created_at=old_date)]
+        llm_service = MagicMock()
+        llm_service.call_feature = AsyncMock(
+            return_value=(
+                '{"memories":[{"id":"stale-1","verdict":"delete",'
+                '"confidence":0.51,"reason":"Maybe obsolete."}]}'
+            )
+        )
+
+        with patch("gobby.prompts.loader.PromptLoader") as loader_cls:
+            loader_cls.return_value.render.return_value = "rendered prompt"
+            report = await execute_cleanup(
+                mgr,
+                dry_run=False,
+                categories=["stale"],
+                llm_service=llm_service,
+                stale_confidence_threshold=0.85,
+            )
+
+        assert report["stale"]["delete_candidates"] == 0
+        assert report["stale"]["review"] == 1
+        assert report["total_found"] == 0
+        assert report["total_review"] == 1
+        mgr.delete_memory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_malformed_classifier_output_falls_back_to_review(self) -> None:
+        mgr = self._make_manager()
+        old_date = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        mgr.db.fetchall.return_value = [_row(memory_id="stale-1", created_at=old_date)]
+        llm_service = MagicMock()
+        llm_service.call_feature = AsyncMock(return_value="not json")
+
+        with patch("gobby.prompts.loader.PromptLoader") as loader_cls:
+            loader_cls.return_value.render.return_value = "rendered prompt"
+            report = await execute_cleanup(
+                mgr,
+                dry_run=False,
+                categories=["stale"],
+                llm_service=llm_service,
+            )
+
+        assert report["stale"]["classifier_mode"] == "error"
+        assert "classifier_error" in report["stale"]
+        assert report["total_found"] == 0
+        assert report["total_review"] == 1
+        mgr.delete_memory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_llm_service_keeps_stale_candidates_for_review(self) -> None:
+        mgr = self._make_manager()
+        old_date = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+        mgr.db.fetchall.return_value = [_row(memory_id="stale-1", created_at=old_date)]
+
+        report = await execute_cleanup(mgr, dry_run=False, categories=["stale"])
+
+        assert report["stale"]["classifier_mode"] == "unavailable"
+        assert "classifier_error" in report["stale"]
+        assert report["stale"]["delete_candidates"] == 0
+        assert report["total_found"] == 0
+        assert report["total_review"] == 1
+        mgr.delete_memory.assert_not_called()

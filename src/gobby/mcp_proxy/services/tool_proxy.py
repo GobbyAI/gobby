@@ -16,13 +16,7 @@ from .resource_operations import (
 )
 from .result_handling import (
     apply_before_tool_enforcement,
-    build_after_tool_event,
     build_before_tool_event,
-    build_proxy_tool_after_tool_event,
-    build_synthetic_tool_output,
-    emit_synthetic_after_tool,
-    emit_synthetic_proxy_after_tool,
-    should_emit_synthetic_after_tool,
 )
 from .server_resolution import (
     find_tool_server as find_tool_server_impl,
@@ -148,7 +142,7 @@ class ToolProxyService:
     ) -> tuple[
         "HookManager | None", Any | None, Any | None, Any, dict[str, Any], str | None, str | None
     ]:
-        """Resolve shared session metadata for synthetic tool lifecycle events."""
+        """Resolve shared session metadata for direct tool lifecycle events."""
         return resolve_tool_event_context(self, effective_session_id)
 
     def _record_discovery_state(
@@ -188,110 +182,9 @@ class ToolProxyService:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> Any:
-        """Build the synthetic before_tool event used for direct MCP execution."""
+        """Build the before_tool event used for direct MCP execution."""
         return build_before_tool_event(
             self, effective_session_id, server_name, tool_name, arguments
-        )
-
-    @staticmethod
-    def _build_synthetic_tool_output(result: Any) -> dict[str, Any]:
-        """Wrap direct MCP call results in the observer-friendly AFTER_TOOL shape."""
-        return build_synthetic_tool_output(result)
-
-    @staticmethod
-    def _should_emit_synthetic_after_tool(
-        *,
-        session: Any | None,
-        source: Any,
-        enforce_workflow: bool,
-    ) -> bool:
-        """Return True when the Codex-terminal MCP compatibility shim should run."""
-        return should_emit_synthetic_after_tool(
-            session=session,
-            source=source,
-            enforce_workflow=enforce_workflow,
-        )
-
-    def _build_after_tool_event(
-        self,
-        effective_session_id: str,
-        server_name: str,
-        tool_name: str,
-        arguments: dict[str, Any],
-        result: Any,
-        *,
-        is_failure: bool,
-    ) -> Any | None:
-        """Build the synthetic AFTER_TOOL compatibility event for Codex terminal MCP calls."""
-        return build_after_tool_event(
-            self,
-            effective_session_id,
-            server_name,
-            tool_name,
-            arguments,
-            result,
-            is_failure=is_failure,
-        )
-
-    async def _emit_synthetic_after_tool(
-        self,
-        *,
-        effective_session_id: str | None,
-        server_name: str,
-        tool_name: str,
-        arguments: dict[str, Any],
-        result: Any,
-        enforce_workflow: bool,
-        is_failure: bool,
-    ) -> None:
-        """Emit the internal Codex-terminal MCP AFTER_TOOL compatibility event."""
-        await emit_synthetic_after_tool(
-            self,
-            effective_session_id=effective_session_id,
-            server_name=server_name,
-            tool_name=tool_name,
-            arguments=arguments,
-            result=result,
-            enforce_workflow=enforce_workflow,
-            is_failure=is_failure,
-        )
-
-    def _build_proxy_tool_after_tool_event(
-        self,
-        effective_session_id: str,
-        tool_name: str,
-        tool_input: dict[str, Any],
-        result: Any,
-        *,
-        is_failure: bool,
-    ) -> Any | None:
-        """Build a synthetic AFTER_TOOL event for daemon-owned proxy tools."""
-        return build_proxy_tool_after_tool_event(
-            self,
-            effective_session_id,
-            tool_name,
-            tool_input,
-            result,
-            is_failure=is_failure,
-        )
-
-    async def emit_synthetic_proxy_after_tool(
-        self,
-        *,
-        session_id: str | None,
-        tool_name: str,
-        tool_input: dict[str, Any],
-        result: Any,
-        is_failure: bool = False,
-    ) -> None:
-        """Emit the internal Codex-terminal AFTER_TOOL shim for proxy discovery tools."""
-        await emit_synthetic_proxy_after_tool(
-            self,
-            session_id=session_id,
-            tool_name=tool_name,
-            tool_input=tool_input,
-            result=result,
-            is_failure=is_failure,
         )
 
     async def _apply_before_tool_enforcement(

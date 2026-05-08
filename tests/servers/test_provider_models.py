@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
+from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.provider_models import ProviderModelCatalog
 
 pytestmark = pytest.mark.unit
@@ -43,7 +45,8 @@ class TestProviderModelCatalog:
             "value": "sonnet",
             "label": "Sonnet",
             "canonical_id": "claude-sonnet-4-6-20260410",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+            "context_length": 200_000,
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
         }
 
     @pytest.mark.asyncio
@@ -102,7 +105,7 @@ class TestProviderModelCatalog:
             patch.object(
                 catalog,
                 "_get_cli_version",
-                new=AsyncMock(side_effect=["1.0.12", "0.37.1", "0.14.3", "0.118.0"]),
+                new=AsyncMock(side_effect=["1.0.12", "0.37.1", "0.14.3", "0.118.0", "0.106.0"]),
             ),
         ):
             status = await catalog.refresh()
@@ -114,8 +117,153 @@ class TestProviderModelCatalog:
         assert status["codex"]["error"] == "codex probe failed"
 
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
-        assert payload["version"] == 2
+        assert payload["version"] == 3
         assert payload["providers"]["codex"]["source"] == "cache"
+        assert payload["providers"]["codex"]["models"][0]["context_length"] == 200_000
+
+    def test_load_cache_preserves_and_enriches_context_lengths(self, temp_dir: Path) -> None:
+        cache_path = temp_dir / "provider-model-catalog.json"
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "providers": {
+                        "codex": {
+                            "source": "live",
+                            "models": [{"value": "gpt-5.4", "label": "gpt-5.4"}],
+                        },
+                        "gemini": {
+                            "source": "live",
+                            "models": [
+                                {
+                                    "value": "gemini-custom",
+                                    "label": "Gemini Custom",
+                                    "context_length": 123456,
+                                }
+                            ],
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+
+        codex = catalog.get_provider_snapshot("codex")["models"][0]
+        gemini = catalog.get_provider_snapshot("gemini")["models"][0]
+        assert codex["context_length"] == 200_000
+        assert gemini["context_length"] == 123_456
+
+    def test_load_cache_accepts_version_none(self, temp_dir: Path) -> None:
+        cache_path = temp_dir / "provider-model-catalog.json"
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "version": None,
+                    "providers": {
+                        "codex": {
+                            "source": "cache",
+                            "models": [
+                                {
+                                    "value": "gpt-5.4",
+                                    "label": "GPT-5.4",
+                                    "context_length": 123_000,
+                                }
+                            ],
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+
+        model = catalog.get_provider_snapshot("codex")["models"][0]
+        assert model["context_length"] == 123_000
+
+    def test_get_context_window_matches_aliases_suffixes_and_droid_core(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        catalog._providers = {
+            "claude": {
+                "models": [
+                    {
+                        "value": "sonnet",
+                        "canonical_id": "claude-sonnet-4-6-20260410",
+                        "context_length": 200_000,
+                    }
+                ]
+            },
+            "qwen": {
+                "models": [
+                    {
+                        "value": "qwen3-coder(openai)",
+                        "label": "qwen3-coder",
+                        "context_length": 262_144,
+                    }
+                ]
+            },
+            "droid": {
+                "models": [
+                    {"value": "glm-5", "label": "Droid Core (GLM-5)", "context_length": 128_000}
+                ]
+            },
+            "codex": {
+                "models": [
+                    {"value": "gpt-5.5", "context_length": 321_000},
+                    {"value": "gpt-5.4", "context_length": 333_000},
+                ]
+            },
+        }
+
+        assert catalog.get_context_window("claude", "sonnet") == 200_000
+        assert catalog.get_context_window("claude", "claude-sonnet-4-6-20260410") == 200_000
+        assert catalog.get_context_window("claude", "claude-sonnet-4-6-20241022") == 200_000
+        assert catalog.get_context_window("qwen", "qwen3-coder(openai)") == 262_144
+        assert catalog.get_context_window("qwen", "qwen3-coder") == 262_144
+        assert catalog.get_context_window("droid", "gpt-5.5") == 321_000
+        assert catalog.get_context_window("droid", "gpt-5.4") == 333_000
+        assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
+        assert catalog.get_context_window("droid", "custom/byok-model") is None
+
+    def test_configured_models_precede_live_snapshot_and_keep_metadata(
+        self, temp_dir: Path
+    ) -> None:
+        config = DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                codex=LLMProviderConfig(models="gpt-5.5,gpt-5.4"),
+            )
+        )
+        catalog = ProviderModelCatalog(
+            config=config,
+            cache_path=temp_dir / "provider-model-catalog.json",
+        )
+        catalog._providers = {
+            "codex": {
+                "source": "live",
+                "models": [
+                    {
+                        "value": "gpt-5.5",
+                        "label": "GPT-5.5 Live",
+                        "context_length": 321_000,
+                    },
+                    {"value": "gpt-5.4", "label": "GPT-5.4 Live", "context_length": 200_000},
+                    {"value": "gpt-5.2", "label": "GPT-5.2 Live", "context_length": 200_000},
+                ],
+            },
+        }
+
+        snapshot = catalog.get_provider_snapshot("codex")
+        models = snapshot["models"]
+
+        assert [model["value"] for model in models] == ["gpt-5.5", "gpt-5.4", "gpt-5.2"]
+        assert models[0]["label"] == "GPT-5.5 Live"
+        assert models[0]["context_length"] == 321_000
 
     @pytest.mark.asyncio
     async def test_refresh_marks_provider_failed_without_prior_cache(self, temp_dir: Path) -> None:
@@ -135,6 +283,65 @@ class TestProviderModelCatalog:
         assert status["claude"]["source"] == "failed"
         assert status["gemini"]["source"] == "failed"
         assert status["codex"]["source"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_marks_client_as_model_discovery(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        client = MagicMock()
+        order: list[str] = []
+
+        async def start() -> None:
+            order.append("start")
+
+        client.start = AsyncMock(side_effect=start)
+        client.stop = AsyncMock()
+        client.session_info = {
+            "models": {
+                "availableModels": [
+                    {"modelId": "gemini-test", "name": "Gemini Test"},
+                ]
+            }
+        }
+
+        client_cls = MagicMock(return_value=client)
+        client_cls.cli_name = "gemini"
+        gobby_home = temp_dir / "gobby-home"
+        expected_cwd = (gobby_home / "provider-model-discovery").resolve()
+
+        def record_trust(_cli: str, _cwd: Path) -> None:
+            order.append("trust")
+
+        with (
+            patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.pre_approve_directory",
+                side_effect=record_trust,
+            ) as pre_approve,
+        ):
+            models = await catalog._discover_acp_models(client_cls=client_cls)
+
+        client_cls.assert_called_once()
+        _, kwargs = client_cls.call_args
+        assert kwargs["purpose"] == "model-discovery"
+        assert Path(kwargs["cwd"]) == expected_cwd
+        assert Path(kwargs["cwd"]).is_absolute()
+        assert kwargs["request_timeout"] > 30.0
+        pre_approve.assert_called_once_with("gemini", expected_cwd)
+        assert order == ["trust", "start"]
+        assert client_cls.call_count == 1
+        assert client_cls.call_args is not None
+        client.start.assert_awaited_once()
+        assert client.start.await_count == 1
+        assert client.start.await_args is not None
+        client.stop.assert_awaited_once()
+        assert client.stop.await_count == 1
+        assert client.stop.await_args is not None
+        assert models == [{"value": "gemini-test", "label": "Gemini Test"}]
 
     def test_load_cache_ignores_unsupported_version(self, temp_dir: Path) -> None:
         cache_path = temp_dir / "provider-model-catalog.json"
@@ -186,6 +393,7 @@ class TestProviderModelCatalog:
                 "label": "claude-sonnet-4-5",
             },
         ]
+        assert len(models) == 3
 
     def test_normalize_qwen_model_labels_only_disambiguates_duplicate_base_ids(
         self, temp_dir: Path
@@ -232,6 +440,51 @@ class TestProviderModelCatalog:
             models = await catalog._discover_qwen_models()
 
         assert models == [{"value": "gpt-5(openai)", "label": "gpt-5"}]
+        assert models[0]["label"] == "gpt-5"
+
+    @pytest.mark.asyncio
+    async def test_discover_droid_models_returns_static_catalog(self, temp_dir: Path) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+
+        models = await catalog._discover_provider_models("droid")
+
+        assert {model["value"] for model in models} == {
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-opus-4-6-fast",
+            "claude-opus-4-5-20251101",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "gpt-5.4",
+            "gpt-5.4-fast",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-fast",
+            "gpt-5.2",
+            "gpt-5.2-codex",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "minimax-m2.7",
+            "minimax-m2.5",
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "glm-5.1",
+            "glm-5",
+            "glm-4.7",
+            "gpt-5.1-codex-max",
+        }
+        assert len(models) == 24
+
+        by_id = {model["value"]: model for model in models}
+        assert "xhigh" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
+        assert "max" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
+        assert "minimal" in by_id["gemini-3-flash-preview"]["reasoning"]["supported_efforts"]
+        assert by_id["minimax-m2.7"]["reasoning"]["supported_efforts"] == ["high"]
+        for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
+            assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
 
     def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
         global_settings = temp_dir / ".qwen" / "settings.json"

@@ -30,7 +30,7 @@ export class MessageErrorBoundary extends Component<Props, State> {
       return (
         <div className="px-4 py-3">
           <div className="max-w-3xl mx-auto">
-            <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-400">
+            <div className="rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">
               <span className="font-medium">Render error:</span>{' '}
               {this.state.error?.message || 'Unknown error'}
             </div>

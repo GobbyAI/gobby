@@ -7,22 +7,84 @@ signal handling, and PID file management. Extracted from runner.py.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import signal
-import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from random import SystemRandom
 from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
+from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.shutdown_intent import ShutdownIntent
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
+    from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
+_JITTER_RANDOM = SystemRandom()
+_ISOLATION_CLEANUP_SCAN_LIMIT = 1000
+
+
+async def _sleep_until_next_bin_freshness_cycle(
+    duration: float,
+    *,
+    is_shutdown_requested: Callable[[], bool],
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    if duration <= 0 or is_shutdown_requested():
+        return
+    await sleep(duration)
+
+
+async def bin_freshness_loop(
+    db: DatabaseProtocol,
+    config: BinFreshnessConfig,
+    is_shutdown_requested: Callable[[], bool],
+    *,
+    update_once: Callable[[DatabaseProtocol, BinFreshnessConfig], list[Any]] | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    jitter: Callable[[float], float] | None = None,
+) -> None:
+    """Background loop for GitHub-backed managed native binary updates."""
+    if not config.enabled:
+        return
+
+    from gobby.install.bin_freshness_updater import update_all_managed_bins
+
+    updater = update_once or update_all_managed_bins
+    jitter_fn = jitter or (lambda upper: _JITTER_RANDOM.uniform(0, upper))
+
+    try:
+        await _sleep_until_next_bin_freshness_cycle(
+            config.initial_delay_seconds,
+            is_shutdown_requested=is_shutdown_requested,
+            sleep=sleep,
+        )
+        while not is_shutdown_requested():
+            try:
+                await asyncio.to_thread(updater, db, config)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in bin freshness loop: {e}")
+
+            interval = config.interval_seconds
+            if config.jitter_seconds > 0:
+                interval += jitter_fn(config.jitter_seconds)
+            try:
+                await _sleep_until_next_bin_freshness_cycle(
+                    interval,
+                    is_shutdown_requested=is_shutdown_requested,
+                    sleep=sleep,
+                )
+            except asyncio.CancelledError:
+                break
+    except asyncio.CancelledError:
+        pass
 
 
 async def drain_hook_inbox_loop(
@@ -43,13 +105,14 @@ async def drain_hook_inbox_loop(
 async def metrics_cleanup_loop(
     metrics_manager: ToolMetricsManager,
     is_shutdown_requested: Callable[[], bool],
+    *,
+    interval_seconds: int = 24 * 60 * 60,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """Background loop for periodic metrics cleanup (every 24 hours)."""
-    interval_seconds = 24 * 60 * 60  # 24 hours
-
     while not is_shutdown_requested():
         try:
-            await asyncio.sleep(interval_seconds)
+            await sleep(interval_seconds)
             deleted = metrics_manager.cleanup_old_metrics()
             if deleted > 0:
                 logger.info(f"Periodic metrics cleanup: removed {deleted} old entries")
@@ -320,7 +383,7 @@ async def cleanup_expired_isolation_loop(
             await asyncio.sleep(interval_seconds)
 
             # Reap expired worktrees
-            expired_worktrees = worktree_storage.find_expired()
+            expired_worktrees = await asyncio.to_thread(worktree_storage.find_expired)
             for wt in expired_worktrees:
                 try:
                     path = wt.worktree_path
@@ -334,7 +397,7 @@ async def cleanup_expired_isolation_loop(
                         removed = result == 0
                     except Exception as e:
                         logger.debug("git worktree remove failed for %s: %s", path, e)
-                    if not removed and os.path.exists(path):
+                    if not removed and await asyncio.to_thread(os.path.exists, path):
                         await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
                     # Prune stale worktree references
                     await asyncio.to_thread(_run_git_command, ["git", "worktree", "prune"])
@@ -345,7 +408,7 @@ async def cleanup_expired_isolation_loop(
                             ["git", "branch", "-D", wt.branch_name],
                         )
                     # Remove DB record
-                    worktree_storage.delete(wt.id)
+                    await asyncio.to_thread(worktree_storage.delete, wt.id)
                     logger.info(
                         f"Expired worktree cleanup: deleted {wt.id} "
                         f"(branch={wt.branch_name}, path={path})"
@@ -357,13 +420,13 @@ async def cleanup_expired_isolation_loop(
                     )
 
             # Reap expired clones
-            expired_clones = clone_storage.find_expired()
+            expired_clones = await asyncio.to_thread(clone_storage.find_expired)
             for clone in expired_clones:
                 try:
                     path = clone.clone_path
-                    if os.path.exists(path):
+                    if await asyncio.to_thread(os.path.exists, path):
                         await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
-                    clone_storage.delete(clone.id)
+                    await asyncio.to_thread(clone_storage.delete, clone.id)
                     logger.info(
                         f"Expired clone cleanup: deleted {clone.id} "
                         f"(branch={clone.branch_name}, path={path})"
@@ -374,10 +437,70 @@ async def cleanup_expired_isolation_loop(
                         exc_info=True,
                     )
 
+            await asyncio.to_thread(
+                _cleanup_missing_isolation_records,
+                worktree_storage,
+                clone_storage,
+            )
+
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Error in expired isolation cleanup loop: {e}")
+
+
+def _cleanup_missing_isolation_records(
+    worktree_storage: Any,
+    clone_storage: Any,
+    *,
+    limit: int = _ISOLATION_CLEANUP_SCAN_LIMIT,
+) -> dict[str, int]:
+    """Remove isolation DB records whose workspace directories no longer exist."""
+    counts = {
+        "worktrees": _delete_missing_worktree_records(worktree_storage, limit=limit),
+        "clones": _delete_missing_clone_records(clone_storage, limit=limit),
+    }
+    if counts["worktrees"] or counts["clones"]:
+        logger.info(
+            "Missing isolation cleanup: removed %s worktree records and %s clone records",
+            counts["worktrees"],
+            counts["clones"],
+        )
+    return counts
+
+
+def _delete_missing_worktree_records(worktree_storage: Any, *, limit: int) -> int:
+    removed = 0
+    for worktree in worktree_storage.list_worktrees(limit=limit):
+        path = worktree.worktree_path
+        if path and os.path.isdir(path):
+            continue
+        if worktree_storage.delete(worktree.id):
+            removed += 1
+            logger.info(
+                "Removed missing worktree record %s (branch=%s, path=%s)",
+                worktree.id,
+                worktree.branch_name,
+                path,
+            )
+    return removed
+
+
+def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
+    removed = 0
+    for clone in clone_storage.list_clones(limit=limit):
+        path = clone.clone_path
+        if path and os.path.isdir(path):
+            continue
+        if clone_storage.delete(clone.id):
+            removed += 1
+            logger.info(
+                "Removed missing clone record %s (branch=%s, path=%s)",
+                clone.id,
+                clone.branch_name,
+                path,
+            )
+    return removed
 
 
 def _run_git_command(args: list[str]) -> int:
@@ -388,15 +511,22 @@ def _run_git_command(args: list[str]) -> int:
     return result.returncode
 
 
-def write_shutdown_source(source: str, sender_pid: int | None = None) -> None:
+def write_shutdown_source(
+    source: str,
+    sender_pid: int | None = None,
+    *,
+    intent: str | None = None,
+) -> None:
     """Write a marker file identifying why/who is sending SIGTERM."""
     try:
-        data = {
-            "source": source,
-            "sender_pid": sender_pid or os.getpid(),
-            "timestamp": time.time(),
-        }
-        (get_gobby_home() / "shutdown_source.json").write_text(json.dumps(data))
+        from gobby.shutdown_intent import infer_shutdown_intent, write_shutdown_intent
+
+        write_shutdown_intent(
+            source,
+            intent or infer_shutdown_intent(source),
+            sender_pid=sender_pid,
+            home=get_gobby_home(),
+        )
     except Exception as e:
         logger.debug(
             f"Failed to write shutdown source={source} pid={sender_pid or os.getpid()}: {e}",
@@ -406,21 +536,15 @@ def write_shutdown_source(source: str, sender_pid: int | None = None) -> None:
 
 def read_shutdown_source() -> str:
     """Read and remove the shutdown source marker. Returns description string."""
-    source_file = get_gobby_home() / "shutdown_source.json"
-    try:
-        if source_file.exists():
-            data = json.loads(source_file.read_text())
-            source_file.unlink(missing_ok=True)
-            age = time.time() - data.get("timestamp", 0)
-            if age < 10:  # Only trust if written within last 10 seconds
-                return f"source={data['source']}, sender_pid={data.get('sender_pid')}"
-            return f"stale shutdown_source.json (age={age:.1f}s): {data}"
-        return "unknown (no shutdown_source.json — external SIGTERM)"
-    except Exception as e:
-        return f"unknown (error reading shutdown_source.json: {e})"
+    from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
+
+    return format_shutdown_source(read_shutdown_intent(home=get_gobby_home()))
 
 
-def setup_signal_handlers(shutdown_callback: Callable[[], None]) -> None:
+def setup_signal_handlers(
+    shutdown_callback: Callable[[], None],
+    shutdown_intent_callback: Callable[[ShutdownIntent], None] | None = None,
+) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()
 
@@ -428,12 +552,20 @@ def setup_signal_handlers(shutdown_callback: Callable[[], None]) -> None:
         def handle_shutdown() -> None:
             import traceback
 
+            from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
+
             logger.info(
                 f"Received {sig.name} (signal {sig.value}), initiating graceful shutdown... (pid={os.getpid()}, ppid={os.getppid()})",
             )
             # Log stack trace to help identify what triggered the signal
             logger.debug(f"Stack at signal receipt:\n{''.join(traceback.format_stack())}")
-            logger.info(f"Shutdown source: {read_shutdown_source()}")
+            shutdown_record = read_shutdown_intent(home=get_gobby_home())
+            logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
+            if shutdown_intent_callback is not None:
+                try:
+                    shutdown_intent_callback(shutdown_record.intent)
+                except Exception:
+                    logger.exception("Shutdown intent callback failed")
             shutdown_callback()
 
         return handle_shutdown

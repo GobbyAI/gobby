@@ -2,12 +2,26 @@ import { useState } from 'react'
 import { SidebarPanel } from '../shared/SidebarPanel'
 import type { SpanRecord } from '../../hooks/useTraces'
 import { parseLLMAttributes, formatTokenCount } from './llm-utils'
+import { cn } from '../../lib/utils'
 
 interface TraceDetailProps {
   isOpen: boolean
   onClose: () => void
   span?: SpanRecord
 }
+
+const SECTION_HEADING_CLS =
+  'mb-3 flex items-center justify-between gap-2 border-b border-[var(--border)] pb-2 text-[length:var(--text-base)] text-[var(--text-primary)]'
+
+const TOGGLE_BUTTON_CLS =
+  'shrink-0 cursor-pointer rounded-sm border border-[var(--border)] bg-transparent px-1.5 py-0.5 text-[length:var(--text-xs)] font-normal text-[var(--text-secondary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+
+const TABLE_CLS = 'w-full border-collapse text-[length:var(--text-md)]'
+const TH_CLS =
+  'w-[30%] border-b border-[var(--border)] px-2 py-1.5 text-left align-top font-medium text-[var(--text-secondary)] max-[640px]:block max-[640px]:w-full max-[640px]:border-b-0 max-[640px]:py-0.5 max-[640px]:px-0 max-[640px]:text-[length:var(--text-xs)] max-[640px]:uppercase max-[640px]:tracking-[0.5px] max-[640px]:break-words'
+const TD_CLS =
+  'border-b border-[var(--border)] px-2 py-1.5 text-left align-top font-mono break-all max-[640px]:block max-[640px]:w-full max-[640px]:border-b-0 max-[640px]:py-0.5 max-[640px]:px-0'
+const TR_CLS = 'max-[640px]:block max-[640px]:w-full max-[640px]:border-b max-[640px]:border-[var(--border)] max-[640px]:py-1.5 last:max-[640px]:border-b-0'
 
 function formatNsToMs(ns: number): string {
   return (ns / 1_000_000).toFixed(2) + 'ms'
@@ -34,17 +48,19 @@ function LLMSummary({ span }: { span: SpanRecord }) {
 
   if (showRaw) {
     return (
-      <div className="trace-detail-section">
-        <h3>
-          Raw Attributes
-          <button className="llm-toggle-raw" onClick={() => setShowRaw(false)}>Show LLM view</button>
+      <div>
+        <h3 className={SECTION_HEADING_CLS}>
+          <span>Raw Attributes</span>
+          <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowRaw(false)}>
+            Show LLM view
+          </button>
         </h3>
-        <table className="trace-detail-table">
+        <table className={TABLE_CLS}>
           <tbody>
             {Object.entries(attributes).map(([key, value]) => (
-              <tr key={key}>
-                <th>{key}</th>
-                <td>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>
+              <tr key={key} className={TR_CLS}>
+                <th className={TH_CLS}>{key}</th>
+                <td className={TD_CLS}>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>
               </tr>
             ))}
           </tbody>
@@ -55,63 +71,72 @@ function LLMSummary({ span }: { span: SpanRecord }) {
 
   return (
     <>
-      <div className="trace-detail-section">
-        <h3>
-          LLM Call
-          <button className="llm-toggle-raw" onClick={() => setShowRaw(true)}>Show raw</button>
+      <div>
+        <h3 className={SECTION_HEADING_CLS}>
+          <span>LLM Call</span>
+          <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowRaw(true)}>
+            Show raw
+          </button>
         </h3>
-        <div className="llm-summary">
-          <div className="llm-summary-item">
-            <span className="llm-summary-label">Provider</span>
-            <span className="llm-summary-value">{llm.system}</span>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[length:var(--text-sm)] text-[var(--text-secondary)]">Provider</span>
+            <span className="font-mono text-[length:var(--text-md)] text-[var(--text-primary)]">{llm.system}</span>
           </div>
-          <div className="llm-summary-item">
-            <span className="llm-summary-label">Model</span>
-            <span className="llm-summary-value">{llm.model}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[length:var(--text-sm)] text-[var(--text-secondary)]">Model</span>
+            <span className="font-mono text-[length:var(--text-md)] text-[var(--text-primary)]">{llm.model}</span>
           </div>
-          <div className="llm-summary-item">
-            <span className="llm-summary-label">Latency</span>
-            <span className="llm-summary-value">{formatNsToMs(durationNs)}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[length:var(--text-sm)] text-[var(--text-secondary)]">Latency</span>
+            <span className="font-mono text-[length:var(--text-md)] text-[var(--text-primary)]">{formatNsToMs(durationNs)}</span>
           </div>
-          <div className="llm-summary-item">
-            <span className="llm-summary-label">Tokens/sec</span>
-            <span className="llm-summary-value">{tokensPerSec}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[length:var(--text-sm)] text-[var(--text-secondary)]">Tokens/sec</span>
+            <span className="font-mono text-[length:var(--text-md)] text-[var(--text-primary)]">{tokensPerSec}</span>
           </div>
-          <div className="llm-summary-item" style={{ gridColumn: '1 / -1' }}>
-            <span className="llm-summary-label">
+          <div className="col-span-full flex flex-col gap-1">
+            <span className="text-[length:var(--text-sm)] text-[var(--text-secondary)]">
               Tokens: {formatTokenCount(llm.promptTokens)} in / {formatTokenCount(llm.completionTokens)} out / {formatTokenCount(totalTokens)} total
             </span>
-            <div className="llm-token-bar">
-              <div className="llm-token-bar-fill" style={{ width: `${promptRatio}%` }} />
+            <div className="mt-1 h-1.5 rounded-sm bg-[var(--bg-tertiary)]">
+              <div
+                className="h-full rounded-sm bg-[var(--color-warning-foreground)]"
+                style={{ width: `${promptRatio}%` }}
+              />
             </div>
           </div>
         </div>
       </div>
 
       {llm.prompt && (
-        <div className="trace-detail-section">
-          <h3>
-            Prompt
-            <button className="llm-toggle-raw" onClick={() => setShowPrompt(!showPrompt)}>
+        <div>
+          <h3 className={SECTION_HEADING_CLS}>
+            <span>Prompt</span>
+            <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowPrompt(!showPrompt)}>
               {showPrompt ? 'Collapse' : 'Expand'}
             </button>
           </h3>
           {showPrompt && (
-            <div className="llm-content-block llm-content-block--prompt">{llm.prompt}</div>
+            <div className="max-h-[300px] overflow-y-auto whitespace-pre-wrap rounded border border-[color-mix(in_srgb,var(--color-info)_30%,var(--border))] bg-[color-mix(in_srgb,var(--color-info)_8%,var(--bg-tertiary))] p-3 font-mono text-[length:var(--text-sm)]">
+              {llm.prompt}
+            </div>
           )}
         </div>
       )}
 
       {llm.completion && (
-        <div className="trace-detail-section">
-          <h3>
-            Completion
-            <button className="llm-toggle-raw" onClick={() => setShowCompletion(!showCompletion)}>
+        <div>
+          <h3 className={SECTION_HEADING_CLS}>
+            <span>Completion</span>
+            <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowCompletion(!showCompletion)}>
               {showCompletion ? 'Collapse' : 'Expand'}
             </button>
           </h3>
           {showCompletion && (
-            <div className="llm-content-block llm-content-block--completion">{llm.completion}</div>
+            <div className="max-h-[300px] overflow-y-auto whitespace-pre-wrap rounded border border-[color-mix(in_srgb,var(--color-warning-foreground)_30%,var(--border))] bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,var(--bg-tertiary))] p-3 font-mono text-[length:var(--text-sm)]">
+              {llm.completion}
+            </div>
           )}
         </div>
       )}
@@ -123,7 +148,7 @@ export function TraceDetail({ isOpen, onClose, span }: TraceDetailProps) {
   if (!span) {
     return (
       <SidebarPanel isOpen={isOpen} onClose={onClose} title="Span Detail">
-        <div className="trace-detail-content">No span selected</div>
+        <div className="flex flex-col gap-6 p-4">No span selected</div>
       </SidebarPanel>
     )
   }
@@ -151,17 +176,17 @@ export function TraceDetail({ isOpen, onClose, span }: TraceDetailProps) {
 
   return (
     <SidebarPanel isOpen={isOpen} onClose={onClose} title={`Span: ${span.name}`}>
-      <div className="trace-detail-content">
-        <div className="trace-detail-section">
-          <h3>Overview</h3>
-          <table className="trace-detail-table">
+      <div className="flex flex-col gap-6 p-4">
+        <div>
+          <h3 className={cn(SECTION_HEADING_CLS, 'justify-start')}>Overview</h3>
+          <table className={TABLE_CLS}>
             <tbody>
-              <tr><th>Name</th><td>{span.name}</td></tr>
-              <tr><th>Status</th><td>{span.status}</td></tr>
-              <tr><th>Kind</th><td>{span.kind}</td></tr>
-              <tr><th>Duration</th><td>{durationMs}</td></tr>
-              <tr><th>Span ID</th><td>{span.span_id}</td></tr>
-              <tr><th>Trace ID</th><td>{span.trace_id}</td></tr>
+              <tr className={TR_CLS}><th className={TH_CLS}>Name</th><td className={TD_CLS}>{span.name}</td></tr>
+              <tr className={TR_CLS}><th className={TH_CLS}>Status</th><td className={TD_CLS}>{span.status}</td></tr>
+              <tr className={TR_CLS}><th className={TH_CLS}>Kind</th><td className={TD_CLS}>{span.kind}</td></tr>
+              <tr className={TR_CLS}><th className={TH_CLS}>Duration</th><td className={TD_CLS}>{durationMs}</td></tr>
+              <tr className={TR_CLS}><th className={TH_CLS}>Span ID</th><td className={TD_CLS}>{span.span_id}</td></tr>
+              <tr className={TR_CLS}><th className={TH_CLS}>Trace ID</th><td className={TD_CLS}>{span.trace_id}</td></tr>
             </tbody>
           </table>
         </div>
@@ -170,14 +195,14 @@ export function TraceDetail({ isOpen, onClose, span }: TraceDetailProps) {
           <LLMSummary span={span} />
         ) : (
           Object.keys(attributes).length > 0 && (
-            <div className="trace-detail-section">
-              <h3>Attributes</h3>
-              <table className="trace-detail-table">
+            <div>
+              <h3 className={cn(SECTION_HEADING_CLS, 'justify-start')}>Attributes</h3>
+              <table className={TABLE_CLS}>
                 <tbody>
                   {Object.entries(attributes).map(([key, value]) => (
-                    <tr key={key}>
-                      <th>{key}</th>
-                      <td>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>
+                    <tr key={key} className={TR_CLS}>
+                      <th className={TH_CLS}>{key}</th>
+                      <td className={TD_CLS}>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -187,28 +212,28 @@ export function TraceDetail({ isOpen, onClose, span }: TraceDetailProps) {
         )}
 
         {events.length > 0 && (
-          <div className="trace-detail-section">
-            <h3>Events</h3>
-            <div className="trace-detail-events">
+          <div>
+            <h3 className={cn(SECTION_HEADING_CLS, 'justify-start')}>Events</h3>
+            <div className="flex flex-col gap-3">
               {events.map((event, index) => {
                 const eventAttrs = event.attributes || {}
                 return (
-                  <div key={`${event.name}-${index}`} className="trace-detail-event">
-                    <div className="trace-detail-event-header">
-                      <span className="trace-detail-event-name">{event.name}</span>
+                  <div key={`${event.name}-${index}`} className="rounded border border-[var(--border)] bg-[var(--bg-secondary)] p-2">
+                    <div className="mb-2 flex justify-between text-[length:var(--text-md)]">
+                      <span className="font-semibold">{event.name}</span>
                       {event.timestamp && (
-                        <span className="trace-detail-event-time">
+                        <span className="text-[var(--text-secondary)]">
                           {new Date(event.timestamp / 1_000_000).toISOString()}
                         </span>
                       )}
                     </div>
                     {Object.keys(eventAttrs).length > 0 && (
-                      <table className="trace-detail-table">
+                      <table className={TABLE_CLS}>
                         <tbody>
                           {Object.entries(eventAttrs).map(([key, value]) => (
-                            <tr key={key}>
-                              <th>{key}</th>
-                              <td>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>
+                            <tr key={key} className={TR_CLS}>
+                              <th className={TH_CLS}>{key}</th>
+                              <td className={TD_CLS}>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</td>
                             </tr>
                           ))}
                         </tbody>

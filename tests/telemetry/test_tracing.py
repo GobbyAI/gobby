@@ -2,8 +2,6 @@
 Tests for tracing utilities.
 """
 
-import asyncio
-
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -17,6 +15,7 @@ from gobby.telemetry.tracing import (
     record_exception,
     traced,
 )
+from tests._timing import drain_asyncio_tasks
 
 
 @pytest.fixture
@@ -66,7 +65,7 @@ async def test_traced_async(tracer_provider):
 
     @traced(name="async_func")
     async def my_async_func(a, b):
-        await asyncio.sleep(0.01)
+        await drain_asyncio_tasks()
         return a + b
 
     result = await my_async_func(1, 2)

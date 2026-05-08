@@ -7,6 +7,7 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any
 
+from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
 from .hook_commands import rewrite_hook_template_commands
@@ -46,6 +47,7 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "commands_installed": [],
         "mcp_configured": False,
         "mcp_already_configured": False,
+        "trust": None,
         "error": None,
     }
 
@@ -131,6 +133,8 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
 
     scripts_installed = _install_agent_scripts(install_dir)
     result["scripts_installed"] = scripts_installed
+
+    result["trust"] = seed_gobby_home_trust("qwen")
 
     result["success"] = True
     return result

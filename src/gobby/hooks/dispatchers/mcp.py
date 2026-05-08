@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 from gobby.hooks.events import HookEvent
+from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.skills.formatting import skill_fetch_directive
 
 
@@ -70,7 +71,7 @@ async def proxy_self_call(
     if tool == "list_mcp_servers":
         name_filter = args.get("name_filter") if "name_filter" in args else args.get("filter")
         result = await proxy.list_servers(name_filter=name_filter)
-        return result
+        return compact_mcp_server_list(result)
     elif tool == "list_tools":
         server_name = args.get("server_name", "")
         result = await proxy.list_tools(server_name)
@@ -82,6 +83,20 @@ async def proxy_self_call(
         return result
     else:
         return {"success": False, "error": f"Unknown _proxy tool: {tool}"}
+
+
+def _format_hub_auth_status(hub: dict[str, Any]) -> str:
+    """Return compact auth status text for a skill hub."""
+    auth_required = hub.get("auth_required")
+    auth_configured = hub.get("auth_configured")
+    if auth_required is True:
+        if auth_configured is True:
+            return "configured"
+        key_name = hub.get("auth_key_name")
+        return f"missing {key_name}" if key_name else "required"
+    if auth_required is False:
+        return "not required"
+    return "unknown"
 
 
 def format_discovery_result(dr: dict[str, Any]) -> str:
@@ -100,7 +115,17 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         servers = result.get("servers", [])
         lines = ["**Available MCP Servers:**"]
         for s in servers:
-            lines.append(f"- {s.get('name')} ({s.get('state', 'unknown')})")
+            if isinstance(s, str):
+                lines.append(f"- {s}")
+            elif isinstance(s, dict):
+                lines.append(f"- {s.get('name')} ({s.get('state', 'unknown')})")
+        issues = result.get("issues") or []
+        if issues:
+            lines.append("")
+            lines.append("**MCP Server Issues:**")
+            for issue in issues:
+                if isinstance(issue, dict):
+                    lines.append(f"- {issue.get('name')} ({issue.get('state', 'unknown')})")
         return "\n".join(lines)
 
     elif tool == "list_tools":
@@ -161,6 +186,21 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
             'then install_skill(source="hub:slug") to use'
         )
         lines.append("</available-skills>")
+        return "\n".join(lines)
+
+    elif tool == "list_hubs":
+        hubs = result.get("hubs", [])
+        lines = ["<available-skill-hubs>"]
+        for hub in hubs:
+            name = hub.get("name", "unknown")
+            hub_type = hub.get("type", "unknown")
+            auth = _format_hub_auth_status(hub)
+            lines.append(f"- {name} ({hub_type}, auth: {auth})")
+        if not hubs:
+            lines.append("- none configured")
+        lines.append("")
+        lines.append('Search hubs: search_hub(query="...", hub_name="optional") on gobby-skills')
+        lines.append("</available-skill-hubs>")
         return "\n".join(lines)
 
     elif tool == "get_skill":

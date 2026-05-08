@@ -7,12 +7,12 @@ This file provides guidance for developing the Gobby codebase.
 These are enforced by hooks, rules and workflows.
 
 1. **ALWAYS use progressive tool discovery.** Do not try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
-2. **NEVER create or leave monoliths.** Keep files under 1,000 lines. You *MUST* create a refactor tasks if one does not already exist in gobby-tasks.
+2. **NEVER create or leave monoliths.** Keep non-test Python, TypeScript, and CSS source files under 1,000 lines. For non-test `.py`, `.ts`, `.tsx`, and `.css` files only, you *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Leave these tasks for another agent to pick up. Markdown files, including `docs/guides/*.md` and repo-root instruction files, are documentation artifacts and are not subject to this 1,000-line source-file rule; do not create refactor tasks or block docs work based only on Markdown line count.
 3. **ALWAYS create or claim a task before editing a file.** This applies to file edits only — no task needed for plan mode, research, investigation, or answering questions unless the user explicitly requests one.
 4. **Validation runs when closing with a commit. If a commit is done, validation must run.** `skip_validation` is silently stripped when commits are attached.
 5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
 6. **NEVER stop while you have a claimed task in progress.** Your stop hook is blocked while you have a claimed task. Task must be closed before stopping. If you claim a task, you finish a task.
-7. **NEVER mark a task as needs_review if you don't genuinely need the user to review your work.** Do not use it as a workaround to not committing/closing. Escalate to the user if you are genuinely stuck or need guidance.
+7. **Escalate only when the user explicitly needs to review your work, your agent skill/workflow/pipeline directs escalation, or you are genuinely stuck and need guidance.** Do not use escalation as a workaround for committing, closing, or completing required validation.
 8. **You found it, you own it.** Every error, test failure, lint warning, or type error you encounter is yours to fix — even if it's pre-existing, even if it's unrelated to your task. Fix it before closing your task. The only exception is something that genuinely requires multi-session architectural planning; even then, investigate thoroughly and attempt the fix before filing a task to defer it.
 9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
 10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, you *MUST* voice your concerns and provide alternative solutions.
@@ -30,15 +30,24 @@ Do NOT try to call one step through another (e.g., don't use call_tool to invoke
 
 ## DO NOT RUN THE FULL PYTEST SUITE
 
-The repo has over 11,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+The repo has over 15,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+
+When running pytest as an agent, always prefix pytest commands with `GOBBY_TEST_PROTECT=1`.
+
+Pytest must be isolated from the user’s running Gobby daemon and real local daemon state. Tests that need daemon behavior must start/use an isolated test
+daemon with temporary state and ports; they must not talk to the existing user daemon.
 
 ## Plan Mode
 
 Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning includes organizing work, not just designing it.
 
+## Design Context
+
+All design / UI / color / typography work — across every Gobby surface (product UI in `./web/`, the gobby.ai marketing site, Gobby Pro, installer, CLI/TUI) — must read `.impeccable.md` at the project root before producing output. It defines the design system, deutan-safe color constraints, WCAG 2.2 AA target, aesthetic references, and per-surface variation rules. Update via the `impeccable` skill's `teach` mode rather than freehand edits.
+
 ## Project Overview
 
-Gobby is a local-first daemon that unifies AI coding assistants (Claude Code, Gemini CLI, Codex CLI) under one persistent, extensible platform. It provides:
+A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Codex, Droid, Gemini, and QwenCode. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks.
 
 - **Session management** that survives restarts and context compactions
 - **Task system** with dependency graphs, TDD expansion, and validation gates
@@ -48,6 +57,72 @@ Gobby is a local-first daemon that unifies AI coding assistants (Claude Code, Ge
 - **Pipeline system** for deterministic automation with approval gates
 - **Agent spawning** with P2P messaging, command coordination, and worktree isolation
 - **Memory system** for persistent facts across sessions
+
+## Plan-Coverage Contract
+
+The full reference is `docs/contracts/plan-coverage.md`. The authoring surface
+is `src/gobby/install/shared/skills/plan-draft/SKILL.md`; review and expansion
+surfaces link back to it.
+
+Canonical section-heading regex:
+
+```regex
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
+```
+
+- Section kind enum: `deliverable | framing | verification | deferred`.
+  `deliverable` sections require an `**Acceptance:**` block; `framing` and
+  `verification` sections do not carry acceptance items; `deferred` sections
+  require the typed deferral object.
+- Acceptance-item shape: IDs use `A<section>.<n>` dotted suffixes — read the
+  shorthand as "section ID followed by `.<n>`" verbatim, with no synthetic
+  letter added. Section `A1` (letter-prefixed) emits `A1.1`, `A1.2`; section
+  `1.1` (numeric) emits `1.1.1`, `1.1.2` (no `A`). The parser enforces
+  `item_id.startswith(f"{section_id}.")`. Each item names at least one
+  artifact kind: `file`, `symbol`, `test`, or `behavior`.
+- Typed deferral object fields: `task_ref`, `reason`, `owner`,
+  `original_acceptance_items`; the task must be open and carry provenance label
+  `deferred-from:<plan-id>:<section-id>`. A closed task fails the gate.
+- Structured coverage record format:
+  `covers:<plan-id>:<section-id>:<item-id>`. Free-form `plan-ref:` labels are
+  not honored.
+- Manifest section: implementation plans carry a single `## M1 Task Manifest`
+  section at the end of the document with `kind: manifest` and one YAML entry
+  per `kind: deliverable` section (fields: `title`, `category`, `task_type`,
+  `depends_on`, `validation_criteria`, `labels`, `assigned_agent`, `tdd`,
+  `source_section`). Planners author narrative only; `plan-adversary` writes
+  the manifest as the final act of approval. Parser modes:
+  `parse_mode="draft"` tolerates a missing manifest (used by adversary
+  pre-verdict review and `/gobby plan` Phase 3a); `parse_mode="expansion"` and
+  default `parse_mode="strict"` require the manifest and enforce the
+  deliverable→entry 1:1 invariant plus `covers:` label resolution. Full
+  schema, invariants, and adversary-writes-on-approval contract live in
+  `docs/contracts/plan-coverage.md`.
+- CLI synopsis:
+  `gobby plan coverage --plan <path> --plan-id <id> --plan-hash <sha256> --task-tree <db|jsonl|path> [--root-task <ref>] [--project-id <id>] [--matrix-file <path>] [--evidence <kind>] [--manifest <path>] [--regenerate]`.
+  Required flags: `--plan`, `--plan-id`, `--plan-hash`, `--task-tree`.
+  Optional flags: `--root-task`, `--project-id`, `--matrix-file`,
+  `--evidence`, `--manifest`, `--regenerate`. Exit codes: `0`, `2`, `3`, `4`,
+  `5`, `6`, `7`, `8`.
+- Evidence kinds: `commits | task-diff | worktree-diff | coverage-matrix | none`.
+- Bootstrap-ledger requirement: every new epic plan ships a
+  `.coverage-ledger.yaml` companion file, adversary-reviewed before expansion,
+  until the contract tooling is mature.
+- Plan storage: the `plans` table is the authoritative registry. Use the
+  `gobby-plans` MCP server or `gobby plans` CLI to create, list, update, and
+  archive plan records. Each row carries `plan_id`, `project_id`,
+  `root_task_ref`, `plan_path`, `plan_hash`, `plan_kind`, and `state`.
+  `plan_kind` is one of:
+  - `implementation` — parsed strict; requires a generated manifest with
+    matching `plan_hash` and every row `status: covered`.
+  - `strategy` — parsed permissive; no manifest permitted.
+  `state` is one of `active` or `archived`; archived plans live under
+  `.gobby/plans/completed/`.
+- Table-row decomposition rule: any `deliverable` section whose body uses a
+  markdown table to enumerate work items MUST emit one acceptance item per data
+  row with stable IDs. Plan-adversary qualitatively rejects deliverables that
+  enumerate work in tables without per-row acceptance items.
+  Table-row decomposition requires one acceptance item per table data row.
 
 ## Development Commands
 
@@ -84,6 +159,9 @@ uv run gobby pipelines status <id>     # Check execution status
 uv run gobby pipelines approve <token> # Approve waiting pipeline
 uv run gobby pipelines reject <token>  # Reject waiting pipeline
 uv run gobby pipelines import <file>   # Import external pipeline file
+
+# Dispatch/build entry point
+uv run gobby build <plan_or_task>      # Opt a plan, epic, or leaf task into state dispatch
 ```
 
 **Coverage threshold**: 80% (enforced in CI and pre-push)
@@ -158,13 +236,16 @@ src/gobby/
 │   ├── loader.py         # YAML workflow/rule loading and sync
 │   └── ...               # Actions, observers, state, templates
 │
+├── dispatch/             # State-driven task dispatch
+│   ├── rules.py          # Ordered lifecycle dispatch rules
+│   └── dispatcher.py     # Cron heartbeat scanner and action executor
+│
+├── build/                # gobby build shared service
+│   └── service.py        # CLI, MCP, and HTTP build core
+│
 ├── memory/               # Persistent memory system
 │   ├── manager.py        # MemoryManager
 │   └── embeddings.py     # Embedding-based recall
-│
-├── conductor/            # Orchestration daemon
-│   ├── loop.py           # Conductor loop
-│   └── token_tracker.py  # Token budget tracking
 │
 ├── skills/               # Skill management
 │   ├── loader.py         # SkillLoader (filesystem, GitHub, ZIP)
@@ -216,6 +297,75 @@ They are bundled with the software and synced to the `workflow_definitions` DB t
 startup with `enabled: true` by default. Existing DB rows are never overwritten — drift is
 detected via hash comparison at runtime. The DB is the source of truth for what's active,
 not the YAML template files.
+
+### Dispatch Architecture
+
+Gobby task automation is stage-manifest dispatch. The dispatcher is a
+deterministic heartbeat that scans tasks with `allow_automation=true`, reads the
+task's current manifest row, evaluates ordered rules, acquires a per-task mutex,
+and executes the selected action.
+
+The dispatch chain is:
+
+```text
+task_stages_registry -> task_stage_states manifest -> ordered rule -> action
+```
+
+Dispatch rules live in `src/gobby/dispatch/rules.py`. To add a rule:
+
+1. Add a small rule function that checks the current manifest row, artifacts,
+   labels, and automation fields.
+2. Return an explicit action such as start stage, spawn agent, start expansion,
+   create isolation, advance stage, append audit marker, or escalate.
+3. Register it in the ordered rule list near the manifest stage it belongs to.
+4. Keep the rule deterministic. Prompting belongs in spawned agents; the
+   dispatcher only routes manifest state.
+
+Build state is resolved before dispatch:
+
+- `allow_automation` is the opt-in gate. Backlog tasks stay invisible until `gobby build`
+  enables them.
+- `yolo` means rules choose deterministic fallbacks instead of escalating when possible.
+- `isolation` is explicit task state: `none`, `worktree`, or `clone`.
+- `stages` is the ordered manifest materialized in `task_stage_states` from the
+  stage registry. The current stage is the first row whose state is not `done`.
+- Phase 3.2 profile bundles such as `quick`, `review`, `full`, and `full-yolo`
+  are CLI/MCP/HTTP sugar that resolve to the peer build fields above at build
+  time.
+- `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
+  falls back to `backend-developer` with an audit marker.
+
+`gobby build` is the single entry point for turning a plan, epic, or leaf task into
+dispatchable state. The CLI command, MCP tool (`gobby-tasks-ops:build_task`), and HTTP
+route (`POST /api/build`) must all call the shared build service in
+`src/gobby/build/service.py`, returning the same `BuildResult`.
+`gobby unbuild <ref>` is the task-scoped CLI inverse for an existing built task:
+it stops automation for the resolved task or subtree through the shared build
+control path without deleting task history or build artifacts.
+
+Concurrency and audit data are adjacent to tasks:
+
+- `task_dispatch_mutex` stores short-lived leases. Dispatcher code is the normal writer:
+  acquire before side effects, release in `finally`, sweep expired leases on startup, and
+  use the force-release escape hatch only for operator recovery.
+- `task_artifacts` stores sparse pointers such as `plan_file_path`, `target_branch`,
+  worktree/clone path and ID pairs, expansion run IDs, PR URL, and future merge SHA.
+  Write related fields atomically, especially worktree/clone pairs.
+- Audit rows are append-only. Stage helpers write them when changing manifest
+  rows; readers use them for history and diagnostics.
+
+The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 10). When
+the cap is full, no persistent queue is needed; the next heartbeat re-evaluates task
+manifest state.
+
+Retired orchestration templates live under `workflows/*/deprecated/` as archival
+tombstones. Active bundled sync reads only top-level YAML and soft-deletes installed rows
+for retired definitions, so `orchestrator.yaml`, `front-half-orchestrator.yaml`,
+`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, the conductor pipeline, and the
+retired `conductor`, `developer`, and `pipeline-worker` agents must stay out of active
+install roots. Real PR creation and richer merge/conflict handling are tracked in task
+#13552; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
+where they are already available.
 
 ## Code Conventions
 

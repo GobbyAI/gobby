@@ -28,10 +28,30 @@ from gobby.cli.installers.mcp_config import (
 )
 from gobby.cli.installers.shared import (
     install_cli_content,
+    install_global_hooks,
     install_shared_content,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_install_global_hooks_installs_shutdown_guard(temp_dir: Path) -> None:
+    install_dir = temp_dir / "install"
+    shared_hooks = install_dir / "shared" / "hooks"
+    shared_hooks.mkdir(parents=True)
+    (shared_hooks / "ghook_guard.py").write_text("#!/usr/bin/env python3\n")
+    (shared_hooks / "validate_settings.py").write_text("#!/usr/bin/env python3\n")
+
+    hooks_dir = temp_dir / ".gobby" / "hooks"
+    with (
+        patch("gobby.cli.installers.shared.get_install_dir", return_value=install_dir),
+        patch.dict(os.environ, {"GOBBY_HOOKS_DIR": str(hooks_dir)}),
+    ):
+        installed = install_global_hooks()
+
+    assert installed == ["ghook_guard.py", "validate_settings.py"]
+    assert (hooks_dir / "ghook_guard.py").exists()
+    assert os.access(hooks_dir / "ghook_guard.py", os.X_OK)
 
 
 class TestInstallSharedContent:

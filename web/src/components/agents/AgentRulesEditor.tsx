@@ -1,4 +1,25 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import {
+  AGENT_BTN_CLS,
+  AGENT_EDIT_INPUT_CLS,
+  AGENT_RULE_SELECTOR_GROUP_CLS,
+  AGENT_RULE_SELECTOR_HEADING_CLS,
+  AGENT_RULE_SELECTOR_INPUT_ROW_CLS,
+  AGENT_RULE_SELECTOR_PREFIX_CLS,
+  AGENT_RULE_SELECTOR_VALUE_WRAP_CLS,
+  AGENT_RULE_SELECTORS_CLS,
+  AGENT_RULE_SELECTORS_LABEL_CLS,
+  AGENT_RULES_ADD_BTN_CLS,
+  AGENT_RULES_ADD_SELECT_CLS,
+  AGENT_RULES_CHIP_CLS,
+  AGENT_RULES_CHIP_EXCLUDE_CLS,
+  AGENT_RULES_CHIP_INCLUDE_CLS,
+  AGENT_RULES_CHIP_REMOVE_CLS,
+  AGENT_RULES_CHIP_SELECTOR_CLS,
+  AGENT_RULES_CHIPS_CLS,
+  AGENT_RULES_EDITOR_CLS,
+  AGENT_RULES_EMPTY_CLS,
+} from './agents-styles'
 
 interface RuleInfo {
   name: string
@@ -201,15 +222,15 @@ export function AgentRulesEditor({
   )
 
   return (
-    <div className="agent-rules-editor">
+    <div className={AGENT_RULES_EDITOR_CLS}>
       {/* Explicit rules */}
-      <div className="agent-rules-chips">
+      <div className={AGENT_RULES_CHIPS_CLS}>
         {rules.map(name => (
-          <span key={name} className="agent-rules-chip">
+          <span key={name} className={AGENT_RULES_CHIP_CLS}>
             {name}
             <button
               type="button"
-              className="agent-rules-chip-remove"
+              className={AGENT_RULES_CHIP_REMOVE_CLS}
               onClick={() => handleRemove(name)}
               title={`Remove ${name}`}
             >
@@ -218,12 +239,12 @@ export function AgentRulesEditor({
           </span>
         ))}
         {rules.length === 0 && !adding && (
-          <span className="agent-rules-empty">No rules assigned</span>
+          <span className={AGENT_RULES_EMPTY_CLS}>No rules assigned</span>
         )}
       </div>
       {adding ? (
         <select
-          className="agent-edit-input agent-rules-add-select"
+          className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULES_ADD_SELECT_CLS}`}
           autoFocus
           value=""
           onChange={e => { if (e.target.value) handleAdd(e.target.value) }}
@@ -251,7 +272,7 @@ export function AgentRulesEditor({
       ) : (
         <button
           type="button"
-          className="agent-defs-btn agent-rules-add-btn"
+          className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
           onClick={() => setAdding(true)}
           disabled={addableRules.length === 0}
         >
@@ -261,35 +282,35 @@ export function AgentRulesEditor({
 
       {/* Rule Selectors */}
       {onRuleSelectorsChange && (
-        <div className="agent-rule-selectors">
-          <div className="agent-rule-selectors-label">Rule Selectors</div>
+        <div className={AGENT_RULE_SELECTORS_CLS}>
+          <div className={AGENT_RULE_SELECTORS_LABEL_CLS}>Rule Selectors</div>
 
           {/* Include */}
-          <div className="agent-rule-selector-group">
-            <span className="agent-rule-selector-heading">Include</span>
-            <div className="agent-rules-chips">
+          <div className={AGENT_RULE_SELECTOR_GROUP_CLS}>
+            <span className={AGENT_RULE_SELECTOR_HEADING_CLS}>Include</span>
+            <div className={AGENT_RULES_CHIPS_CLS}>
               {selectors.include.map(s => (
-                <span key={s} className="agent-rules-chip agent-rules-chip--selector agent-rules-chip--include">
+                <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_INCLUDE_CLS}`}>
                   {s}
-                  <button type="button" className="agent-rules-chip-remove" onClick={() => handleRemoveSelector('include', s)} title={`Remove ${s}`}>&times;</button>
+                  <button type="button" className={AGENT_RULES_CHIP_REMOVE_CLS} onClick={() => handleRemoveSelector('include', s)} title={`Remove ${s}`}>&times;</button>
                 </span>
               ))}
               {selectors.include.length === 0 && addingSelectorType !== 'include' && (
-                <span className="agent-rules-empty">None</span>
+                <span className={AGENT_RULES_EMPTY_CLS}>None</span>
               )}
             </div>
             {addingSelectorType === 'include' ? (
-              <div className="agent-rule-selector-input-row">
+              <div className={AGENT_RULE_SELECTOR_INPUT_ROW_CLS}>
                 <select
-                  className="agent-edit-input agent-rule-selector-prefix"
+                  className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULE_SELECTOR_PREFIX_CLS}`}
                   value={selectorPrefix}
                   onChange={e => { setSelectorPrefix(e.target.value); setSelectorValue('') }}
                 >
                   {SELECTOR_PREFIXES.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
-                <div className="agent-rule-selector-value-wrap">
+                <div className={AGENT_RULE_SELECTOR_VALUE_WRAP_CLS}>
                   <input
-                    className="agent-edit-input"
+                    className={AGENT_EDIT_INPUT_CLS}
                     autoFocus
                     value={selectorValue}
                     onChange={e => setSelectorValue(e.target.value)}
@@ -303,13 +324,13 @@ export function AgentRulesEditor({
                     </datalist>
                   )}
                 </div>
-                <button type="button" className="agent-defs-btn" onClick={commitSelector}>Add</button>
-                <button type="button" className="agent-defs-btn" onClick={() => setAddingSelectorType(null)}>Cancel</button>
+                <button type="button" className={AGENT_BTN_CLS} onClick={commitSelector}>Add</button>
+                <button type="button" className={AGENT_BTN_CLS} onClick={() => setAddingSelectorType(null)}>Cancel</button>
               </div>
             ) : (
               <button
                 type="button"
-                className="agent-defs-btn agent-rules-add-btn"
+                className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
                 onClick={() => { setAddingSelectorType('include'); setSelectorPrefix('tag:'); setSelectorValue('') }}
               >
                 + Add Include
@@ -318,31 +339,31 @@ export function AgentRulesEditor({
           </div>
 
           {/* Exclude */}
-          <div className="agent-rule-selector-group">
-            <span className="agent-rule-selector-heading">Exclude</span>
-            <div className="agent-rules-chips">
+          <div className={AGENT_RULE_SELECTOR_GROUP_CLS}>
+            <span className={AGENT_RULE_SELECTOR_HEADING_CLS}>Exclude</span>
+            <div className={AGENT_RULES_CHIPS_CLS}>
               {selectors.exclude.map(s => (
-                <span key={s} className="agent-rules-chip agent-rules-chip--selector agent-rules-chip--exclude">
+                <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_EXCLUDE_CLS}`}>
                   {s}
-                  <button type="button" className="agent-rules-chip-remove" onClick={() => handleRemoveSelector('exclude', s)} title={`Remove ${s}`}>&times;</button>
+                  <button type="button" className={AGENT_RULES_CHIP_REMOVE_CLS} onClick={() => handleRemoveSelector('exclude', s)} title={`Remove ${s}`}>&times;</button>
                 </span>
               ))}
               {selectors.exclude.length === 0 && addingSelectorType !== 'exclude' && (
-                <span className="agent-rules-empty">None</span>
+                <span className={AGENT_RULES_EMPTY_CLS}>None</span>
               )}
             </div>
             {addingSelectorType === 'exclude' ? (
-              <div className="agent-rule-selector-input-row">
+              <div className={AGENT_RULE_SELECTOR_INPUT_ROW_CLS}>
                 <select
-                  className="agent-edit-input agent-rule-selector-prefix"
+                  className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULE_SELECTOR_PREFIX_CLS}`}
                   value={selectorPrefix}
                   onChange={e => { setSelectorPrefix(e.target.value); setSelectorValue('') }}
                 >
                   {SELECTOR_PREFIXES.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
-                <div className="agent-rule-selector-value-wrap">
+                <div className={AGENT_RULE_SELECTOR_VALUE_WRAP_CLS}>
                   <input
-                    className="agent-edit-input"
+                    className={AGENT_EDIT_INPUT_CLS}
                     autoFocus
                     value={selectorValue}
                     onChange={e => setSelectorValue(e.target.value)}
@@ -356,13 +377,13 @@ export function AgentRulesEditor({
                     </datalist>
                   )}
                 </div>
-                <button type="button" className="agent-defs-btn" onClick={commitSelector}>Add</button>
-                <button type="button" className="agent-defs-btn" onClick={() => setAddingSelectorType(null)}>Cancel</button>
+                <button type="button" className={AGENT_BTN_CLS} onClick={commitSelector}>Add</button>
+                <button type="button" className={AGENT_BTN_CLS} onClick={() => setAddingSelectorType(null)}>Cancel</button>
               </div>
             ) : (
               <button
                 type="button"
-                className="agent-defs-btn agent-rules-add-btn"
+                className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
                 onClick={() => { setAddingSelectorType('exclude'); setSelectorPrefix('tag:'); setSelectorValue('') }}
               >
                 + Add Exclude

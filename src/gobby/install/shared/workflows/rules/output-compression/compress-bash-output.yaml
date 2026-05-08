@@ -6,6 +6,7 @@ rules:
     event: before_tool
     enabled: true
     priority: 50
+    # Droid keeps output compression enabled; Codex is excluded for its distinct tool payloads.
     when: >
       source != 'codex'
       and event.data.get('tool_name') in ('Bash', 'run_shell_command')

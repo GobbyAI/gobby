@@ -142,6 +142,8 @@ class TestGetRecentGitCommits:
                 text=True,
                 timeout=5,
             )
+            assert mock_run.call_count == 1
+            assert mock_run.call_args is not None
 
     def test_custom_max_commits(self) -> None:
         """Test that custom max_commits parameter is respected."""
@@ -155,6 +157,8 @@ class TestGetRecentGitCommits:
                 text=True,
                 timeout=5,
             )
+            assert mock_run.call_count == 1
+            assert mock_run.call_args is not None
 
     def test_returns_empty_list_on_non_zero_returncode(self) -> None:
         """Test that empty list is returned when git command fails."""
@@ -265,6 +269,8 @@ class TestGetRecentGitCommits:
                 text=True,
                 timeout=5,
             )
+            assert mock_run.call_count == 1
+            assert mock_run.call_args is not None
 
 
 class TestGetFileChanges:

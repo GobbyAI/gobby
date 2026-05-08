@@ -159,12 +159,6 @@ triggers:
 
         {{ handoff }}
 
-    # Memory sync - import from JSONL for Git persistence
-    - action: memory_sync_import
-
-    # Task sync - import from JSONL for Git persistence
-    - action: task_sync_import
-
     # Skill discovery guide injection - inject always-apply skills for all session starts
     # Skip on resume - conversation already has this context from original startup
     # always_apply filter injects the discovery guide (and any other alwaysApply skills)

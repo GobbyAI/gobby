@@ -293,6 +293,26 @@ async def test_session_stats(mock_session_manager, full_sessions_registry):
     assert result["by_status"]["expired"] == 7
 
 
+@pytest.mark.asyncio
+async def test_session_stats_counts_droid_source(mock_session_manager, full_sessions_registry):
+    """Test session_stats includes droid in by_source."""
+
+    def count(project_id=None, status=None, source=None):
+        if source == "droid":
+            return 4
+        if source:
+            return 0
+        return 4
+
+    mock_session_manager.count.side_effect = count
+    mock_session_manager.count_by_status.return_value = {"active": 4}
+
+    result = await full_sessions_registry.call("session_stats", {})
+
+    assert result["total"] == 4
+    assert result["by_source"] == {"droid": 4}
+
+
 # --- Handoff Tool Tests ---
 
 

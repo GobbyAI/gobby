@@ -77,8 +77,14 @@ class TestSetModeIdempotency:
             await server._handle_set_mode(ws, {"conversation_id": "conv-1", "mode": "plan"})
 
         session.set_chat_mode.assert_not_called()
+        assert session.set_chat_mode.call_count == 0
+        assert not session.set_chat_mode.called
         session.sync_sdk_permission_mode.assert_not_awaited()
+        assert session.sync_sdk_permission_mode.await_count == 0
+        assert session.sync_sdk_permission_mode.await_args is None
         svm_cls.assert_not_called()
+        assert svm_cls.call_count == 0
+        assert not svm_cls.called
 
     async def test_accept_edits_noop_when_already_normal(self) -> None:
         """accept_edits is normalized to normal, so if session is already normal the handler should no-op."""
@@ -91,8 +97,14 @@ class TestSetModeIdempotency:
             await server._handle_set_mode(ws, {"conversation_id": "conv-1", "mode": "accept_edits"})
 
         session.set_chat_mode.assert_not_called()
+        assert session.set_chat_mode.call_count == 0
+        assert not session.set_chat_mode.called
         session.sync_sdk_permission_mode.assert_not_awaited()
+        assert session.sync_sdk_permission_mode.await_count == 0
+        assert session.sync_sdk_permission_mode.await_args is None
         svm_cls.assert_not_called()
+        assert svm_cls.call_count == 0
+        assert not svm_cls.called
 
     async def test_real_change_fires_full_pipeline(self) -> None:
         server = ConcreteSessionControl()
@@ -110,3 +122,54 @@ class TestSetModeIdempotency:
         svm_instance.merge_variables.assert_called_once()
         merged_vars = svm_instance.merge_variables.call_args[0][1]
         assert merged_vars["chat_mode"] == "plan"
+
+
+class TestSetModeAttachedSession:
+    """Verify set_mode with target_session_id drives an attached session via storage."""
+
+    async def test_target_session_id_routes_to_storage_update(self) -> None:
+        server = ConcreteSessionControl()
+        attached_session = MagicMock()
+        attached_session.chat_mode = "normal"
+        server.session_manager.get = MagicMock(return_value=attached_session)
+        ws = _make_ws()
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls:
+            svm_instance = MagicMock()
+            svm_cls.return_value = svm_instance
+            await server._handle_set_mode(
+                ws,
+                {"target_session_id": "tmux-uuid-1", "mode": "plan"},
+            )
+
+        server.session_manager.update_chat_mode.assert_called_once_with("tmux-uuid-1", "plan")
+        svm_instance.merge_variables.assert_called_once()
+        merged_vars = svm_instance.merge_variables.call_args[0][1]
+        assert merged_vars["chat_mode"] == "plan"
+
+    async def test_target_session_id_no_change_skips_update(self) -> None:
+        server = ConcreteSessionControl()
+        attached_session = MagicMock()
+        attached_session.chat_mode = "plan"
+        server.session_manager.get = MagicMock(return_value=attached_session)
+        ws = _make_ws()
+
+        await server._handle_set_mode(
+            ws,
+            {"target_session_id": "tmux-uuid-1", "mode": "plan"},
+        )
+
+        server.session_manager.update_chat_mode.assert_not_called()
+
+    async def test_target_session_not_found_returns_error(self) -> None:
+        server = ConcreteSessionControl()
+        server.session_manager.get = MagicMock(return_value=None)
+        ws = _make_ws()
+
+        await server._handle_set_mode(
+            ws,
+            {"target_session_id": "missing-uuid", "mode": "plan"},
+        )
+
+        server._send_error.assert_awaited_once()
+        server.session_manager.update_chat_mode.assert_not_called()

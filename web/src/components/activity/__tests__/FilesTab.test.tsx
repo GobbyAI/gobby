@@ -32,20 +32,10 @@ vi.mock('react-syntax-highlighter', () => ({
   Prism: () => null,
 }))
 
-vi.mock('react-markdown', () => ({
-  default: () => null,
-}))
-
-vi.mock('remark-gfm', () => ({
-  default: () => () => undefined,
-}))
-
-vi.mock('../../shared/MarkdownComponents', () => ({
-  markdownComponents: {},
-}))
-
-vi.mock('../../shared/codeTheme', () => ({
-  codeTheme: {},
+vi.mock('../../shared/MarkdownBody', () => ({
+  MarkdownBody: ({ content }: { content: string }) => (
+    <div data-testid="markdown-body">{content}</div>
+  ),
 }))
 
 vi.mock('../../../hooks/useConfirmDialog', () => ({

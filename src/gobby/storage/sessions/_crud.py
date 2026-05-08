@@ -36,6 +36,8 @@ class _SessionCRUDHost(Protocol):
 
     def get(self, session_id: str) -> Session | None: ...
 
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
     def register(
         self,
         external_id: str,
@@ -51,6 +53,7 @@ class _SessionCRUDHost(Protocol):
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         session_type: str = "terminal",
+        is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
     ) -> Session: ...
@@ -72,6 +75,7 @@ class _SessionCRUDMixin:
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         session_type: str = "terminal",
+        is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
     ) -> Session:
@@ -85,7 +89,7 @@ class _SessionCRUDMixin:
         Args:
             external_id: External session identifier (e.g., Claude Code session ID)
             machine_id: Machine identifier
-            source: CLI source (claude, gemini, qwen, codex)
+            source: CLI source (claude, gemini, qwen, codex, droid)
             project_id: Project ID (None if project context unavailable)
             title: Optional session title
             transcript_path: Path to transcript file
@@ -103,6 +107,7 @@ class _SessionCRUDMixin:
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
 
+        change_event = "session_created"
         with self.db.transaction_immediate() as conn:
             existing = self.find_by_external_id(
                 external_id,
@@ -141,6 +146,7 @@ class _SessionCRUDMixin:
                         parent_session_id = COALESCE(?, parent_session_id),
                         terminal_context = COALESCE(?, terminal_context),
                         workflow_name = COALESCE(?, workflow_name),
+                        is_local = CASE WHEN ? THEN 1 ELSE is_local END,
                         sandbox_enabled = COALESCE(?, sandbox_enabled),
                         sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
                         status = 'active',
@@ -154,6 +160,7 @@ class _SessionCRUDMixin:
                         parent_session_id,
                         terminal_context_json,
                         workflow_name,
+                        int(is_local),
                         sandbox_enabled,
                         sandbox_policy_hash,
                         now,
@@ -166,56 +173,63 @@ class _SessionCRUDMixin:
                 updated = self.get(existing.id)
                 if updated is None:
                     raise RuntimeError(f"Session {existing.id} disappeared during update")
-                return updated
+                change_event = "session_updated"
+                session = updated
+            else:
+                session_id = str(uuid.uuid4())
+                max_seq_row = conn.execute(
+                    "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = ?",
+                    (project_id,),
+                ).fetchone()
+                next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
 
-            session_id = str(uuid.uuid4())
-            max_seq_row = conn.execute(
-                "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = ?",
-                (project_id,),
-            ).fetchone()
-            next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
-
-            conn.execute(
-                """
-                INSERT INTO sessions (
-                    id, external_id, machine_id, source, project_id, title, title_source,
-                    transcript_path, git_branch, parent_session_id,
-                    agent_depth, spawned_by_agent_id, terminal_context,
-                    workflow_name, session_type, sandbox_enabled, sandbox_policy_hash,
-                    status, created_at, updated_at, seq_num,
-                    had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                conn.execute(
+                    """
+                    INSERT INTO sessions (
+                        id, external_id, machine_id, source, project_id, title, title_source,
+                        transcript_path, git_branch, parent_session_id,
+                        agent_depth, spawned_by_agent_id, terminal_context,
+                        workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
+                        status, created_at, updated_at, seq_num,
+                        had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                    """,
+                    (
+                        session_id,
+                        external_id,
+                        machine_id,
+                        source,
+                        project_id,
+                        title,
+                        transcript_path,
+                        git_branch,
+                        parent_session_id,
+                        agent_depth,
+                        spawned_by_agent_id,
+                        terminal_context_json,
+                        workflow_name,
+                        session_type,
+                        int(is_local),
+                        None if sandbox_enabled is None else int(bool(sandbox_enabled)),
+                        sandbox_policy_hash,
+                        now,
+                        now,
+                        next_seq_num,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
-                """,
-                (
-                    session_id,
-                    external_id,
-                    machine_id,
-                    source,
-                    project_id,
-                    title,
-                    transcript_path,
-                    git_branch,
-                    parent_session_id,
-                    agent_depth,
-                    spawned_by_agent_id,
-                    terminal_context_json,
-                    workflow_name,
-                    session_type,
-                    None if sandbox_enabled is None else int(bool(sandbox_enabled)),
-                    sandbox_policy_hash,
-                    now,
-                    now,
-                    next_seq_num,
-                ),
-            )
 
-            get_logger().debug("Created new session %s for external_id=%s", session_id, external_id)
+                get_logger().debug(
+                    "Created new session %s for external_id=%s", session_id, external_id
+                )
 
-            created = self.get(session_id)
-            if created is None:
-                raise RuntimeError(f"Session {session_id} not found after creation")
-            return created
+                created = self.get(session_id)
+                if created is None:
+                    raise RuntimeError(f"Session {session_id} not found after creation")
+                session = created
+
+        self._notify_session_change(change_event, session.id)
+        return session
 
     def create_web_chat_session(
         self: _SessionCRUDHost,
@@ -225,6 +239,7 @@ class _SessionCRUDMixin:
         source: str,
         title: str | None = None,
         model: str | None = None,
+        is_local: bool = False,
         chat_mode: str | None = None,
         sandbox_enabled: bool,
         sandbox_policy_hash: str,
@@ -249,6 +264,7 @@ class _SessionCRUDMixin:
                 project_id=project_id,
                 title=title,
                 session_type="web_chat",
+                is_local=is_local,
                 sandbox_enabled=sandbox_enabled,
                 sandbox_policy_hash=sandbox_policy_hash,
             )
@@ -260,11 +276,12 @@ class _SessionCRUDMixin:
                 """
                 UPDATE sessions
                 SET model = COALESCE(?, model),
+                    is_local = CASE WHEN ? THEN 1 ELSE is_local END,
                     chat_mode = COALESCE(?, chat_mode),
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (model, chat_mode, now, session.id),
+                (model, int(is_local), chat_mode, now, session.id),
             )
             updated = self.get(session.id)
             if updated is None:
@@ -308,4 +325,7 @@ class _SessionCRUDMixin:
         """Delete session by ID."""
         with self.db.transaction():
             cursor = self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        return cursor.rowcount > 0
+        deleted = cursor.rowcount > 0
+        if deleted:
+            self._notify_session_change("session_deleted", session_id)
+        return deleted

@@ -31,6 +31,7 @@ from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
     find_out_of_repo_write_path,
     get_global_approval_rules,
+    is_gcode_shell_command,
     is_tool_auto_allowed,
     load_project_approval_rules_async,
     normalize_approved_tool_keys,
@@ -535,8 +536,10 @@ class CodexWebChatBackend:
                     or not _PLAN_FILE_PATTERN.match(file_path)
                 ):
                     return self._decline_response(method)
-            elif tool_name == "Bash" and _BASH_WRITE_PATTERNS.search(
-                str(input_data.get("command", ""))
+            elif (
+                tool_name == "Bash"
+                and _BASH_WRITE_PATTERNS.search(str(input_data.get("command", "")))
+                and not is_gcode_shell_command(input_data)
             ):
                 return self._decline_response(method)
 
@@ -677,7 +680,10 @@ class CodexWebChatBackend:
 
                 if method == "thread/closed":
                     session._turn_id = None
-                    yield DoneEvent(tool_calls_count=0)
+                    yield DoneEvent(
+                        tool_calls_count=0,
+                        context_window=session._resolve_context_window(),
+                    )
                     turn_completed.set()
                     continue
 
@@ -697,13 +703,18 @@ class CodexWebChatBackend:
                         tool_calls_count=0,
                         input_tokens=int(usage.get("input_tokens", 0)),
                         output_tokens=int(usage.get("output_tokens", 0)),
+                        context_window=session._resolve_context_window(),
                         sdk_session_id=session.sdk_session_id,
                     )
                     turn_completed.set()
         except Exception as exc:
             logger.error("Codex managed session %s error: %s", session.conversation_id, exc)
             yield TextChunk(content=f"Error: {exc}")
-            yield DoneEvent(tool_calls_count=0, sdk_session_id=session.sdk_session_id)
+            yield DoneEvent(
+                tool_calls_count=0,
+                sdk_session_id=session.sdk_session_id,
+                context_window=session._resolve_context_window(),
+            )
         finally:
             for method in event_methods:
                 self._client.remove_notification_handler(method, _enqueue)

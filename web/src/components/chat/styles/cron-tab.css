@@ -1,0 +1,39 @@
+/* ============================================
+   Cron Tab — runs list inside the detail pane
+   ============================================ */
+.cron-tab-runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cron-tab-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-normal);
+  min-width: 0;
+}
+
+.cron-tab-run:last-child {
+  border-bottom: none;
+}
+
+.cron-tab-run__time {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cron-tab-run__status {
+  color: var(--text-muted);
+  text-transform: capitalize;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}

@@ -207,25 +207,24 @@ class TestListAgentsEdgeCases:
         assert result.exit_code == 0
         mgr.list_running.assert_called_once_with(limit=20)
 
-    @patch("gobby.cli.agents.LocalDatabase")
     @patch("gobby.cli.agents.get_agent_run_manager")
-    def test_list_all_no_filter(
-        self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock, runner: CliRunner
-    ) -> None:
-        mock_db_cls.return_value.fetchall.return_value = []
+    def test_list_all_no_filter(self, mock_mgr_fn: MagicMock, runner: CliRunner) -> None:
+        mgr = MagicMock()
+        mgr.list_by_status.return_value = []
+        mock_mgr_fn.return_value = mgr
         result = runner.invoke(agents, ["runs", "list"])
         assert result.exit_code == 0
         assert "No agent runs found" in result.output
+        mgr.list_by_status.assert_called_once_with(status=None, limit=20)
 
-    @patch("gobby.cli.agents.LocalDatabase")
     @patch("gobby.cli.agents.get_agent_run_manager")
-    def test_list_with_status_filter(
-        self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock, runner: CliRunner
-    ) -> None:
-        mock_db_cls.return_value.fetchall.return_value = []
+    def test_list_with_status_filter(self, mock_mgr_fn: MagicMock, runner: CliRunner) -> None:
+        mgr = MagicMock()
+        mgr.list_by_status.return_value = []
+        mock_mgr_fn.return_value = mgr
         result = runner.invoke(agents, ["runs", "list", "--status", "error"])
         assert result.exit_code == 0
-        mock_db_cls.return_value.fetchall.assert_called_once()
+        mgr.list_by_status.assert_called_once_with(status="error", limit=20)
 
 
 # =============================================================================
@@ -306,37 +305,29 @@ class TestGetDaemonUrl:
 
 
 class TestListAgentsDisplay:
-    @patch("gobby.cli.agents.LocalDatabase")
     @patch("gobby.cli.agents.get_agent_run_manager")
-    def test_list_with_runs_display(
-        self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_list_with_runs_display(self, mock_mgr_fn: MagicMock, runner: CliRunner) -> None:
         """Cover the display loop when runs exist."""
 
-        mock_row = {
-            "id": "run-abc123def456",
-            "parent_session_id": "sess-parent",
-            "child_session_id": None,
-            "workflow_name": None,
-            "provider": "claude",
-            "model": "opus",
-            "status": "running",
-            "prompt": "Fix the bug in auth module",
-            "result": None,
-            "error": None,
-            "tool_calls_count": 3,
-            "turns_used": 2,
-            "started_at": "2024-01-01T10:00:00",
-            "completed_at": None,
-            "created_at": "2024-01-01T09:59:00",
-            "updated_at": "2024-01-01T10:01:00",
-            "mode": "interactive",
-            "isolation_mode": None,
-            "isolation_path": None,
-            "agent_name": "default",
-            "task_id": None,
-        }
-        mock_db_cls.return_value.fetchall.return_value = [mock_row]
+        mgr = MagicMock()
+        mgr.list_by_status.return_value = [
+            _mock_run(
+                id="run-abc123def456",
+                child_session_id=None,
+                workflow_name=None,
+                model="opus",
+                prompt="Fix the bug in auth module",
+                tool_calls_count=3,
+                turns_used=2,
+                started_at="2024-01-01T10:00:00",
+                created_at="2024-01-01T09:59:00",
+                updated_at="2024-01-01T10:01:00",
+                agent_name="default",
+                task_id=None,
+            )
+        ]
+        mock_mgr_fn.return_value = mgr
+
         result = runner.invoke(agents, ["runs", "list"])
         assert result.exit_code == 0
         assert "Found 1 agent run(s)" in result.output

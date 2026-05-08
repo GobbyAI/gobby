@@ -1,0 +1,105 @@
+[
+  {
+    "id": "msg-gemini-user-1",
+    "role": "user",
+    "content": "Run the session tests and tell me what's failing.",
+    "timestamp": "2026-05-04T12:00:00.000Z"
+  },
+  {
+    "id": "msg-gemini-asst-1",
+    "role": "assistant",
+    "content": "",
+    "timestamp": "2026-05-04T12:00:01.000Z",
+    "contentBlocks": [
+      {
+        "type": "thinking",
+        "content": "Need to run the test suite and inspect the failure."
+      },
+      {
+        "type": "text",
+        "content": "I'll run the suite first and then inspect any failing module.\n\n```python\ndef inspect(path):\n    return open(path).read()\n```\n\nKicking off the run."
+      },
+      {
+        "type": "tool_chain",
+        "tool_calls": [
+          {
+            "id": "tc-gemini-shell-1",
+            "tool_name": "run_shell_command",
+            "server_name": "builtin",
+            "tool_type": "bash",
+            "status": "completed",
+            "arguments": { "command": "uv run pytest tests/sessions/ -q" },
+            "result": {
+              "kind": "text",
+              "content": "1 failed, 72 passed in 4.21s\nFAILED tests/sessions/test_renderer.py::test_protocol_emits_kind",
+              "truncated": false,
+              "metadata": { "exit_code": 1 }
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_chain",
+        "tool_calls": [
+          {
+            "id": "tc-gemini-read-1",
+            "tool_name": "read_file",
+            "server_name": "builtin",
+            "tool_type": "read",
+            "status": "completed",
+            "arguments": { "absolute_path": "/repo/src/gobby/sessions/transcript_renderer.py" },
+            "result": {
+              "kind": "json",
+              "content": {
+                "path": "/repo/src/gobby/sessions/transcript_renderer.py",
+                "lines": 812,
+                "summary": ["ToolResultKind", "RenderedToolCall", "RenderedMessage"]
+              },
+              "truncated": false
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_chain",
+        "tool_calls": [
+          {
+            "id": "tc-gemini-replace-1",
+            "tool_name": "replace",
+            "server_name": "builtin",
+            "tool_type": "edit",
+            "status": "completed",
+            "arguments": {
+              "file_path": "/repo/src/gobby/sessions/transcript_renderer.py",
+              "old_string": "    content_type: str",
+              "new_string": "    kind: ToolResultKind"
+            },
+            "result": {
+              "kind": "text",
+              "content": "File replaced successfully",
+              "truncated": false
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_chain",
+        "tool_calls": [
+          {
+            "id": "tc-gemini-shell-2",
+            "tool_name": "run_shell_command",
+            "server_name": "builtin",
+            "tool_type": "bash",
+            "status": "error",
+            "arguments": { "command": "uv run pytest tests/sessions/test_renderer.py::test_missing -q" },
+            "error": "ERROR: not found: tests/sessions/test_renderer.py::test_missing"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "content": "Replacement applied. Re-run the originally failing test to confirm green."
+      }
+    ]
+  }
+]

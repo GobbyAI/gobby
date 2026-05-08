@@ -193,19 +193,12 @@ class TestGobbyDaemonToolsListMcpServers:
         assert result["total"] == 2
         assert result["connected"] == 1
 
-        # Verify slim fields on each server
-        server1 = next(s for s in result["servers"] if s["name"] == "server1")
-        assert server1["state"] == "connected"
-        assert server1["transport"] == "http"
-
-        server2 = next(s for s in result["servers"] if s["name"] == "server2")
-        assert server2["state"] == "pending"
-        assert server2["transport"] == "stdio"
+        assert result["servers"] == ["server1", "server2"]
+        assert result["issues"] == [{"name": "server2", "state": "pending", "transport": "stdio"}]
 
     @pytest.mark.asyncio
-    async def test_list_mcp_servers_emits_proxy_after_tool(self, tools_handler):
-        """Codex-terminal compatibility emission should be delegated through tool_proxy."""
-        tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
+    async def test_list_mcp_servers_does_not_emit_proxy_after_tool(self, tools_handler):
+        """list_mcp_servers should record discovery without proxy AFTER_TOOL synthesis."""
         tools_handler.tool_proxy.record_servers_listed = MagicMock()
         tools_handler.internal_manager.get_all_registries.return_value = []
         tools_handler._mcp_manager.server_configs = []
@@ -214,12 +207,9 @@ class TestGobbyDaemonToolsListMcpServers:
 
         result = await tools_handler.list_mcp_servers(session_id="session-123")
 
-        tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="session-123",
-            tool_name="list_mcp_servers",
-            tool_input={},
-            result=result,
-        )
+        assert result["success"] is True
+        tools_handler.tool_proxy.record_servers_listed.assert_called_once_with("session-123")
+        assert not hasattr(tools_handler.tool_proxy, "emit_synthetic_proxy_after_tool")
 
 
 class TestGobbyDaemonToolsCallTool:
@@ -285,6 +275,8 @@ class TestGobbyDaemonToolsCallTool:
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
             "gobby-skills", "get_skill", {"name": "brevity"}, None
         )
+        assert tools_handler.tool_proxy.call_tool.call_count == 1
+        assert tools_handler.tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_call_tool_with_none_arguments(self, tools_handler):
@@ -300,6 +292,8 @@ class TestGobbyDaemonToolsCallTool:
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
             "server", "no-args-tool", None, None
         )
+        assert tools_handler.tool_proxy.call_tool.call_count == 1
+        assert tools_handler.tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     async def test_call_tool_propagates_errors(self, tools_handler):
@@ -353,23 +347,20 @@ class TestGobbyDaemonToolsListTools:
         await tools_handler.list_tools(server_name="server1")
 
         tools_handler.tool_proxy.list_tools.assert_called_once_with("server1", session_id=None)
+        assert tools_handler.tool_proxy.list_tools.call_count == 1
+        assert tools_handler.tool_proxy.list_tools.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_list_tools_emits_proxy_after_tool(self, tools_handler):
-        """list_tools should emit the internal proxy AFTER_TOOL compatibility event."""
+    async def test_list_tools_does_not_emit_proxy_after_tool(self, tools_handler):
+        """list_tools should not emit an internal proxy AFTER_TOOL event."""
         tools_handler.tool_proxy.list_tools = AsyncMock(
             return_value={"tools": [{"name": "tool1"}], "tool_count": 1}
         )
-        tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
 
         result = await tools_handler.list_tools(server_name="server1", session_id="session-123")
 
-        tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="session-123",
-            tool_name="list_tools",
-            tool_input={"server_name": "server1"},
-            result=result,
-        )
+        assert result["tool_count"] == 1
+        assert not hasattr(tools_handler.tool_proxy, "emit_synthetic_proxy_after_tool")
 
     @pytest.mark.asyncio
     async def test_list_tools_with_session_id(self, tools_handler):
@@ -383,6 +374,8 @@ class TestGobbyDaemonToolsListTools:
         tools_handler.tool_proxy.list_tools.assert_called_once_with(
             "server1", session_id="session-123"
         )
+        assert tools_handler.tool_proxy.list_tools.call_count == 1
+        assert tools_handler.tool_proxy.list_tools.call_args is not None
 
 
 class TestGobbyDaemonToolsGetToolSchema:
@@ -426,12 +419,13 @@ class TestGobbyDaemonToolsGetToolSchema:
             "my-tool",
             session_id=None,
         )
+        assert tools_handler.tool_proxy.get_tool_schema.call_count == 1
+        assert tools_handler.tool_proxy.get_tool_schema.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_get_tool_schema_emits_proxy_after_tool(self, tools_handler):
-        """get_tool_schema should emit the internal proxy AFTER_TOOL compatibility event."""
+    async def test_get_tool_schema_does_not_emit_proxy_after_tool(self, tools_handler):
+        """get_tool_schema should not emit an internal proxy AFTER_TOOL event."""
         tools_handler.tool_proxy.get_tool_schema = AsyncMock(return_value={"name": "tool"})
-        tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
 
         result = await tools_handler.get_tool_schema(
             "my-server",
@@ -439,12 +433,8 @@ class TestGobbyDaemonToolsGetToolSchema:
             session_id="session-123",
         )
 
-        tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="session-123",
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "my-server", "tool_name": "my-tool"},
-            result=result,
-        )
+        assert result == {"name": "tool"}
+        assert not hasattr(tools_handler.tool_proxy, "emit_synthetic_proxy_after_tool")
 
 
 class TestGobbyDaemonToolsServerManagement:

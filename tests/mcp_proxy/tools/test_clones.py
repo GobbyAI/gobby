@@ -141,7 +141,7 @@ class TestCreateClone:
     async def test_create_clone_use_local(self, registry, mock_clone_storage, mock_git_manager):
         """Create clone with use_local clones base_branch then creates new branch."""
         mock_git_manager.full_clone.return_value = MagicMock(success=True)
-        mock_git_manager._run_git.return_value = MagicMock(returncode=0)
+        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0)
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
         mock_clone_storage.create.return_value = Clone(
             id="clone-local",
@@ -178,7 +178,7 @@ class TestCreateClone:
         assert call_args.kwargs["remote_url"] == str(mock_git_manager.repo_path)
         assert call_args.kwargs["branch"] == "main"
         # Should create new branch in the clone since branch_name != base_branch
-        mock_git_manager._run_git.assert_called_once_with(
+        mock_git_manager.run_git_command.assert_called_once_with(
             ["checkout", "-b", "feature"],
             cwd="/tmp/clones/local",
             check=True,
@@ -476,7 +476,7 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.return_value = MagicMock()
 
         # Mock fetch from clone path (returncode=0 = success)
-        mock_git_manager._run_git.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
         # Mock merge operation
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
@@ -490,7 +490,7 @@ class TestMergeCloneToTarget:
 
         assert result["success"] is True
         # Should have fetched from clone path (not pushed to origin)
-        fetch_call = mock_git_manager._run_git.call_args_list[0]
+        fetch_call = mock_git_manager.run_git_command.call_args_list[0]
         assert "fetch" in fetch_call[0][0]
         assert "/tmp/clones/test" in fetch_call[0][0]
         # Should have set cleanup_after on success
@@ -529,7 +529,7 @@ class TestMergeCloneToTarget:
         )
 
         # Fetch from clone path fails
-        mock_git_manager._run_git.return_value = MagicMock(
+        mock_git_manager.run_git_command.return_value = MagicMock(
             returncode=1,
             stderr="fatal: not a git repository",
         )
@@ -564,7 +564,7 @@ class TestMergeCloneToTarget:
         )
 
         # Fetch succeeds
-        mock_git_manager._run_git.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
         # Merge has conflicts - error="merge_conflict" signals conflict
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=False,
@@ -607,7 +607,7 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.return_value = MagicMock()
 
         # Fetch succeeds
-        mock_git_manager._run_git.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
             has_conflicts=False,

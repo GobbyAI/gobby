@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.merge_resolutions import MergeResolutionManager
+from gobby.storage.merge_resolutions import MergeConflict, MergeResolution, MergeResolutionManager
 
 pytestmark = pytest.mark.integration
 
@@ -120,7 +120,10 @@ class TestTaskStatusDuringMerge:
     provides sufficient tracking for Phase 1.
     """
 
-    @pytest.mark.skip(reason="Task merge fields deferred to Phase 2 - requires schema migration")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Task merge fields deferred to Phase 2 - requires schema migration",
+    )
     def test_task_has_merge_in_progress_field(self) -> None:
         """Task should have merge_in_progress field."""
         from gobby.storage.tasks import Task
@@ -128,7 +131,10 @@ class TestTaskStatusDuringMerge:
         task_fields = Task.__dataclass_fields__
         assert "merge_in_progress" in task_fields
 
-    @pytest.mark.skip(reason="Task merge fields deferred to Phase 2 - requires schema migration")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Task merge fields deferred to Phase 2 - requires schema migration",
+    )
     def test_task_has_blocked_by_merge_field(self) -> None:
         """Task should have blocked_by_merge field."""
         from gobby.storage.tasks import Task
@@ -136,7 +142,10 @@ class TestTaskStatusDuringMerge:
         task_fields = Task.__dataclass_fields__
         assert "blocked_by_merge" in task_fields
 
-    @pytest.mark.skip(reason="Task merge fields deferred to Phase 2 - requires schema migration")
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Task merge fields deferred to Phase 2 - requires schema migration",
+    )
     def test_task_manager_has_set_merge_status_method(self) -> None:
         """TaskManager should have method to set merge status."""
         from gobby.storage.tasks import LocalTaskManager
@@ -332,11 +341,25 @@ class TestMergeManagerHelperMethods:
     def test_get_active_resolution_returns_pending_resolution(self, mock_resolution) -> None:
         """get_active_resolution should return the current pending resolution."""
 
-        if not hasattr(MergeResolutionManager, "get_active_resolution"):
-            pytest.fail("get_active_resolution method not implemented")
+        db = MagicMock()
+        db.fetchone.return_value = {"id": "mr-abc123"}
+        manager = MergeResolutionManager(db)
+
+        with patch.object(MergeResolution, "from_row", return_value=mock_resolution):
+            result = manager.get_active_resolution()
+
+        assert result is mock_resolution
+        assert "status = 'pending'" in db.fetchone.call_args.args[0]
 
     def test_get_conflict_by_path_finds_conflict(self, mock_conflict) -> None:
         """get_conflict_by_path should find conflict by file path."""
 
-        if not hasattr(MergeResolutionManager, "get_conflict_by_path"):
-            pytest.fail("get_conflict_by_path method not implemented")
+        db = MagicMock()
+        db.fetchone.return_value = {"id": "mc-conflict1"}
+        manager = MergeResolutionManager(db)
+
+        with patch.object(MergeConflict, "from_row", return_value=mock_conflict):
+            result = manager.get_conflict_by_path("src/test.py", "mr-abc123")
+
+        assert result is mock_conflict
+        assert db.fetchone.call_args.args[1] == ("src/test.py", "mr-abc123")

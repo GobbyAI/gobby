@@ -16,6 +16,7 @@ import click
 import httpx
 import psutil
 
+from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
 from .installers.service import (
@@ -178,7 +179,7 @@ def _show_error_log_tail(error_log_file: Path, n: int = 15) -> None:
         click.echo(f"  Check logs: {error_log_file}", err=True)
 
 
-def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
+def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
     """Poll the daemon's startup progress endpoint and display steps."""
     displayed_steps: set[str] = set()
     displayed_errors: set[str] = set()
@@ -192,7 +193,7 @@ def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
                 timeout=1.0,
             )
             if resp.status_code != 200:
-                break
+                return False
             progress = resp.json()
 
             # Show completed steps
@@ -224,13 +225,14 @@ def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
                     click.echo("Background tasks:")
                     for task in scheduled:
                         _step(task, scheduled=True)
-                break
+                return True
 
         except (httpx.ConnectError, httpx.TimeoutException):
             pass
         except Exception:
-            break
+            return False
         time.sleep(0.5)
+    return False
 
 
 def _wait_for_daemon_health(
@@ -380,6 +382,9 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
             if elapsed is None:
                 _step("Daemon did not become healthy after service start", error=True)
                 sys.exit(1)
+            if not _poll_startup_progress(config.daemon_port):
+                _step("Daemon did not finish startup readiness after service start", error=True)
+                sys.exit(1)
             _step(f"Daemon started via {svc.get('platform', 'OS')} service")
             _step(f"Health check passed ({elapsed:.1f}s)")
             return
@@ -455,6 +460,13 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     if verbose:
         cmd.append("--verbose")
 
+    if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex", "gemini")):
+        click.secho(
+            "warning: no Anthropic/OpenAI/Google API/provider credential env vars detected. "
+            "Spawned agents may prompt for login unless the CLI has on-disk credentials.",
+            fg="yellow",
+        )
+
     with contextlib.ExitStack() as log_stack:
         log_f = log_stack.enter_context(open(log_file, "a"))
         error_log_f = log_stack.enter_context(open(error_log_file, "a"))
@@ -493,7 +505,10 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
                 sys.exit(1)
 
             # Poll startup progress from daemon
-            _poll_startup_progress(http_port)
+            if not _poll_startup_progress(http_port):
+                _step("Startup readiness did not complete", error=True)
+                _show_error_log_tail(error_log_file)
+                sys.exit(1)
 
             # Spawn UI server if enabled
             ui_url = None
@@ -532,23 +547,21 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
             sys.exit(1)
 
 
-@click.command()
-@click.option(
-    "--docker",
-    "docker_flag",
-    is_flag=True,
-    help="Also stop Docker service containers (Qdrant, Neo4j)",
-)
-@click.pass_context
-def stop(ctx: click.Context, docker_flag: bool) -> None:
-    """Stop the Gobby daemon."""
+def _do_stop(
+    ctx: click.Context,
+    docker_flag: bool,
+    shutdown_intent: str = "stop",
+) -> bool:
+    """Stop the daemon and return whether shutdown succeeded."""
+    _ = ctx
+    shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
     svc = get_service_status()
     if svc.get("installed") and svc.get("running"):
         previous_pid = _get_running_daemon_pid(svc)
         click.echo("Stopping via OS service manager...")
-        result = service_stop()
+        result = service_stop(shutdown_intent=shutdown_intent, shutdown_source=shutdown_source)
         if result.get("success"):
             if previous_pid is not None:
                 _step(f"Waiting for service-managed daemon (PID: {previous_pid}) to exit...")
@@ -557,7 +570,7 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
             elapsed = _wait_for_service_stop(previous_pid)
             if elapsed is None:
                 _step("Service stop returned, but daemon is still running", error=True)
-                sys.exit(1)
+                return False
             _step(f"Daemon stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")
         else:
             click.echo(f"Service stop failed: {result.get('error')}", err=True)
@@ -570,16 +583,33 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
             docker_stopped = True
 
         if result.get("success"):
-            sys.exit(0)
+            return True
 
-    success = stop_daemon_util(quiet=False)
+    success = stop_daemon_util(
+        quiet=False,
+        shutdown_intent=shutdown_intent,
+        shutdown_source=shutdown_source,
+    )
 
     # Stop Docker containers if requested (only if not already stopped above)
     if docker_flag and not docker_stopped:
         click.echo("Stopping Docker containers...")
         _services_stop(get_gobby_home())
 
-    sys.exit(0 if success else 1)
+    return bool(success)
+
+
+@click.command()
+@click.option(
+    "--docker",
+    "docker_flag",
+    is_flag=True,
+    help="Also stop Docker service containers (Qdrant, Neo4j)",
+)
+@click.pass_context
+def stop(ctx: click.Context, docker_flag: bool) -> None:
+    """Stop the Gobby daemon."""
+    sys.exit(0 if _do_stop(ctx, docker_flag) else 1)
 
 
 @click.command()
@@ -605,14 +635,11 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
     """Restart the Gobby daemon (stop then start)."""
     setup_logging(verbose)
 
-    try:
-        ctx.invoke(stop, docker_flag=docker_flag)
-    except SystemExit as exc:
-        code = exc.code
-        if code not in (None, 0):
-            sys.exit(code if isinstance(code, int) else 1)
+    if not _do_stop(ctx, docker_flag, shutdown_intent="restart"):
+        sys.exit(1)
 
     ctx.invoke(start, verbose=verbose, no_ui=no_ui, docker_flag=docker_flag)
+    ctx.invoke(status)
 
 
 @click.command()

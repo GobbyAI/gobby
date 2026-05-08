@@ -7,6 +7,7 @@ import pytest
 
 from gobby.utils.native_bin import (
     local_native_bin_path,
+    native_bin_dir,
     native_bin_name,
     resolve_native_bin,
     resolve_native_bin_or_default,
@@ -35,6 +36,11 @@ def test_local_native_bin_path_prefers_gobby_home(temp_dir: Path) -> None:
         assert local_native_bin_path("ghook") == (
             temp_dir / ".gobby" / "bin" / native_bin_name("ghook")
         )
+
+
+def test_native_bin_dir_uses_gobby_home(temp_dir: Path) -> None:
+    with patch.object(Path, "home", return_value=temp_dir):
+        assert native_bin_dir() == temp_dir / ".gobby" / "bin"
 
 
 def test_resolve_native_bin_prefers_local_binary(temp_dir: Path) -> None:

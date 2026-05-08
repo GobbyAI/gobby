@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.voice.text_normalizer import normalize_tts_text
+
 logger = logging.getLogger(__name__)
 
 _WARMUP_IDLE = "idle"
@@ -68,13 +70,14 @@ class TTSPipeline:
         tts: TTSProvider,
         conversation_id: str,
         clients: dict[Any, dict[str, Any]],
+        max_chunk_chars: int = 180,
     ) -> None:
         from gobby.voice.sentence_buffer import SentenceBuffer
 
         self.tts = tts
         self.conversation_id = conversation_id
         self.clients = clients
-        self.sentence_buffer = SentenceBuffer()
+        self.sentence_buffer = SentenceBuffer(max_chunk_chars=max_chunk_chars)
         self._chunk_index = 0
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._flush_called = False
@@ -100,8 +103,7 @@ class TTSPipeline:
         if self._flush_called:
             return
         self._flush_called = True
-        remaining = self.sentence_buffer.flush()
-        if remaining:
+        for remaining in self.sentence_buffer.flush():
             await self._queue.put(remaining)
         await self._queue.join()
         # Send sentinel so the worker task exits cleanly instead of
@@ -140,8 +142,12 @@ class TTSPipeline:
 
     async def _synthesize_and_send(self, text: str) -> None:
         """Synthesize a sentence and send audio chunks to all conversation clients."""
+        spoken_text = normalize_tts_text(text)
+        if not spoken_text:
+            return
+
         try:
-            async for pcm_bytes, sample_rate in self.tts.synthesize_stream(text):
+            async for pcm_bytes, sample_rate in self.tts.synthesize_stream(spoken_text):
                 # Send metadata frame (JSON)
                 meta = json.dumps(
                     {
@@ -507,13 +513,21 @@ class VoiceMixin:
         tts = self._get_tts()
         if not tts:
             return None
+        voice_config = self._get_voice_config()
+        if voice_config is None:
+            return None
 
         # Cancel existing pipeline if any
         existing = self._active_tts_pipelines.pop(conversation_id, None)
         if existing:
             asyncio.create_task(existing.cancel())
 
-        pipeline = TTSPipeline(tts, conversation_id, self.clients)
+        pipeline = TTSPipeline(
+            tts,
+            conversation_id,
+            self.clients,
+            max_chunk_chars=voice_config.tts_clause_max_chars,
+        )
         self._active_tts_pipelines[conversation_id] = pipeline
         return pipeline
 

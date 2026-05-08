@@ -95,7 +95,7 @@ def register_lifecycle_routes(
                     detail="Required: session_ids (list) and target_project_id",
                 )
 
-            moved = 0
+            moved_ids: list[str] = []
             errors = []
             with server.session_manager.db.transaction():
                 for sid in session_ids:
@@ -108,13 +108,16 @@ def register_lifecycle_routes(
                             "UPDATE sessions SET project_id = ?, updated_at = datetime('now') WHERE id = ?",
                             (target_project_id, sid),
                         )
-                        moved += 1
+                        moved_ids.append(sid)
                     except Exception as e:
                         errors.append(f"Failed to move {sid}: {e}")
 
+            for sid in moved_ids:
+                await broadcast_session("session_updated", sid)
+
             return {
                 "status": "success",
-                "moved": moved,
+                "moved": len(moved_ids),
                 "errors": errors,
                 "total": len(session_ids),
             }
@@ -299,8 +302,6 @@ def register_lifecycle_routes(
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
-            await broadcast_session("session_updated", session_id)
-
             return {"session": session.to_dict()}
 
         except HTTPException:
@@ -332,7 +333,6 @@ def register_lifecycle_routes(
             from gobby.servers.routes.sessions.statusline_activity import clear_trackers
 
             clear_trackers(session_id)
-            await broadcast_session("session_expired", session_id)
 
             return {
                 "status": "expired",

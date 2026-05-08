@@ -1,11 +1,11 @@
 """Tests for the communications polling manager."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.communications.polling import PollingManager
+from tests._timing import drain_asyncio_tasks, wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -51,8 +51,7 @@ async def test_stop_polling_cancels_task(polling_manager, mock_adapter):
     task = polling_manager._tasks["test-channel"]
     polling_manager.stop_polling("test-channel")
 
-    # Allow event loop to process cancellation
-    await asyncio.sleep(0)
+    await drain_asyncio_tasks()
 
     assert not polling_manager.is_polling("test-channel")
     assert "test-channel" not in polling_manager._tasks
@@ -91,8 +90,10 @@ async def test_poll_loop_calls_adapter(polling_manager, mock_adapter, mock_manag
 
     polling_manager.start_polling("test-channel", mock_adapter, interval=0)
 
-    # Allow event loop to run briefly
-    await asyncio.sleep(0.01)
+    await wait_for_async_condition(
+        lambda: mock_manager.handle_inbound_messages.called,
+        description="inbound message handling",
+    )
 
     polling_manager.stop_all()
 
@@ -120,8 +121,10 @@ async def test_poll_loop_error_handling(polling_manager, mock_adapter, mock_mana
     # Start polling — backoff after error is 5s, so task will be in backoff sleep
     polling_manager.start_polling("test-channel", mock_adapter, interval=0)
 
-    # Allow event loop to process the first (erroring) poll
-    await asyncio.sleep(0.05)
+    await wait_for_async_condition(
+        lambda: mock_adapter.poll.call_count >= 1,
+        description="first poll attempt",
+    )
 
     # Task should still be running despite the error
     assert polling_manager.is_polling("test-channel")

@@ -1,72 +1,62 @@
 // Shared badge components for the task system.
 // Reusable across TasksPage, TaskDetail, Kanban cards, etc.
 
+import './task-execution.css'
+
 import type { TaskStateLike } from '../../lib/taskState'
 import {
-  getTaskBucket,
+  getTaskDisplayState,
   getTaskStateSummary,
   getTaskStateTokens,
-  TASK_BUCKET_BG,
-  TASK_BUCKET_COLORS,
-  TASK_BUCKET_LABELS,
-  TASK_BUCKET_ORDER,
-  type TaskBucket,
+  TASK_STATE_COLORS,
+  TASK_STATE_LABELS,
+  TASK_STATE_ORDER,
+  type TaskDisplayState,
 } from '../../lib/taskState'
+import { ActivityRowStatusDot } from '../activity/ActivityRowStatusDot'
+import { cn } from '../../lib/utils'
 
 // =============================================================================
 // Color maps
 // =============================================================================
 
 const STATUS_COLORS: Record<string, string> = {
-  open: TASK_BUCKET_COLORS.ready,
-  in_progress: "#fb923c",
-  needs_review: "#c084fc",
-  review_approved: "#2dd4bf",
-  closed: "#9ca3af",
-  escalated: "#f87171",
-};
-
-const STATUS_BG: Record<string, string> = {
-  open: TASK_BUCKET_BG.ready,
-  in_progress: "rgba(251, 146, 60, 0.15)",
-  needs_review: "rgba(192, 132, 252, 0.15)",
-  review_approved: "rgba(45, 212, 191, 0.15)",
-  closed: "rgba(156, 163, 175, 0.15)",
-  escalated: "rgba(248, 113, 113, 0.15)",
+  open: TASK_STATE_COLORS.ready,
+  in_progress: "var(--color-warning-foreground)",
+  needs_review: "var(--color-info)",
+  review_approved: "var(--color-review)",
+  closed: "var(--text-muted)",
+  escalated: "var(--color-error)",
 };
 
 const PRIORITY_STYLES: Record<
   number,
   { bg: string; color: string; label: string }
 > = {
-  0: { bg: "rgba(239, 68, 68, 0.15)", color: "#f87171", label: "Critical" },
-  1: { bg: "rgba(245, 158, 11, 0.15)", color: "#fbbf24", label: "High" },
-  2: { bg: "rgba(59, 130, 246, 0.12)", color: "#60a5fa", label: "Medium" },
-  3: { bg: "rgba(34, 197, 94, 0.12)", color: "#4ade80", label: "Low" },
-  4: { bg: "rgba(115, 115, 115, 0.15)", color: "#a3a3a3", label: "Backlog" },
+  0: { bg: "var(--color-error-soft)", color: "var(--color-error)", label: "Critical" },
+  1: { bg: "var(--color-warning-soft)", color: "var(--color-warning-foreground)", label: "High" },
+  2: { bg: "var(--color-info-soft)", color: "var(--color-info)", label: "Medium" },
+  3: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)", label: "Low" },
+  4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)", label: "Backlog" },
 };
 
-const TYPE_STYLES: Record<string, { bg: string; color: string }> = {
-  task: { bg: "rgba(59, 130, 246, 0.12)", color: "#60a5fa" },
-  bug: { bg: "rgba(239, 68, 68, 0.12)", color: "#f87171" },
-  feature: { bg: "rgba(34, 197, 94, 0.12)", color: "#4ade80" },
-  epic: { bg: "rgba(139, 92, 246, 0.12)", color: "#a78bfa" },
-  chore: { bg: "rgba(115, 115, 115, 0.15)", color: "#a3a3a3" },
-};
+const TASK_BADGE_CLS =
+  'inline-flex items-center justify-center h-5 px-1.5 rounded-full text-[length:var(--text-2xs)] font-semibold leading-none whitespace-nowrap'
+const TASK_BADGE_DOT_CLS = 'inline-block w-[7px] h-[7px] rounded-full shrink-0'
+const TASK_BADGE_BLOCKED_CLS =
+  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[length:var(--text-2xs)] font-medium text-[var(--color-error)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]'
+
+function chipToken(value: string | number): string {
+  return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+}
 
 // =============================================================================
 // StatusBadge
 // =============================================================================
 
 export function StatusBadge({ status }: { status: string }) {
-  const color = STATUS_COLORS[status] || "#737373";
-  const bg = STATUS_BG[status] || "rgba(115, 115, 115, 0.12)";
   return (
-    <span
-      className="task-badge task-badge--status"
-      style={{ background: bg, color }}
-    >
-      <span className="task-badge-dot" style={{ backgroundColor: color }} />
+    <span className={cn(TASK_BADGE_CLS, `chip chip--state-${chipToken(status)}`)}>
       {status.replace(/_/g, " ")}
     </span>
   );
@@ -76,24 +66,24 @@ export function StatusBadge({ status }: { status: string }) {
 // StatusDot (minimal dot-only variant)
 // =============================================================================
 
+function displayStateFromStatus(status: string | undefined): TaskDisplayState {
+  if (status === 'open') return 'ready'
+  if (status && TASK_STATE_ORDER.includes(status as TaskDisplayState)) {
+    return status as TaskDisplayState
+  }
+  return 'ready'
+}
+
 export function StatusDot({ status, task }: { status?: string; task?: TaskStateLike }) {
-  const isBucketStatus = Boolean(status && TASK_BUCKET_ORDER.includes(status as TaskBucket))
-  const bucket = task
-    ? getTaskBucket(task)
-    : isBucketStatus
-      ? status as TaskBucket
-      : getTaskBucket({ status })
+  const displayState = task ? getTaskDisplayState(task) : displayStateFromStatus(status)
   const label = task
     ? getTaskStateSummary(task)
-    : isBucketStatus
-      ? TASK_BUCKET_LABELS[status as TaskBucket]
-      : (status ?? 'unknown').replace(/_/g, ' ')
+    : TASK_STATE_LABELS[displayState]
   return (
-    <span
-      className="task-badge-dot task-badge-dot--standalone"
-      style={{ backgroundColor: TASK_BUCKET_COLORS[bucket] || "#737373" }}
+    <ActivityRowStatusDot
+      color={TASK_STATE_COLORS[displayState] || "var(--text-muted)"}
+      label={`Status: ${label}`}
       title={label}
-      aria-label={`Status: ${label}`}
     />
   );
 }
@@ -110,10 +100,8 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
       {tokens.map(token => (
         <span
           key={token.key}
-          className="task-badge task-badge--status"
-          style={{ background: token.background, color: token.color }}
+          className={cn(TASK_BADGE_CLS, `chip chip--state-${chipToken(token.key)}`)}
         >
-          <span className="task-badge-dot" style={{ backgroundColor: token.color }} />
           {token.label}
         </span>
       ))}
@@ -126,12 +114,10 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
 // =============================================================================
 
 export function PriorityBadge({ priority }: { priority: number }) {
-  const style = PRIORITY_STYLES[priority] || PRIORITY_STYLES[2];
+  const normalizedPriority = priority in PRIORITY_STYLES ? priority : 2;
+  const style = PRIORITY_STYLES[normalizedPriority];
   return (
-    <span
-      className="task-badge task-badge--priority"
-      style={{ background: style.bg, color: style.color }}
-    >
+    <span className={cn(TASK_BADGE_CLS, `chip chip--priority-${chipToken(normalizedPriority)}`)}>
       {style.label}
     </span>
   );
@@ -142,12 +128,8 @@ export function PriorityBadge({ priority }: { priority: number }) {
 // =============================================================================
 
 export function TypeBadge({ type }: { type: string }) {
-  const style = TYPE_STYLES[type] || TYPE_STYLES.task;
   return (
-    <span
-      className="task-badge task-badge--type"
-      style={{ background: style.bg, color: style.color }}
-    >
+    <span className={cn(TASK_BADGE_CLS, `chip chip--type-${chipToken(type)}`)}>
       {type}
     </span>
   );
@@ -178,7 +160,7 @@ function LockIcon() {
 export function BlockedIndicator({ count }: { count?: number }) {
   return (
     <span
-      className="task-badge task-badge--blocked"
+      className={TASK_BADGE_BLOCKED_CLS}
       title={`Blocked by ${count ?? "?"} task(s)`}
       aria-label={`Blocked by ${count ?? "unknown"} task(s)`}
     >
@@ -192,4 +174,10 @@ export function BlockedIndicator({ count }: { count?: number }) {
 // Re-export color constants for use in other components
 // =============================================================================
 
-export { STATUS_COLORS, PRIORITY_STYLES, TYPE_STYLES };
+export {
+  STATUS_COLORS,
+  PRIORITY_STYLES,
+  TASK_BADGE_BLOCKED_CLS,
+  TASK_BADGE_CLS,
+  TASK_BADGE_DOT_CLS,
+};

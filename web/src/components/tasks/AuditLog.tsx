@@ -4,11 +4,12 @@ import { useNow } from '../../hooks/useNow'
 import { StatusDot } from './TaskBadges'
 import { RiskBadge } from './RiskBadges'
 import { classifyTaskRisk } from './riskUtils'
-import { getCanonicalTaskState, getTaskBucket, getTaskStateSummary, type TaskBucket } from '../../lib/taskState'
-
-// =============================================================================
-// Types
-// =============================================================================
+import {
+  getCanonicalTaskState,
+  getTaskDisplayState,
+  getTaskStateSummary,
+  type TaskDisplayState,
+} from '../../lib/taskState'
 
 interface AuditEntry {
   timestamp: string
@@ -18,24 +19,46 @@ interface AuditEntry {
   targetId: string
   result: string
   riskLevel: 'critical' | 'high' | 'medium' | 'low' | 'none'
-  status: TaskBucket
+  status: TaskDisplayState
 }
 
 type ActionFilter = 'all' | 'created' | 'closed' | 'status_change' | 'high_risk'
 type TimeFilter = 'all' | '1h' | '24h' | '7d'
 
-// =============================================================================
-// Derive audit entries from tasks
-// =============================================================================
+const ROOT_CLS = 'flex flex-1 flex-col overflow-hidden'
+const FILTERS_CLS =
+  'flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--border)] px-3 py-2'
+const FILTER_GROUP_CLS = 'flex items-center gap-1'
+const FILTER_LABEL_CLS = 'mr-[0.15rem] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const FILTER_BTN_CLS =
+  'cursor-pointer rounded-[0.2rem] border border-[var(--border)] bg-[var(--bg-primary)] px-[0.4rem] py-[0.15rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+const FILTER_BTN_ACTIVE_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent)]'
+const COUNT_CLS = 'ml-auto font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const ENTRIES_CLS = 'flex-1 overflow-y-auto py-1'
+const EMPTY_CLS =
+  'p-8 text-center text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
+const ENTRY_CLS =
+  'flex w-full cursor-pointer items-center gap-[0.4rem] border-0 border-b border-[var(--border)] bg-transparent px-3 py-[0.35rem] text-left font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+const ENTRY_FAILURE_CLS =
+  'bg-[color-mix(in_srgb,var(--color-error)_4%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)]'
+const ENTRY_TIME_CLS =
+  'min-w-[5.5rem] shrink-0 font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
+const ENTRY_ICON_CLS =
+  'w-4 shrink-0 text-center text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const ENTRY_ACTION_CLS =
+  'min-w-[5.5rem] shrink-0 text-[length:calc(var(--font-size-base)*0.7)] font-semibold text-[var(--text-secondary)]'
+const ENTRY_TARGET_CLS = 'min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap'
+const ENTRY_ACTOR_CLS =
+  'shrink-0 font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
 
 function deriveAuditEntries(tasks: GobbyTask[]): AuditEntry[] {
   const entries: AuditEntry[] = []
 
   for (const task of tasks) {
     const risk = classifyTaskRisk(task.title, task.task_type)
-    const bucket = getTaskBucket(task)
+    const displayState = getTaskDisplayState(task)
 
-    // Task created
     entries.push({
       timestamp: task.created_at,
       action: 'created',
@@ -44,32 +67,27 @@ function deriveAuditEntries(tasks: GobbyTask[]): AuditEntry[] {
       targetId: task.id,
       result: 'success',
       riskLevel: risk,
-      status: bucket,
+      status: displayState,
     })
 
-    if (bucket !== 'ready') {
+    if (displayState !== 'ready') {
       entries.push({
         timestamp: task.updated_at,
-        action: bucket === 'closed' ? 'closed' : 'status_change',
+        action: displayState === 'closed' ? 'closed' : 'status_change',
         actor: getCanonicalTaskState(task).owner_session_id || 'system',
         target: `${task.ref} → ${getTaskStateSummary(task)}`,
         targetId: task.id,
-        result: bucket === 'blocked' ? 'failure' : 'success',
+        result: displayState === 'blocked' ? 'failure' : 'success',
         riskLevel: risk,
-        status: bucket,
+        status: displayState,
       })
     }
   }
 
-  // Sort by timestamp descending (most recent first)
   entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 
   return entries
 }
-
-// =============================================================================
-// Helpers
-// =============================================================================
 
 function formatTimestamp(iso: string): string {
   const d = new Date(iso)
@@ -107,10 +125,6 @@ const ACTION_LABELS: Record<string, string> = {
   status_change: 'Status Changed',
 }
 
-// =============================================================================
-// AuditLog
-// =============================================================================
-
 interface AuditLogProps {
   tasks: GobbyTask[]
   onSelectTask: (id: string) => void
@@ -127,10 +141,8 @@ export function AuditLog({ tasks, onSelectTask }: AuditLogProps) {
     const cutoff = now - timeFilterMs(timeFilter)
 
     return allEntries.filter(entry => {
-      // Time filter
       if (timeFilter !== 'all' && new Date(entry.timestamp).getTime() < cutoff) return false
 
-      // Action filter
       if (actionFilter === 'high_risk') {
         return entry.riskLevel === 'critical' || entry.riskLevel === 'high'
       }
@@ -141,55 +153,53 @@ export function AuditLog({ tasks, onSelectTask }: AuditLogProps) {
   }, [allEntries, actionFilter, timeFilter, now])
 
   return (
-    <div className="audit-log">
-      {/* Filter bar */}
-      <div className="audit-log-filters">
-        <div className="audit-log-filter-group">
-          <span className="audit-log-filter-label">Action:</span>
+    <div className={ROOT_CLS}>
+      <div className={FILTERS_CLS}>
+        <div className={FILTER_GROUP_CLS}>
+          <span className={FILTER_LABEL_CLS}>Action:</span>
           {(['all', 'created', 'closed', 'status_change', 'high_risk'] as const).map(f => (
             <button
               key={f}
-              className={`audit-log-filter-btn ${actionFilter === f ? 'active' : ''}`}
+              className={actionFilter === f ? `${FILTER_BTN_CLS} ${FILTER_BTN_ACTIVE_CLS}` : FILTER_BTN_CLS}
               onClick={() => setActionFilter(f)}
             >
               {f === 'all' ? 'All' : f === 'high_risk' ? 'High Risk' : ACTION_LABELS[f] || f}
             </button>
           ))}
         </div>
-        <div className="audit-log-filter-group">
-          <span className="audit-log-filter-label">Time:</span>
+        <div className={FILTER_GROUP_CLS}>
+          <span className={FILTER_LABEL_CLS}>Time:</span>
           {(['all', '1h', '24h', '7d'] as const).map(f => (
             <button
               key={f}
-              className={`audit-log-filter-btn ${timeFilter === f ? 'active' : ''}`}
+              className={timeFilter === f ? `${FILTER_BTN_CLS} ${FILTER_BTN_ACTIVE_CLS}` : FILTER_BTN_CLS}
               onClick={() => setTimeFilter(f)}
             >
               {f === 'all' ? 'All time' : f}
             </button>
           ))}
         </div>
-        <span className="audit-log-count">{filtered.length} entries</span>
+        <span className={COUNT_CLS}>{filtered.length} entries</span>
       </div>
 
-      {/* Log entries */}
-      <div className="audit-log-entries">
+      <div className={ENTRIES_CLS}>
         {filtered.length === 0 ? (
-          <div className="audit-log-empty">No audit entries match filters</div>
+          <div className={EMPTY_CLS}>No audit entries match filters</div>
         ) : (
           filtered.map((entry, i) => (
             <button
               key={`${entry.targetId}-${entry.action}-${i}`}
-              className={`audit-log-entry ${entry.result === 'failure' ? 'audit-log-entry--failure' : ''}`}
+              className={entry.result === 'failure' ? `${ENTRY_CLS} ${ENTRY_FAILURE_CLS}` : ENTRY_CLS}
               onClick={() => onSelectTask(entry.targetId)}
             >
-              <span className="audit-log-entry-time">{formatTimestamp(entry.timestamp)}</span>
-              <span className="audit-log-entry-icon">{ACTION_ICONS[entry.action] || '•'}</span>
+              <span className={ENTRY_TIME_CLS}>{formatTimestamp(entry.timestamp)}</span>
+              <span className={ENTRY_ICON_CLS}>{ACTION_ICONS[entry.action] || '•'}</span>
               <StatusDot status={entry.status} />
-              <span className="audit-log-entry-action">{ACTION_LABELS[entry.action] || entry.action}</span>
-              <span className="audit-log-entry-target">{entry.target}</span>
+              <span className={ENTRY_ACTION_CLS}>{ACTION_LABELS[entry.action] || entry.action}</span>
+              <span className={ENTRY_TARGET_CLS}>{entry.target}</span>
               <RiskBadge level={entry.riskLevel} compact />
-              <span className="audit-log-entry-actor" title={entry.actor}>
-                {entry.actor === 'system' ? 'system' : entry.actor.length > 8 ? entry.actor.slice(0, 8) + '\u2026' : entry.actor}
+              <span className={ENTRY_ACTOR_CLS} title={entry.actor}>
+                {entry.actor === 'system' ? 'system' : entry.actor.length > 8 ? entry.actor.slice(0, 8) + '…' : entry.actor}
               </span>
             </button>
           ))

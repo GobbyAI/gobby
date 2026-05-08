@@ -10,15 +10,11 @@ This module contains:
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Literal
 
-from gobby.tasks.state_semantics import (
-    TaskLifecycleStage,
-    get_pre_escalation_status,
-    lifecycle_stage_from_status,
-    project_legacy_status,
-    serialize_task_state,
-)
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES as TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.state_semantics import serialize_task_state
 
 # Priority name to numeric value mapping
 PRIORITY_MAP = {"backlog": 4, "low": 3, "medium": 2, "high": 1, "critical": 0}
@@ -36,6 +32,57 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
         "manual",  # Manual functional testing (observe output)
     }
 )
+
+# Valid task types exposed across storage, CLI, HTTP, and MCP creation surfaces.
+TASK_TYPE_CHOICES: tuple[str, ...] = (
+    "task",
+    "bug",
+    "feature",
+    "epic",
+    "chore",
+    "refactor",
+    "simple_fix",
+    "research_spike",
+    "architecture_doc",
+    "prd_doc",
+    "review_anchor",
+)
+VALID_TASK_TYPES: frozenset[str] = frozenset(TASK_TYPE_CHOICES)
+TASK_TYPE_ALIASES: dict[str, str] = {
+    "docs": "chore",
+    "fix": "simple_fix",
+    "nit": "simple_fix",
+    "performance": "task",
+    "research": "research_spike",
+    "test": "task",
+}
+
+
+def validate_task_type(task_type: str | None) -> str:
+    """Validate and normalize a task type value."""
+    if task_type is None:
+        raise ValueError("task_type is required")
+    if not isinstance(task_type, str):
+        raise ValueError("task_type must be a string")
+    raw = task_type.lower().strip()
+    normalized = TASK_TYPE_ALIASES.get(raw, raw)
+    if normalized not in VALID_TASK_TYPES:
+        allowed = ", ".join(TASK_TYPE_CHOICES)
+        raise ValueError(f"Invalid task_type '{task_type}'. Expected one of: {allowed}.")
+    return normalized
+
+
+def task_type_filter_values(task_type: str) -> tuple[str, ...]:
+    """Return canonical and legacy storage values for a task type filter."""
+    canonical = validate_task_type(task_type)
+    aliases = tuple(alias for alias, target in TASK_TYPE_ALIASES.items() if target == canonical)
+    return (canonical, *aliases)
+
+
+class Isolation(StrEnum):
+    none = "none"
+    worktree = "worktree"
+    clone = "clone"
 
 
 class UnsetType:
@@ -100,6 +147,21 @@ class TaskNotFoundError(Exception):
     pass
 
 
+class TaskClosedError(ValueError):
+    """Raised when a task operation is blocked by a closed task."""
+
+    pass
+
+
+class TaskAlreadyClaimedError(ValueError):
+    """Raised when a task is already claimed by another session."""
+
+    def __init__(self, task_id: str, claimed_by: str) -> None:
+        self.task_id = task_id
+        self.claimed_by = claimed_by
+        super().__init__(f"Task {task_id} is already claimed by session '{claimed_by}'")
+
+
 class TaskHasChildrenError(ValueError):
     """Raised when deleting a task that has children without cascade."""
 
@@ -117,16 +179,10 @@ class Task:
     id: str
     project_id: str
     title: str
-    status: Literal[
-        "open",
-        "in_progress",
-        "needs_review",
-        "review_approved",
-        "closed",
-        "escalated",
-    ]
     priority: int
-    task_type: str  # bug, feature, task, epic, chore, refactor
+    # task, bug, feature, epic, chore, refactor, simple_fix, research_spike,
+    # architecture_doc, prd_doc, review_anchor
+    task_type: str
     created_at: str
     updated_at: str
     # Optional fields
@@ -134,7 +190,6 @@ class Task:
     parent_task_id: str | None = None
     created_in_session_id: str | None = None
     claimed_by_session_id: str | None = None
-    lifecycle_stage: TaskLifecycleStage | None = None
     closed_in_session_id: str | None = None
     closed_commit_sha: str | None = None
     closed_at: str | None = None
@@ -153,6 +208,7 @@ class Task:
     # Escalation fields
     escalated_at: str | None = None
     escalation_reason: str | None = None
+    is_escalated: bool = False
     # GitHub integration fields
     github_issue_number: int | None = None
     github_pr_number: int | None = None
@@ -166,14 +222,24 @@ class Task:
     # Scheduling fields (Gantt chart)
     start_date: str | None = None
     due_date: str | None = None
+    # Automation dispatch fields
+    allow_automation: bool = False
+    unattended: bool = False
+    isolation: Isolation = Isolation.worktree
+    assigned_agent: str | None = None
+    additional_skills: list[str] | None = None
     # Dependency fields (populated on demand, not stored in tasks table)
     blocked_by: set[str] = field(default_factory=set)
     active_blocked_by: set[str] = field(default_factory=set)
+    # Stage manifest rows (populated on demand, not stored in tasks table)
+    stages: tuple[Any, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        """Fill canonical lifecycle stage for manually constructed legacy-style tasks."""
-        if self.lifecycle_stage is None:
-            self.lifecycle_stage = lifecycle_stage_from_status(self.status)
+        """Normalize enum-backed fields for manually constructed tasks."""
+        self.task_type = validate_task_type(self.task_type)
+        self.isolation = Isolation(self.isolation)
+        if self.escalated_at and not self.closed_at:
+            self.is_escalated = True
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
@@ -185,23 +251,11 @@ class Task:
         keys = row.keys()
         closed_at = row["closed_at"] if "closed_at" in keys else None
         escalated_at = row["escalated_at"] if "escalated_at" in keys else None
-        lifecycle_stage = (
-            row["lifecycle_stage"]
-            if "lifecycle_stage" in keys
-            else lifecycle_stage_from_status(row["status"])
-        )
-        projected_status = project_legacy_status(
-            lifecycle_stage=lifecycle_stage,
-            closed_at=closed_at,
-            escalated_at=escalated_at,
-            legacy_status=row["status"],
-        )
-
+        is_escalated = bool(row["is_escalated"]) if "is_escalated" in keys else bool(escalated_at)
         return cls(
             id=row["id"],
             project_id=row["project_id"],
             title=row["title"],
-            status=projected_status,
             priority=normalize_priority(row["priority"]),
             task_type=row["task_type"],
             created_at=row["created_at"],
@@ -218,7 +272,6 @@ class Task:
             claimed_by_session_id=(
                 row["claimed_by_session_id"] if "claimed_by_session_id" in keys else None
             ),
-            lifecycle_stage=lifecycle_stage,
             closed_in_session_id=(
                 row["closed_in_session_id"] if "closed_in_session_id" in keys else None
             ),
@@ -247,6 +300,7 @@ class Task:
             commits=json.loads(row["commits"]) if "commits" in keys and row["commits"] else None,
             escalated_at=escalated_at,
             escalation_reason=row["escalation_reason"] if "escalation_reason" in keys else None,
+            is_escalated=is_escalated,
             github_issue_number=(
                 row["github_issue_number"] if "github_issue_number" in keys else None
             ),
@@ -258,6 +312,19 @@ class Task:
             path_cache=row["path_cache"] if "path_cache" in keys else None,
             start_date=row["start_date"] if "start_date" in keys else None,
             due_date=row["due_date"] if "due_date" in keys else None,
+            allow_automation=bool(row["allow_automation"]) if "allow_automation" in keys else False,
+            unattended=bool(row["unattended"]) if "unattended" in keys else False,
+            isolation=(
+                Isolation(row["isolation"])
+                if "isolation" in keys and row["isolation"] is not None
+                else Isolation.worktree
+            ),
+            assigned_agent=row["assigned_agent"] if "assigned_agent" in keys else None,
+            additional_skills=(
+                json.loads(row["additional_skills"])
+                if "additional_skills" in keys and row["additional_skills"]
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -268,11 +335,6 @@ class Task:
             "project_id": self.project_id,
             "title": self.title,
             "state": state,
-            "compat": {
-                "status": self.status,
-                "assignee": self.assignee,
-            },
-            "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,
             "created_at": self.created_at,
@@ -281,7 +343,6 @@ class Task:
             "parent_task_id": self.parent_task_id,
             "created_in_session_id": self.created_in_session_id,
             "claimed_by_session_id": self.claimed_by_session_id,
-            "lifecycle_stage": self.lifecycle_stage,
             "closed_in_session_id": self.closed_in_session_id,
             "closed_commit_sha": self.closed_commit_sha,
             "closed_at": self.closed_at,
@@ -298,7 +359,7 @@ class Task:
             "commits": self.commits,
             "escalated_at": self.escalated_at,
             "escalation_reason": self.escalation_reason,
-            "pre_escalation_status": get_pre_escalation_status(self),
+            "is_escalated": self.is_escalated,
             "github_issue_number": self.github_issue_number,
             "github_pr_number": self.github_pr_number,
             "github_repo": self.github_repo,
@@ -308,6 +369,11 @@ class Task:
             "path_cache": self.path_cache,
             "start_date": self.start_date,
             "due_date": self.due_date,
+            "allow_automation": self.allow_automation,
+            "unattended": self.unattended,
+            "isolation": self.isolation,
+            "assigned_agent": self.assigned_agent,
+            "additional_skills": self.additional_skills,
             "id": self.id,  # UUID at end for backwards compat
         }
 
@@ -326,11 +392,6 @@ class Task:
             "ref": f"#{self.seq_num}" if self.seq_num else self.id[:8],
             "title": self.title,
             "state": state,
-            "compat": {
-                "status": self.status,
-                "assignee": self.assignee,
-            },
-            "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,
             "parent_task_id": self.parent_task_id,
@@ -340,18 +401,22 @@ class Task:
             "path_cache": self.path_cache,
             "assignee": self.assignee,
             "claimed_by_session_id": self.claimed_by_session_id,
-            "lifecycle_stage": self.lifecycle_stage,
             "category": self.category,
             "closed_at": self.closed_at,
             "closed_in_session_id": self.closed_in_session_id,
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
             "escalated_at": self.escalated_at,
-            "pre_escalation_status": get_pre_escalation_status(self),
+            "is_escalated": self.is_escalated,
             "start_date": self.start_date,
             "due_date": self.due_date,
             "github_issue_number": self.github_issue_number,
             "github_repo": self.github_repo,
             "github_pr_number": self.github_pr_number,
+            "allow_automation": self.allow_automation,
+            "unattended": self.unattended,
+            "isolation": self.isolation,
+            "assigned_agent": self.assigned_agent,
+            "additional_skills": self.additional_skills,
             "id": self.id,  # UUID at end for backwards compat
         }

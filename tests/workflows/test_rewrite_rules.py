@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(tmp_path: Path) -> LocalDatabase:
     db_path = tmp_path / "test_rewrite.db"
     database = LocalDatabase(db_path)
     run_migrations(database)
@@ -67,6 +68,34 @@ def _insert_rule(
 def _sync_bundled_rules(db: LocalDatabase) -> None:
     """Sync the real bundled rule set into the test database."""
     sync_bundled_rules(db, get_bundled_rules_path())
+
+
+def _load_bundled_rule(
+    manager: LocalWorkflowDefinitionManager,
+    rule_name: str,
+) -> str:
+    """Load one bundled rule by name, exercising the production YAML `when:` clause.
+
+    Walks the bundled rules tree, finds the rule, and inserts it directly so the
+    test isolates the rule under test from sibling rules' preconditions.
+    """
+    import yaml
+
+    rules_path = get_bundled_rules_path()
+    for yaml_file in sorted(rules_path.rglob("*.yaml")):
+        if "deprecated" in yaml_file.relative_to(rules_path).parts:
+            continue
+        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            continue
+        rules = data.get("rules") or {}
+        if rule_name not in rules:
+            continue
+        body = RuleDefinitionBody.model_validate(rules[rule_name])
+        priority = rules[rule_name].get("priority", 100)
+        enabled = rules[rule_name].get("enabled", True)
+        return _insert_rule(manager, rule_name, body, priority=priority, enabled=enabled)
+    raise AssertionError(f"Bundled rule {rule_name!r} not found under {rules_path}")
 
 
 class TestMCPRewriteNesting:
@@ -196,33 +225,11 @@ class TestStripSkipValidation:
     async def test_strips_skip_validation_with_commits(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        _insert_rule(
-            manager,
-            "strip-skip-validation-with-commit",
-            RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
-                when=(
-                    "tool_input.get('skip_validation') "
-                    "and (variables.get('task_has_commits') or tool_input.get('commit_sha')) "
-                    "and tool_input.get('tool_name') == 'close_task'"
-                ),
-                effects=[
-                    RuleEffect(
-                        type="inject_context",
-                        template="Gobby stripped skip_validation from your close_task call.",
-                    ),
-                    RuleEffect(
-                        type="rewrite_input",
-                        input_updates={"skip_validation": False},
-                        auto_approve=True,
-                    ),
-                ],
-            ),
-        )
+        _load_bundled_rule(manager, "strip-skip-validation-with-commit")
 
         event = _make_event(
             data={
-                "tool_name": "call_tool",
+                "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": "gobby-tasks",
                     "tool_name": "close_task",
@@ -237,9 +244,7 @@ class TestStripSkipValidation:
         )
 
         assert response.decision == "allow"
-        # Should have inject_context
         assert "stripped skip_validation" in (response.context or "")
-        # Should rewrite
         assert response.modified_input is not None
         inner = response.modified_input["arguments"]
         assert inner["skip_validation"] is False
@@ -249,33 +254,11 @@ class TestStripSkipValidation:
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rule should NOT fire when no commits are attached."""
-        _insert_rule(
-            manager,
-            "strip-skip-validation-with-commit",
-            RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
-                when=(
-                    "tool_input.get('skip_validation') "
-                    "and (variables.get('task_has_commits') or tool_input.get('commit_sha')) "
-                    "and tool_input.get('tool_name') == 'close_task'"
-                ),
-                effects=[
-                    RuleEffect(
-                        type="inject_context",
-                        template="Gobby stripped skip_validation.",
-                    ),
-                    RuleEffect(
-                        type="rewrite_input",
-                        input_updates={"skip_validation": False},
-                        auto_approve=True,
-                    ),
-                ],
-            ),
-        )
+        _load_bundled_rule(manager, "strip-skip-validation-with-commit")
 
         event = _make_event(
             data={
-                "tool_name": "call_tool",
+                "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
                     "server_name": "gobby-tasks",
                     "tool_name": "close_task",
@@ -287,6 +270,32 @@ class TestStripSkipValidation:
         engine = RuleEngine(db)
         response = await engine.evaluate(
             event, session_id="sess-1", variables={"task_has_commits": False}
+        )
+
+        assert response.decision == "allow"
+        assert response.modified_input is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_for_other_servers(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Rule must scope to gobby-tasks::close_task, not any close_task lookalike."""
+        _load_bundled_rule(manager, "strip-skip-validation-with-commit")
+
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "some-other-server",
+                    "tool_name": "close_task",
+                    "arguments": {"task_id": "t-1", "skip_validation": True},
+                },
+            }
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(
+            event, session_id="sess-1", variables={"task_has_commits": True}
         )
 
         assert response.decision == "allow"
@@ -483,7 +492,9 @@ class TestCompressBashOutputBundledRule:
     """Bundled compress-bash-output should skip Codex but keep other CLIs."""
 
     @pytest.mark.asyncio
-    async def test_codex_does_not_rewrite_plain_bash(self, db, manager) -> None:
+    async def test_codex_does_not_rewrite_plain_bash(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         _sync_bundled_rules(db)
 
         row = manager.get_by_name("compress-bash-output")
@@ -503,7 +514,7 @@ class TestCompressBashOutputBundledRule:
         assert response.modified_input is None
 
     @pytest.mark.asyncio
-    async def test_claude_still_rewrites_bash_through_gsqz(self, db) -> None:
+    async def test_claude_still_rewrites_bash_through_gsqz(self, db: LocalDatabase) -> None:
         _sync_bundled_rules(db)
 
         event = _make_event(

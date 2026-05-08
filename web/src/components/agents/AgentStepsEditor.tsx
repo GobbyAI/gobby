@@ -1,5 +1,39 @@
 import { useState, useCallback } from 'react'
-import './AgentStepsEditor.css'
+import {
+  AGENT_BTN_CLS,
+  AGENT_BTN_DANGER_CLS,
+  AGENT_EDIT_INPUT_CLS,
+  AGENT_EDIT_TEXTAREA_CLS,
+  AGENT_RULES_ADD_BTN_CLS,
+  AGENT_RULES_EMPTY_CLS,
+  STEP_ACTIONS_CLS,
+  STEP_ADVANCED_FIELDS_CLS,
+  STEP_ADVANCED_TOGGLE_CLS,
+  STEP_CARD_BODY_CLS,
+  STEP_CARD_CLS,
+  STEP_CARD_EXPANDED_CLS,
+  STEP_CARD_HEADER_CLS,
+  STEP_CHEVRON_CLS,
+  STEP_CHIP_ADD_BTN_CLS,
+  STEP_CHIP_ADD_ROW_CLS,
+  STEP_CHIP_CLS,
+  STEP_CHIP_FIELD_CLS,
+  STEP_CHIP_INPUT_CLS,
+  STEP_CHIP_REMOVE_CLS,
+  STEP_CHIPS_CLS,
+  STEP_EDITOR_CLS,
+  STEP_FIELD_CLS,
+  STEP_FIELD_LABEL_CLS,
+  STEP_JSON_EDITOR_CLS,
+  STEP_NAME_BADGE_CLS,
+  STEP_PREVIEW_CLS,
+  STEP_SECTION_CLS,
+  STEP_SECTION_LABEL_CLS,
+  STEP_TOGGLE_SELECT_CLS,
+  STEP_TRANSITION_ROW_CLS,
+  STEP_TRANSITION_TO_CLS,
+  STEP_TRANSITION_WHEN_CLS,
+} from './agents-styles'
 
 // ---------------------------------------------------------------------------
 // Types (mirrors WorkflowStep / WorkflowTransition from definitions.py)
@@ -83,24 +117,24 @@ function ChipInput({ values, onChange, placeholder }: {
   }
 
   return (
-    <div className="step-chip-input">
-      <div className="step-chips">
+    <div className={STEP_CHIP_INPUT_CLS}>
+      <div className={STEP_CHIPS_CLS}>
         {values.map(v => (
-          <span key={v} className="step-chip">
+          <span key={v} className={STEP_CHIP_CLS}>
             {v}
-            <button type="button" className="step-chip-remove" onClick={() => onChange(values.filter(x => x !== v))}>&times;</button>
+            <button type="button" className={STEP_CHIP_REMOVE_CLS} onClick={() => onChange(values.filter(x => x !== v))}>&times;</button>
           </span>
         ))}
       </div>
-      <div className="step-chip-add-row">
+      <div className={STEP_CHIP_ADD_ROW_CLS}>
         <input
-          className="agent-edit-input step-chip-field"
+          className={`${AGENT_EDIT_INPUT_CLS} ${STEP_CHIP_FIELD_CLS}`}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAdd() } }}
           placeholder={placeholder}
         />
-        <button type="button" className="agent-defs-btn step-chip-add-btn" onClick={handleAdd} disabled={!input.trim()}>+</button>
+        <button type="button" className={`${AGENT_BTN_CLS} ${STEP_CHIP_ADD_BTN_CLS}`} onClick={handleAdd} disabled={!input.trim()}>+</button>
       </div>
     </div>
   )
@@ -115,15 +149,15 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
   const isMcpAllowedAll = step.allowed_mcp_tools === 'all'
 
   return (
-    <div className="step-section">
-      <h5 className="step-section-label">Tool Gating</h5>
+    <div className={STEP_SECTION_CLS}>
+      <h5 className={STEP_SECTION_LABEL_CLS}>Tool Gating</h5>
 
       {/* Allowed Tools */}
-      <div className="step-field">
-        <label className="step-field-label">
+      <div className={STEP_FIELD_CLS}>
+        <label className={STEP_FIELD_LABEL_CLS}>
           Allowed Tools
           <select
-            className="agent-edit-input step-toggle-select"
+            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TOGGLE_SELECT_CLS}`}
             value={isAllowedAll ? 'all' : 'list'}
             onChange={e => onChange({ allowed_tools: e.target.value === 'all' ? 'all' : [] })}
           >
@@ -141,8 +175,8 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
       </div>
 
       {/* Blocked Tools */}
-      <div className="step-field">
-        <label className="step-field-label">Blocked Tools</label>
+      <div className={STEP_FIELD_CLS}>
+        <label className={STEP_FIELD_LABEL_CLS}>Blocked Tools</label>
         <ChipInput
           values={step.blocked_tools || []}
           onChange={v => onChange({ blocked_tools: v })}
@@ -151,11 +185,11 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
       </div>
 
       {/* Allowed MCP Tools */}
-      <div className="step-field">
-        <label className="step-field-label">
+      <div className={STEP_FIELD_CLS}>
+        <label className={STEP_FIELD_LABEL_CLS}>
           Allowed MCP Tools
           <select
-            className="agent-edit-input step-toggle-select"
+            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TOGGLE_SELECT_CLS}`}
             value={isMcpAllowedAll ? 'all' : 'list'}
             onChange={e => onChange({ allowed_mcp_tools: e.target.value === 'all' ? 'all' : [] })}
           >
@@ -173,8 +207,8 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
       </div>
 
       {/* Blocked MCP Tools */}
-      <div className="step-field">
-        <label className="step-field-label">Blocked MCP Tools</label>
+      <div className={STEP_FIELD_CLS}>
+        <label className={STEP_FIELD_LABEL_CLS}>Blocked MCP Tools</label>
         <ChipInput
           values={step.blocked_mcp_tools || []}
           onChange={v => onChange({ blocked_mcp_tools: v })}
@@ -211,12 +245,12 @@ function TransitionsSection({ step, onChange, allStepNames }: {
   }
 
   return (
-    <div className="step-section">
-      <h5 className="step-section-label">Transitions</h5>
+    <div className={STEP_SECTION_CLS}>
+      <h5 className={STEP_SECTION_LABEL_CLS}>Transitions</h5>
       {transitions.map((t, idx) => (
-        <div key={idx} className="step-transition-row">
+        <div key={idx} className={STEP_TRANSITION_ROW_CLS}>
           <select
-            className="agent-edit-input step-transition-to"
+            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TRANSITION_TO_CLS}`}
             value={t.to}
             onChange={e => updateTransition(idx, { to: e.target.value })}
           >
@@ -226,15 +260,15 @@ function TransitionsSection({ step, onChange, allStepNames }: {
             ))}
           </select>
           <input
-            className="agent-edit-input step-transition-when"
+            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TRANSITION_WHEN_CLS}`}
             value={t.when}
             onChange={e => updateTransition(idx, { when: e.target.value })}
             placeholder="when expression..."
           />
-          <button type="button" className="step-chip-remove" onClick={() => removeTransition(idx)}>&times;</button>
+          <button type="button" className={STEP_CHIP_REMOVE_CLS} onClick={() => removeTransition(idx)}>&times;</button>
         </div>
       ))}
-      <button type="button" className="agent-defs-btn agent-rules-add-btn" onClick={addTransition}>+ Add Transition</button>
+      <button type="button" className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`} onClick={addTransition}>+ Add Transition</button>
     </div>
   )
 }
@@ -254,20 +288,20 @@ function AdvancedSection({ step, onChange }: { step: WorkflowStep; onChange: (s:
   ]
 
   return (
-    <div className="step-section">
-      <button type="button" className="step-advanced-toggle" onClick={() => setExpanded(!expanded)}>
-        <span className="step-chevron">{expanded ? '\u25BE' : '\u25B8'}</span>
+    <div className={STEP_SECTION_CLS}>
+      <button type="button" className={STEP_ADVANCED_TOGGLE_CLS} onClick={() => setExpanded(!expanded)}>
+        <span className={STEP_CHEVRON_CLS}>{expanded ? '\u25BE' : '\u25B8'}</span>
         Advanced
       </button>
       {expanded && (
-        <div className="step-advanced-fields">
+        <div className={STEP_ADVANCED_FIELDS_CLS}>
           {fields.map(({ key, label }) => {
             const val = step[key] as Record<string, unknown>[] | undefined
             return (
-              <div key={key} className="step-field">
-                <label className="step-field-label">{label}</label>
+              <div key={key} className={STEP_FIELD_CLS}>
+                <label className={STEP_FIELD_LABEL_CLS}>{label}</label>
                 <textarea
-                  className="agent-edit-input agent-edit-textarea step-json-editor"
+                  className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS} ${STEP_JSON_EDITOR_CLS}`}
                   value={val && val.length > 0 ? JSON.stringify(val, null, 2) : ''}
                   onChange={e => {
                     const text = e.target.value.trim()
@@ -328,41 +362,41 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
   }, [steps, onChange])
 
   return (
-    <div className="step-editor">
+    <div className={STEP_EDITOR_CLS}>
       {steps.length === 0 && (
-        <span className="agent-rules-empty">No steps defined</span>
+        <span className={AGENT_RULES_EMPTY_CLS}>No steps defined</span>
       )}
 
       {steps.map((step, idx) => {
         const isExpanded = expandedName === step.name
 
         return (
-          <div className={`step-card${isExpanded ? ' step-card--expanded' : ''}`} key={`${step.name}-${idx}`}>
+          <div className={`${STEP_CARD_CLS}${isExpanded ? ' ' + STEP_CARD_EXPANDED_CLS : ''}`} key={`${step.name}-${idx}`}>
             {/* Header */}
             <div
-              className="step-card-header"
+              className={STEP_CARD_HEADER_CLS}
               onClick={() => setExpandedName(isExpanded ? null : step.name)}
             >
-              <span className="step-name-badge">{step.name}</span>
-              <span className="step-preview">{getStepPreview(step)}</span>
-              <span className="step-chevron">{isExpanded ? '\u25BE' : '\u25B8'}</span>
+              <span className={STEP_NAME_BADGE_CLS}>{step.name}</span>
+              <span className={STEP_PREVIEW_CLS}>{getStepPreview(step)}</span>
+              <span className={STEP_CHEVRON_CLS}>{isExpanded ? '\u25BE' : '\u25B8'}</span>
             </div>
 
             {/* Expanded body */}
             {isExpanded && (
-              <div className="step-card-body">
+              <div className={STEP_CARD_BODY_CLS}>
                 {/* Actions */}
-                <div className="step-actions">
-                  <button type="button" className="agent-defs-btn" onClick={() => moveStep(idx, -1)} disabled={idx === 0} title="Move up">&uarr;</button>
-                  <button type="button" className="agent-defs-btn" onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} title="Move down">&darr;</button>
-                  <button type="button" className="agent-defs-btn agent-defs-btn--danger" onClick={() => deleteStep(idx)}>Delete</button>
+                <div className={STEP_ACTIONS_CLS}>
+                  <button type="button" className={AGENT_BTN_CLS} onClick={() => moveStep(idx, -1)} disabled={idx === 0} title="Move up">&uarr;</button>
+                  <button type="button" className={AGENT_BTN_CLS} onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} title="Move down">&darr;</button>
+                  <button type="button" className={`${AGENT_BTN_CLS} ${AGENT_BTN_DANGER_CLS}`} onClick={() => deleteStep(idx)}>Delete</button>
                 </div>
 
                 {/* Identity */}
-                <div className="step-field">
-                  <label className="step-field-label">Name</label>
+                <div className={STEP_FIELD_CLS}>
+                  <label className={STEP_FIELD_LABEL_CLS}>Name</label>
                   <input
-                    className="agent-edit-input"
+                    className={AGENT_EDIT_INPUT_CLS}
                     value={step.name}
                     onChange={e => {
                       const newName = e.target.value
@@ -371,20 +405,20 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                     }}
                   />
                 </div>
-                <div className="step-field">
-                  <label className="step-field-label">Description</label>
+                <div className={STEP_FIELD_CLS}>
+                  <label className={STEP_FIELD_LABEL_CLS}>Description</label>
                   <textarea
-                    className="agent-edit-input agent-edit-textarea"
+                    className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
                     value={step.description || ''}
                     onChange={e => updateStep(idx, { description: e.target.value || null })}
                     placeholder="What this step does..."
                     rows={2}
                   />
                 </div>
-                <div className="step-field">
-                  <label className="step-field-label">Status Message</label>
+                <div className={STEP_FIELD_CLS}>
+                  <label className={STEP_FIELD_LABEL_CLS}>Status Message</label>
                   <textarea
-                    className="agent-edit-input agent-edit-textarea"
+                    className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
                     value={step.status_message || ''}
                     onChange={e => updateStep(idx, { status_message: e.target.value || null })}
                     placeholder="Shown while step is active..."
@@ -403,10 +437,10 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
                 />
 
                 {/* Exit When */}
-                <div className="step-field">
-                  <label className="step-field-label">Exit When</label>
+                <div className={STEP_FIELD_CLS}>
+                  <label className={STEP_FIELD_LABEL_CLS}>Exit When</label>
                   <input
-                    className="agent-edit-input"
+                    className={AGENT_EDIT_INPUT_CLS}
                     value={step.exit_when || ''}
                     onChange={e => updateStep(idx, { exit_when: e.target.value || null })}
                     placeholder="Expression to auto-exit this step..."
@@ -421,7 +455,7 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
         )
       })}
 
-      <button type="button" className="agent-defs-btn agent-rules-add-btn" onClick={addStep}>+ Add Step</button>
+      <button type="button" className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`} onClick={addStep}>+ Add Step</button>
     </div>
   )
 }

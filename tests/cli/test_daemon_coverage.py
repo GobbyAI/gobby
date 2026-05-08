@@ -31,7 +31,8 @@ def runner() -> CliRunner:
 class TestServicesStart:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         """No compose file → early return, no error."""
-        _services_start(tmp_path)  # Should not raise
+        _services_start(tmp_path)
+        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
@@ -49,6 +50,8 @@ class TestServicesStart:
 
         _services_start(tmp_path)
         mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
@@ -64,7 +67,11 @@ class TestServicesStart:
         mock_config.return_value = cfg
         mock_run.return_value = MagicMock(returncode=1, stderr="err", stdout="")
 
-        _services_start(tmp_path)  # Should not raise
+        _services_start(tmp_path)
+        mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
+        assert mock_run.call_args.kwargs["cwd"] == str(tmp_path / "services")
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
@@ -77,7 +84,11 @@ class TestServicesStart:
 
         mock_config.return_value = MagicMock(memory=MagicMock(neo4j_auth=None))
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=120)
-        _services_start(tmp_path)  # Should not raise
+        result = _services_start(tmp_path)
+        assert result is None
+        mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
 
     @patch("gobby.config.app.load_config")
     def test_config_error(self, mock_config: MagicMock, tmp_path: Path) -> None:
@@ -89,12 +100,15 @@ class TestServicesStart:
         # Should still try to run docker compose even on config error
         with patch("gobby.cli.daemon.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            _services_start(tmp_path)
+            result = _services_start(tmp_path)
+            assert result is None
+            mock_run.assert_called_once()
 
 
 class TestServicesStop:
     def test_no_compose_file(self, tmp_path: Path) -> None:
-        _services_stop(tmp_path)  # no-op
+        _services_stop(tmp_path)
+        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
@@ -104,6 +118,8 @@ class TestServicesStop:
         mock_run.return_value = MagicMock(returncode=0)
         _services_stop(tmp_path)
         mock_run.assert_called_once()
+        assert mock_run.call_count == 1
+        assert mock_run.call_args is not None
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
@@ -111,7 +127,9 @@ class TestServicesStop:
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=60)
-        _services_stop(tmp_path)  # Should not raise
+        result = _services_stop(tmp_path)
+        assert result is None
+        mock_run.assert_called_once()
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_exception(self, mock_run: MagicMock, tmp_path: Path) -> None:
@@ -119,7 +137,9 @@ class TestServicesStop:
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = FileNotFoundError("docker not found")
-        _services_stop(tmp_path)  # Should not raise
+        result = _services_stop(tmp_path)
+        assert result is None
+        mock_run.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +172,8 @@ class TestStopCommand:
         result = runner.invoke(stop, ["--docker"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         mock_services.assert_called_once()
+        assert mock_services.call_count == 1
+        assert mock_services.call_args is not None
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +239,7 @@ class TestStatusCommand:
         config.ui.enabled = False
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Running PID 123" in result.output
 
     @patch("gobby.cli.daemon.format_status_message", return_value="Stale PID")
     @patch("gobby.cli.daemon.os.kill", side_effect=ProcessLookupError)

@@ -1,4 +1,9 @@
-import { getProviderDisplayName, type ProviderModelOption, type ReasoningOption } from '../../lib/providerModels'
+import {
+  formatModelDisplayLabel,
+  getProviderDisplayName,
+  type ProviderModelOption,
+  type ReasoningOption,
+} from '../../lib/providerModels'
 import { SourceIcon } from '../shared/SourceIcon'
 import { BranchIndicator } from './BranchIndicator'
 import { BrainIcon } from './ChatInputIcons'
@@ -12,9 +17,11 @@ import {
 } from './ui/Select'
 
 interface ChatInputModelControlsProps {
+  compact?: boolean
   currentBranch?: string | null
   disabled?: boolean
   effectiveProvider: string
+  hideBranch?: boolean
   modelOptions: ProviderModelOption[]
   onModelSelect: (model: string) => void
   onProviderSelect: (provider: string) => void
@@ -33,9 +40,11 @@ interface ChatInputModelControlsProps {
 }
 
 export function ChatInputModelControls({
+  compact = false,
   currentBranch,
   disabled = false,
   effectiveProvider,
+  hideBranch = false,
   modelOptions,
   onModelSelect,
   onProviderSelect,
@@ -52,6 +61,12 @@ export function ChatInputModelControls({
   worktreePath,
   worktreePickerDisabled = false,
 }: ChatInputModelControlsProps) {
+  const reasoningOnlyDisabled =
+    reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled)
+  const formattedModelLabel = formatModelDisplayLabel(resolvedModelLabel)
+  const displayedModelLabel = compact && formattedModelLabel.length > 15
+    ? `${formattedModelLabel.slice(0, 15)}...`
+    : formattedModelLabel
   return (
     <div className="chat-input-controls">
       <div className="chat-input-model-controls">
@@ -95,7 +110,7 @@ export function ChatInputModelControls({
             title={providerPickerDisabledReason ?? 'Select model'}
           >
             <div className="chat-input-select__value">
-              <span className="chat-input-select__text">{resolvedModelLabel}</span>
+              <span className="chat-input-select__text">{displayedModelLabel}</span>
             </div>
           </SelectTrigger>
           <SelectContent side="top" className="chat-input-select__content">
@@ -103,21 +118,18 @@ export function ChatInputModelControls({
               <SelectLabel className="chat-input-select__label">Model</SelectLabel>
               {modelOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
-                  {option.label}
+                  {formatModelDisplayLabel(option.label)}
                 </SelectItem>
               ))}
             </SelectGroup>
           </SelectContent>
         </Select>
 
+        {!reasoningOnlyDisabled && (
         <Select
           value={resolvedReasoning}
           onValueChange={onReasoningSelect}
-          disabled={
-            selectionDisabled ||
-            (reasoningOptions.length === 1 &&
-              Boolean(reasoningOptions[0]?.disabled))
-          }
+          disabled={selectionDisabled}
         >
           <SelectTrigger
             className="chat-input-select chat-input-select--reasoning !w-auto"
@@ -147,8 +159,9 @@ export function ChatInputModelControls({
             </SelectGroup>
           </SelectContent>
         </Select>
+        )}
 
-        {onWorktreeChange && (
+        {onWorktreeChange && !hideBranch && (
           <BranchIndicator
             currentBranch={currentBranch ?? null}
             worktreePath={worktreePath ?? null}
@@ -156,6 +169,7 @@ export function ChatInputModelControls({
             onWorktreeChange={onWorktreeChange}
             disabled={disabled || worktreePickerDisabled}
             variant="select"
+            compact={compact}
           />
         )}
       </div>

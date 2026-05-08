@@ -207,6 +207,18 @@ class TestResolveRuntimeStdioArgs:
         assert "--executable-path=/tmp/old-chrome" not in args
         assert "--executable-path=/tmp/new-chrome" in args
 
+    @patch(
+        "gobby.mcp_proxy.bundled.resolve_chrome_devtools_executable_path",
+        return_value=None,
+    )
+    def test_does_not_pin_package_version_at_runtime(self, _mock_path: MagicMock) -> None:
+        args = resolve_runtime_stdio_args(
+            "chrome-devtools",
+            ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
+        )
+
+        assert args == ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]
+
 
 # ===========================================================================
 # StdioTransportConnection — init

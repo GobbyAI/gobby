@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import "./ExpressionBuilder.css";
+import { cn } from "../../lib/utils";
 
 const VARIABLES = [
   "tool_name",
@@ -11,6 +11,14 @@ const VARIABLES = [
 ];
 
 const OPERATORS = ["==", "!=", "in", "not in"];
+
+const TOGGLE_BTN_BASE_CLS =
+  'cursor-pointer border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-0.5 text-[length:var(--text-xs)] font-medium text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:px-3'
+const TOGGLE_BTN_ACTIVE_CLS =
+  'bg-[var(--bg-tertiary)] font-semibold text-[var(--text-primary)]'
+
+const FIELD_INPUT_CLS =
+  'min-w-0 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--accent)] focus:[box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent)_20%,transparent)] pointer-coarse:min-h-11'
 
 interface ParsedExpression {
   variable: string;
@@ -150,11 +158,15 @@ export function ExpressionBuilder({ value, onChange }: ExpressionBuilderProps) {
   };
 
   return (
-    <div className="expr-builder">
-      <div className="expr-builder-toggle">
+    <div className="flex flex-col gap-1.5">
+      <div className="flex self-end">
         <button
           type="button"
-          className={`expr-builder-toggle-btn ${mode === "builder" ? "expr-builder-toggle-btn--active" : ""}`}
+          className={cn(
+            TOGGLE_BTN_BASE_CLS,
+            'rounded-l-md',
+            mode === "builder" && TOGGLE_BTN_ACTIVE_CLS,
+          )}
           onClick={() => switchMode("builder")}
           disabled={mode === "raw" && !canBuild}
           aria-pressed={mode === "builder"}
@@ -163,7 +175,11 @@ export function ExpressionBuilder({ value, onChange }: ExpressionBuilderProps) {
         </button>
         <button
           type="button"
-          className={`expr-builder-toggle-btn ${mode === "raw" ? "expr-builder-toggle-btn--active" : ""}`}
+          className={cn(
+            TOGGLE_BTN_BASE_CLS,
+            'rounded-r-md border-l-0',
+            mode === "raw" && TOGGLE_BTN_ACTIVE_CLS,
+          )}
           onClick={() => switchMode("raw")}
           aria-pressed={mode === "raw"}
         >
@@ -172,9 +188,10 @@ export function ExpressionBuilder({ value, onChange }: ExpressionBuilderProps) {
       </div>
 
       {mode === "builder" ? (
-        <div className="expr-builder-row">
+        <div className="flex items-center gap-1.5">
           <select
             aria-label="Select variable"
+            className={cn(FIELD_INPUT_CLS, 'flex-[1_1_40%]')}
             value={variable}
             onChange={(e) =>
               handleBuilderChange(e.target.value, operator, operand)
@@ -192,6 +209,7 @@ export function ExpressionBuilder({ value, onChange }: ExpressionBuilderProps) {
           </select>
           <select
             aria-label="Select operator"
+            className={cn(FIELD_INPUT_CLS, 'flex-[0_0_auto] min-w-[80px]')}
             value={operator}
             onChange={(e) =>
               handleBuilderChange(variable, e.target.value, operand)
@@ -205,6 +223,7 @@ export function ExpressionBuilder({ value, onChange }: ExpressionBuilderProps) {
           </select>
           <input
             aria-label="Operand value"
+            className={cn(FIELD_INPUT_CLS, 'flex-1')}
             value={operand}
             onChange={(e) =>
               handleBuilderChange(variable, operator, e.target.value)
@@ -215,13 +234,13 @@ export function ExpressionBuilder({ value, onChange }: ExpressionBuilderProps) {
       ) : (
         <>
           <input
-            className="rule-edit-input rule-edit-mono"
+            className={cn(FIELD_INPUT_CLS, 'w-full text-[length:var(--text-sm)]')}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder='e.g. tool_name == "Edit"'
           />
           {!canBuild && value.trim() && (
-            <span className="expr-builder-hint">
+            <span className="text-[length:var(--text-xs)] italic text-[var(--text-muted)]">
               Complex expression — edit in raw mode
             </span>
           )}

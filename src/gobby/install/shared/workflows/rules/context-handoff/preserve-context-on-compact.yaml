@@ -6,6 +6,7 @@ rules:
     event: pre_compact
     enabled: true
     priority: 5
+    # Droid uses the normal pre_compact path; only Gemini automatic compaction is skipped.
     when: "event.source.value != 'gemini' or event.data.get('trigger') == 'manual'"
     effects:
       - type: set_variable

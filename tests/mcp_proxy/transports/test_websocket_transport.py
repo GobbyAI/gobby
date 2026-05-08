@@ -159,6 +159,8 @@ class TestWebSocketConnectSuccess:
         await conn.connect()
 
         mock_ws_client.assert_called_once_with("ws://localhost:9090/ws")
+        assert mock_ws_client.call_count == 1
+        assert mock_ws_client.call_args is not None
 
 
 # ===========================================================================

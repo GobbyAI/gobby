@@ -57,7 +57,7 @@ def expand_cmd() -> None:
 @expand_cmd.command("validate-plan")
 @click.argument("plan_file")
 def validate_plan_cmd(plan_file: str) -> None:
-    """Validate a plan file and list detected phases."""
+    """Validate a Plan-Coverage Contract plan file."""
     service = _build_expansion_service()
     plan_path = Path(plan_file)
     if not plan_path.is_absolute():
@@ -132,6 +132,39 @@ def apply_cmd(run_id: str, session_id: str | None, json_output: bool) -> None:
     click.echo(f"Run: {run.id}")
     click.echo(f"Status: {run.status}")
     click.echo(f"Created tasks: {len(run.created_task_ids or [])}")
+
+
+@expand_cmd.command("reset")
+@click.argument("task_ref")
+@click.option("--run-id", default=None, help="Optional expansion run ID to reset.")
+@click.option("--session-id", default=None, help="Optional session ref for audit attribution.")
+@click.option("--json-output", "json_output", is_flag=True, help="Emit JSON.")
+def reset_cmd(
+    task_ref: str,
+    run_id: str | None,
+    session_id: str | None,
+    json_output: bool,
+) -> None:
+    """Delete generated expansion output for a task."""
+    service = _build_expansion_service()
+    task = resolve_task_id(service.task_manager, task_ref)
+    if task is None:
+        raise click.ClickException(f"Task not found: {task_ref}")
+    resolved_session_id = _resolve_cli_session_id(session_id)
+    try:
+        result = service.reset_expansion_output(
+            task.id,
+            run_id=run_id,
+            session_id=resolved_session_id,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if json_output:
+        click.echo(json.dumps(result.to_dict()))
+        return
+    click.echo(f"Task: {task.id}")
+    click.echo(f"Run: {result.run_id or 'none'}")
+    click.echo(f"Deleted tasks: {len(result.deleted_task_ids)}")
 
 
 @expand_cmd.command("status")

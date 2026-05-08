@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -18,10 +17,6 @@ from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.mcp_proxy._call_tool_wrapper import (
-    CallToolWrapperInputError,
-    canonicalize_call_tool_wrapper,
-)
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -32,15 +27,9 @@ logger = logging.getLogger(__name__)
 class CodexHooksAdapter(BaseAdapter):
     """Adapter for Codex CLI hooks.json lifecycle events.
 
-    Translates Codex hooks.json payloads (SessionStart, UserPromptSubmit,
-    PreToolUse, PostToolUse, Stop) to unified HookEvent format and converts
-    HookResponse back to the JSON schema Codex expects on hook stdout.
-
-    Codex hooks.json uses the same input format as Claude Code (same event
-    names, same stdin JSON structure) but expects a different output schema:
-    - No ``continue`` field
-    - ``decision``: ``"approve"`` or ``"block"``
-    - ``hookSpecificOutput.additionalContext`` for context injection
+    Translates Codex hooks.json payloads to unified HookEvent format and
+    converts HookResponse back to the event-specific JSON schema Codex expects
+    on hook stdout.
     """
 
     source = SessionSource.CODEX
@@ -50,56 +39,26 @@ class CodexHooksAdapter(BaseAdapter):
         "SessionStart": HookEventType.SESSION_START,
         "UserPromptSubmit": HookEventType.BEFORE_AGENT,
         "PreToolUse": HookEventType.BEFORE_TOOL,
+        "PermissionRequest": HookEventType.PERMISSION_REQUEST,
         "PostToolUse": HookEventType.AFTER_TOOL,
+        "PreCompact": HookEventType.PRE_COMPACT,
+        "PostCompact": HookEventType.POST_COMPACT,
         "Stop": HookEventType.STOP,
     }
 
-    # Hook events that only accept systemMessage (not additionalContext).
-    # Codex rejects/ignores additionalContext for these event types.
-    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {"PreToolUse", "Stop"}
+    # Hook events where context must be routed through top-level systemMessage.
+    # These schemas do not support hookSpecificOutput.additionalContext.
+    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {
+        "PreToolUse",
+        "PermissionRequest",
+        "PreCompact",
+        "PostCompact",
+        "Stop",
+    }
+    COMPACT_EVENTS: set[str] = {"PreCompact", "PostCompact"}
 
     def __init__(self, hook_manager: HookManager | None = None):
         self._hook_manager = hook_manager
-
-    @staticmethod
-    def _is_wrapper_only_call_tool_rewrite(response: HookResponse) -> bool:
-        modified_input = response.modified_input
-        if not isinstance(modified_input, dict):
-            return False
-
-        normalized_tool_name = response.metadata.get("_normalized_tool_name")
-        if normalized_tool_name not in {
-            "call_tool",
-            "mcp__gobby__call_tool",
-            "mcp_gobby_call_tool",
-        }:
-            return False
-
-        raw_tool_input = response.metadata.get("_raw_tool_input")
-        if not isinstance(raw_tool_input, dict):
-            return False
-
-        try:
-            original_wrapper = canonicalize_call_tool_wrapper(
-                server_name=raw_tool_input.get("server_name"),
-                tool_name=raw_tool_input.get("tool_name"),
-                arguments=raw_tool_input.get("arguments"),
-                args=raw_tool_input.get("args"),
-                session_id=raw_tool_input.get("session_id"),
-                project_id=raw_tool_input.get("project_id"),
-            )
-            rewritten_wrapper = canonicalize_call_tool_wrapper(
-                server_name=modified_input.get("server_name"),
-                tool_name=modified_input.get("tool_name"),
-                arguments=modified_input.get("arguments"),
-                args=modified_input.get("args"),
-                session_id=modified_input.get("session_id"),
-                project_id=modified_input.get("project_id"),
-            )
-        except CallToolWrapperInputError:
-            return False
-
-        return original_wrapper == rewritten_wrapper
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Convert Codex hooks.json payload to HookEvent."""
@@ -134,6 +93,7 @@ class CodexHooksAdapter(BaseAdapter):
         if original_tool_name:
             metadata["original_tool_name"] = original_tool_name
             metadata["normalized_tool_name"] = normalized_data.get("tool_name")
+        self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(
             event_type=event_type,
@@ -160,57 +120,37 @@ class CodexHooksAdapter(BaseAdapter):
             logger=logger,
         )
 
-        # Codex CLI 0.120.0 rejects ``updatedInput`` and ``permissionDecision=allow``
-        # for PreToolUse hooks. When Gobby wants to rewrite a tool call, block the
-        # current execution and tell the model exactly how to retry instead.
-        has_retry_signal = bool(
-            response.auto_approve
-            or normalized_reason
-            or response.context
-            or response.system_message
-        )
         if (
             response.modified_input
             and response.decision not in ("deny", "block")
             and hook_event_name == "PreToolUse"
-            and has_retry_signal
-            and not self._is_wrapper_only_call_tool_rewrite(response)
         ):
-            retry_reason = (
-                normalized_reason
-                or "Retry the tool call by resending the corrected input from the hook message "
-                "verbatim. Do not reformulate it."
+            logger.debug(
+                "Codex PreToolUse hook returned modified_input; Codex does not support "
+                "updatedInput. Proxy will apply rewrite at dispatch via "
+                "apply_before_tool_enforcement. Decision=%s.",
+                response.decision or "allow",
             )
-            retry_parts: list[str] = []
-            if response.system_message:
-                retry_parts.append(response.system_message)
-            if response.context:
-                retry_parts.append(response.context)
-            retry_parts.append(
-                "Retry this tool call by resending the corrected input below verbatim. "
-                "Do not add, remove, or rename fields.\n"
-                f"{json.dumps(response.modified_input, indent=2, sort_keys=True)}"
-            )
-            retry_result: dict[str, Any] = {
-                "decision": "block",
-                "reason": retry_reason,
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": retry_reason,
-                },
-            }
-            retry_result["systemMessage"] = truncate_additional_context(
-                "\n\n".join(retry_parts),
-                contributor_sizes={
-                    f"retry_part_{idx}": len(part) for idx, part in enumerate(retry_parts, start=1)
-                },
-                logger=logger,
-            )
-            return retry_result
+
+        result: dict[str, Any] = {"continue": True}
 
         if response.decision in ("deny", "block"):
-            if hook_event_name == "PreToolUse":
+            if hook_event_name == "PermissionRequest":
+                decision: dict[str, Any] = {"behavior": "deny"}
+                if normalized_reason:
+                    decision["message"] = normalized_reason
+                result["hookSpecificOutput"] = {
+                    "hookEventName": "PermissionRequest",
+                    "decision": decision,
+                }
+
+            elif hook_event_name in self.COMPACT_EVENTS:
+                return {
+                    "continue": False,
+                    "stopReason": normalized_reason or "Blocked by Gobby hook",
+                }
+
+            elif hook_event_name == "PreToolUse":
                 deny_result: dict[str, Any] = {
                     "decision": "block",
                     "hookSpecificOutput": {
@@ -240,12 +180,17 @@ class CodexHooksAdapter(BaseAdapter):
                     )
                 return deny_result
 
-            block_result: dict[str, Any] = {"continue": False, "decision": "block"}
-            if normalized_reason:
-                block_result["reason"] = normalized_reason
-            return block_result
+            else:
+                block_result: dict[str, Any] = {"continue": False, "decision": "block"}
+                if normalized_reason:
+                    block_result["reason"] = normalized_reason
+                return block_result
 
-        result: dict[str, Any] = {"continue": True}
+        if hook_event_name == "PermissionRequest" and "hookSpecificOutput" not in result:
+            result["hookSpecificOutput"] = {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "allow"},
+            }
 
         # Build additionalContext from all context sources
         context_parts: list[tuple[str, str]] = []
@@ -257,7 +202,7 @@ class CodexHooksAdapter(BaseAdapter):
         session_start_hook = hook_event_name == "SessionStart"
 
         # Route system_message by event type:
-        # - systemMessage-only events (PreToolUse, Stop): visible systemMessage
+        # - systemMessage-only events: visible systemMessage
         # - SessionStart: startup context only via additionalContext
         # - UserPromptSubmit, PostToolUse: additionalContext only (hidden from user)
         if response.system_message:
@@ -284,7 +229,6 @@ class CodexHooksAdapter(BaseAdapter):
                     context_parts.append(("metadata", "\n".join(context_lines)))
 
         # Build hookSpecificOutput or systemMessage based on event type.
-        # PreToolUse/Stop only accept systemMessage — additionalContext is rejected.
         if context_parts:
             combined_context = truncate_additional_context(
                 "\n\n".join(part for _, part in context_parts),
@@ -299,10 +243,13 @@ class CodexHooksAdapter(BaseAdapter):
                 else:
                     result["systemMessage"] = combined_context
             else:
-                result["hookSpecificOutput"] = {
-                    "hookEventName": hook_event_name,
-                    "additionalContext": combined_context,
-                }
+                hook_specific = result.get("hookSpecificOutput")
+                if not isinstance(hook_specific, dict):
+                    hook_specific = {"hookEventName": hook_event_name}
+                    result["hookSpecificOutput"] = hook_specific
+                else:
+                    hook_specific.setdefault("hookEventName", hook_event_name)
+                hook_specific["additionalContext"] = combined_context
 
         return result
 

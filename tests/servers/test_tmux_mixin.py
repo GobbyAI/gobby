@@ -148,6 +148,7 @@ class TestTmuxListSessions:
             ),
         ):
             await server._handle_tmux_list_sessions(ws, {"request_id": "r1"})
+        assert ws.sent_messages == []
 
 
 class TestTmuxAttach:
@@ -328,7 +329,7 @@ class TestTmuxKillSession:
             )
 
         mock_session_mgr.update_status.assert_called_once_with("sess-1", "expired")
-        server.broadcast_session_event.assert_awaited_once_with("session_expired", "sess-1")
+        server.broadcast_session_event.assert_not_awaited()
         results = ws.messages_of_type("tmux_kill_result")
         assert results[0]["success"] is True
         assert results[0]["expired_session_ids"] == ["sess-1"]
@@ -380,6 +381,8 @@ class TestTmuxKillSession:
             )
 
         mock_session_mgr.update_status.assert_not_called()
+        assert mock_session_mgr.update_status.call_count == 0
+        assert not mock_session_mgr.update_status.called
         results = ws.messages_of_type("tmux_kill_result")
         assert results[0]["expired_session_ids"] == []
 
@@ -390,8 +393,9 @@ class TestTmuxResize:
     @pytest.mark.asyncio
     async def test_resize_missing_fields(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        # Should not raise - silent failure
-        await server._handle_tmux_resize(ws, {})
+        result = await server._handle_tmux_resize(ws, {})
+        assert result is None
+        assert ws.sent_messages == []
 
     @pytest.mark.asyncio
     async def test_resize_calls_bridge(self, server: WebSocketServer) -> None:
@@ -399,6 +403,8 @@ class TestTmuxResize:
         with patch.object(server._tmux_bridge, "resize", new_callable=AsyncMock) as mock_resize:
             await server._handle_tmux_resize(ws, {"streaming_id": "s1", "rows": 24, "cols": 80})
             mock_resize.assert_called_once_with("s1", 24, 80)
+            assert mock_resize.call_count == 1
+            assert mock_resize.call_args is not None
 
 
 class TestTmuxClientCleanup:
@@ -407,7 +413,9 @@ class TestTmuxClientCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_empty(self, server: WebSocketServer) -> None:
         ws = MockWebSocket()
-        await server._cleanup_tmux_client(ws)  # should not raise
+        result = await server._cleanup_tmux_client(ws)
+        assert result is None
+        assert ws not in server._tmux_client_bridges
 
     @pytest.mark.asyncio
     async def test_cleanup_with_bridges(self, server: WebSocketServer) -> None:
@@ -457,3 +465,5 @@ class TestTerminalInputBridgeRouting:
             with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
                 await server._handle_terminal_input(ws, {"run_id": "some-agent", "data": "x"})
                 mock_arm.get.assert_called_once_with("some-agent")
+                assert mock_arm.get.call_count == 1
+                assert mock_arm.get.call_args is not None

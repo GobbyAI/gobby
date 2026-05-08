@@ -28,6 +28,7 @@ class Project:
     updated_at: str
     github_repo: str | None = None  # GitHub repo in "owner/repo" format
     linear_team_id: str | None = None  # Linear team ID for project sync
+    linear_project_id: str | None = None  # Linear project ID for scoped sync
     linear_synced_at: str | None = None  # Last bidirectional Linear sync timestamp
     deleted_at: str | None = None
 
@@ -44,6 +45,7 @@ class Project:
             updated_at=row["updated_at"],
             github_repo=row["github_repo"] if "github_repo" in keys else None,
             linear_team_id=row["linear_team_id"] if "linear_team_id" in keys else None,
+            linear_project_id=row["linear_project_id"] if "linear_project_id" in keys else None,
             linear_synced_at=row["linear_synced_at"] if "linear_synced_at" in keys else None,
             deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
         )
@@ -57,6 +59,7 @@ class Project:
             "github_url": self.github_url,
             "github_repo": self.github_repo,
             "linear_team_id": self.linear_team_id,
+            "linear_project_id": self.linear_project_id,
             "linear_synced_at": self.linear_synced_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -204,6 +207,7 @@ class LocalProjectManager:
             "github_url",
             "github_repo",
             "linear_team_id",
+            "linear_project_id",
             "linear_synced_at",
         }
         fields = {k: v for k, v in fields.items() if k in allowed}

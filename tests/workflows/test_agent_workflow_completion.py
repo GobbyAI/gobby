@@ -45,7 +45,9 @@ def _register_agent_workflow(
     *,
     session_id: str = "agent-session",
     workflow_name: str = "plan-adversary-steps",
-    review_tool: str = "mark_task_review_approved",
+    review_tool: str = "approve_review",
+    review_success_handlers: list[dict[str, object]] | None = None,
+    review_error_handlers: list[dict[str, object]] | None = None,
 ) -> WorkflowInstanceManager:
     _create_session(db, session_id)
     manager = LocalWorkflowDefinitionManager(db)
@@ -60,15 +62,17 @@ def _register_agent_workflow(
             {
                 "name": "review",
                 "allowed_tools": "all",
-                "on_mcp_success": [
+                "on_mcp_success": review_success_handlers
+                or [
                     {
-                        "server": "gobby-tasks",
+                        "server": "gobby-tasks-ops",
                         "tool": review_tool,
                         "action": "set_variable",
                         "variable": "review_complete",
                         "value": True,
                     }
                 ],
+                "on_mcp_error": review_error_handlers or [],
                 "transitions": [{"to": "terminate", "when": "vars.review_complete"}],
             },
             {
@@ -111,16 +115,21 @@ def _after_tool_event(
     *,
     session_id: str = "agent-session",
     source: SessionSource = SessionSource.CLAUDE,
-    mcp_tool: str = "mark_task_review_approved",
+    mcp_server: str = "gobby-tasks-ops",
+    mcp_tool: str = "approve_review",
+    tool_arguments: dict[str, object] | None = None,
     tool_output: object | None = None,
     tool_response: object | None = None,
 ) -> HookEvent:
+    tool_input: dict[str, object] = {
+        "server_name": mcp_server,
+        "tool_name": mcp_tool,
+    }
+    if tool_arguments is not None:
+        tool_input["arguments"] = tool_arguments
     data = {
         "tool_name": "mcp__gobby__call_tool",
-        "tool_input": {
-            "server_name": "gobby-tasks",
-            "tool_name": mcp_tool,
-        },
+        "tool_input": tool_input,
     }
     if tool_output is not None:
         data["tool_output"] = tool_output
@@ -158,6 +167,8 @@ class TestAgentWorkflowCompletion:
 
         assert variables["step_workflow_complete"] is True
         runner.complete_run.assert_called_once_with("run-123", result=None)
+        assert runner.complete_run.call_count == 1
+        assert runner.complete_run.call_args is not None
         completion_registry.notify.assert_awaited_once_with(
             "run-123",
             {
@@ -168,6 +179,46 @@ class TestAgentWorkflowCompletion:
             },
             message="Agent run-123 completed via workflow terminate",
         )
+        assert completion_registry.notify.await_count == 1
+        assert completion_registry.notify.await_args is not None
+
+    @pytest.mark.asyncio
+    async def test_holistic_review_complete_stage_success_transitions_to_terminate(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_agent_workflow(
+            db,
+            workflow_name="holistic-reviewer",
+            review_tool="complete_stage",
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        response = await engine.evaluate(
+            _after_tool_event(
+                mcp_tool="complete_stage",
+                tool_arguments={
+                    "stage_name": "holistic_qa",
+                    "validation_override_reason": "holistic_qa approved by holistic-reviewer",
+                },
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "holistic-reviewer")
+        assert instance is None
+        assert variables["review_complete"] is True
+        assert variables["step_workflow_complete"] is True
+        assert response.context is not None
+        completion_registry.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_exit_condition_noops_for_non_agent_session(self, db: LocalDatabase) -> None:
@@ -187,7 +238,11 @@ class TestAgentWorkflowCompletion:
 
         assert variables["step_workflow_complete"] is True
         runner.complete_run.assert_not_called()
+        assert runner.complete_run.call_count == 0
+        assert not runner.complete_run.called
         completion_registry.notify.assert_not_awaited()
+        assert completion_registry.notify.await_count == 0
+        assert completion_registry.notify.await_args is None
 
     @pytest.mark.asyncio
     async def test_failed_codex_mcp_envelope_keeps_review_step_open(
@@ -195,7 +250,7 @@ class TestAgentWorkflowCompletion:
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
-            review_tool="mark_task_review_rejected",
+            review_tool="reject_review",
         )
         runner = MagicMock()
         runner.run_storage = MagicMock()
@@ -210,7 +265,7 @@ class TestAgentWorkflowCompletion:
 
         failed_event = _after_tool_event(
             source=SessionSource.CODEX,
-            mcp_tool="mark_task_review_rejected",
+            mcp_tool="reject_review",
             tool_response={
                 "content": [
                     {
@@ -240,7 +295,7 @@ class TestAgentWorkflowCompletion:
 
         success_event = _after_tool_event(
             source=SessionSource.CODEX,
-            mcp_tool="mark_task_review_rejected",
+            mcp_tool="reject_review",
             tool_response={
                 "content": [{"type": "text", "text": json.dumps({"success": True})}],
                 "structuredContent": {"success": True},
@@ -254,9 +309,60 @@ class TestAgentWorkflowCompletion:
         )
 
         instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
-        assert instance is not None
-        assert instance.current_step == "terminate"
-        assert instance.variables["review_complete"] is True
+        assert instance is None
+        assert variables["review_complete"] is True
+        assert variables["step_workflow_complete"] is True
+        assert response.context is not None
+        completion_registry.notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_closed_review_target_error_completes_plan_adversary_workflow(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_agent_workflow(
+            db,
+            review_tool="reject_review",
+            review_error_handlers=[
+                {
+                    "server": "gobby-tasks-ops",
+                    "tool": "reject_review",
+                    "when": "'closed' in str(tool_output)",
+                    "action": "set_variable",
+                    "variable": "review_complete",
+                    "value": True,
+                }
+            ],
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        event = _after_tool_event(
+            source=SessionSource.CODEX,
+            mcp_tool="reject_review",
+            tool_output={
+                "success": True,
+                "result": {
+                    "error": (
+                        "Cannot reject review for task with status 'closed'. "
+                        "Task must be in 'needs_review' or 'in_progress' status."
+                    )
+                },
+            },
+        )
+
+        response = await engine.evaluate(event, session_id="agent-session", variables=variables)
+
+        instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
+        assert instance is None
+        assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
         assert response.context is not None
         completion_registry.notify.assert_awaited_once()
@@ -283,3 +389,62 @@ class TestAgentWorkflowCompletion:
         assert result["status"] == "success"
         assert result["via"] == "workflow_terminate"
         assert result["workflow"] == "plan-adversary-steps"
+
+    @pytest.mark.asyncio
+    async def test_on_mcp_success_when_condition_checks_tool_argument(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_agent_workflow(
+            db,
+            workflow_name="merge-orchestrator-test",
+            review_tool="verify_in_worktree",
+            review_success_handlers=[
+                {
+                    "server": "gobby-merge",
+                    "tool": "verify_in_worktree",
+                    "when": "tool_input.final is True",
+                    "action": "set_variable",
+                    "variable": "review_complete",
+                    "value": True,
+                }
+            ],
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-merge",
+                mcp_tool="verify_in_worktree",
+                tool_arguments={"final": False},
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "merge-orchestrator-test")
+        assert instance is not None
+        assert instance.current_step == "review"
+        assert instance.variables["review_complete"] is False
+        assert "review_complete" not in variables
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-merge",
+                mcp_tool="verify_in_worktree",
+                tool_arguments={"final": True},
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "merge-orchestrator-test")
+        assert instance is None
+        assert variables["review_complete"] is True

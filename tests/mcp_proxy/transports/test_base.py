@@ -1,6 +1,5 @@
 """Tests for the BaseTransportConnection class."""
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -9,6 +8,7 @@ import pytest
 
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -352,7 +352,7 @@ class TestBaseTransportConnectionHealthCheck:
         mock_session = MagicMock()
 
         async def slow_list_tools() -> list:
-            await asyncio.sleep(10)
+            await wait_forever()
             return []
 
         mock_session.list_tools = slow_list_tools

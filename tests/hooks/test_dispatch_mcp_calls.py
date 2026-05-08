@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -58,6 +59,8 @@ class TestDispatchMcpCallsGuards:
         )
 
         stub.logger.debug.assert_called()
+        assert stub.logger.debug.call_count >= 1
+        assert stub.logger.debug.call_args is not None
 
     def test_missing_server_or_tool_logs_warning(self) -> None:
         """Calls with missing server/tool are skipped with a warning."""
@@ -71,6 +74,8 @@ class TestDispatchMcpCallsGuards:
         )
 
         stub.logger.warning.assert_called()
+        assert stub.logger.warning.call_count >= 1
+        assert stub.logger.warning.call_args is not None
 
     def test_empty_list_is_noop(self) -> None:
         """Empty mcp_calls list does nothing."""
@@ -81,6 +86,8 @@ class TestDispatchMcpCallsGuards:
         stub._dispatch_mcp_calls([], event)
 
         proxy.call_tool.assert_not_called()
+        assert proxy.call_tool.call_count == 0
+        assert not proxy.call_tool.called
 
 
 class TestDispatchMcpCallsContextInjection:
@@ -172,8 +179,10 @@ class TestDispatchMcpCallsBackgroundMode:
         # We're in an async context, so get_running_loop will succeed
         stub._dispatch_mcp_calls(calls, event)
 
-        # Give the task a chance to execute
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: proxy.call_tool.called,
+            description="background MCP call",
+        )
 
         proxy.call_tool.assert_called_once()
         call_args = proxy.call_tool.call_args[0]
@@ -202,10 +211,15 @@ class TestDispatchMcpCallsBackgroundMode:
 
         # Should not raise
         stub._dispatch_mcp_calls(calls, event)
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: stub.logger.error.called,
+            description="background MCP error log",
+        )
 
         # Error was logged
         stub.logger.error.assert_called()
+        assert stub.logger.error.call_count >= 1
+        assert stub.logger.error.call_args is not None
 
 
 class TestDispatchMcpCallsNoEventLoop:
@@ -254,6 +268,8 @@ class TestDispatchMcpCallsNoEventLoop:
         stub._dispatch_mcp_calls(calls, event)
 
         proxy.call_tool.assert_called_once()
+        assert proxy.call_tool.call_count == 1
+        assert proxy.call_tool.call_args is not None
 
     def test_blocking_asyncio_run_error_is_logged(self) -> None:
         """Errors in asyncio.run() fallback for blocking calls are logged."""
@@ -274,6 +290,8 @@ class TestDispatchMcpCallsNoEventLoop:
         # Should not raise
         stub._dispatch_mcp_calls(calls, event)
         stub.logger.error.assert_called()
+        assert stub.logger.error.call_count >= 1
+        assert stub.logger.error.call_args is not None
 
     def test_multiple_calls_all_execute(self) -> None:
         """Multiple MCP calls in sequence all execute via asyncio.run()."""
@@ -319,9 +337,14 @@ class TestDispatchMcpCallsProxyNone:
         ]
 
         stub._dispatch_mcp_calls(calls, event)
-        await asyncio.sleep(0.05)
+        await wait_for_async_condition(
+            lambda: stub.logger.warning.called,
+            description="missing proxy warning",
+        )
 
         stub.logger.warning.assert_called()
+        assert stub.logger.warning.call_count >= 1
+        assert stub.logger.warning.call_args is not None
 
 
 class TestDispatchMcpCallsSessionResolution:

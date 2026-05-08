@@ -416,7 +416,7 @@ export function SessionInteractionModal({
               </div>
             )}
 
-            {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+            {error && <p className="text-xs text-error mt-2">{error}</p>}
 
             <div className="flex justify-end gap-2 mt-1">
               <button
@@ -483,7 +483,7 @@ export function SessionInteractionModal({
               </>
             )}
 
-            {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+            {error && <p className="text-xs text-error mt-2">{error}</p>}
 
             <div className="flex justify-end gap-2 mt-3">
               <button

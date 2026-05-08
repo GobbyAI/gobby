@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +23,7 @@ import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
 from gobby.hooks.health_monitor import HealthMonitor
+from tests._timing import wait_for_condition
 
 pytestmark = pytest.mark.unit
 
@@ -129,9 +129,11 @@ class TestHealthStatusReporting:
         )
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=0.1)
 
-        # Start monitoring and wait for first check
         monitor.start()
-        time.sleep(0.15)  # Wait for check to complete
+        wait_for_condition(
+            lambda: monitor.get_cached_status()[0] is True,
+            description="successful cached health status",
+        )
         monitor.stop()
 
         is_ready, message, status, error = monitor.get_cached_status()
@@ -154,7 +156,7 @@ class TestHealthStatusReporting:
             try:
                 for _ in range(10):
                     results.append(monitor.get_cached_status())
-                    time.sleep(0.01)
+                    threading.Event().wait(0.01)
             except Exception as e:
                 errors.append(e)
 
@@ -183,7 +185,10 @@ class TestHealthCheckScheduling:
 
         try:
             monitor.start()
-            time.sleep(0.1)  # Allow timer to start
+            wait_for_condition(
+                lambda: monitor._health_check_timer is not None,
+                description="health check timer",
+            )
 
             assert monitor._health_check_timer is not None
         finally:
@@ -193,10 +198,12 @@ class TestHealthCheckScheduling:
         """Test calling start() multiple times is safe."""
         mock_client = MagicMock(spec=["check_status"])
 
-        # Add delay to ensure health_check_loop doesn't finish and replace
-        # the timer before we check for idempotency
+        check_started = threading.Event()
+        release_check = threading.Event()
+
         def delayed_check():
-            time.sleep(0.5)
+            check_started.set()
+            release_check.wait(1.0)
             return (True, "Ready", "ready", None)
 
         mock_client.check_status.side_effect = delayed_check
@@ -204,6 +211,7 @@ class TestHealthCheckScheduling:
 
         try:
             monitor.start()
+            wait_for_condition(check_started.is_set, description="health check start")
             timer1 = monitor._health_check_timer
 
             monitor.start()  # Should not create new timer
@@ -211,6 +219,7 @@ class TestHealthCheckScheduling:
 
             assert timer1 is timer2  # Same timer instance
         finally:
+            release_check.set()
             monitor.stop()
 
     def test_stop_cancels_timer(self) -> None:
@@ -220,7 +229,10 @@ class TestHealthCheckScheduling:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=1.0)
 
         monitor.start()
-        time.sleep(0.1)
+        wait_for_condition(
+            lambda: monitor._health_check_timer is not None,
+            description="health check timer",
+        )
         assert monitor._health_check_timer is not None
 
         monitor.stop()
@@ -234,12 +246,15 @@ class TestHealthCheckScheduling:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=0.05)
 
         monitor.start()
-        time.sleep(0.1)  # Let a check complete
+        wait_for_condition(
+            lambda: mock_client.check_status.call_count >= 1,
+            description="completed health check",
+        )
         monitor.stop()
 
         # After stop, is_shutdown should prevent new timers
         assert monitor._is_shutdown is True
-        time.sleep(0.1)  # Wait to ensure no reschedule
+        threading.Event().wait(0.1)
         assert monitor._health_check_timer is None
 
     def test_check_runs_at_interval(self) -> None:
@@ -249,7 +264,11 @@ class TestHealthCheckScheduling:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=0.1)
 
         monitor.start()
-        time.sleep(0.35)  # Should run ~3 times (0, 0.1, 0.2, 0.3)
+        wait_for_condition(
+            lambda: mock_client.check_status.call_count >= 2,
+            timeout=0.5,
+            description="repeated health checks",
+        )
         monitor.stop()
 
         # Allow for timing variance
@@ -284,7 +303,10 @@ class TestHealthCheckFailureHandling:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=0.1)
 
         monitor.start()
-        time.sleep(0.15)
+        wait_for_condition(
+            lambda: mock_client.check_status.call_count >= 1,
+            description="failed health check",
+        )
         monitor.stop()
 
         is_ready, message, status, error = monitor.get_cached_status()
@@ -299,7 +321,10 @@ class TestHealthCheckFailureHandling:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=0.1)
 
         monitor.start()
-        time.sleep(0.15)
+        wait_for_condition(
+            lambda: "Network error" in (monitor.get_cached_status()[3] or ""),
+            description="cached health check exception",
+        )
         monitor.stop()
 
         is_ready, message, status, error = monitor.get_cached_status()
@@ -320,7 +345,11 @@ class TestHealthCheckFailureHandling:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=0.1)
 
         monitor.start()
-        time.sleep(0.25)  # Allow 2-3 checks
+        wait_for_condition(
+            lambda: mock_client.check_status.call_count >= 2,
+            timeout=0.5,
+            description="health check recovery",
+        )
         monitor.stop()
 
         is_ready, message, status, error = monitor.get_cached_status()
@@ -335,7 +364,11 @@ class TestHealthCheckFailureHandling:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=0.05)
 
         monitor.start()
-        time.sleep(0.2)  # Should attempt multiple checks despite failures
+        wait_for_condition(
+            lambda: mock_client.check_status.call_count >= 2,
+            timeout=0.5,
+            description="continuous health check attempts",
+        )
 
         # Monitoring should still be active
         assert monitor._health_check_timer is not None or not monitor._is_shutdown
@@ -402,7 +435,10 @@ class TestHealthMonitorIntegration:
 
         manager = MockHookManager()
         manager.start()
-        time.sleep(0.15)
+        wait_for_condition(
+            lambda: manager._get_cached_daemon_status()[0] is True,
+            description="mock manager cached health status",
+        )
 
         status = manager._get_cached_daemon_status()
         assert status[0] is True  # is_ready
@@ -419,14 +455,18 @@ class TestHealthMonitorIntegration:
         logger.setLevel(logging.DEBUG)
 
         # Patch logger.debug to verify no exceptions during health check cycle
-        with patch.object(logger, "debug"):
+        with patch.object(logger, "debug") as mock_debug:
             monitor = HealthMonitor(
                 daemon_client=mock_client, health_check_interval=0.1, logger=logger
             )
             monitor.start()
-            time.sleep(0.15)
+            wait_for_condition(
+                lambda: mock_client.check_status.call_count >= 1,
+                description="logged health check",
+            )
             monitor.stop()
-            # Test passes if no exceptions occurred during health check cycle
+            assert monitor._is_shutdown is True
+            assert mock_debug.called
 
 
 class TestHealthMonitorEdgeCases:
@@ -448,7 +488,10 @@ class TestHealthMonitorEdgeCases:
         monitor = HealthMonitor(daemon_client=mock_client, health_check_interval=1.0)
 
         monitor.start()
-        time.sleep(0.1)
+        wait_for_condition(
+            lambda: monitor._health_check_timer is not None,
+            description="health check timer",
+        )
 
         # Multiple stops should be safe
         monitor.stop()

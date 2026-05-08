@@ -3,6 +3,7 @@ import concurrent.futures
 import json
 import logging
 import threading
+from _thread import LockType
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_TOOL_CONTEXT_REHYDRATION_SOURCES = frozenset(
+    {
+        SessionSource.CLAUDE,
+        SessionSource.CODEX,
+        SessionSource.GEMINI,
+        SessionSource.QWEN,
+        SessionSource.DROID,
+    }
+)
+
 
 def _is_turn_start_event(event_type: HookEventType | str) -> bool:
     value = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
@@ -25,6 +36,19 @@ def _is_turn_start_event(event_type: HookEventType | str) -> bool:
 def _is_turn_end_event(event_type: HookEventType | str) -> bool:
     value = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
     return value in {HookEventType.AFTER_AGENT.value, HookEventType.STOP.value}
+
+
+class _EvalLockState:
+    """Per-session evaluation lock plus registry bookkeeping."""
+
+    lock: LockType
+    references: int
+    cleanup_pending: bool
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.references = 0
+        self.cleanup_pending = False
 
 
 class WorkflowHookHandler:
@@ -69,6 +93,9 @@ class WorkflowHookHandler:
         self._tool_context_lock = threading.Lock()
         self._tool_contexts: dict[str, list[dict[str, Any]]] = {}
         self._tool_context_by_id: dict[tuple[str, str], dict[str, Any]] = {}
+
+        self._eval_locks_lock = threading.Lock()
+        self._eval_locks: dict[str, _EvalLockState] = {}
 
     @staticmethod
     def _tool_context_ids(data: dict[str, Any]) -> list[str]:
@@ -216,7 +243,7 @@ class WorkflowHookHandler:
     def _sync_tool_context(self, event: HookEvent, session_id: str) -> None:
         """Maintain BEFORE/AFTER tool parity for rule evaluation."""
         if (
-            event.source not in (SessionSource.CLAUDE, SessionSource.CODEX)
+            event.source not in _TOOL_CONTEXT_REHYDRATION_SOURCES
             or not session_id
             or not isinstance(event.data, dict)
         ):
@@ -253,6 +280,47 @@ class WorkflowHookHandler:
                 event.metadata["_codex_tool_context_rehydrated"] = True
 
         self._forget_tool_context(event.source, session_id, snapshot)
+
+    def _reserve_eval_lock(self, session_id: str) -> _EvalLockState:
+        """Reserve the per-session evaluation lock for one active or waiting event."""
+        with self._eval_locks_lock:
+            state = self._eval_locks.get(session_id)
+            if state is None:
+                state = _EvalLockState()
+                self._eval_locks[session_id] = state
+            state.references += 1
+            return state
+
+    def _release_eval_lock(
+        self,
+        session_id: str,
+        state: _EvalLockState,
+        *,
+        cleanup: bool = False,
+    ) -> None:
+        """Release one registry reference and prune ended sessions after waiters drain."""
+        with self._eval_locks_lock:
+            current = self._eval_locks.get(session_id)
+            if current is not state:
+                return
+            if cleanup:
+                state.cleanup_pending = True
+            state.references -= 1
+            if state.references <= 0 and state.cleanup_pending:
+                self._eval_locks.pop(session_id, None)
+
+    async def _acquire_eval_lock(self, lock: LockType) -> None:
+        """Acquire a thread lock without blocking the event loop."""
+        if lock.acquire(blocking=False):
+            return
+
+        acquire_task = asyncio.create_task(asyncio.to_thread(lock.acquire))
+        try:
+            await asyncio.shield(acquire_task)
+        except asyncio.CancelledError:
+            await acquire_task
+            lock.release()
+            raise
 
     def _resolve_project_path(self, event: HookEvent) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
@@ -358,129 +426,148 @@ class WorkflowHookHandler:
 
         try:
             session_id = event.metadata.get("_platform_session_id") or event.session_id or ""
+            eval_lock_state = self._reserve_eval_lock(session_id) if session_id else None
+            eval_lock_acquired = False
 
-            self._sync_tool_context(event, session_id)
+            try:
+                if eval_lock_state:
+                    await self._acquire_eval_lock(eval_lock_state.lock)
+                    eval_lock_acquired = True
 
-            # Load session-scoped variables (canonical store)
-            variables: dict[str, Any] = {}
-            if self._session_var_manager:
-                try:
-                    variables = dict(self._session_var_manager.get_variables(session_id))
-                except Exception as e:
-                    if event.event_type == HookEventType.STOP:
-                        logger.warning(
-                            f"Failed to load session variables on STOP - blocking for safety: {e}",
+                self._sync_tool_context(event, session_id)
+
+                # Load session-scoped variables (canonical store)
+                variables: dict[str, Any] = {}
+                if self._session_var_manager:
+                    try:
+                        variables = dict(self._session_var_manager.get_variables(session_id))
+                    except Exception as e:
+                        if event.event_type == HookEventType.STOP:
+                            logger.warning(
+                                "Failed to load session variables on STOP - "
+                                f"blocking for safety: {e}",
+                            )
+                            return HookResponse(
+                                decision="block",
+                                reason="Could not load session state. Try again.",
+                            )
+                        logger.debug(f"Could not load session variables for rules: {e}")
+
+                # Inject current_step from active workflow instance so rule templates
+                # can display it (e.g., require-step-completion block message).
+                if variables.get("is_spawned_agent") and not variables.get("current_step"):
+                    try:
+                        from gobby.workflows.state_manager import WorkflowInstanceManager
+
+                        instances = WorkflowInstanceManager(
+                            self.rule_engine.db
+                        ).get_active_instances(session_id)
+                        for inst in instances:
+                            if inst.current_step:
+                                variables["current_step"] = inst.current_step
+                                break
+                    except Exception as e:
+                        logger.debug(f"Could not inject current_step from workflow instance: {e}")
+
+                # Lazy-init variable presets for sessions that started before gobby init.
+                # Mirrors the baseline_dirty_files pattern below — one-time DB hit per session.
+                if "_variable_defaults_loaded" not in variables and event.project_id:
+                    try:
+                        from gobby.storage.workflow_definitions import (
+                            LocalWorkflowDefinitionManager,
                         )
-                        return HookResponse(
-                            decision="block",
-                            reason="Could not load session state. Try again.",
-                        )
-                    logger.debug(f"Could not load session variables for rules: {e}")
 
-            # Inject current_step from active workflow instance so rule templates
-            # can display it (e.g., require-step-completion block message).
-            if variables.get("is_spawned_agent") and not variables.get("current_step"):
-                try:
-                    from gobby.workflows.state_manager import WorkflowInstanceManager
+                        def_manager = LocalWorkflowDefinitionManager(self.rule_engine.db)
+                        enabled_variables = [
+                            v for v in def_manager.list_all(workflow_type="variable") if v.enabled
+                        ]
+                        defaults: dict[str, Any] = {}
+                        for var_row in enabled_variables:
+                            try:
+                                var_body = json.loads(var_row.definition_json)
+                                key = var_body.get("variable", var_row.name)
+                                if key not in variables:
+                                    defaults[key] = var_body.get("value")
+                            except (json.JSONDecodeError, AttributeError):
+                                pass
+                        defaults["_variable_defaults_loaded"] = True
+                        variables.update(defaults)
+                        if self._session_var_manager and session_id:
+                            self._session_var_manager.merge_variables(session_id, defaults)
+                    except Exception as e:
+                        logger.debug(f"Could not lazy-load variable defaults: {e}")
 
-                    instances = WorkflowInstanceManager(self.rule_engine.db).get_active_instances(
-                        session_id
+                from gobby.workflows.git_utils import get_dirty_files_categorized
+                from gobby.workflows.safe_evaluator import LazyBool
+
+                project_path = self._resolve_project_path(event)
+                if not project_path:
+                    logger.warning(
+                        f"_evaluate_rules: no project_path resolved for session={session_id} "
+                        f"event={event.event_type} source={event.source} "
+                        f"cwd={event.cwd!r} project_id={event.project_id!r} "
+                        f"metadata_path={event.metadata.get('project_path')!r}"
                     )
-                    for inst in instances:
-                        if inst.current_step:
-                            variables["current_step"] = inst.current_step
-                            break
-                except Exception as e:
-                    logger.debug(f"Could not inject current_step from workflow instance: {e}")
 
-            # Lazy-init variable presets for sessions that started before gobby init.
-            # Mirrors the baseline_dirty_files pattern below — one-time DB hit per session.
-            if "_variable_defaults_loaded" not in variables and event.project_id:
-                try:
-                    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-
-                    def_manager = LocalWorkflowDefinitionManager(self.rule_engine.db)
-                    enabled_variables = [
-                        v for v in def_manager.list_all(workflow_type="variable") if v.enabled
-                    ]
-                    defaults: dict[str, Any] = {}
-                    for var_row in enabled_variables:
-                        try:
-                            var_body = json.loads(var_row.definition_json)
-                            key = var_body.get("variable", var_row.name)
-                            if key not in variables:
-                                defaults[key] = var_body.get("value")
-                        except (json.JSONDecodeError, AttributeError):
-                            pass
-                    defaults["_variable_defaults_loaded"] = True
-                    variables.update(defaults)
+                # Lazy-init baseline on first evaluation (rule template may not have fired)
+                if "baseline_dirty_files" not in variables:
+                    initial_dirty = sorted(get_dirty_files_categorized(project_path).all)
+                    variables["baseline_dirty_files"] = initial_dirty
+                    variables.setdefault("session_edited_files", [])
+                    # Persist so future evaluations have it
                     if self._session_var_manager and session_id:
-                        self._session_var_manager.merge_variables(session_id, defaults)
-                except Exception as e:
-                    logger.debug(f"Could not lazy-load variable defaults: {e}")
+                        self._session_var_manager.merge_variables(
+                            session_id,
+                            {"baseline_dirty_files": initial_dirty, "session_edited_files": []},
+                        )
 
-            from gobby.workflows.git_utils import get_dirty_files_categorized
-            from gobby.workflows.safe_evaluator import LazyBool
+                session_edited = set(variables.get("session_edited_files", []))
 
-            project_path = self._resolve_project_path(event)
-            if not project_path:
-                logger.warning(
-                    f"_evaluate_rules: no project_path resolved for session={session_id} "
-                    f"event={event.event_type} source={event.source} "
-                    f"cwd={event.cwd!r} project_id={event.project_id!r} "
-                    f"metadata_path={event.metadata.get('project_path')!r}"
+                def _check_dirty(
+                    _edited: set[str] = session_edited,
+                    _path: str | None = project_path,
+                ) -> bool:
+                    result = get_dirty_files_categorized(_path)
+                    # Only count files this session actually touched
+                    dirty_tracked = result.tracked
+                    dirty_untracked = result.untracked
+                    session_dirty_tracked = _edited & dirty_tracked
+                    session_dirty_untracked = _edited & dirty_untracked
+                    return bool(session_dirty_tracked or session_dirty_untracked)
+
+                eval_context = {"has_dirty_files": LazyBool(_check_dirty)}
+
+                # Snapshot BEFORE observers to capture both observer and rule changes in the diff
+                pre_eval = deepcopy(variables)
+
+                # Run built-in observers BEFORE rule evaluation
+                self._run_observers(event, session_id, variables)
+
+                response = await self.rule_engine.evaluate(
+                    event=event,
+                    session_id=session_id,
+                    variables=variables,
+                    eval_context=eval_context,
                 )
 
-            # Lazy-init baseline on first evaluation (rule template may not have fired)
-            if "baseline_dirty_files" not in variables:
-                initial_dirty = sorted(get_dirty_files_categorized(project_path).all)
-                variables["baseline_dirty_files"] = initial_dirty
-                variables.setdefault("session_edited_files", [])
-                # Persist so future evaluations have it
-                if self._session_var_manager and session_id:
-                    self._session_var_manager.merge_variables(
+                # Persist all variables changed by observers OR rule effects
+                if self._session_var_manager:
+                    changed = {
+                        k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
+                    }
+                    if changed:
+                        self._session_var_manager.merge_variables(session_id, changed)
+
+                return response
+            finally:
+                if eval_lock_state:
+                    if eval_lock_acquired:
+                        eval_lock_state.lock.release()
+                    self._release_eval_lock(
                         session_id,
-                        {"baseline_dirty_files": initial_dirty, "session_edited_files": []},
+                        eval_lock_state,
+                        cleanup=event.event_type == HookEventType.SESSION_END,
                     )
-
-            session_edited = set(variables.get("session_edited_files", []))
-
-            def _check_dirty(
-                _edited: set[str] = session_edited,
-                _path: str | None = project_path,
-            ) -> bool:
-                result = get_dirty_files_categorized(_path)
-                # Only count files this session actually touched
-                dirty_tracked = result.tracked
-                dirty_untracked = result.untracked
-                session_dirty_tracked = _edited & dirty_tracked
-                session_dirty_untracked = _edited & dirty_untracked
-                return bool(session_dirty_tracked or session_dirty_untracked)
-
-            eval_context = {"has_dirty_files": LazyBool(_check_dirty)}
-
-            # Snapshot BEFORE observers to capture both observer and rule changes in the diff
-            pre_eval = deepcopy(variables)
-
-            # Run built-in observers BEFORE rule evaluation
-            self._run_observers(event, session_id, variables)
-
-            response = await self.rule_engine.evaluate(
-                event=event,
-                session_id=session_id,
-                variables=variables,
-                eval_context=eval_context,
-            )
-
-            # Persist all variables changed by observers OR rule effects
-            if self._session_var_manager:
-                changed = {
-                    k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
-                }
-                if changed:
-                    self._session_var_manager.merge_variables(session_id, changed)
-
-            return response
         except Exception as e:
             logger.error(f"RuleEngine evaluation failed: {e}", exc_info=True)
             raise

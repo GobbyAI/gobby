@@ -1,0 +1,40 @@
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
+---
+
+# Photo Restoration
+
+## Capability
+Transform blurry, vintage, or low-quality images into crystal-clear, 8k resolution modern photographs while preserving the original identity, pose, and composition.
+
+## Triggers
+- "Restore this photo."
+- "Fix this blurry image."
+- "Make this vintage photo look modern."
+- "Upscale and sharpen this picture."
+
+## Instructions
+1.  **Analyze the User's Image**:
+    - Note the subject's identity, pose, and composition.
+    - Identify areas needing restoration: blur, grain, focus, lighting.
+
+2.  **Construct the Image Generation Prompt**:
+    - **Core Command**: "High-fidelity restoration of this vintage photograph. Transform this blurry image into a crystal-clear, 8k resolution modern photograph."
+    - **Enhancements**: "Sharpen all details, remove film grain, and correct focus. Enhance facial features to be lifelike and highly detailed, ensuring realistic skin texture and eye clarity. Fix lighting to be balanced and natural."
+    - **Preservation**: "Upscale to high definition while preserving the original identity, pose, and composition."
+    - **Style**: "Professional portrait photography, shot on a 85mm lens, f/1.8, photorealistic, cinematic lighting."
+    - **Constraint**: "While improving quality dramatically, preserve the original composition, identity, pose, and framing."
+
+3.  **Generate the Image**:
+    - Use the image generation tool.
+    - Pass the constructed prompt.
+    - Pass the user's uploaded image path in the reference image parameter to use as a reference/control.
+
+## Tools / Commands
+- Image generation tool: To generate the restored image based on the input.
+
+## Examples
+User: "Restore this old photo." (User attaches `[image]`)
+Action:
+1. Construct prompt using the standard restoration template.
+2. Call the image generation tool with the constructed prompt and image paths.

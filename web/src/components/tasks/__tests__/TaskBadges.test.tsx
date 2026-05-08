@@ -26,12 +26,12 @@ describe('StatusBadge', () => {
 describe('StatusDot', () => {
   it('renders with correct aria-label', () => {
     render(<StatusDot status="open" />)
-    expect(screen.getByLabelText('Status: open')).toBeTruthy()
+    expect(screen.getByLabelText('Status: Ready')).toBeTruthy()
   })
 
   it('renders with title', () => {
     render(<StatusDot status="needs_review" />)
-    expect(screen.getByTitle('needs review')).toBeTruthy()
+    expect(screen.getByTitle('Needs Review')).toBeTruthy()
   })
 })
 

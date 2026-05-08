@@ -84,7 +84,9 @@ class TestMergeCliImports:
 
     def test_import_merge_cli_module(self) -> None:
         """Can import merge CLI module."""
-        from gobby.cli import merge  # noqa: F401
+        from gobby.cli import merge
+
+        assert merge is not None
 
     def test_import_merge_commands(self) -> None:
         """Can import merge command group."""
@@ -159,6 +161,7 @@ class TestMergeStartCommand:
         result = runner.invoke(cli, ["merge", "start", "feature/test", "--strategy", "ai-only"])
 
         assert result.exit_code == 0
+        assert result.exception is None
 
     @patch("gobby.cli.merge.get_project_context")
     def test_merge_start_no_project(
@@ -217,6 +220,8 @@ class TestMergeStatusCommand:
         result = runner.invoke(cli, ["merge", "status"])
 
         assert result.exit_code == 0
+        assert result.exception is None
+        assert "merge" in result.output.lower()
 
     @patch("gobby.cli.merge.get_worktree_context")
     @patch("gobby.cli.merge.get_merge_manager")
@@ -268,6 +273,7 @@ class TestMergeStatusCommand:
         result = runner.invoke(cli, ["merge", "status"])
 
         assert result.exit_code == 0
+        assert result.exception is None
         assert "no" in result.output.lower() and "merge" in result.output.lower()
 
 
@@ -304,6 +310,7 @@ class TestMergeResolveCommand:
         result = runner.invoke(cli, ["merge", "resolve", "src/test.py"])
 
         assert result.exit_code == 0
+        assert result.exception is None
 
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_project_context")
@@ -563,6 +570,7 @@ class TestMergeOutputFormatting:
 
         # Check output contains expected fields
         assert result.exit_code == 0
+        assert result.exception is None
         # Output should contain branch info or status
 
 
@@ -644,6 +652,7 @@ class TestMergeWorktreeIntegration:
 
         # Should use worktree context for the merge
         assert result.exit_code == 0
+        assert result.exception is None
 
     @patch("gobby.cli.merge.get_merge_manager")
     @patch("gobby.cli.merge.get_worktree_context")
@@ -673,3 +682,4 @@ class TestMergeWorktreeIntegration:
         result = runner.invoke(cli, ["merge", "status"])
 
         assert result.exit_code == 0
+        assert result.exception is None

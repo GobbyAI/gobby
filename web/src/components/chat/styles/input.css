@@ -1,18 +1,18 @@
 [data-theme="light"] .ptt-button.recording {
-  background: rgba(220, 38, 38, 0.1);
-  border-color: #dc2626;
-  color: #dc2626;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-color: var(--color-error);
+  color: var(--color-error);
 }
 [data-theme="light"] .listening-indicator.speech-detected .speaking-bar {
-  background: #16a34a;
+  background: var(--color-success-foreground);
 }
 [data-theme="light"] .voice-error {
-  color: #dc2626;
+  color: var(--color-error);
 }
 [data-theme="light"] .stop-button {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
-  border-color: #dc2626;
+  background: var(--color-error);
+  color: var(--text-on-error);
+  border-color: var(--color-error);
 }
 
 /* Chat input */
@@ -43,7 +43,9 @@
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 0.375rem;
-  transition: all 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
   padding: 0;
 }
 
@@ -95,7 +97,7 @@
 
 .chat-scope-btn {
   padding: 0.25rem 0.625rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   background: transparent;
   color: var(--text-secondary);
   border: none;
@@ -136,7 +138,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
   z-index: 100;
   overflow: hidden;
 }
@@ -144,7 +146,7 @@
 .chat-scope-search {
   width: 100%;
   padding: 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
   border: none;
@@ -162,7 +164,7 @@
   display: block;
   width: 100%;
   padding: 0.4rem 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   text-align: left;
   background: none;
   color: var(--text-secondary);
@@ -238,11 +240,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--surface-scrim);
   color: var(--text-primary);
   border: none;
   border-radius: 50%;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -260,7 +262,7 @@
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   margin-bottom: 0.5rem;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-popover-up, 0 -4px 12px oklch(0% 0 0 / 0.3));
   z-index: 10;
 }
 
@@ -354,13 +356,13 @@
 }
 
 .stop-button {
-  background: #7f1d1d;
-  color: #f87171;
-  border: 1px solid #dc2626;
+  background: var(--color-error);
+  color: var(--text-on-error);
+  border: 1px solid var(--color-error);
 }
 
 .stop-button:hover {
-  background: #991b1b;
+  filter: brightness(1.08);
 }
 
 .chat-actions {
@@ -370,12 +372,12 @@
 
 /* Voice Mode */
 .chat-toolbar-btn.voice-active {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .chat-toolbar-btn.voice-active:hover {
-  background: rgba(239, 68, 68, 0.25);
+  background: color-mix(in srgb, var(--color-error) 25%, transparent);
 }
 
 .ptt-button {
@@ -390,7 +392,11 @@
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s,
+    color 0.15s,
+    opacity 0.15s;
   flex-shrink: 0;
   align-self: flex-end;
   -webkit-user-select: none;
@@ -404,9 +410,9 @@
 }
 
 .ptt-button.recording {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: #ef4444;
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  border-color: var(--color-error);
+  color: var(--color-error);
   animation: pulse-recording 1.5s ease-in-out infinite;
 }
 
@@ -425,10 +431,10 @@
 @keyframes pulse-recording {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-error) 40%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--color-error) 0%, transparent);
   }
 }
 
@@ -437,15 +443,15 @@
   align-items: center;
   gap: 3px;
   padding: 0.375rem 0.75rem;
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info) 20%, transparent);
   border-radius: 0.5rem;
   cursor: pointer;
   margin-bottom: 0.25rem;
 }
 
 .speaking-indicator:hover {
-  background: rgba(59, 130, 246, 0.15);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
 }
 
 .speaking-bar {
@@ -488,14 +494,14 @@
   align-items: center;
   gap: 3px;
   padding: 0.375rem 0.75rem;
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info) 20%, transparent);
   border-radius: 0.5rem;
   margin-bottom: 0.25rem;
 }
 
 .listening-indicator.speech-detected .speaking-bar {
-  background: #4ade80;
+  background: var(--color-success-foreground);
 }
 
 .listening-indicator.transcribing {
@@ -525,9 +531,9 @@
 
 .voice-error {
   font-size: calc(var(--font-size-base) * 0.75);
-  color: #ef4444;
+  color: var(--color-error);
   padding: 0.25rem 0.5rem;
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-radius: 0.25rem;
   margin-bottom: 0.25rem;
 }
@@ -538,6 +544,17 @@
   flex-direction: column;
   gap: 0.625rem;
 }
+
+/* Mode (Plan|Act|YOLO) sits on its own row between the textarea row and the
+   model controls row so chat input lays out as a clean 4-row grid even at
+/* Container for chat-column-scoped responsive behavior. Used by AgentStatusBar
+   (New Chat button) and chat-input controls to react to the chat panel's own
+   width, independent of viewport. */
+.chat-column {
+  container-type: inline-size;
+  container-name: chat-column;
+}
+
 
 .chat-input-overlay {
   position: absolute;
@@ -557,7 +574,7 @@
   border-radius: 999px;
   background: var(--accent);
   color: var(--accent-foreground);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 
@@ -576,7 +593,7 @@
 }
 
 .chat-input-notice {
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -587,6 +604,9 @@
   gap: 0.75rem;
   margin-bottom: 0.5rem;
   flex-wrap: wrap;
+  /* Align right edge with the textarea after accounting for the primary
+     send/stop button width and input row gap. */
+  padding-right: 3.25rem;
 }
 
 .chat-input-toolbar__left,
@@ -622,7 +642,7 @@
   border-color: var(--border);
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
 }
 
 .chat-input-select:hover {
@@ -680,7 +700,7 @@
   display: block;
   padding: 0.375rem 0.625rem 0.25rem;
   color: var(--text-muted);
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -761,7 +781,7 @@
 
 .chat-session-status__state {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-weight: 500;
   white-space: nowrap;
   line-height: 1;
@@ -811,3 +831,28 @@
     align-items: center;
   }
 }
+
+/* Below 480px chat-column width, drop button labels so toolbar buttons
+   render as glyphs only, and reclaim the toolbar's right gutter (it's a
+   send-button alignment reserve that, at narrow widths, forces Mode + the
+   4 toolbar buttons to wrap to a second row). The 4-row compact layout
+   doesn't engage until <=320px — between 320 and 480 we keep the 3-row
+   layout and just compress to fit.
+
+   Placed last in the file so its rules win over earlier base declarations
+   that share the same specificity. !important is needed to beat Tailwind
+   utility classes (px-2.5) on SelectTrigger / BranchIndicator buttons. */
+@container chat-column (max-width: 479px) {
+  .chat-new-chat-btn__label {
+    display: none;
+  }
+  .chat-input-toolbar {
+    padding-right: 0;
+  }
+  /* Tighten the toolbar gap so Mode (now size="sm" via ChatInput, ~110px)
+     plus the four 36px icon buttons fit on one row down to the 320px floor. */
+  .chat-input-toolbar__left {
+    gap: 0.25rem;
+  }
+}
+

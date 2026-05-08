@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 
 pytestmark = pytest.mark.unit
@@ -236,6 +237,8 @@ class TestListAgentRuns:
         await list_agent_runs(parent_session_id="sess-123", status="running")
 
         runner.list_runs.assert_called_once_with("sess-123", status="running", limit=20)
+        assert runner.list_runs.call_count == 1
+        assert runner.list_runs.call_args is not None
 
     @pytest.mark.asyncio
     async def test_respects_limit(self):
@@ -249,6 +252,8 @@ class TestListAgentRuns:
         await list_agent_runs(parent_session_id="sess-123", limit=50)
 
         runner.list_runs.assert_called_once_with("sess-123", status=None, limit=50)
+        assert runner.list_runs.call_count == 1
+        assert runner.list_runs.call_args is not None
 
 
 class TestStopAgent:
@@ -260,14 +265,24 @@ class TestStopAgent:
         runner = _make_runner_with_run_storage()
         runner.get_run.return_value = _make_mock_agent_run(status="running")
         runner.cancel_run.return_value = True
+        runtime_db = object()
 
-        registry = create_agents_registry(runner)
+        registry = create_agents_registry(runner, db=runtime_db)
         stop_agent = registry._tools["stop_agent"].func
 
-        with patch(
-            "gobby.mcp_proxy.tools.agents._kill_agent_process",
-            new_callable=AsyncMock,
-            return_value={"success": True},
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state",
+                return_value=AgentRuntimeCleanupResult(
+                    dispatch_mutex_rows=1,
+                    workflow_instance_rows=1,
+                ),
+            ) as cleanup,
         ):
             result = await stop_agent(run_id="run-123")
 
@@ -275,6 +290,11 @@ class TestStopAgent:
         assert "stopped" in result["message"]
         assert result["terminal_reason"] == "user_cancelled"
         runner.cancel_run.assert_called_once_with("run-123")
+        cleanup.assert_called_once_with(
+            runtime_db,
+            run_id="run-123",
+            child_session_id="sess-456",
+        )
 
     @pytest.mark.asyncio
     async def test_run_not_found(self):
@@ -845,14 +865,15 @@ class TestFireSyntheticStop:
         """Test that _fire_synthetic_stop does nothing when resolver is None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        # Should not raise
-        _fire_synthetic_stop(None, "sess-123")
+        result = _fire_synthetic_stop(None, "sess-123")
+        assert result is None
 
     def test_noop_when_resolver_returns_none(self):
         """Test that _fire_synthetic_stop does nothing when resolver returns None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        _fire_synthetic_stop(lambda: None, "sess-123")
+        result = _fire_synthetic_stop(lambda: None, "sess-123")
+        assert result is None
 
     def test_calls_evaluate_workflow_rules(self):
         """Test that _fire_synthetic_stop fires a synthetic STOP event."""
@@ -876,8 +897,9 @@ class TestFireSyntheticStop:
         mock_hook_mgr = MagicMock()
         mock_hook_mgr._evaluate_workflow_rules.side_effect = RuntimeError("boom")
 
-        # Should not raise
-        _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
+        result = _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
+        assert result is None
+        assert mock_hook_mgr._evaluate_workflow_rules.call_count == 1
 
     @pytest.mark.asyncio
     async def test_kill_agent_fires_synthetic_stop(self):
@@ -967,10 +989,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
             )
 
         notify_result = mock_complete.call_args.kwargs["notify_result"]
-        assert (
-            notify_result["signoff_message"]
-            == "REJECTED: round 5, 1 blocking (sample)"
-        )
+        assert notify_result["signoff_message"] == "REJECTED: round 5, 1 blocking (sample)"
         assert notify_result["status"] == "success"
         assert notify_result["run_id"] == "run-xyz"
 
@@ -1017,3 +1036,5 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
 
         notify_result = mock_complete.call_args.kwargs["notify_result"]
         assert "signoff_message" not in notify_result
+        assert notify_result["status"] == "success"
+        assert notify_result["run_id"] == "run-abc"

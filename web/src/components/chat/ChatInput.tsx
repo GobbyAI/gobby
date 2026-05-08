@@ -1,5 +1,10 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ChatModeInfo, ChatSendOptions } from '../../types/chat'
+import type {
+  QueuedFile,
+  ChatMode,
+  ChatModeInfo,
+  ChatSendOptions,
+} from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
@@ -89,6 +94,7 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
+  isAttached?: boolean
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -161,6 +167,7 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
+  isAttached = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -177,6 +184,23 @@ export function ChatInput({
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
+  const metaRef = useRef<HTMLDivElement>(null)
+  // Track the chat-column ancestor. At <=479px we stay on the 3-row layout
+  // but compress: model name + branch label truncate, toolbar buttons show
+  // as glyphs only, and ModeSelector shrinks to size="sm" so Mode + the 4
+  // toolbar buttons all fit on one row down to the 320px floor.
+  const [isNarrow, setIsNarrow] = useState(false)
+  useEffect(() => {
+    const el = metaRef.current?.closest('.chat-column')
+    if (!el) return
+    setIsNarrow(el.getBoundingClientRect().width <= 479)
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(([entry]) => {
+      setIsNarrow(entry.contentRect.width <= 479)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
 
@@ -247,14 +271,29 @@ export function ChatInput({
     const filesToSend = attachmentsDisabled ? [] : queuedFiles
     const hasFiles = filesToSend.length > 0
     if ((trimmed || hasFiles) && !disabled) {
+      if (ttsEnabled) {
+        prepareTTSPlayback?.()
+      }
       onSend(trimmed, hasFiles ? filesToSend : undefined, {
         reasoningEffort: currentReasoning,
+        ttsEnabled,
       })
       setInput('')
       clearQueuedFiles()
       onScrollToBottom?.()
     }
-  }, [attachmentsDisabled, clearQueuedFiles, currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
+  }, [
+    attachmentsDisabled,
+    clearQueuedFiles,
+    currentReasoning,
+    disabled,
+    input,
+    onScrollToBottom,
+    onSend,
+    prepareTTSPlayback,
+    queuedFiles,
+    ttsEnabled,
+  ])
 
   const handleChange = useCallback((value: string) => {
     setInput(value)
@@ -382,7 +421,7 @@ export function ChatInput({
 
   const resolvePrimaryButtonKind = (): PrimaryButtonKind => {
     if (isStreaming) return 'stop'
-    if (pttEnabled && !hasInput) {
+    if (pttEnabled && !hasInput && !isAttached) {
       return isRecording ? 'mic-recording' : 'mic-idle'
     }
     return 'send'
@@ -550,7 +589,7 @@ export function ChatInput({
       : 'Message input — unavailable')
 
   const primaryButtonClassName = cn(
-    'inline-flex h-[52px] w-[52px] self-start items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
+    'inline-flex h-[36px] w-[36px] self-end items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
     primaryButtonKind === 'stop'
       ? 'border border-border bg-transparent text-foreground hover:bg-muted'
       : 'bg-accent text-accent-foreground hover:bg-accent-hover',
@@ -639,7 +678,7 @@ export function ChatInput({
           </div>
         )}
 
-        <div className="chat-input-meta">
+        <div ref={metaRef} className="chat-input-meta">
           <div
             className={`chat-input-notice-slot${proxyDeliveryNotice ? ' has-notice' : ''}`}
             aria-live="polite"
@@ -651,28 +690,34 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
-              {onModeChange && (
+              {!isAttached && onModeChange && (
                 <ModeSelector
                   mode={mode}
                   onModeChange={onModeChange}
                   disabled={disabled || modeDisabled}
                   modes={modeOptions}
+                  size={isNarrow ? 'sm' : 'md'}
                 />
               )}
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={disabled || attachmentsDisabled}
-                title={
-                  attachmentsDisabled
-                    ? 'Attached session owns attachments'
-                    : 'Attach file'
-                }
-              >
-                <PaperclipIcon />
-              </Button>
-              {onAgentChange && agentName && agentDefinitions.length > 0 && (
+              {!isAttached && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled || attachmentsDisabled}
+                  title={
+                    attachmentsDisabled
+                      ? 'Attached session owns attachments'
+                      : 'Attach file'
+                  }
+                >
+                  <PaperclipIcon />
+                </Button>
+              )}
+              {!isAttached &&
+                onAgentChange &&
+                agentName &&
+                agentDefinitions.length > 0 && (
                 <ActiveAgentIndicator
                   agentName={agentName}
                   onAgentChange={onAgentChange}
@@ -685,7 +730,7 @@ export function ChatInput({
                   disabled={disabled || agentPickerDisabled}
                 />
               )}
-              {onTtsEnabledChange && (
+              {!isAttached && onTtsEnabledChange && (
                 <Button
                   size="icon"
                   variant="ghost"
@@ -725,7 +770,7 @@ export function ChatInput({
                   <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />
                 </Button>
               )}
-              {onSttEnabledChange && startRecording && stopRecording && (
+              {!isAttached && onSttEnabledChange && startRecording && stopRecording && (
                 <Button
                   size="icon"
                   variant="ghost"
@@ -791,7 +836,7 @@ export function ChatInput({
           <div className="flex items-start gap-2">
             <textarea
               ref={textareaRef}
-              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[52px]"
+              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -821,7 +866,7 @@ export function ChatInput({
               data-1p-ignore
             />
 
-            <div className="shrink-0 self-start">
+            <div className="shrink-0 self-end">
               <button
                 ref={primaryButtonRef}
                 type="button"
@@ -841,27 +886,29 @@ export function ChatInput({
             </div>
           </div>
 
-          {canSelectModel && (
+          {!isAttached && canSelectModel && (
             <ChatInputModelControls
-              currentBranch={currentBranch}
-              disabled={disabled}
-              effectiveProvider={effectiveProvider}
-              modelOptions={modelOptions}
-              onModelSelect={handleModelSelect}
-              onProviderSelect={handleProviderSelect}
-              onReasoningSelect={handleReasoningSelect}
-              onWorktreeChange={onWorktreeChange}
-              orderedProviders={orderedProviders}
-              projectId={projectId}
-              providerPickerDisabledReason={providerPickerDisabledReason}
-              reasoningOptions={reasoningOptions}
-              resolvedModelLabel={resolvedModelLabel}
-              resolvedModelValue={resolvedModelValue}
-              resolvedReasoning={resolvedReasoning}
-              selectionDisabled={selectionDisabled}
-              worktreePath={worktreePath}
-              worktreePickerDisabled={worktreePickerDisabled}
-            />
+                compact={isNarrow}
+                currentBranch={currentBranch}
+                disabled={disabled}
+                effectiveProvider={effectiveProvider}
+                hideBranch={false}
+                modelOptions={modelOptions}
+                onModelSelect={handleModelSelect}
+                onProviderSelect={handleProviderSelect}
+                onReasoningSelect={handleReasoningSelect}
+                onWorktreeChange={onWorktreeChange}
+                orderedProviders={orderedProviders}
+                projectId={projectId}
+                providerPickerDisabledReason={providerPickerDisabledReason}
+                reasoningOptions={reasoningOptions}
+                resolvedModelLabel={resolvedModelLabel}
+                resolvedModelValue={resolvedModelValue}
+                resolvedReasoning={resolvedReasoning}
+                selectionDisabled={selectionDisabled}
+                worktreePath={worktreePath}
+                worktreePickerDisabled={worktreePickerDisabled}
+              />
           )}
           {showObserveOverlay && (
             <div className="chat-input-overlay">

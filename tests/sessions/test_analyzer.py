@@ -428,7 +428,7 @@ def test_mcp_call_tool_gobby_tasks_extracts_task() -> None:
                         "input": {
                             "server_name": "gobby-tasks",
                             "tool_name": "update_task",
-                            "arguments": {"task_id": "gt-abc123", "status": "in_progress"},
+                            "arguments": {"task_id": "gt-abc123", "title": "Updated task title"},
                         },
                     },
                 ]
@@ -677,18 +677,18 @@ class TestFormatToolDescription:
         }
         assert analyzer._format_tool_description(block) == "Created task: Untitled"
 
-    def test_mcp_call_tool_update_task_status(self) -> None:
-        """Test gobby-tasks update_task shows status change."""
+    def test_mcp_call_tool_update_task(self) -> None:
+        """Test gobby-tasks update_task shows a task update."""
         analyzer = TranscriptAnalyzer()
         block = {
             "name": "mcp__gobby__call_tool",
             "input": {
                 "server_name": "gobby-tasks",
                 "tool_name": "update_task",
-                "arguments": {"task_id": "#456", "status": "in_progress"},
+                "arguments": {"task_id": "#456", "title": "Updated task title"},
             },
         }
-        assert analyzer._format_tool_description(block) == "Updated task #456: status → in_progress"
+        assert analyzer._format_tool_description(block) == "Updated task #456"
 
     def test_mcp_call_tool_close_task(self) -> None:
         """Test gobby-tasks close_task shows reason."""

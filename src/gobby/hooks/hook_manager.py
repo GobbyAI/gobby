@@ -37,14 +37,18 @@ from gobby.hooks.dispatchers.webhook import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
+from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
+from gobby.utils.session_refs import try_resolve_session_field
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
+    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.sessions import SessionManager
 
 
 class HookManager:
@@ -94,8 +98,10 @@ class HookManager:
         task_sync_manager: Any | None = None,
         agent_runner: "AgentRunner | None" = None,
         completion_registry: "CompletionEventRegistry | None" = None,
+        database: "DatabaseProtocol | None" = None,
+        session_manager: "SessionManager | None" = None,
         code_index_trigger: Any | None = None,
-    ):
+    ) -> None:
         """
         Initialize HookManager with subsystems.
 
@@ -114,6 +120,8 @@ class HookManager:
             task_sync_manager: Optional TaskSyncManager instance
             agent_runner: Optional AgentRunner for workflow-bound agent completion
             completion_registry: Optional CompletionEventRegistry for wait wakeups
+            database: Optional database instance to share with daemon services
+            session_manager: Optional SessionManager instance to share with daemon services
         """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -127,6 +135,7 @@ class HookManager:
         self._message_processor = message_processor
         self.memory_sync_manager = memory_sync_manager
         self.task_sync_manager = task_sync_manager
+        self._owns_database = database is None and session_manager is None
 
         # Capture event loop for thread-safe broadcasting (if running in async context)
         self._loop: asyncio.AbstractEventLoop | None
@@ -160,6 +169,8 @@ class HookManager:
             task_sync_manager=task_sync_manager,
             agent_runner=agent_runner,
             completion_registry=completion_registry,
+            database=database,
+            session_manager=session_manager,
             get_machine_id=self.get_machine_id,
             resolve_project_id=self._resolve_project_id,
             code_index_trigger=code_index_trigger,
@@ -334,10 +345,32 @@ class HookManager:
         # generic lookup here can auto-register a stray duplicate before the
         # handler gets a chance to bind the real session.
         if event.event_type == HookEventType.SESSION_START:
-            if not event.project_id:
-                cwd = event.cwd or event.data.get("cwd")
-                event.project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
+            project_resolution = resolve_hook_project_context(
+                event,
+                session_manager=self._session_manager,
+                resolve_project_id=self._resolve_project_id,
+                logger=self.logger,
+            )
+            if project_resolution.skipped:
+                self.logger.debug(
+                    "Skipping SESSION_START without project context: %s",
+                    project_resolution.reason,
+                )
+                return HookResponse(decision="allow")
         else:
+            project_resolution = resolve_hook_project_context(
+                event,
+                session_manager=self._session_manager,
+                resolve_project_id=self._resolve_project_id,
+                logger=self.logger,
+            )
+            if project_resolution.skipped:
+                self.logger.debug(
+                    "Skipping hook without project context: event=%s reason=%s",
+                    event.event_type.value,
+                    project_resolution.reason,
+                )
+                return HookResponse(decision="allow")
             # Resolve platform session_id from CLI external_id
             self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
             self._record_session_activity_pulse(event)
@@ -409,13 +442,6 @@ class HookManager:
             response.modified_input = event.metadata.pop("_modified_input")
             response.auto_approve = event.metadata.pop("_auto_approve", False)
 
-        # If we resolved #N session refs but no rule/coercion set _modified_input,
-        # create one so Claude Code sends UUIDs to the MCP server
-        if event.metadata.pop("_session_refs_resolved", False):
-            if not response.modified_input:
-                response.modified_input = event.data.get("tool_input", {})
-                response.auto_approve = True
-
         raw_tool_input = event.metadata.get("raw_tool_input")
         if isinstance(raw_tool_input, dict):
             response.metadata.setdefault("_raw_tool_input", copy.deepcopy(raw_tool_input))
@@ -483,8 +509,7 @@ class HookManager:
         """Resolve #N session references to UUIDs in MCP tool arguments.
 
         Modifies event.data["tool_input"] in place so all downstream consumers
-        (rules, handlers, auto-coercion) see resolved UUIDs. Sets a flag only
-        when the rewritten value must be replayed to the tool as modified_input.
+        (rules, handlers, auto-coercion) see resolved UUIDs.
         """
         if event.event_type != HookEventType.BEFORE_TOOL:
             return
@@ -498,27 +523,19 @@ class HookManager:
             return
 
         project_id = event.project_id
-        replay_needed = False
 
         # Variable tools intentionally keep the user's explicit session ref
         # (#N, N, UUID, or prefix). They resolve refs internally and preserving
         # the original form keeps retry payloads cleaner for agents.
         if tool_name not in {"mcp__gobby__set_variable", "mcp__gobby__get_variable"}:
             # Top-level session_id (call_tool, tasks tools, etc.)
-            top_level_modified = self._try_resolve_session_field(
-                tool_input, "session_id", project_id
-            )
-            if tool_name != "mcp__gobby__call_tool":
-                replay_needed |= top_level_modified
+            self._try_resolve_session_field(tool_input, "session_id", project_id)
 
         # Nested session_id inside call_tool arguments
         if tool_name == "mcp__gobby__call_tool":
             args = tool_input.get("arguments")
             if isinstance(args, dict):
-                replay_needed |= self._try_resolve_session_field(args, "session_id", project_id)
-
-        if replay_needed:
-            event.metadata["_session_refs_resolved"] = True
+                self._try_resolve_session_field(args, "session_id", project_id)
 
     def _try_resolve_session_field(
         self, d: dict[str, Any], field: str, project_id: str | None
@@ -527,27 +544,12 @@ class HookManager:
 
         Returns True if the field was rewritten.
         """
-        val = d.get(field)
-        if not isinstance(val, str):
-            return False
-
-        ref = val.lstrip("#") if val.startswith("#") else val
-        if not ref.isdigit():
-            return False  # Already a UUID or prefix — no resolution needed
-
-        try:
-            resolved = self._session_manager.resolve_session_reference(val, project_id)
-            if resolved != val:
-                d[field] = resolved
-                return True
-        except ValueError as e:
-            self.logger.debug(f"Could not resolve session ref '{val}': {e}")
-        except Exception as e:
-            self.logger.warning(
-                f"Unexpected error resolving session ref '{val}': {e}", exc_info=True
-            )
-
-        return False
+        return try_resolve_session_field(
+            d,
+            field,
+            session_manager=self._session_manager,
+            project_id=project_id,
+        )
 
     @staticmethod
     def _summarize_mcp_calls(mcp_calls: list[dict[str, Any]]) -> list[str]:
@@ -884,6 +886,7 @@ class HookManager:
         Clean up HookManager resources on daemon shutdown.
 
         Stops background health check monitoring and transcript watchers.
+        Closes only database handles created by this HookManager.
         """
         self.logger.debug("HookManager shutting down")
 
@@ -901,7 +904,7 @@ class HookManager:
         except Exception as e:
             self.logger.warning(f"Failed to close webhook dispatcher: {e}")
 
-        if hasattr(self, "_database"):
+        if self._owns_database and hasattr(self, "_database"):
             self._database.close()
 
         self.logger.debug("HookManager shutdown complete")

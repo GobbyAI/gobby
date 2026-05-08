@@ -100,7 +100,7 @@ class TestFTSTriggerScoping:
         # Drop the FTS table but keep triggers
         _drop_fts_table_keep_triggers(db)
 
-        # This must succeed — the update trigger should NOT fire
+        timestamp = datetime.now(UTC).isoformat()
         with db.transaction() as conn:
             conn.execute(
                 """
@@ -109,8 +109,16 @@ class TestFTSTriggerScoping:
                     last_accessed_at = ?
                 WHERE id = ?
                 """,
-                (datetime.now(UTC).isoformat(), mem_id),
+                (timestamp, mem_id),
             )
+            row = conn.execute(
+                "SELECT access_count, last_accessed_at FROM memories WHERE id = ?",
+                (mem_id,),
+            ).fetchone()
+
+        assert row is not None
+        assert row["access_count"] == 1
+        assert row["last_accessed_at"] == timestamp
 
     def test_mark_graph_processed_succeeds_without_fts(self, db, memory_manager) -> None:
         """graph_processed updates must not invoke the FTS trigger."""
@@ -118,8 +126,14 @@ class TestFTSTriggerScoping:
 
         _drop_fts_table_keep_triggers(db)
 
-        # Must succeed — trigger should NOT fire on graph_processed
         memory_manager.mark_graph_processed(mem_id)
+        row = db.connection.execute(
+            "SELECT graph_processed FROM memories WHERE id = ?",
+            (mem_id,),
+        ).fetchone()
+
+        assert row is not None
+        assert row["graph_processed"] == 1
 
     def test_updated_at_succeeds_without_fts(self, db, memory_manager) -> None:
         """updated_at changes must not invoke the FTS trigger."""
@@ -128,10 +142,18 @@ class TestFTSTriggerScoping:
         _drop_fts_table_keep_triggers(db)
 
         with db.transaction() as conn:
+            timestamp = datetime.now(UTC).isoformat()
             conn.execute(
                 "UPDATE memories SET updated_at = ? WHERE id = ?",
-                (datetime.now(UTC).isoformat(), mem_id),
+                (timestamp, mem_id),
             )
+            row = conn.execute(
+                "SELECT updated_at FROM memories WHERE id = ?",
+                (mem_id,),
+            ).fetchone()
+
+        assert row is not None
+        assert row["updated_at"] == timestamp
 
     def test_content_update_fires_trigger(self, db, memory_manager) -> None:
         """Updating content (an indexed column) MUST fire the FTS trigger.

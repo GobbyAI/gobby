@@ -4,162 +4,119 @@ import { useSessionDetail } from "../../hooks/useSessionDetail";
 import type { GobbySession } from "../../types/sessions";
 import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { getSessionTitleText } from "../../lib/sessionTitle";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { MessageItem } from "../chat/MessageItem";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import { SourceIcon } from "../shared/SourceIcon";
 import {
+  ClipboardListIcon,
+  PlayIcon,
+  SwapIcon,
+  TranscriptIcon,
+} from "../icons";
+import {
   SessionInteractionModal,
   type InteractionMode,
 } from "./SessionInteractionModal";
+import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
+import {
+  countActiveFilters,
+  DEFAULT_LIVE_STATUSES,
+  defaultSessionsFilters,
+  matchesSessionsFilters,
+  type SessionStatus,
+  type SessionsFilters,
+} from "./sessionsFilters";
+import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
+import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
+import {
+  type RunningAgent,
+  type WatchingSessionEntry,
+  type SessionContextMenu,
+  WATCHING_SESSION_ID_KEY,
+  HIDDEN_SOURCES,
+  getBaseUrl,
+  resolveLocalFlag,
+  renderBadges,
+  matchesSearch,
+  entryTimestamp,
+  parseTimestamp,
+} from "./SessionsTab.helpers";
 
-interface RunningAgent {
-  run_id: string;
-  provider: string;
-  pid?: number;
-  mode?: string;
-  started_at?: string;
-  session_id?: string;
-}
+// Canonical session-providers — sessions can exist for any of these regardless
+// of current local availability, so the filter affordance reflects what was
+// used historically rather than what is installable right now.
+const SESSION_PROVIDERS: readonly string[] = [
+  "claude",
+  "codex",
+  "droid",
+  "gemini",
+  "qwen",
+];
+
+const STATUS_MODE_OPTIONS = [
+  { value: "live" as const, label: "Live" },
+  { value: "expired" as const, label: "Expired" },
+] as const;
 
 interface SessionsTabProps {
   sessions?: GobbySession[];
   isLoadingSessions?: boolean;
+  filters?: SessionsFilters;
+  onFiltersChange?: (filters: SessionsFilters) => void;
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
   onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
-  chatSessionId?: string;
+  chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
   onSwapSession?: (target: SwappedSessionTarget) => void;
 }
 
-interface WatchingSessionEntry {
-  id: string;
-  type: "agent" | "session";
-  label: string;
-  provider: string;
-  status: string;
-  sessionType?: string;
-  externalId?: string;
-  agentRunId?: string | null;
-  runId?: string;
-  startedAt?: string;
-  updatedAt?: string;
-  seqNum?: number | null;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  hasTmux: boolean;
-  sandboxEnabled: boolean;
+function FilterEmptyState({
+  message,
+  hasActiveFilters,
+  activeFilterCount,
+  onClear,
+  hint = "Matching sessions will appear here.",
+}: {
+  message: string;
+  hasActiveFilters: boolean;
+  activeFilterCount: number;
+  onClear: () => void;
+  hint?: string;
+}) {
+  return (
+    <ActivityPanelEmpty
+      icon={<SessionsEmptyIcon />}
+      heading="Sessions"
+      body={hasActiveFilters && activeFilterCount > 0 ? message : hint}
+      footer={
+        hasActiveFilters && activeFilterCount > 0 ? (
+          <button
+            type="button"
+            className="text-xs text-accent hover:underline"
+            onClick={onClear}
+          >
+            Clear filters
+          </button>
+        ) : null
+      }
+    />
+  );
 }
 
-interface SessionContextMenu {
-  x: number;
-  y: number;
-  entry: WatchingSessionEntry;
-}
-
-type SessionStatusFilter = "live" | "expired";
 type WatchingContentMode = "transcript" | "summary";
-
-const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
-const LIVE_SESSION_STATUSES = new Set(["active", "paused"]);
-const HIDDEN_SOURCES = new Set(["pipeline", "cron", "system"]);
-
-function getBaseUrl(): string {
-  return import.meta.env.VITE_API_BASE_URL || "";
-}
-
-function getSessionTypeBadge(sessionType: string | undefined): {
-  label: string;
-  className: string;
-} {
-  if (sessionType === "web_chat") {
-    return { label: "web", className: "session-kind-badge--web" };
-  }
-  return { label: "tmux", className: "session-kind-badge--tmux" };
-}
-
-function getAgentBadge(agentRunId: string | null | undefined): {
-  label: string;
-  className: string;
-} | null {
-  if (!agentRunId) return null;
-  return { label: "auto", className: "session-kind-badge--auto" };
-}
-
-function getSandboxBadge(sandboxEnabled: boolean): {
-  label: string;
-  className: string;
-} | null {
-  if (!sandboxEnabled) return null;
-  return { label: "SB", className: "session-kind-badge--sandbox" };
-}
-
-function renderBadges(entry: WatchingSessionEntry) {
-  const badges = [
-    getSessionTypeBadge(entry.sessionType),
-    getSandboxBadge(entry.sandboxEnabled),
-    getAgentBadge(entry.agentRunId),
-  ]
-    .filter(
-      (
-        badge,
-      ): badge is {
-        label: string;
-        className: string;
-      } => Boolean(badge),
-    )
-    .sort((left, right) =>
-      left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
-    );
-
-  return (
-    <>
-      {badges.map((badge) => (
-        <span
-          key={`${badge.className}:${badge.label}`}
-          className={`session-kind-badge ${badge.className}`}
-        >
-          {badge.label}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function matchesStatusFilter(
-  session: GobbySession,
-  statusFilter: SessionStatusFilter,
-): boolean {
-  if (statusFilter === "expired") {
-    return session.status === "expired";
-  }
-  return LIVE_SESSION_STATUSES.has(session.status);
-}
-
-function matchesSearch(session: GobbySession, search: string): boolean {
-  if (!search.trim()) {
-    return true;
-  }
-  const query = search.trim().toLowerCase();
-  return (
-    (session.title && session.title.toLowerCase().includes(query)) ||
-    session.ref.toLowerCase().includes(query) ||
-    session.external_id.toLowerCase().includes(query)
-  );
-}
-
-function entryTimestamp(entry: WatchingSessionEntry): number {
-  const raw = entry.updatedAt ?? entry.startedAt ?? null;
-  return raw ? new Date(raw).getTime() : 0;
-}
 
 export const SessionsTab = memo(function SessionsTab({
   sessions = [],
   isLoadingSessions = false,
+  filters: filtersProp,
+  onFiltersChange,
   onKillAgent,
   onExpireSession,
   onResumeSession,
@@ -173,7 +130,6 @@ export const SessionsTab = memo(function SessionsTab({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>("live");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
     try {
@@ -182,10 +138,31 @@ export const SessionsTab = memo(function SessionsTab({
       return null;
     }
   });
-  const [topHeight, setTopHeight] = useState(35);
+  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
   const [modalMode, setModalMode] = useState<InteractionMode | null>(null);
+  // Filter state is owned by App so the catalog hook can refetch with
+  // server-side predicates (covers historical-tail filtering). Fall back to
+  // local state if a legacy caller mounts SessionsTab without the props —
+  // tests and standalone storybook entries do this.
+  const [localFilters, setLocalFilters] = useState<SessionsFilters>(
+    defaultSessionsFilters,
+  );
+  const filters = filtersProp ?? localFilters;
+  const setFilters = useCallback(
+    (next: SessionsFilters) => {
+      if (onFiltersChange) {
+        onFiltersChange(next);
+      } else {
+        setLocalFilters(next);
+      }
+    },
+    [onFiltersChange],
+  );
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+
+  const activeFilterCount = countActiveFilters(filters);
   const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
   const initialSelectionAppliedRef = useRef(false);
   const selectionClearedRef = useRef(false);
@@ -222,44 +199,79 @@ export const SessionsTab = memo(function SessionsTab({
   }, []);
 
   useEffect(() => {
-    void fetchAgents();
+    const fetchNow = () => {
+      void fetchAgents();
+    };
+    const timeout = window.setTimeout(fetchNow, 0);
     const interval = window.setInterval(() => {
       void fetchAgents();
     }, 5000);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearTimeout(timeout);
+      window.clearInterval(interval);
+    };
   }, [fetchAgents]);
 
   useEffect(() => {
-    setExpiringIds((prev) => {
-      const next = new Set<string>();
-      for (const sessionId of prev) {
-        const session = sessions.find((candidate) => candidate.id === sessionId);
-        if (session && session.status !== "expired") {
-          next.add(sessionId);
+    const timeout = window.setTimeout(() => {
+      setExpiringIds((prev) => {
+        const next = new Set<string>();
+        for (const sessionId of prev) {
+          const session = sessions.find((candidate) => candidate.id === sessionId);
+          if (session && session.status !== "expired") {
+            next.add(sessionId);
+          }
         }
-      }
-      return next;
-    });
+        return next;
+      });
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [sessions]);
 
+  // Status (Live | Expired) is part of SessionsFilters now; the SegmentedControl
+  // writes filters.statuses and matchesSessionsFilters runs the predicate. The
+  // agent-entries block below also gates on this — agents are by definition
+  // live, so hide them when the user is looking at Expired only.
+  const statusMode: "live" | "expired" =
+    filters.statuses.size === 1 && filters.statuses.has("expired")
+      ? "expired"
+      : "live";
+
+  const setStatusMode = useCallback(
+    (mode: "live" | "expired") => {
+      setFilters({
+        ...filters,
+        statuses:
+          mode === "expired"
+            ? new Set<SessionStatus>(["expired"])
+            : new Set<SessionStatus>(DEFAULT_LIVE_STATUSES),
+      });
+    },
+    [filters, setFilters],
+  );
+
   const visibleSessions = useMemo(
-    () =>
-      sessions
+    () => {
+      const now = new Date();
+      return sessions
         .filter((session) => session.id !== chatSessionId)
         .filter((session) => !expiringIds.has(session.id))
         .filter((session) => !HIDDEN_SOURCES.has(session.source))
-        .filter((session) => matchesStatusFilter(session, statusFilter))
         .filter((session) => matchesSearch(session, search))
-        .sort(
-          (a, b) =>
-            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-        ),
-    [chatSessionId, expiringIds, search, sessions, statusFilter],
+        .filter((session) => matchesSessionsFilters(session, filters, now))
+        .sort((a, b) => {
+          const aSeq = a.seq_num ?? -Infinity;
+          const bSeq = b.seq_num ?? -Infinity;
+          if (aSeq !== bSeq) return bSeq - aSeq;
+          return parseTimestamp(b.created_at) - parseTimestamp(a.created_at);
+        });
+    },
+    [chatSessionId, expiringIds, search, sessions, filters],
   );
 
   const entries: WatchingSessionEntry[] = useMemo(() => {
     const agentEntries: WatchingSessionEntry[] =
-      statusFilter === "live"
+      statusMode === "live"
         ? agents.reduce<WatchingSessionEntry[]>((nextEntries, agent) => {
             const matchedSession = agent.session_id
               ? visibleSessions.find((session) => session.id === agent.session_id)
@@ -267,6 +279,16 @@ export const SessionsTab = memo(function SessionsTab({
             if (!matchedSession) {
               return nextEntries;
             }
+            const sessionIsLocal = resolveLocalFlag(
+              matchedSession.is_local,
+              matchedSession.source,
+              matchedSession.model,
+            );
+            const agentIsLocal = resolveLocalFlag(
+              agent.is_local,
+              agent.provider,
+              agent.model,
+            );
             nextEntries.push({
               id: matchedSession.id,
               type: "agent",
@@ -287,6 +309,7 @@ export const SessionsTab = memo(function SessionsTab({
                 (matchedSession.usage_output_tokens ?? 0),
               hasTmux: Boolean(matchedSession.terminal_context),
               sandboxEnabled: matchedSession.sandbox_enabled ?? false,
+              isLocal: sessionIsLocal || agentIsLocal,
             });
             return nextEntries;
           }, [])
@@ -311,76 +334,89 @@ export const SessionsTab = memo(function SessionsTab({
         totalTokens: (session.usage_input_tokens ?? 0) + (session.usage_output_tokens ?? 0),
         hasTmux: Boolean(session.terminal_context),
         sandboxEnabled: session.sandbox_enabled ?? false,
+        isLocal: resolveLocalFlag(session.is_local, session.source, session.model),
       }));
 
     return [...agentEntries, ...sessionEntries].sort(
       (a, b) => entryTimestamp(b) - entryTimestamp(a),
     );
-  }, [agents, statusFilter, visibleSessions]);
+  }, [agents, statusMode, visibleSessions]);
 
   const isLoading = isLoadingSessions || agentsLoading;
 
   useEffect(() => {
-    if (isLoading) {
-      return;
-    }
-
-    if (entries.length === 0) {
-      selectionClearedRef.current = false;
-      if (selectedSessionId !== null) {
-        setSelectedSessionId(null);
+    const timeout = window.setTimeout(() => {
+      if (isLoading) {
+        return;
       }
-      return;
-    }
 
-    const hasFocusedEntry =
-      focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
-
-    if (!initialSelectionAppliedRef.current) {
-      initialSelectionAppliedRef.current = true;
-      selectionClearedRef.current = false;
-      const persistedStillPresent =
-        selectedSessionId != null &&
-        entries.some((entry) => entry.id === selectedSessionId);
-      const nextSelection = hasFocusedEntry
-        ? focusSessionId
-        : persistedStillPresent
-          ? selectedSessionId
-          : entries[0].id;
-      if (nextSelection !== selectedSessionId) {
-        setSelectedSessionId(nextSelection);
+      if (entries.length === 0) {
+        selectionClearedRef.current = false;
+        if (selectedSessionId !== null) {
+          setSelectedSessionId(null);
+        }
+        return;
       }
-      if (hasFocusedEntry) {
+
+      const hasFocusedEntry =
+        focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
+
+      if (!initialSelectionAppliedRef.current) {
+        initialSelectionAppliedRef.current = true;
+        selectionClearedRef.current = false;
+        const persistedStillPresent =
+          selectedSessionId != null &&
+          entries.some((entry) => entry.id === selectedSessionId);
+        const nextSelection = hasFocusedEntry
+          ? focusSessionId
+          : persistedStillPresent
+            ? selectedSessionId
+            : entries[0].id;
+        if (nextSelection !== selectedSessionId) {
+          setSelectedSessionId(nextSelection);
+        }
+        if (hasFocusedEntry) {
+          setContentMode("transcript");
+          onFocusHandled?.();
+        }
+        return;
+      }
+
+      if (hasFocusedEntry && focusSessionId === selectedSessionId) {
+        selectionClearedRef.current = false;
+        setContentMode("transcript");
         onFocusHandled?.();
-      }
-      return;
-    }
-
-    if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
-      selectionClearedRef.current = false;
-      setSelectedSessionId(focusSessionId);
-      onFocusHandled?.();
-      return;
-    }
-
-    if (!selectedSessionId) {
-      if (selectionClearedRef.current) {
         return;
       }
-      setSelectedSessionId(entries[0].id);
-      return;
-    }
 
-    const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
-    if (!stillPresent) {
-      if (selectedSessionId === chatSessionId && !hasFocusedEntry) {
-        selectionClearedRef.current = true;
-        setSelectedSessionId(null);
+      if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
+        selectionClearedRef.current = false;
+        setContentMode("transcript");
+        setSelectedSessionId(focusSessionId);
+        onFocusHandled?.();
         return;
       }
-      selectionClearedRef.current = false;
-      setSelectedSessionId(entries[0].id);
-    }
+
+      if (!selectedSessionId) {
+        if (selectionClearedRef.current) {
+          return;
+        }
+        setSelectedSessionId(entries[0].id);
+        return;
+      }
+
+      const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
+      if (!stillPresent) {
+        if (selectedSessionId === chatSessionId && !hasFocusedEntry) {
+          selectionClearedRef.current = true;
+          setSelectedSessionId(null);
+          return;
+        }
+        selectionClearedRef.current = false;
+        setSelectedSessionId(entries[0].id);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [
     chatSessionId,
     entries,
@@ -389,7 +425,6 @@ export const SessionsTab = memo(function SessionsTab({
     onFocusHandled,
     selectedSessionId,
   ]);
-
   useEffect(() => {
     try {
       if (selectedSessionId) {
@@ -403,7 +438,10 @@ export const SessionsTab = memo(function SessionsTab({
   }, [selectedSessionId]);
 
   useEffect(() => {
-    setContentMode("transcript");
+    const timeout = window.setTimeout(() => {
+      setContentMode("transcript");
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [selectedSessionId]);
 
   const {
@@ -465,10 +503,10 @@ export const SessionsTab = memo(function SessionsTab({
     if (contentMode === "transcript") {
       const messagesEnd = messagesEndRef.current;
       if (messagesEnd && typeof messagesEnd.scrollIntoView === "function") {
-        messagesEnd.scrollIntoView({ behavior: "smooth" });
+        messagesEnd.scrollIntoView({ behavior: "auto" });
       }
     }
-  }, [chatMessages.length, contentMode]);
+  }, [chatMessages.length, contentMode, selectedSessionId]);
 
   const handleSelect = useCallback((id: string) => {
     selectionClearedRef.current = false;
@@ -591,30 +629,72 @@ export const SessionsTab = memo(function SessionsTab({
     setModalEntry(null);
   }, []);
 
-  const emptyListMessage =
-    statusFilter === "expired" ? "No expired sessions" : "No live sessions";
+  const handleSwapSelectedSession = useCallback(() => {
+    if (!selectedSessionId || !selectedEntry) return;
+    setContentMode("transcript");
+    onSwapSession?.({
+      sessionId: selectedSessionId,
+      sessionType: selectedEntry.sessionType ?? null,
+      agentRunId: selectedEntry.agentRunId ?? null,
+    });
+  }, [onSwapSession, selectedEntry, selectedSessionId]);
+
+  const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
+  const emptyListMessage = hasActiveFilters
+    ? "No sessions match these filters."
+    : statusMode === "expired"
+      ? "No expired sessions"
+      : "No live sessions";
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <input
-          type="search"
+      <div className="activity-panel-toolbar">
+        <ActivityPanelSearch
           value={searchInput}
-          onChange={(event) => setSearchInput(event.target.value)}
-          placeholder="Search sessions"
-          className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
+          onChange={setSearchInput}
+          placeholder="Search"
         />
-        <select
-          aria-label="Session status filter"
-          value={statusFilter}
-          onChange={(event) =>
-            setStatusFilter(event.target.value as SessionStatusFilter)
-          }
-          className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none"
+        <SegmentedControl<"live" | "expired">
+          value={statusMode}
+          onChange={setStatusMode}
+          options={STATUS_MODE_OPTIONS}
+          ariaLabel="Session status filter"
+          size="md"
+          className="activity-panel-toolbar-segmented"
+        />
+        <button
+          type="button"
+          className="activity-filter-button"
+          onClick={() => setShowFilterDropdown((v) => !v)}
+          title="Filter sessions"
+          aria-label="Filter sessions"
+          aria-expanded={showFilterDropdown}
         >
-          <option value="live">Live</option>
-          <option value="expired">Expired</option>
-        </select>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          {activeFilterCount > 0 && (
+            <span className="activity-filter-badge">{activeFilterCount}</span>
+          )}
+        </button>
+        {showFilterDropdown && (
+          <SessionsFilterDropdown
+            filters={filters}
+            onChange={setFilters}
+            providerOptions={SESSION_PROVIDERS}
+            onClose={() => setShowFilterDropdown(false)}
+          />
+        )}
       </div>
 
       <div
@@ -622,20 +702,16 @@ export const SessionsTab = memo(function SessionsTab({
         style={selectedSessionId ? { height: `${topHeight}%` } : undefined}
       >
         {isLoading && entries.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>Loading sessions...</p>
-          </div>
+          <ActivityPanelEmpty body="Loading sessions…" />
         ) : fetchError && entries.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>{fetchError}</p>
-          </div>
+          <ActivityPanelEmpty body={fetchError} />
         ) : entries.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>{emptyListMessage}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Matching sessions will appear here.
-            </p>
-          </div>
+          <FilterEmptyState
+            message={emptyListMessage}
+            hasActiveFilters={hasActiveFilters}
+            activeFilterCount={activeFilterCount}
+            onClear={() => setFilters(defaultSessionsFilters())}
+          />
         ) : (
           entries.map((entry) => {
             const isSelected = entry.id === selectedSessionId;
@@ -647,12 +723,31 @@ export const SessionsTab = memo(function SessionsTab({
             return (
               <div
                 key={`${entry.type}-${entry.id}`}
+                role="button"
+                tabIndex={0}
                 className={`session-entry${isSelected ? " session-entry--active" : ""}${isPaused ? " session-entry--paused" : ""}`}
                 onClick={() => handleSelect(entry.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleSelect(entry.id);
+                  }
+                }}
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <ActivityRowStatusDot
+                    color={
+                      entry.status === "active"
+                        ? "var(--color-success-foreground)"
+                        : entry.status === "expired"
+                          ? "var(--text-muted)"
+                          : "var(--color-warning-foreground)"
+                    }
+                    pulse={entry.status === "active"}
+                    label={`Session ${entry.status}`}
+                  />
                   <SourceIcon source={entry.provider} size={14} />
-                  <span className="text-sm text-foreground truncate">
+                  <span className="activity-row-title">
                     {displayLabel}
                   </span>
                 </div>
@@ -696,13 +791,12 @@ export const SessionsTab = memo(function SessionsTab({
 
       {selectedSessionId && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div
-            className="flex items-center gap-3 px-3 border-b border-border"
-            style={{ height: 40, background: "var(--bg-secondary)" }}
-          >
+          <div className="activity-panel-status-bar activity-panel-status-bar--detail">
             <div className="min-w-0 flex-1">
-              <span className="block truncate text-xs text-muted-foreground">
-                Watching{" "}
+              <span className="activity-panel-status-bar__title">
+                <span className="activity-panel-status-bar__watching-prefix">
+                  Watching{" "}
+                </span>
                 {selectedEntry
                   ? selectedEntry.seqNum
                     ? `#${selectedEntry.seqNum}: ${selectedEntry.label}`
@@ -710,48 +804,62 @@ export const SessionsTab = memo(function SessionsTab({
                   : "session"}
               </span>
             </div>
-            <div className="flex flex-none items-center gap-3">
+            <div className="activity-panel-status-bar__actions">
               {showSummaryButton && (
                 <button
                   type="button"
-                  className="session-pane-action"
+                  className="btn btn-accent btn-sm activity-panel-action-btn"
                   onClick={() =>
                     setContentMode((current) =>
                       current === "summary" ? "transcript" : "summary",
                     )
                   }
+                  aria-label={contentMode === "summary" ? "Transcript" : "Summary"}
+                  title={contentMode === "summary" ? "Transcript" : "Summary"}
                 >
-                  {contentMode === "summary" ? "Transcript" : "Summary"}
+                  {contentMode === "summary" ? (
+                    <>
+                      <TranscriptIcon />
+                      <span className="activity-panel-action-btn__label">
+                        Transcript
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardListIcon />
+                      <span className="activity-panel-action-btn__label">
+                        Summary
+                      </span>
+                    </>
+                  )}
                 </button>
               )}
               {showResumeButton && (
                 <button
                   type="button"
-                  className="session-pane-action"
+                  className="btn btn-accent btn-sm activity-panel-action-btn"
                   onClick={() => {
                     if (selectedSessionId) {
                       void onResumeSession?.(selectedSessionId);
                     }
                   }}
+                  aria-label="Resume"
+                  title="Resume"
                 >
-                  Resume
+                  <PlayIcon />
+                  <span className="activity-panel-action-btn__label">Resume</span>
                 </button>
               )}
               {showSwapButton && selectedEntry && (
                 <button
                   type="button"
-                  className="session-pane-action"
-                  onClick={() => {
-                    if (selectedSessionId) {
-                      onSwapSession?.({
-                        sessionId: selectedSessionId,
-                        sessionType: selectedEntry.sessionType ?? null,
-                        agentRunId: selectedEntry.agentRunId ?? null,
-                      });
-                    }
-                  }}
+                  className="btn btn-accent btn-sm activity-panel-action-btn"
+                  onClick={handleSwapSelectedSession}
+                  aria-label="Swap"
+                  title="Swap"
                 >
-                  Swap
+                  <SwapIcon />
+                  <span className="activity-panel-action-btn__label">Swap</span>
                 </button>
               )}
             </div>
@@ -768,21 +876,15 @@ export const SessionsTab = memo(function SessionsTab({
                     />
                   </div>
                 ) : (
-                  <div className="activity-tab-empty">
-                    <p>No summary available</p>
-                  </div>
+                  <ActivityPanelEmpty body="No summary available" />
                 )}
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto chat-scaled">
                 {isLoadingDetail ? (
-                  <div className="activity-tab-empty">
-                    <p>Loading messages...</p>
-                  </div>
+                  <ActivityPanelEmpty body="Loading messages…" />
                 ) : chatMessages.length === 0 ? (
-                  <div className="activity-tab-empty">
-                    <p>{transcriptEmptyStateMessage}</p>
-                  </div>
+                  <ActivityPanelEmpty body={transcriptEmptyStateMessage} />
                 ) : (
                   <>
                     {chatMessages.map((message) => (
@@ -864,7 +966,7 @@ export const SessionsTab = memo(function SessionsTab({
             runId: modalEntry.runId,
             seqNum: modalEntry.seqNum,
           }}
-          fromSessionId={chatSessionId}
+          fromSessionId={chatSessionId ?? undefined}
         />
       )}
     </div>

@@ -13,6 +13,8 @@ import pytest
 
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture()
 def manager(temp_db):

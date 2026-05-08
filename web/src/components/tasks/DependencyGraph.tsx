@@ -1,11 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect, useId } from 'react'
 import dagre from '@dagrejs/dagre'
 import type { GobbyTask } from '../../hooks/useTasks'
-import { getTaskBucket, TASK_BUCKET_COLORS } from '../../lib/taskState'
-
-// =============================================================================
-// Types
-// =============================================================================
+import { getTaskDisplayState, TASK_STATE_COLORS } from '../../lib/taskState'
 
 interface GraphNode {
   id: string
@@ -25,29 +21,31 @@ interface ViewBox {
   scale: number
 }
 
-// =============================================================================
-// Constants
-// =============================================================================
-
 const NODE_WIDTH = 160
 const NODE_HEIGHT = 36
 
-// =============================================================================
-// Layout engine (simple layered DAG)
-// =============================================================================
+const CONTAINER_CLS =
+  'relative overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
+const SVG_CLS = 'block h-[520px] w-full'
+const EMPTY_CLS =
+  'p-12 text-center text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
+const CONTROLS_CLS =
+  'absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]'
+const CTRL_BTN_CLS =
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-none bg-transparent text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+const CTRL_LABEL_CLS =
+  'min-w-9 px-1 text-center text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
 
 function buildGraph(tasks: GobbyTask[]): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const taskMap = new Map(tasks.map(t => [t.id, t]))
   const edges: GraphEdge[] = []
 
-  // Build edges from parent-child relationships
   for (const task of tasks) {
     if (task.parent_task_id && taskMap.has(task.parent_task_id)) {
       edges.push({ from: task.parent_task_id, to: task.id })
     }
   }
 
-  // Use dagre for layout
   const g = new dagre.graphlib.Graph()
   g.setGraph({ rankdir: 'LR', nodesep: 16, ranksep: 60, marginx: 20, marginy: 20 })
   g.setDefaultEdgeLabel(() => ({}))
@@ -76,10 +74,6 @@ function buildGraph(tasks: GobbyTask[]): { nodes: GraphNode[]; edges: GraphEdge[
   return { nodes, edges }
 }
 
-// =============================================================================
-// SVG Arrow marker
-// =============================================================================
-
 function ArrowDefs({ markerId }: { markerId: string }) {
   return (
     <defs>
@@ -97,10 +91,6 @@ function ArrowDefs({ markerId }: { markerId: string }) {
     </defs>
   )
 }
-
-// =============================================================================
-// DependencyGraph
-// =============================================================================
 
 interface DependencyGraphProps {
   tasks: GobbyTask[]
@@ -123,7 +113,6 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
     return m
   }, [nodes])
 
-  // Compute SVG bounds
   const bounds = useMemo(() => {
     if (nodes.length === 0) return { width: 400, height: 300 }
     const maxX = Math.max(...nodes.map(n => n.x + NODE_WIDTH)) + 40
@@ -131,7 +120,6 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
     return { width: maxX, height: maxY }
   }, [nodes])
 
-  // Fit to view on first render
   useEffect(() => {
     if (!svgRef.current || nodes.length === 0) return
     const rect = svgRef.current.getBoundingClientRect()
@@ -145,7 +133,6 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
     })
   }, [nodes.length, bounds.width, bounds.height])
 
-  // Pan handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
     setDragging(true)
@@ -166,14 +153,12 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
     dragStart.current = null
   }, [])
 
-  // Zoom handler
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return
     e.preventDefault()
     const delta = e.deltaY > 0 ? 0.9 : 1.1
     setView(v => {
       const newScale = Math.min(Math.max(v.scale * delta, 0.2), 3)
-      // Zoom toward cursor
       const rect = svgRef.current?.getBoundingClientRect()
       if (!rect) return { ...v, scale: newScale }
       const cx = e.clientX - rect.left
@@ -208,20 +193,20 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
   }, [bounds])
 
   if (tasks.length === 0) {
-    return <div className="dep-graph-empty">No tasks to visualize</div>
+    return <div className={EMPTY_CLS}>No tasks to visualize</div>
   }
 
   return (
-    <div className="dep-graph-container">
-      <div className="dep-graph-controls">
-        <button className="dep-graph-ctrl-btn" onClick={zoomIn} title="Zoom in" aria-label="Zoom in">+</button>
-        <button className="dep-graph-ctrl-btn" onClick={zoomOut} title="Zoom out" aria-label="Zoom out">{'\u2212'}</button>
-        <button className="dep-graph-ctrl-btn" onClick={fitView} title="Fit to view" aria-label="Fit to view">{'\u2922'}</button>
-        <span className="dep-graph-ctrl-label">{Math.round(view.scale * 100)}%</span>
+    <div className={CONTAINER_CLS}>
+      <div className={CONTROLS_CLS}>
+        <button className={CTRL_BTN_CLS} onClick={zoomIn} title="Zoom in" aria-label="Zoom in">+</button>
+        <button className={CTRL_BTN_CLS} onClick={zoomOut} title="Zoom out" aria-label="Zoom out">−</button>
+        <button className={CTRL_BTN_CLS} onClick={fitView} title="Fit to view" aria-label="Fit to view">⤢</button>
+        <span className={CTRL_LABEL_CLS}>{Math.round(view.scale * 100)}%</span>
       </div>
       <svg
         ref={svgRef}
-        className="dep-graph-svg"
+        className={SVG_CLS}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -231,7 +216,6 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
       >
         <ArrowDefs markerId={markerId} />
         <g transform={`translate(${view.x}, ${view.y}) scale(${view.scale})`}>
-          {/* Edges */}
           {edges.map((edge) => {
             const from = nodeMap.get(edge.from)
             const to = nodeMap.get(edge.to)
@@ -256,9 +240,8 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
             )
           })}
 
-          {/* Nodes */}
           {nodes.map(node => {
-            const color = TASK_BUCKET_COLORS[getTaskBucket(node.task)] || '#737373'
+            const color = TASK_STATE_COLORS[getTaskDisplayState(node.task)] || 'var(--text-muted)'
             const isHovered = hoveredId === node.id
             return (
               <g
@@ -277,7 +260,6 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
                   stroke={isHovered ? 'var(--accent)' : color}
                   strokeWidth={isHovered ? 2 : 1.5}
                 />
-                {/* Status indicator bar */}
                 <rect
                   x={0}
                   y={0}
@@ -286,7 +268,6 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
                   rx={2}
                   fill={color}
                 />
-                {/* Ref label */}
                 <text
                   x={12}
                   y={14}
@@ -296,7 +277,6 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
                 >
                   {node.task.ref}
                 </text>
-                {/* Title (truncated) */}
                 <text
                   x={12}
                   y={28}

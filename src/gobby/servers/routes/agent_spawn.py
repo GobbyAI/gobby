@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, field_validator
 
+from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.storage.task_dependencies import TaskDependencyManager
-from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -183,34 +183,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
     """Create agent spawn router with endpoints bound to server instance."""
     router = APIRouter(prefix="/api/agents", tags=["agent-spawn"])
 
-    async def _get_or_create_launcher_session(project_id: str) -> str:
-        """Get or create a persistent web_launcher session for HTTP-initiated spawns."""
-        sm = server.services.session_manager
-        # Look for existing launcher session
-        sessions = sm.list(project_id=project_id)
-        for s in sessions:
-            if getattr(s, "source", None) == "web_launcher":
-                return s.id
-
-        # Create a new one
-        session_id = str(uuid.uuid4())
-        from gobby.utils.machine_id import get_machine_id
-
-        sm.register(
-            external_id=f"web-launcher-{project_id[:8]}",
-            machine_id=get_machine_id() or "web",
-            source="web_launcher",
-            project_id=project_id,
-            title="Web Launcher",
-            agent_depth=0,
-        )
-        # Fetch the just-created session to get its DB id
-        sessions = sm.list(project_id=project_id)
-        for s in sessions:
-            if getattr(s, "source", None) == "web_launcher":
-                return s.id
-        return session_id
-
     async def _do_spawn(
         req: AgentSpawnRequest, project_id: str | None = None
     ) -> AgentSpawnResponse:
@@ -265,21 +237,25 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
                 sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
 
+            from gobby.llm.local_detection import is_local_agent_definition
+
+            source = req.provider or "claude"
             conversation = session_manager.create_web_chat_session(
                 machine_id=get_machine_id() or "web",
                 project_id=effective_project_id,
-                source=req.provider or "claude",
+                source=source,
                 title=task.title,
                 model=req.model,
+                is_local=is_local_agent_definition(source, req.model),
                 sandbox_enabled=sandbox_enabled,
                 sandbox_policy_hash=sandbox_policy_hash,
             )
             conversation_id = conversation.id
             task_updated = False
 
-            # Update task ownership/status conservatively.
+            # Update task ownership conservatively.
             try:
-                if is_active_claim_status(task.status):
+                if is_task_actionable(task):
                     current_owner = get_claimed_session_id(task)
                     if current_owner and current_owner != conversation_id:
                         logger.info(
@@ -292,12 +268,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                         task_updated = True
                 else:
                     logger.info(
-                        "Skipping web chat auto-claim for task %s; status=%s is not active work",
+                        "Skipping web chat auto-claim for task %s; task is not actionable",
                         req.task_id,
-                        task.status,
                     )
             except Exception as e:
-                logger.warning(f"Failed to update task status: {e}")
+                logger.warning(f"Failed to update task ownership: {e}")
 
             # Broadcast task update
             if task_updated:
@@ -314,8 +289,16 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         if not runner:
             return AgentSpawnResponse(success=False, error="Agent runner unavailable")
 
+        if server.services.session_manager is None:
+            return AgentSpawnResponse(success=False, error="Session manager unavailable")
+
         # Get parent session for spawning
-        parent_session_id = await _get_or_create_launcher_session(effective_project_id)
+        parent_session_id = await aget_or_create_launcher_session(
+            server.services.session_manager,
+            effective_project_id,
+            "web_launcher",
+            "Web Launcher",
+        )
 
         # Load agent definition
         from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent

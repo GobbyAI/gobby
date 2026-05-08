@@ -22,6 +22,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -216,8 +217,18 @@ class TestHandleAllLifecycles:
 
             # Make the coroutine hang by patching _evaluate_rules
             async def slow_coroutine(event):
-                await asyncio.sleep(10)
+                await wait_forever()
                 return HookResponse(decision="allow")
+
+            async def cancel_pending_tasks() -> None:
+                current = asyncio.current_task()
+                pending = [
+                    task for task in asyncio.all_tasks() if task is not current and not task.done()
+                ]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
             handler._evaluate_rules = slow_coroutine
 
@@ -238,6 +249,8 @@ class TestHandleAllLifecycles:
             assert isinstance(error_holder["error"], TimeoutError)
 
         finally:
+            cleanup = asyncio.run_coroutine_threadsafe(cancel_pending_tasks(), loop)
+            cleanup.result(timeout=2)
             loop.call_soon_threadsafe(loop.stop)
             t_loop.join()
             loop.close()
@@ -922,16 +935,21 @@ class TestVariablePersistence:
             metadata={"_platform_session_id": "test-session"},
         )
 
-        await handler._evaluate_rules(before_event)
+        before_response = await handler._evaluate_rules(before_event)
         response = await handler._evaluate_rules(after_event)
 
-        assert response.decision == "allow"
-        assert response.context is not None
-        assert (
-            'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
-            in response.context
+        assert before_response.decision == "block"
+        assert 'Call get_skill(name="task-transitions") on gobby-skills, then continue.' in (
+            before_response.reason or ""
         )
-        assert "# Task transitions" not in response.context
+        assert response.decision == "allow"
+        assert after_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
+        assert after_event.data["mcp_server"] == "gobby"
+        assert after_event.data["mcp_tool"] == "get_tool_schema"
+        assert after_event.metadata["_codex_tool_context_rehydrated"] is True
 
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
@@ -1375,7 +1393,7 @@ class TestStopFailsClosedOnVariableLoadError:
 
 
 class TestCodexToolContextRehydration:
-    """Codex AFTER_TOOL events should regain BEFORE_TOOL context when needed."""
+    """CLI AFTER_TOOL events should regain BEFORE_TOOL context when needed."""
 
     @staticmethod
     def _make_event(
@@ -1475,8 +1493,12 @@ class TestCodexToolContextRehydration:
         }
 
     @pytest.mark.asyncio
-    async def test_unsupported_after_tool_source_is_unchanged(self) -> None:
-        """Sources without tool-context rehydration should be unchanged."""
+    @pytest.mark.parametrize(
+        "source",
+        [SessionSource.GEMINI, SessionSource.QWEN, SessionSource.DROID],
+    )
+    async def test_rehydrates_supported_cli_sources(self, source: SessionSource) -> None:
+        """Gemini, Qwen, and Droid share the same tool-context rehydration path."""
         handler, rule_engine = self._make_handler()
 
         before_event = self._make_event(
@@ -1485,14 +1507,79 @@ class TestCodexToolContextRehydration:
                 "tool_name": "Read",
                 "tool_input": {"file_path": "src/main.py"},
             },
-            source=SessionSource.GEMINI,
+            source=source,
         )
         await handler._evaluate_rules(before_event)
 
         after_event = self._make_event(
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Read"},
+            source=source,
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert after_event.data["tool_input"] == {"file_path": "src/main.py"}
+        assert after_event.metadata["_tool_context_rehydrated"] is True
+        assert after_event.metadata["_tool_context_rehydrated_source"] == source.value
+        evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
+        assert evaluated_event.data["tool_input"] == {"file_path": "src/main.py"}
+
+    @pytest.mark.asyncio
+    async def test_gemini_get_skill_output_envelope_tracks_loaded_skill(self) -> None:
+        """Gemini get_skill results wrapped in output JSON still update loaded_skills."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp_gobby-skills_get_skill",
+                "tool_input": {"name": "brevity"},
+                "tool_use_id": "gemini-skill-1",
+            },
             source=SessionSource.GEMINI,
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_use_id": "gemini-skill-1",
+                "tool_response": {
+                    "output": '{"result": {"success": true, "skill": {"name": "brevity"}}}',
+                },
+            },
+            source=SessionSource.GEMINI,
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert after_event.data["mcp_server"] == "gobby-skills"
+        assert after_event.data["mcp_tool"] == "get_skill"
+        assert after_event.data["tool_output"] == {
+            "result": {"success": True, "skill": {"name": "brevity"}}
+        }
+        variables = rule_engine.evaluate.await_args_list[-1].kwargs["variables"]
+        assert variables["loaded_skills"] == ["brevity"]
+        assert variables["mcp_calls"]["gobby-skills"] == ["get_skill"]
+
+    @pytest.mark.asyncio
+    async def test_pipeline_after_tool_source_is_unchanged(self) -> None:
+        """Pipeline sessions do not use CLI tool-context rehydration."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "Read",
+                "tool_input": {"file_path": "src/main.py"},
+            },
+            source=SessionSource.PIPELINE,
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={"tool_name": "Read"},
+            source=SessionSource.PIPELINE,
         )
         await handler._evaluate_rules(after_event)
 

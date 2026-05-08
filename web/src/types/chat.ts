@@ -7,7 +7,7 @@ export interface ChatModeInfo {
   id: ChatMode;
   label: string;
   description: string;
-  level: number; // 0=plan, 1=act, 2=full-auto
+  level: number; // 0=plan, 1=act, 2=yolo
 }
 
 export const CHAT_MODES: ChatModeInfo[] = [
@@ -25,8 +25,8 @@ export const CHAT_MODES: ChatModeInfo[] = [
   },
   {
     id: "bypass",
-    label: "Auto",
-    description: "Auto-approve all tools",
+    label: "YOLO",
+    description: "Run without approval prompts",
     level: 2,
   },
 ];
@@ -42,9 +42,11 @@ export function normalizeChatMode(mode: string | null | undefined): ChatMode {
   return "plan";
 }
 
+export type ToolResultKind = 'text' | 'json' | 'image' | 'error';
+
 export interface ToolResult {
   content: unknown;
-  content_type: string; // 'text' | 'json' | 'image' | 'error'
+  kind: ToolResultKind;
   truncated: boolean;
   metadata?: Record<string, unknown>; // exit_code, line_count, etc.
 }
@@ -106,7 +108,9 @@ export type ContentBlock =
   | { type: "tool_reference"; tool_name: string; server_name: string }
   | {
       type: "image";
-      source: { media_type: string; data: string; [key: string]: unknown };
+      source?: { media_type?: string; data?: string; [key: string]: unknown };
+      image_url?: string | { url?: string };
+      url?: string;
     }
   | { type: "document"; source: { name?: string } & Record<string, unknown> }
   | { type: "web_search_result"; content: Record<string, unknown> }
@@ -153,6 +157,7 @@ export interface QueuedFile {
 
 export interface ChatSendOptions {
   reasoningEffort?: string | null;
+  ttsEnabled?: boolean;
 }
 
 export interface ProjectOption {
@@ -270,7 +275,7 @@ export interface ChatState {
   onProviderChange?: (provider: string | null) => void;
   dbSessionId?: string | null;
   conversationSwitchKey?: number;
-  viewSession?: (sessionId: string) => void;
+  viewSession?: (sessionId: string, options?: { forceRefresh?: boolean }) => void;
   clearViewingSession?: () => void;
   mainSessionMeta?: SessionObservationMeta | null;
   viewingSessionId?: string | null;
@@ -286,6 +291,7 @@ export interface ChatState {
   ) => void;
   onAttachToViewed?: () => void;
   onDetachFromSession?: () => void;
+  onAttachedModeChange?: (mode: ChatMode) => void;
 }
 
 export interface ConversationState {

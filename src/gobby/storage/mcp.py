@@ -14,7 +14,7 @@ from gobby.mcp_proxy.bundled import (
     LEGACY_GLOBAL_PROJECT_IDS,
     canonical_project_id_for_server,
     is_bundled_external_mcp_server,
-    normalize_persisted_args,
+    normalize_bundled_managed_args,
 )
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import GLOBAL_PROJECT_ID
@@ -316,7 +316,7 @@ class LocalMCPManager:
         """
         name = name.lower()
         canonical_project_id = canonical_project_id_for_server(name, project_id)
-        sanitized_args = normalize_persisted_args(name, args)
+        sanitized_args = normalize_bundled_managed_args(name, args)
 
         server = self._persist_server(
             name=name,
@@ -491,7 +491,7 @@ class LocalMCPManager:
                     project_id=GLOBAL_PROJECT_ID,
                     url=canonical_source.url,
                     command=canonical_source.command,
-                    args=normalize_persisted_args(name, canonical_source.args),
+                    args=normalize_bundled_managed_args(name, canonical_source.args),
                     env=canonical_source.env,
                     headers=canonical_source.headers,
                     enabled=canonical_source.enabled,
@@ -512,7 +512,8 @@ class LocalMCPManager:
 
             if (
                 canonical_source.project_id != GLOBAL_PROJECT_ID
-                or normalize_persisted_args(name, canonical_source.args) != canonical_source.args
+                or normalize_bundled_managed_args(name, canonical_source.args)
+                != canonical_source.args
             ):
                 stats["normalized"] += 1
             stats["duplicates_removed"] += len(duplicate_ids)
@@ -547,7 +548,7 @@ class LocalMCPManager:
             return server
 
         if "args" in fields:
-            fields["args"] = normalize_persisted_args(name, fields["args"])
+            fields["args"] = normalize_bundled_managed_args(name, fields["args"])
 
         if "args" in fields and fields["args"] is not None:
             fields["args"] = json.dumps(fields["args"])

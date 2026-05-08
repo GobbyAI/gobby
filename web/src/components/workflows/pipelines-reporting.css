@@ -1,0 +1,433 @@
+/* Stat chips (mirrors tasks-stat-chip) */
+.reporting-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: calc(var(--font-size-base) * 0.75);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  font-family: inherit;
+}
+
+.reporting-stat-chip:hover {
+  background: var(--bg-tertiary);
+}
+
+.reporting-stat-chip.active {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.reporting-stat-chip-count {
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.65);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.reporting-stat-chip.active .reporting-stat-chip-count {
+  color: var(--text-secondary);
+}
+
+/* Type toggle (mirrors task-group-tabs) */
+.reporting-type-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.reporting-type-tab {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font-size: calc(var(--font-size-base) * 0.7);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.reporting-type-tab:hover {
+  color: var(--text-primary);
+}
+
+.reporting-type-tab.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── Table container ── */
+
+.reporting-table-container {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Column header row (mirrors tasks-th) */
+.reporting-table-header {
+  display: flex;
+  align-items: center;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  z-index: 1;
+}
+
+.reporting-th {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: calc(var(--font-size-base) * 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.reporting-th--name { flex: 1; min-width: 0; }
+.reporting-th--id { width: 100px; }
+.reporting-th--time { width: 90px; text-align: right; }
+.reporting-th--duration { width: 80px; text-align: right; }
+
+/* ── Timeline entries (mirrors tasks-row) ── */
+
+.reporting-entry {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.reporting-entry:last-child {
+  border-bottom: none;
+}
+
+.reporting-row {
+  display: flex;
+  align-items: center;
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.reporting-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.reporting-cell {
+  white-space: nowrap;
+  font-size: calc(var(--font-size-base) * 0.85);
+}
+
+.reporting-cell--status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reporting-cell--kind {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.reporting-cell--name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 0.5rem;
+}
+
+.reporting-cell--id {
+  width: 100px;
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.75);
+  color: var(--text-muted);
+}
+
+.reporting-cell--time {
+  width: 90px;
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.75);
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.reporting-cell--duration {
+  width: 80px;
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.75);
+  color: var(--text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.reporting-cell--chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+/* ── Drill-down panel ── */
+
+.reporting-drilldown {
+  padding: 0 1rem 1rem 1.25rem;
+  animation: reporting-slide-in 0.15s ease-out;
+}
+
+@keyframes reporting-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Section blocks inside drill-downs */
+.reporting-section {
+  padding: 0.5rem 0;
+  font-size: calc(var(--font-size-base) * 0.85);
+  color: var(--text-secondary);
+}
+
+.reporting-section + .reporting-section {
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.reporting-section-label {
+  display: block;
+  font-size: calc(var(--font-size-base) * 0.65);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.375rem;
+}
+
+/* Inline metadata rows */
+.reporting-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: calc(var(--font-size-base) * 0.8);
+  color: var(--text-secondary);
+  padding: 0.25rem 0;
+}
+
+.reporting-meta-key {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: calc(var(--font-size-base) * 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.reporting-meta-value {
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.8);
+  color: var(--text-primary);
+}
+
+/* ── Collapsible toggle ── */
+
+.reporting-toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0;
+  font-size: calc(var(--font-size-base) * 0.8);
+  font-weight: 500;
+  transition: color 0.12s;
+}
+
+.reporting-toggle:hover {
+  color: var(--text-primary);
+}
+
+/* ── Code/config blocks ── */
+
+.reporting-code-block {
+  margin-top: 0.375rem;
+  animation: reporting-slide-in 0.12s ease-out;
+}
+
+.reporting-code-block pre {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace);
+  font-size: calc(var(--font-size-base) * 0.75);
+  background: color-mix(in srgb, var(--bg-tertiary) 60%, black);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.625rem 0.75rem;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 280px;
+  overflow-y: auto;
+  overflow-x: auto;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ── Badges row ── */
+
+.reporting-badges-row {
+  display: flex;
+  gap: 0.375rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.25rem 0;
+}
+
+/* Refined badge for provider/model/mode */
+.reporting-tag {
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.65);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  padding: 0.125rem 0.5rem;
+  border-radius: 3px;
+  border: 1px solid;
+}
+
+.reporting-tag--provider {
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 20%, transparent);
+  color: var(--color-info);
+}
+
+.reporting-tag--model {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+}
+
+.reporting-tag--mode {
+  background: color-mix(in srgb, var(--color-warning-foreground) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning-foreground) 20%, transparent);
+  color: var(--color-warning-foreground);
+}
+
+/* ── Stats grid ── */
+
+.reporting-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.reporting-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.reporting-stat-label {
+  font-size: calc(var(--font-size-base) * 0.6);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.reporting-stat-value {
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.9);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ── Command entries ── */
+
+.reporting-commands-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.reporting-command-entry {
+  display: flex;
+  gap: 0.625rem;
+  align-items: center;
+  padding: 0.375rem 0.5rem;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  font-size: calc(var(--font-size-base) * 0.75);
+}
+
+.reporting-command-type {
+  font-family: inherit;
+  font-weight: 600;
+  font-size: calc(var(--font-size-base) * 0.7);
+  color: var(--text-primary);
+  min-width: 80px;
+}
+
+.reporting-command-time {
+  font-family: inherit;
+  font-size: calc(var(--font-size-base) * 0.65);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* Light-theme overrides for surfaces whose dark/light tints differ.
+   Migrated from PipelinesPage.css during #13899. */
+
+[data-theme="light"] .reporting-tag--provider {
+  background: color-mix(in srgb, var(--color-info) 6%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+[data-theme="light"] .reporting-tag--model {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+[data-theme="light"] .reporting-tag--mode {
+  background: color-mix(in srgb, var(--color-warning-foreground) 6%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
+}
+
+[data-theme="light"] .reporting-code-block pre {
+  background: var(--surface-tint-subtle);
+  border-left-color: var(--border);
+}
+
+[data-theme="light"] .reporting-stat {
+  background: var(--surface-tint-subtle);
+  border-color: var(--border);
+}

@@ -52,6 +52,8 @@ class TestBeforeAgentHandling:
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
             "sess-123", "active"
         )
+        assert mock_dependencies["session_manager"].update_session_status.call_count == 1
+        assert mock_dependencies["session_manager"].update_session_status.call_args is not None
 
     def test_before_agent_skips_status_update_for_clear(self, mock_dependencies: dict) -> None:
         """Test BEFORE_AGENT skips status update for /clear command."""
@@ -65,6 +67,8 @@ class TestBeforeAgentHandling:
         handlers.handle_before_agent(event)
 
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
+        assert mock_dependencies["session_manager"].update_session_status.call_count == 0
+        assert not mock_dependencies["session_manager"].update_session_status.called
 
     def test_before_agent_skips_status_update_for_exit(self, mock_dependencies: dict) -> None:
         """Test BEFORE_AGENT skips status update for /exit command."""
@@ -78,6 +82,8 @@ class TestBeforeAgentHandling:
         handlers.handle_before_agent(event)
 
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
+        assert mock_dependencies["session_manager"].update_session_status.call_count == 0
+        assert not mock_dependencies["session_manager"].update_session_status.called
 
     def test_before_agent_resets_transcript_processed(self, mock_dependencies: dict) -> None:
         """Test BEFORE_AGENT resets transcript processed flag."""
@@ -93,6 +99,8 @@ class TestBeforeAgentHandling:
         mock_dependencies["session_storage"].reset_transcript_processed.assert_called_once_with(
             "sess-123"
         )
+        assert mock_dependencies["session_storage"].reset_transcript_processed.call_count == 1
+        assert mock_dependencies["session_storage"].reset_transcript_processed.call_args is not None
 
     def test_before_agent_status_update_error(self, mock_dependencies: dict) -> None:
         """Test error updating session status is handled."""
@@ -142,6 +150,8 @@ class TestAfterAgentHandling:
         mock_dependencies["session_manager"].update_session_status.assert_called_once_with(
             "sess-123", "paused"
         )
+        assert mock_dependencies["session_manager"].update_session_status.call_count == 1
+        assert mock_dependencies["session_manager"].update_session_status.call_args is not None
 
     def test_after_agent_status_update_error(self, mock_dependencies: dict) -> None:
         """Test error updating session status is handled."""

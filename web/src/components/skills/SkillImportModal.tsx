@@ -1,4 +1,22 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
+import { cn } from '../../lib/utils'
+import { useDialogFocus } from '../../hooks/useDialogFocus'
+import { SOURCE_BADGE_CLS, SOURCE_BADGE_BG, FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
+
+const OVERLAY_CLS =
+  'fixed inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)] [animation:fadeIn_0.15s_ease]'
+const MODAL_CLS =
+  'w-[500px] max-w-[90vw] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
+const HEADER_CLS = 'flex items-center justify-between border-b border-[var(--border)] px-5 py-4'
+const HEADER_TITLE_CLS = 'm-0 text-[length:var(--text-lg)] font-semibold'
+const CLOSE_CLS =
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-xl)] text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const BODY_CLS = 'flex flex-col gap-2 p-5'
+const LABEL_CLS = 'text-[length:var(--text-sm)] font-medium text-[var(--text-muted)]'
+const INPUT_CLS =
+  'rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-2 font-[inherit] text-[length:var(--text-base)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
+const ERROR_CLS = 'text-[length:var(--text-sm)] text-[var(--color-error)]'
+const FOOTER_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] px-5 py-3'
 
 interface SkillImportModalProps {
   onImport: (source: string) => Promise<void>
@@ -15,6 +33,8 @@ function detectSourceType(source: string): string {
 }
 
 export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useDialogFocus({ ref: dialogRef, isOpen: true, onClose })
   const [source, setSource] = useState('')
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,21 +57,28 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !importing) handleImport()
-    if (e.key === 'Escape') onClose()
-  }, [handleImport, importing, onClose])
+  }, [handleImport, importing])
 
   return (
-    <div className="skill-import-overlay" onClick={onClose}>
-      <div className="skill-import-modal" onClick={e => e.stopPropagation()}>
-        <div className="skill-import-header">
-          <h3>Import Skill</h3>
-          <button className="skill-import-close" onClick={onClose}>&times;</button>
+    <div className={OVERLAY_CLS} onClick={onClose}>
+      <div ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-import-title" tabIndex={-1} onClick={e => e.stopPropagation()}>
+        <div className={HEADER_CLS}>
+          <h2 id="skill-import-title" className={HEADER_TITLE_CLS}>Import Skill</h2>
+          <button
+            type="button"
+            className={CLOSE_CLS}
+            onClick={onClose}
+            aria-label="Close import modal"
+            title="Close"
+          >
+            &times;
+          </button>
         </div>
 
-        <div className="skill-import-body">
-          <label className="skill-import-label">Source URL or Path</label>
+        <div className={BODY_CLS}>
+          <label className={LABEL_CLS}>Source URL or Path</label>
           <input
-            className="skill-import-input"
+            className={INPUT_CLS}
             value={source}
             onChange={e => setSource(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -60,18 +87,18 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
           />
 
           {sourceType && (
-            <span className={`skills-source-badge skills-source-badge--${sourceType}`}>
+            <span className={cn(SOURCE_BADGE_CLS, SOURCE_BADGE_BG[sourceType] ?? SOURCE_BADGE_BG.unknown)}>
               {sourceType}
             </span>
           )}
 
-          {error && <div className="skill-import-error">{error}</div>}
+          {error && <div className={ERROR_CLS}>{error}</div>}
         </div>
 
-        <div className="skill-import-footer">
-          <button className="skill-form-cancel-btn" onClick={onClose}>Cancel</button>
+        <div className={FOOTER_CLS}>
+          <button className={FORM_CANCEL_BTN_CLS} onClick={onClose}>Cancel</button>
           <button
-            className="skill-form-save-btn"
+            className={FORM_SAVE_BTN_CLS}
             onClick={handleImport}
             disabled={!source.trim() || importing}
           >

@@ -1,7 +1,6 @@
 """Tests for lazy server initialization."""
 
 import asyncio
-import time
 
 import pytest
 
@@ -60,8 +59,7 @@ class TestCircuitBreaker:
         assert cb.state == CircuitState.OPEN
         assert not cb.can_execute()
 
-        # Wait for recovery timeout
-        time.sleep(0.15)
+        cb.last_failure_time -= 0.15
 
         assert cb.can_execute()
         assert cb.state == CircuitState.HALF_OPEN
@@ -71,7 +69,7 @@ class TestCircuitBreaker:
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.01)
 
         cb.record_failure()
-        time.sleep(0.02)
+        cb.last_failure_time -= 0.02
         cb.can_execute()  # Triggers half-open
 
         cb.record_success()
@@ -83,7 +81,7 @@ class TestCircuitBreaker:
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.01)
 
         cb.record_failure()
-        time.sleep(0.02)
+        cb.last_failure_time -= 0.02
         cb.can_execute()  # Triggers half-open
 
         cb.record_failure()
@@ -268,7 +266,7 @@ class TestCircuitBreakerEdgeCases:
         assert cb.state == CircuitState.OPEN
 
         # Wait for recovery and trigger half-open
-        time.sleep(0.02)
+        cb.last_failure_time -= 0.02
         # First can_execute() transitions from OPEN to HALF_OPEN and returns True
         # but doesn't count as a half_open call (it's the transition call)
         assert cb.can_execute() is True
@@ -310,7 +308,7 @@ class TestCircuitBreakerEdgeCases:
 
         # Trip circuit and enter half-open
         cb.record_failure()
-        time.sleep(0.02)
+        cb.last_failure_time -= 0.02
         cb.can_execute()  # Transitions to HALF_OPEN, resets half_open_calls to 0
         assert cb.state == CircuitState.HALF_OPEN
         assert cb.half_open_calls == 0  # Reset on transition
@@ -395,8 +393,8 @@ class TestLazyServerConnectorEdgeCases:
     def test_unregister_nonexistent_server_no_error(self) -> None:
         """Unregistering non-existent server does not raise error."""
         connector = LazyServerConnector()
-        # Should not raise
         connector.unregister_server("nonexistent")
+        assert connector.get_state("nonexistent") is None
 
     def test_custom_retry_config(self) -> None:
         """Custom retry config is used."""
@@ -551,7 +549,6 @@ class TestConcurrentConnections:
             lock = connector.get_connection_lock("test-server")
             async with lock:
                 connection_order.append(f"{name}_start")
-                await asyncio.sleep(0.01)
                 connection_order.append(f"{name}_end")
 
         # Start two concurrent connections

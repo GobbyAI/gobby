@@ -1,14 +1,14 @@
 import type { ModelBreakdown } from '../../types/tokens'
 
 const COLORS = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#06b6d4',
-  '#84cc16',
-  '#f97316',
+  'var(--source-codex)',
+  'var(--color-success-foreground)',
+  'var(--color-warning-foreground)',
+  'var(--color-error)',
+  'var(--source-claude)',
+  'var(--color-review)',
+  'var(--source-gemini)',
+  'var(--color-destructive-foreground)',
 ]
 
 interface Props {

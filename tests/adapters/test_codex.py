@@ -28,6 +28,7 @@ from gobby.adapters.codex_impl.types import (
 )
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -259,8 +260,8 @@ class TestCodexAppServerClientNotificationHandlers:
         client = CodexAppServerClient()
         handler = MagicMock()
 
-        # Should not raise
         client.remove_notification_handler("missing", handler)
+        assert client._notification_handlers == {}
 
 
 class TestCodexAppServerClientStart:
@@ -351,6 +352,7 @@ class TestCodexAppServerClientStart:
                 "--disable",
                 "guardian_approval",
             ]
+            assert args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
 
         await client.stop()
 
@@ -406,7 +408,7 @@ class TestCodexAppServerClientStop:
 
         # Create an actual asyncio task that we can cancel
         async def long_running():
-            await asyncio.sleep(100)
+            await wait_forever()
 
         mock_task = asyncio.create_task(long_running())
         client._reader_task = mock_task
@@ -449,8 +451,12 @@ class TestCodexAppServerClientContextManager:
             with patch.object(client, "stop", new_callable=AsyncMock) as mock_stop:
                 async with client:
                     mock_start.assert_called_once()
+                    assert mock_start.call_count == 1
+                    assert mock_start.call_args is not None
 
                 mock_stop.assert_called_once()
+                assert mock_stop.call_count == 1
+                assert mock_stop.call_args is not None
 
 
 class TestCodexAppServerClientRequestId:
@@ -791,6 +797,8 @@ class TestCodexAppServerClientTurnManagement:
                 "turn/interrupt",
                 {"threadId": "thr-1", "turnId": "turn-1"},
             )
+            assert mock_send.call_count == 1
+            assert mock_send.call_args is not None
 
 
 class TestCodexAppServerClientRunTurn:
@@ -954,6 +962,8 @@ class TestCodexAdapterAttachDetach:
         adapter.attach_to_client(mock_client)
 
         mock_client.add_notification_handler.assert_not_called()
+        assert mock_client.add_notification_handler.call_count == 0
+        assert not mock_client.add_notification_handler.called
 
     def test_detach_from_client(self) -> None:
         """Detaching removes notification handlers."""
@@ -973,8 +983,9 @@ class TestCodexAdapterAttachDetach:
         """Detaching when not attached is a no-op."""
         adapter = CodexAdapter()
 
-        # Should not raise
         adapter.detach_from_client()
+        assert adapter._attached is False
+        assert adapter._codex_client is None
 
 
 class TestCodexAdapterTranslateToHookEvent:
@@ -1604,8 +1615,8 @@ class TestCodexAdapterHandleNotification:
         """Notification without hook manager is silently ignored."""
         adapter = CodexAdapter()
 
-        # Should not raise
         adapter._handle_notification("turn/started", {"threadId": "thr-1"})
+        assert adapter._hook_manager is None
 
     def test_handle_notification_error_handling(self) -> None:
         """Errors in notification handling are caught."""
@@ -1613,8 +1624,8 @@ class TestCodexAdapterHandleNotification:
         mock_hook_manager.handle.side_effect = Exception("Processing error")
         adapter = CodexAdapter(hook_manager=mock_hook_manager)
 
-        # Should not raise
         adapter._handle_notification("turn/started", {"threadId": "thr-1"})
+        assert mock_hook_manager.handle.call_count == 1
 
 
 class TestCodexAdapterSyncExistingSessions:
@@ -1928,27 +1939,47 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
         assert hook_event is None
 
-    def test_translate_pre_compact_unsupported_returns_none(self) -> None:
-        """Codex terminal compact hooks remain unsupported and no-op."""
+    @pytest.mark.parametrize(
+        ("hook_type", "expected_event_type"),
+        [
+            ("PermissionRequest", HookEventType.PERMISSION_REQUEST),
+            ("PreCompact", HookEventType.PRE_COMPACT),
+            ("PostCompact", HookEventType.POST_COMPACT),
+        ],
+    )
+    def test_translate_new_codex_hook_events(
+        self, hook_type: str, expected_event_type: HookEventType
+    ) -> None:
+        """Translate new Codex 0.129 hook events to unified events."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
         hook_event = adapter.translate_to_hook_event(
             {
-                "hook_type": "PreCompact",
+                "hook_type": hook_type,
                 "input_data": {"session_id": "thread-123"},
                 "source": "codex",
             }
         )
 
-        assert hook_event is None
+        assert hook_event is not None
+        assert hook_event.event_type == expected_event_type
 
     def test_all_event_types_mapped(self) -> None:
-        """All 5 Codex hook types are in EVENT_MAP."""
+        """All 8 Codex hook types are in EVENT_MAP."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
-        expected = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
+        expected = {
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact",
+            "SessionStart",
+            "UserPromptSubmit",
+            "Stop",
+        }
         assert set(CodexHooksAdapter.EVENT_MAP.keys()) == expected
 
 
@@ -1991,6 +2022,84 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["decision"] == "block"
         assert result["reason"] == "Not allowed"
 
+    def test_permission_request_allow_uses_decision_behavior(self) -> None:
+        """PermissionRequest allow must use Codex decision.behavior."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow")
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        assert result["continue"] is True
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PermissionRequest"
+        assert hso["decision"] == {"behavior": "allow"}
+        assert "updatedInput" not in result
+        assert "updatedPermissions" not in result
+        assert "interrupt" not in result
+        assert "updatedInput" not in hso
+        assert "updatedPermissions" not in hso
+        assert "interrupt" not in hso
+
+    def test_permission_request_deny_uses_decision_behavior(self) -> None:
+        """PermissionRequest deny must not use top-level block fields."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="deny", reason="Not allowed")
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "reason" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PermissionRequest"
+        assert hso["decision"] == {"behavior": "deny", "message": "Not allowed"}
+        assert "updatedInput" not in result
+        assert "updatedPermissions" not in result
+        assert "interrupt" not in result
+        assert "updatedInput" not in hso
+        assert "updatedPermissions" not in hso
+        assert "interrupt" not in hso
+
+    def test_permission_request_deny_preserves_context_and_metadata(self) -> None:
+        """PermissionRequest deny still uses shared context assembly."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="deny",
+            reason="Not allowed",
+            system_message="Session banner",
+            context="Rule context",
+            metadata={
+                "session_id": "session-uuid",
+                "session_ref": "#123",
+                "_first_hook_for_session": True,
+            },
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
+
+        hso = result["hookSpecificOutput"]
+        assert hso["decision"] == {"behavior": "deny", "message": "Not allowed"}
+        assert "Session banner" in result["systemMessage"]
+        assert "Rule context" in result["systemMessage"]
+        assert "Gobby Session ID: #123 (session-uuid)" in result["systemMessage"]
+
+    @pytest.mark.parametrize("hook_type", ["PreCompact", "PostCompact"])
+    def test_compact_block_uses_continue_false_stop_reason(self, hook_type: str) -> None:
+        """Compact blocks use only universal output fields."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="block", reason="Compaction blocked")
+        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+
+        assert result == {"continue": False, "stopReason": "Compaction blocked"}
+        assert "decision" not in result
+        assert "reason" not in result
+        assert "hookSpecificOutput" not in result
+
     def test_pre_tool_use_block_uses_permission_decision(self) -> None:
         """PreToolUse blocks must use Codex permissionDecision, not continue=false."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
@@ -2013,8 +2122,8 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "Use MCP instead" in result["systemMessage"]
         assert "Run create_task first" in result["systemMessage"]
 
-    def test_pre_tool_use_rewrite_blocks_and_surfaces_retry_input(self) -> None:
-        """PreToolUse rewrites block and tell Codex how to retry safely."""
+    def test_pre_tool_use_rewrite_does_not_surface_retry_input(self) -> None:
+        """PreToolUse rewrites proceed without telling Codex to retry."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -2026,23 +2135,14 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
-        assert result["decision"] == "block"
-        assert (
-            result["reason"]
-            == "Retry the tool call by resending the corrected input from the hook message "
-            "verbatim. Do not reformulate it."
-        )
-        assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert (
-            result["hookSpecificOutput"]["permissionDecisionReason"]
-            == "Retry the tool call by resending the corrected input from the hook message "
-            "verbatim. Do not reformulate it."
-        )
-        assert "updatedInput" not in result["hookSpecificOutput"]
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "hookSpecificOutput" not in result
+        assert "updatedInput" not in result
+        assert "updatedPermissions" not in result
+        assert "interrupt" not in result
         assert "Bare python is not allowed" in result["systemMessage"]
-        assert "Do not add, remove, or rename fields." in result["systemMessage"]
-        assert "uv run python hello.py" in result["systemMessage"]
+        assert "uv run python hello.py" not in result["systemMessage"]
 
     def test_pre_tool_use_wrapper_only_call_tool_rewrite_does_not_emit_retry_blob(self) -> None:
         """Wrapper-only call_tool reshapes should auto-heal without visible retry JSON."""
@@ -2153,6 +2253,36 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         hso = result["hookSpecificOutput"]
         assert hso["hookEventName"] == "UserPromptSubmit"
         assert "Session info" in hso["additionalContext"]
+
+    def test_system_message_routes_to_additional_context_for_post_tool_use(self) -> None:
+        """PostToolUse routes system_message to additionalContext, not systemMessage."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", system_message="Tool note")
+        result = adapter.translate_from_hook_response(response, hook_type="PostToolUse")
+
+        assert "systemMessage" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PostToolUse"
+        assert "Tool note" in hso["additionalContext"]
+
+    @pytest.mark.parametrize("hook_type", ["PermissionRequest", "PreCompact", "PostCompact"])
+    def test_context_without_additional_context_schema_routes_to_system_message(
+        self, hook_type: str
+    ) -> None:
+        """Events without additionalContext schemas route context to systemMessage."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", context="Rule context")
+        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+
+        if hook_type == "PermissionRequest":
+            assert result["hookSpecificOutput"]["decision"] == {"behavior": "allow"}
+        else:
+            assert "hookSpecificOutput" not in result
+        assert "Rule context" in result["systemMessage"]
 
     def test_system_message_routes_only_to_additional_context_for_session_start(self) -> None:
         """SessionStart keeps the banner in startup context only once."""
@@ -3141,6 +3271,8 @@ class TestCodexAdapterApprovalAttach:
         adapter.attach_to_client(mock_client)
 
         mock_client.register_approval_handler.assert_called_once()
+        assert mock_client.register_approval_handler.call_count == 1
+        assert mock_client.register_approval_handler.call_args is not None
 
 
 # =============================================================================

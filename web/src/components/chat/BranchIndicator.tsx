@@ -15,6 +15,24 @@ interface BranchIndicatorProps {
   onWorktreeChange: (worktreePath: string, worktreeId?: string) => void
   disabled?: boolean
   variant?: 'toolbar' | 'select'
+  compact?: boolean
+}
+
+function truncateLabel(value: string, maxChars: number): string {
+  return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value
+}
+
+async function readCheckoutError(response: Response, branchName: string): Promise<string> {
+  try {
+    const data: unknown = await response.json()
+    const detail = (data as { detail?: unknown } | null)?.detail
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail
+    }
+  } catch {
+    // Fall through to status text.
+  }
+  return response.statusText || `Failed to switch to ${branchName}`
 }
 
 export function BranchIndicator({
@@ -24,12 +42,14 @@ export function BranchIndicator({
   onWorktreeChange,
   variant = 'toolbar',
   disabled = false,
+  compact = false,
 }: BranchIndicatorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([])
   const [branches, setBranches] = useState<BranchInfo[]>([])
   const [mainRepoPath, setMainRepoPath] = useState<string | null>(null)
   const [apiBranch, setApiBranch] = useState<string | null>(null)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const buildParams = useCallback(() => {
@@ -90,33 +110,60 @@ export function BranchIndicator({
 
   const handleToggle = () => {
     if (disabled) return
-    if (!isOpen) fetchDropdownData()
+    if (!isOpen) {
+      setCheckoutError(null)
+      fetchDropdownData()
+    }
     setIsOpen(!isOpen)
   }
 
   const handleSelectWorktree = (path: string, id?: string) => {
+    setCheckoutError(null)
     onWorktreeChange(path, id)
     setIsOpen(false)
   }
 
-  const handleSelectBranch = (_branchName: string) => {
-    if (mainRepoPath) {
-      onWorktreeChange(mainRepoPath)
+  const handleSelectBranch = async (branchName: string) => {
+    setCheckoutError(null)
+    if (!mainRepoPath) {
+      setCheckoutError('Repository path unavailable')
+      return
     }
-    setIsOpen(false)
+
+    const params = buildParams()
+    try {
+      const response = await fetch(`/api/source-control/branches/checkout?${params}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch_name: branchName }),
+      })
+
+      if (!response.ok) {
+        setCheckoutError(await readCheckoutError(response, branchName))
+        return
+      }
+
+      const data = await response.json()
+      if (data.current_branch) setApiBranch(data.current_branch)
+      onWorktreeChange(data.repo_path || mainRepoPath)
+      setIsOpen(false)
+    } catch {
+      setCheckoutError(`Failed to switch to ${branchName}`)
+    }
   }
 
   const effectiveBranch = currentBranch ?? apiBranch
   if (!effectiveBranch) return null
 
   const isDetached = effectiveBranch.startsWith('detached:')
-  const displayBranch = isDetached ? effectiveBranch.replace('detached:', '') : effectiveBranch
+  const rawDisplayBranch = isDetached ? effectiveBranch.replace('detached:', '') : effectiveBranch
+  const displayBranch = compact ? truncateLabel(rawDisplayBranch, 10) : rawDisplayBranch
 
   // Branch names that have worktrees (avoid duplicates)
   const worktreeBranches = new Set(worktrees.map(wt => wt.branch_name))
   // Local branches without worktrees, excluding current
   const standaloneBranches = branches.filter(
-    b => !worktreeBranches.has(b.name) && !b.is_current
+    b => !b.is_remote && !worktreeBranches.has(b.name) && !b.is_current
   )
 
   return (
@@ -126,7 +173,7 @@ export function BranchIndicator({
         onClick={handleToggle}
         className={
           variant === 'select'
-            ? `inline-flex h-8 min-w-0 shrink-0 items-center gap-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-xs transition-colors ${
+            ? `inline-flex h-9 min-w-0 shrink-0 items-center gap-1 rounded-md border border-border bg-transparent px-2.5 py-2 text-sm transition-colors ${
                 disabled
                   ? 'cursor-not-allowed text-muted-foreground/50'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -159,6 +206,12 @@ export function BranchIndicator({
           role="listbox"
           aria-label="Switch branch or worktree"
         >
+          {checkoutError && (
+            <div role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive">
+              {checkoutError}
+            </div>
+          )}
+
           {/* Worktrees */}
           {worktrees.length > 0 && (
             <>
@@ -197,7 +250,7 @@ export function BranchIndicator({
                   role="option"
                   aria-selected={false}
                   className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted flex items-center gap-2"
-                  onClick={() => handleSelectBranch(b.name)}
+                  onClick={() => { void handleSelectBranch(b.name) }}
                 >
                   <BranchIcon />
                   <span className="truncate">{b.name}</span>

@@ -18,7 +18,7 @@
 
 ---
 
-Gobby runs as a long-lived local daemon that unifies AI coding CLIs like Claude Code, Gemini CLI, and Codex, giving them shared sessions, memory, workflows, and guardrails instead of yet another one-off helper script. Because Claude Code natively supports OpenAI-compatible endpoints, local model providers like LM Studio and Ollama work out of the box — the same Gobby workflows run against both cloud and local models without changing your setup.
+Gobby runs as a long-lived local daemon that unifies AI coding CLIs like Claude Code, Gemini CLI, Codex, and Factory Droid, giving them shared sessions, memory, workflows, and guardrails instead of yet another one-off helper script. Because Claude Code natively supports OpenAI-compatible endpoints, local model providers like LM Studio and Ollama work out of the box — the same Gobby workflows run against both cloud and local models without changing your setup.
 
 **Gobby is built with Gobby.** Most of this codebase was written by AI agents running through Gobby's own task system and workflows — over 10,000 tasks tracked and counting.
 
@@ -45,7 +45,7 @@ Gobby solves this by acting as the control plane for your AI coding stack rather
 
 Gobby runs as a local daemon with HTTP, WebSocket, and MCP endpoints and never requires a cloud control plane. Your AI CLIs talk to it in two ways:
 
-- **Hooks**: lightweight adapters for Claude Code, Gemini CLI, and Codex that send structured events ("user executed this command", "assistant applied this edit", "session compacted context"), enabling deterministic, testable workflows around otherwise opaque sessions.
+- **Hooks**: lightweight adapters for Claude Code, Gemini CLI, Codex, and Factory Droid that send structured events ("user executed this command", "assistant applied this edit", "session compacted context"), enabling deterministic, testable workflows around otherwise opaque sessions.
 - **MCP server**: a stdio-based FastMCP endpoint exposing Gobby's task, session, memory, workflow, and orchestration APIs as tools your assistants can call directly from within the editor.
 
 Because Claude Code natively supports OpenAI-compatible endpoints, local model providers like LM Studio and Ollama work through the same hooks and MCP tools as cloud providers. You can prototype workflows on local models and later swap in cloud providers without rewriting anything.
@@ -117,15 +117,25 @@ Access at `http://localhost:60887` when the daemon is running.
 
 ### AI coding CLIs
 
-Gobby's 0.3.x series provides first-class integration with three primary CLIs, all with functional parity through hooks and MCP:
+Gobby's 0.4.x series provides first-class integration with four primary CLIs, all with functional parity through hooks and MCP:
 
 | CLI         | Integration style    | What Gobby adds                                                |
 |------------|----------------------|----------------------------------------------------------------|
 | Claude Code| Hooks + MCP server   | Persistent sessions, task syncing, rule-enforced workflows     |
 | Gemini CLI | Hooks + MCP server   | Shared memory and tasks, cross-session context, pipelines      |
 | Codex      | Hooks + MCP server   | Centralized orchestration, tool access, and background agents  |
+| Droid CLI  | Hooks + MCP server   | Factory Droid sessions, shared tasks, and spawned agents       |
 
-All three CLIs talk to the same daemon, so a task started in Claude Code can be finished from Gemini CLI or Codex with full context and validation.
+Factory Droid can be installed and wired into Gobby with:
+
+```bash
+curl -fsSL https://app.factory.ai/cli | sh
+gobby start
+gobby init
+gobby install --droid
+```
+
+All four CLIs talk to the same daemon, so a task started in Claude Code can be finished from Gemini CLI, Codex, or Droid with full context and validation.
 
 ### Local model providers
 
@@ -161,7 +171,7 @@ pipx install gobby
 pip install gobby
 ```
 
-Python 3.13+ is recommended for the 0.3.x series.
+Python 3.13+ is recommended for the 0.4.x series.
 
 ---
 
@@ -175,7 +185,7 @@ gobby init    # Initialize .gobby state for this repo
 gobby install # Detect and install hooks for supported CLIs
 ```
 
-`gobby install` auto-detects your installed CLIs and configures hooks and the MCP server for each one. Under the hood, all three CLIs get the same stdio-based MCP configuration:
+`gobby install` auto-detects your installed CLIs and configures hooks and the MCP server for each one. Under the hood, supported CLIs get the same stdio-based MCP configuration:
 
 ```json
 {
@@ -212,7 +222,7 @@ Because both modes share the same daemon, hooks, memory, and skills, you can sta
 
 ## Status, roadmap, and contributing
 
-Gobby's 0.3.x line is still pre-1.0 and evolving quickly; APIs and configuration formats may change as the daemon, workflow engine, and hook integrations are hardened for long-running use. Roadmap items include deeper local-model integration, additional CLIs, and more prebuilt workflows for common engineering tasks.
+Gobby's 0.4.x line is still pre-1.0 and evolving quickly; APIs and configuration formats may change as the daemon, workflow engine, and hook integrations are hardened for long-running use. Roadmap items include deeper local-model integration, additional CLIs, and more prebuilt workflows for common engineering tasks.
 
 The project is Apache 2.0 licensed and welcomes contributions from developers who want a more transparent, developer-centric control plane for AI coding tools. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 

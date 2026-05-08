@@ -35,6 +35,7 @@ def create_session_messages_registry(
     worktree_manager: Any | None = None,
     inter_session_message_manager: Any | None = None,
     transcript_reader: TranscriptReader | None = None,
+    web_chat_session_registry: Any | None = None,
     # Deprecated: kept for backwards-compat callers, ignored
     message_manager: object | None = None,
 ) -> InternalToolRegistry:
@@ -49,6 +50,7 @@ def create_session_messages_registry(
         db: Database for dependency injection (optional)
         worktree_manager: Worktree manager for context enrichment (optional)
         transcript_reader: TranscriptReader for JSONL + gzip fallback reads (optional)
+        web_chat_session_registry: Live web-chat registry for compact_self (optional)
         message_manager: Deprecated, ignored. Kept for backwards compatibility.
 
     Returns:
@@ -112,6 +114,11 @@ def create_session_messages_registry(
 
     # --- Terminal Interaction Tools (send_keys, capture_output) ---
     if session_manager is not None and db is not None:
-        register_terminal_tools(registry, session_manager, db)
+        register_terminal_tools(
+            registry,
+            session_manager,
+            db,
+            web_chat_session_registry=web_chat_session_registry,
+        )
 
     return registry

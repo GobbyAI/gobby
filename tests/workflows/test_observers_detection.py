@@ -1,5 +1,7 @@
 """Tests for detection functions in observers module."""
 
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -100,6 +102,35 @@ class TestDetectPlanModeFromContext:
         assert variables.get("plan_mode") is False
         assert variables.get("plan_skill_loaded") is False
 
+    def test_detects_claude_yolo_mode_system_reminder(self, variables) -> None:
+        variables["mode_level"] = 1
+        variables["plan_mode"] = True
+        variables["plan_skill_loaded"] = True
+        prompt = (
+            "<system-reminder>"
+            "YOLO mode is active. You may execute without approval prompts."
+            "</system-reminder>"
+        )
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
+        assert variables.get("mode_level") == 2
+        assert variables.get("plan_mode") is False
+        assert variables.get("plan_skill_loaded") is False
+
+    def test_detects_legacy_claude_auto_mode_system_reminder(self, variables) -> None:
+        variables["mode_level"] = 1
+        prompt = "<system-reminder>Auto mode is active.</system-reminder>"
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
+        assert variables.get("mode_level") == 2
+
+    def test_detects_claude_act_mode_system_reminder(self, variables) -> None:
+        variables["mode_level"] = 2
+        prompt = "<system-reminder>You are in Act mode.</system-reminder>"
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "normal"
+        assert variables.get("mode_level") == 1
+
     def test_does_not_change_when_already_in_plan_mode(self, variables) -> None:
         variables["mode_level"] = 0
         variables["plan_mode"] = True
@@ -114,7 +145,7 @@ class TestDetectPlanModeFromContext:
         variables["chat_mode"] = "bypass"
         prompt = "Please fix the bug in the code."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
-        assert variables.get("mode_level") == 2  # reset to Full Auto
+        assert variables.get("mode_level") == 2  # reset to YOLO
 
     def test_no_heal_when_chat_mode_is_plan(self, variables) -> None:
         """Don't reset mode_level if chat_mode is genuinely plan (edge case)."""
@@ -210,6 +241,20 @@ class TestDetectPlanModeFromContext:
         variables["chat_mode"] = "bypass"
         prompt = '<plan-mode status="approved">\nPlan approved.\n</plan-mode>'
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("mode_level") == 2
+
+    def test_detects_yolo_chat_mode_tag(self, variables) -> None:
+        variables["mode_level"] = 1
+        prompt = '<chat-mode status="yolo">\nYou are in YOLO MODE.\n</chat-mode>'
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
+        assert variables.get("mode_level") == 2
+
+    def test_detects_legacy_auto_chat_mode_tag(self, variables) -> None:
+        variables["mode_level"] = 1
+        prompt = '<chat-mode status="auto">\nYou are in AUTO MODE.\n</chat-mode>'
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("chat_mode") == "bypass"
         assert variables.get("mode_level") == 2
 
     def test_plan_mode_active_tag_inside_conversation_history_ignored(self, variables) -> None:
@@ -619,6 +664,25 @@ class TestDetectMcpCall:
         assert "demo-server" in mcp_results
         assert mcp_results["demo-server"]["demo-tool"] == "success"
 
+    def test_tracks_json_safe_result(self, variables, make_after_tool_event) -> None:
+        @dataclass
+        class DemoResult:
+            id: str
+            count: int
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": {"items": [DemoResult(id="a", count=1)]}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_results"]["demo-server"]["demo-tool"] == {
+            "items": [{"id": "a", "count": 1}]
+        }
+        json.dumps(variables)
+
     def test_tracks_multiple_tools(self, variables, make_after_tool_event) -> None:
         event1 = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -637,6 +701,44 @@ class TestDetectMcpCall:
         calls = variables["mcp_calls"]["demo-server"]
         assert "tool-1" in calls
         assert "tool-2" in calls
+
+    def test_heals_null_mcp_calls(self, variables, make_after_tool_event) -> None:
+        variables["mcp_calls"] = None
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": "success"},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_calls"] == {"demo-server": ["demo-tool"]}
+
+    def test_heals_null_mcp_results(self, variables, make_after_tool_event) -> None:
+        variables["mcp_results"] = None
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": "success"},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
+
+    def test_heals_null_mcp_server_buckets(self, variables, make_after_tool_event) -> None:
+        variables["mcp_calls"] = {"demo-server": None}
+        variables["mcp_results"] = {"demo-server": None}
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": "success"},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_calls"] == {"demo-server": ["demo-tool"]}
+        assert variables["mcp_results"] == {"demo-server": {"demo-tool": "success"}}
 
     def test_ignores_error_responses(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(

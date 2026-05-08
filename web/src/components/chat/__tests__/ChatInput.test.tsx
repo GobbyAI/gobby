@@ -252,6 +252,35 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith('Hello world', undefined, {
       reasoningEffort: 'auto',
+      ttsEnabled: false,
+    })
+  })
+
+  it('prepares playback before sending with enabled TTS intent', async () => {
+    const callOrder: string[] = []
+    const prepareTTSPlayback = vi.fn(() => {
+      callOrder.push('prepare')
+    })
+    const onSend = vi.fn(() => {
+      callOrder.push('send')
+    })
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        ttsEnabled={true}
+        prepareTTSPlayback={prepareTTSPlayback}
+      />,
+    )
+
+    await userEvent.type(screen.getByRole('textbox'), 'Speak this')
+    await userEvent.keyboard('{Enter}')
+
+    expect(callOrder).toEqual(['prepare', 'send'])
+    expect(prepareTTSPlayback).toHaveBeenCalledTimes(1)
+    expect(onSend).toHaveBeenCalledWith('Speak this', undefined, {
+      reasoningEffort: 'auto',
+      ttsEnabled: true,
     })
   })
 
@@ -293,8 +322,12 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('mode-selector')).toBeTruthy()
     expect(screen.getByText('accept_edits')).toBeTruthy()
 
+    // ModeSelector always lives in toolbar__left as the first child; the
+    // mode-row variant was removed in favor of a single 3-row layout that
+    // compresses (size="sm") at narrow widths.
     const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
     expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
+    expect(container.querySelector('.chat-input-mode-row')).toBeNull()
   })
 
   it('disables proxy-owned footer controls while leaving text entry enabled', () => {
@@ -552,6 +585,7 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith('Hello', undefined, {
       reasoningEffort: 'auto',
+      ttsEnabled: false,
     })
   })
 
@@ -585,7 +619,9 @@ describe('ChatInput', () => {
     expect(screen.queryByText('OpenAI')).toBeNull()
     expect(screen.getByLabelText('Select provider')).toHaveAttribute('title', 'OpenAI')
     expect(screen.getByText('Local')).toBeTruthy()
-    expect(screen.getByLabelText('Select reasoning effort')).toBeTruthy()
+    // Reasoning dropdown is hidden when no reasoning levels are supported
+    // (only the disabled Auto option) — see ChatInputModelControls.
+    expect(screen.queryByLabelText('Select reasoning effort')).toBeNull()
   })
 
   it('forwards non-local slash commands in proxy mode', async () => {
@@ -610,6 +646,7 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith('/plan', undefined, {
       reasoningEffort: 'auto',
+      ttsEnabled: false,
     })
     expect(onPaletteSelect).not.toHaveBeenCalled()
   })

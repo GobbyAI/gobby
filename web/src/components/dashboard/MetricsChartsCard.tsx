@@ -99,7 +99,7 @@ function buildChartData(snapshots: MetricSnapshot[]): ChartPoint[] {
 }
 
 const CHART_MARGIN = { top: 5, right: 10, left: 0, bottom: 5 }
-const GRID_STROKE = 'rgba(255,255,255,0.06)'
+const GRID_STROKE = 'color-mix(in srgb, var(--text-primary) 6%, transparent)'
 const AXIS_STYLE = { fontSize: 10, fill: 'var(--text-secondary)' }
 
 function EmptyChart() {
@@ -142,8 +142,8 @@ export function MetricsChartsCard({ hours }: Props) {
                     <Tooltip
                       contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
-                    <Area type="monotone" dataKey="httpReqs" name="Requests" stroke="#3b82f6" fill="rgba(59,130,246,0.15)" />
-                    <Area type="monotone" dataKey="httpErrors" name="Errors" stroke="#ef4444" fill="rgba(239,68,68,0.15)" />
+                    <Area type="monotone" dataKey="httpReqs" name="Requests" stroke="var(--color-info)" fill="color-mix(in srgb, var(--color-info) 15%, transparent)" />
+                    <Area type="monotone" dataKey="httpErrors" name="Errors" stroke="var(--color-error)" fill="color-mix(in srgb, var(--color-error) 15%, transparent)" />
                     <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -162,8 +162,8 @@ export function MetricsChartsCard({ hours }: Props) {
                     <Tooltip
                       contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
-                    <Area type="monotone" dataKey="mcpCalls" name="Calls" stroke="#8b5cf6" fill="rgba(139,92,246,0.15)" />
-                    <Area type="monotone" dataKey="mcpErrors" name="Errors" stroke="#ef4444" fill="rgba(239,68,68,0.15)" />
+                    <Area type="monotone" dataKey="mcpCalls" name="Calls" stroke="var(--color-info)" fill="color-mix(in srgb, var(--color-info) 15%, transparent)" />
+                    <Area type="monotone" dataKey="mcpErrors" name="Errors" stroke="var(--color-error)" fill="color-mix(in srgb, var(--color-error) 15%, transparent)" />
                     <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                   </AreaChart>
                 </ResponsiveContainer>

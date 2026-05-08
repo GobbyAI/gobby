@@ -1,8 +1,11 @@
 """Runner lifecycle, maintenance, and entrypoint tests."""
 
 import asyncio
+import logging
+import os
 import signal
-from contextlib import ExitStack
+import sys
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,7 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
+import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 from gobby.runner import GobbyRunner, main, run_gobby
+from gobby.shutdown_intent import ShutdownIntent
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -56,9 +61,10 @@ class TestGobbyRunnerRun:
 
             runner = GobbyRunner()
 
-            async def _delayed_shutdown() -> None:
-                await asyncio.sleep(0)
+            async def stop_after_mcp_connect() -> None:
                 runner._shutdown_requested = True
+
+            mock_mcp_manager.connect_all.side_effect = stop_after_mcp_connect
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
@@ -66,11 +72,12 @@ class TestGobbyRunnerRun:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    asyncio.create_task(_delayed_shutdown())
                     await runner.run()
 
             mock_mcp_manager.connect_all.assert_called_once()
             mock_mcp_manager.disconnect_all.assert_called_once()
+            assert runner._shutdown_requested is True
+            assert runner.database.close.called is True
 
     @pytest.mark.asyncio
     async def test_run_handles_mcp_timeout(self, mock_config):
@@ -98,6 +105,9 @@ class TestGobbyRunnerRun:
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run()
 
+            assert mock_mcp_manager.disconnect_all.await_count == 1
+            assert runner.database.close.called is True
+
     @pytest.mark.asyncio
     async def test_run_handles_mcp_connection_error(self, mock_config):
         """Test that run handles MCP connection errors."""
@@ -123,6 +133,9 @@ class TestGobbyRunnerRun:
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run()
+
+            assert mock_mcp_manager.disconnect_all.await_count == 1
+            assert runner.database.close.called is True
 
     @pytest.mark.asyncio
     async def test_run_with_websocket_server(self, mock_config_with_websocket):
@@ -150,9 +163,10 @@ class TestGobbyRunnerRun:
 
             runner = GobbyRunner()
 
-            async def _delayed_shutdown() -> None:
-                await asyncio.sleep(0.3)
+            async def stop_after_mcp_connect() -> None:
                 runner._shutdown_requested = True
+
+            mock_mcp_manager.connect_all.side_effect = stop_after_mcp_connect
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
@@ -160,10 +174,11 @@ class TestGobbyRunnerRun:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    asyncio.create_task(_delayed_shutdown())
                     await runner.run()
 
             mock_ws_server.start.assert_called()
+            assert mock_ws_server.start.call_count == 1
+            assert runner._shutdown_requested is True
 
     @pytest.mark.asyncio
     async def test_run_passes_websocket_to_http(self, mock_config_with_websocket):
@@ -192,6 +207,7 @@ class TestGobbyRunnerRun:
             runner = GobbyRunner()
 
             assert runner.http_server.websocket_server == mock_ws_server
+            assert mock_http.websocket_server == mock_ws_server
 
 
 class TestInitSubsystems:
@@ -262,6 +278,303 @@ class TestInitSubsystems:
             "subsystem": "Embeddings",
             "error": "LM Studio server start failed: boom",
         } in tracker.errors
+        assert tracker.done is True
+
+    @pytest.mark.asyncio
+    async def test_qdrant_health_failure_keeps_vector_store(self) -> None:
+        vector_store = SimpleNamespace(
+            initialize=AsyncMock(side_effect=RuntimeError("qdrant down")),
+            ensure_collection=AsyncMock(),
+            count=AsyncMock(return_value=0),
+        )
+        runner = SimpleNamespace(
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(provider_model_catalog=None),
+            ),
+            mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
+            config=SimpleNamespace(
+                databases=SimpleNamespace(
+                    qdrant=SimpleNamespace(url="http://localhost:6333"),
+                    neo4j=SimpleNamespace(url=""),
+                ),
+                embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
+                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
+                telemetry=SimpleNamespace(log_file="/tmp/gobby.log"),
+                bind_host="localhost",
+            ),
+            memory_manager=None,
+            metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
+            vector_store=vector_store,
+            message_processor=None,
+            communications_manager=None,
+            lifecycle_manager=SimpleNamespace(start=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            code_indexer=None,
+            pipeline_executor=None,
+            pipeline_execution_manager=None,
+            workflow_loader=None,
+            completion_registry=None,
+            websocket_server=None,
+        )
+
+        with (
+            patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)),
+            patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager,
+        ):
+            mock_tmux_manager.return_value.health_check = AsyncMock()
+            await runner_lifecycle._init_subsystems(runner, AsyncMock())
+
+        assert runner.vector_store is vector_store
+        assert runner.lifecycle_manager.start.await_count == 1
+        vector_store.initialize.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_provider_model_discovery_runs_in_background_without_startup_warning(
+        self, caplog
+    ) -> None:
+        refresh_started = asyncio.Event()
+        refresh_release = asyncio.Event()
+
+        async def slow_refresh(**_kwargs: object) -> None:
+            refresh_started.set()
+            await refresh_release.wait()
+
+        provider_catalog = SimpleNamespace(refresh=AsyncMock(side_effect=slow_refresh))
+        vector_store = SimpleNamespace(
+            initialize=AsyncMock(),
+            ensure_collection=AsyncMock(),
+            count=AsyncMock(return_value=1),
+        )
+        runner = SimpleNamespace(
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(provider_model_catalog=provider_catalog),
+                codex_client=MagicMock(),
+            ),
+            mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
+            config=SimpleNamespace(
+                databases=SimpleNamespace(
+                    qdrant=SimpleNamespace(url=""),
+                    neo4j=SimpleNamespace(url=""),
+                ),
+                embeddings=SimpleNamespace(model="", api_base="", api_key="", dim=768),
+                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
+                telemetry=SimpleNamespace(log_file="/tmp/gobby.log"),
+                bind_host="localhost",
+            ),
+            memory_manager=None,
+            metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
+            vector_store=vector_store,
+            message_processor=None,
+            communications_manager=None,
+            lifecycle_manager=SimpleNamespace(start=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            code_indexer=None,
+            pipeline_executor=None,
+            pipeline_execution_manager=None,
+            workflow_loader=None,
+            completion_registry=None,
+            websocket_server=None,
+        )
+
+        with patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager:
+            mock_tmux_manager.return_value.health_check = AsyncMock()
+            await runner_lifecycle._init_subsystems(runner, AsyncMock())
+
+        vector_store.initialize.assert_awaited_once()
+        vector_store.ensure_collection.assert_awaited_once()
+        await asyncio.wait_for(refresh_started.wait(), timeout=1.0)
+        assert "Provider model discovery timed out" not in caplog.text
+
+        task = runner._provider_model_refresh_task
+        assert task is not None
+        assert not task.done()
+        assert refresh_started.is_set()
+        refresh_release.set()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.runner_lifecycle_subsystems import _start_agent_lifecycle_monitor
+
+        tracker = runner_lifecycle.StartupTracker()
+        monitor = SimpleNamespace(
+            cleanup_stale_pending_runs=AsyncMock(side_effect=RuntimeError("cleanup failed")),
+            start=AsyncMock(side_effect=RuntimeError("start failed")),
+        )
+        runner = SimpleNamespace(agent_lifecycle_monitor=monitor)
+        reconcile = AsyncMock(side_effect=RuntimeError("reconcile failed"))
+
+        with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+            await _start_agent_lifecycle_monitor(runner, tracker, reconcile)
+
+        reconcile.assert_awaited_once_with(runner)
+        monitor.cleanup_stale_pending_runs.assert_awaited_once()
+        monitor.start.assert_awaited_once()
+        assert tracker.steps_completed == []
+        assert tracker.errors == [
+            {
+                "subsystem": "Agent lifecycle monitor",
+                "error": (
+                    "reconcile failed: reconcile failed; cleanup failed: cleanup failed; "
+                    "start failed: start failed"
+                ),
+            }
+        ]
+        assert "Agent restart reconciliation failed during startup" in caplog.text
+        assert "Agent stale pending cleanup failed during startup" in caplog.text
+        assert "Agent lifecycle monitor start failed during startup" in caplog.text
+
+
+class TestShutdownDaemonServices:
+    @pytest.mark.asyncio
+    async def test_shutdown_marker_is_removed_after_cleanup(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        marker = tmp_path / "shutdown_source.json"
+        marker.write_text("{}", encoding="utf-8")
+        cleanup_saw_marker = False
+        runner = SimpleNamespace(
+            _shutdown_intent=ShutdownIntent.STOP,
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+                _terminate_streamable_http_sessions=AsyncMock(),
+            ),
+            lifecycle_manager=SimpleNamespace(stop=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+            config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
+            memory_manager=None,
+            vector_store=None,
+            mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
+            database=SimpleNamespace(close=MagicMock()),
+        )
+        server = SimpleNamespace(should_exit=False)
+        server_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+
+        def cleanup_pid_file() -> None:
+            nonlocal cleanup_saw_marker
+            cleanup_saw_marker = marker.exists()
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            server_task,
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=cleanup_pid_file,
+        )
+
+        assert cleanup_saw_marker is True
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_restart_reaps_only_non_terminal_agent_children(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeNoSuchProcess(Exception):
+            pass
+
+        class FakeAccessDenied(Exception):
+            pass
+
+        class FakeProcess:
+            def __init__(
+                self,
+                pid: int,
+                name: str,
+                cmdline: list[str],
+                children: list["FakeProcess"] | None = None,
+            ) -> None:
+                self.pid = pid
+                self._name = name
+                self._cmdline = cmdline
+                self._children = children or []
+                self._parent: FakeProcess | None = None
+                self.terminated = False
+                for child in self._children:
+                    child._parent = self
+
+            def children(self, recursive: bool = False) -> list["FakeProcess"]:
+                if not recursive:
+                    return list(self._children)
+                result: list[FakeProcess] = []
+                pending = list(self._children)
+                while pending:
+                    child = pending.pop(0)
+                    result.append(child)
+                    pending.extend(child._children)
+                return result
+
+            def parent(self) -> "FakeProcess | None":
+                return self._parent
+
+            def name(self) -> str:
+                return self._name
+
+            def cmdline(self) -> list[str]:
+                return self._cmdline
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.terminated = True
+
+        pane = FakeProcess(200, "zsh", ["zsh"])
+        tmux = FakeProcess(100, "tmux", ["tmux", "-L", "gobby"], [pane])
+        unrelated_tmux = FakeProcess(250, "tmux", ["tmux", "-L", "other"])
+        worker = FakeProcess(300, "gcode", ["gcode", "index"])
+        current = FakeProcess(os.getpid(), "python", ["python"], [tmux, unrelated_tmux, worker])
+        processes = {
+            process.pid: process for process in [current, tmux, pane, unrelated_tmux, worker]
+        }
+
+        class FakePsutil:
+            NoSuchProcess = FakeNoSuchProcess
+            AccessDenied = FakeAccessDenied
+
+            @staticmethod
+            def Process(pid: int) -> FakeProcess:
+                return processes[pid]
+
+            @staticmethod
+            def wait_procs(
+                children: list[FakeProcess], timeout: float
+            ) -> tuple[list[FakeProcess], list[FakeProcess]]:
+                return children, []
+
+        monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+
+        await runner_lifecycle_shutdown._reap_remaining_child_processes(
+            preserve_agents=True,
+            preserved_agent_pids={pane.pid},
+        )
+
+        assert tmux.terminated is False
+        assert pane.terminated is False
+        assert unrelated_tmux.terminated is True
+        assert worker.terminated is True
 
 
 class TestRunGobbyFunction:
@@ -281,6 +594,7 @@ class TestRunGobbyFunction:
                 config_path=Path("/tmp/config.yaml"), verbose=True
             )
             mock_runner.run.assert_called_once()
+            assert mock_runner.run.await_count == 1
 
 
 class TestMainFunction:
@@ -301,6 +615,7 @@ class TestMainFunction:
                         main(config_path=Path("/tmp/config.yaml"), verbose=True)
 
                     mock_run.assert_called_once()
+                    assert mock_run.call_count == 1
 
     def test_main_handles_keyboard_interrupt(self) -> None:
         """Test that main handles KeyboardInterrupt gracefully."""
@@ -431,15 +746,25 @@ class TestMetricsCleanupLoop:
             def is_shutdown():
                 return shutdown_requested
 
-            task = asyncio.create_task(metrics_cleanup_loop(runner.metrics_manager, is_shutdown))
+            intervals: list[float] = []
 
-            await asyncio.sleep(0.01)
-            shutdown_requested = True
+            async def complete_first_cycle(seconds: float) -> None:
+                nonlocal shutdown_requested
+                intervals.append(seconds)
+                shutdown_requested = True
 
-            try:
-                await asyncio.wait_for(task, timeout=1.0)
-            except asyncio.CancelledError:
-                pass
+            task = asyncio.create_task(
+                metrics_cleanup_loop(
+                    runner.metrics_manager,
+                    is_shutdown,
+                    interval_seconds=1,
+                    sleep=complete_first_cycle,
+                )
+            )
+            await asyncio.wait_for(task, timeout=1.0)
+
+            assert intervals == [1]
+            assert runner.metrics_manager.cleanup_old_metrics.call_count == 1
 
     @pytest.mark.asyncio
     async def test_metrics_cleanup_loop_handles_exception(self, mock_config):
@@ -453,7 +778,7 @@ class TestMetricsCleanupLoop:
 
             runner = GobbyRunner()
             runner.metrics_manager.cleanup_old_metrics = MagicMock(
-                side_effect=Exception("Cleanup error")
+                side_effect=[Exception("Cleanup error"), 0]
             )
 
             shutdown_requested = False
@@ -461,15 +786,26 @@ class TestMetricsCleanupLoop:
             def is_shutdown():
                 return shutdown_requested
 
-            task = asyncio.create_task(metrics_cleanup_loop(runner.metrics_manager, is_shutdown))
+            intervals: list[float] = []
 
-            await asyncio.sleep(0.01)
-            shutdown_requested = True
+            async def complete_after_retry(seconds: float) -> None:
+                nonlocal shutdown_requested
+                intervals.append(seconds)
+                if len(intervals) == 2:
+                    shutdown_requested = True
 
-            try:
-                await asyncio.wait_for(task, timeout=1.0)
-            except asyncio.CancelledError:
-                pass
+            task = asyncio.create_task(
+                metrics_cleanup_loop(
+                    runner.metrics_manager,
+                    is_shutdown,
+                    interval_seconds=1,
+                    sleep=complete_after_retry,
+                )
+            )
+            await asyncio.wait_for(task, timeout=1.0)
+
+            assert intervals == [1, 1]
+            assert runner.metrics_manager.cleanup_old_metrics.call_count == 2
 
     @pytest.mark.asyncio
     async def test_metrics_cleanup_loop_cancelled(self, mock_config):
@@ -482,15 +818,23 @@ class TestMetricsCleanupLoop:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
+            runner.metrics_manager.cleanup_old_metrics = MagicMock()
 
-            task = asyncio.create_task(metrics_cleanup_loop(runner.metrics_manager, lambda: False))
-            await asyncio.sleep(0.01)
-            task.cancel()
+            async def cancelled_sleep(_seconds: float) -> None:
+                raise asyncio.CancelledError
 
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            task = asyncio.create_task(
+                metrics_cleanup_loop(
+                    runner.metrics_manager,
+                    lambda: False,
+                    interval_seconds=1,
+                    sleep=cancelled_sleep,
+                )
+            )
+            await asyncio.wait_for(task, timeout=1.0)
+
+            assert task.done()
+            assert runner.metrics_manager.cleanup_old_metrics.call_count == 0
 
 
 class TestSignalHandlerBehavior:
@@ -524,6 +868,42 @@ class TestSignalHandlerBehavior:
         captured_handler()
         assert shutdown_called is True
 
+    def test_signal_handler_still_shuts_down_when_intent_callback_fails(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.runner_maintenance import setup_signal_handlers
+
+        mock_loop = MagicMock()
+        captured_handler = None
+
+        def capture_handler(sig, handler):
+            nonlocal captured_handler
+            if sig == signal.SIGTERM:
+                captured_handler = handler
+
+        mock_loop.add_signal_handler = capture_handler
+        shutdown_callback = MagicMock()
+        shutdown_intent_callback = MagicMock(side_effect=RuntimeError("intent failed"))
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+        ):
+            setup_signal_handlers(
+                shutdown_callback,
+                shutdown_intent_callback=shutdown_intent_callback,
+            )
+
+        assert captured_handler is not None
+        with caplog.at_level(logging.ERROR, logger="gobby.runner_maintenance"):
+            captured_handler()
+
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.STOP)
+        shutdown_callback.assert_called_once_with()
+        assert "Shutdown intent callback failed" in caplog.text
+
 
 class TestAgentEventBroadcastingCallback:
     """Tests for the broadcast_agent_event callback via fire_agent_event."""
@@ -534,8 +914,13 @@ class TestAgentEventBroadcastingCallback:
         import gobby.runner_broadcasting as rb
         from gobby.runner_broadcasting import fire_agent_event, setup_agent_event_broadcasting
 
+        broadcast_seen = asyncio.Event()
+
+        async def broadcast_agent_event(**_kwargs: object) -> None:
+            broadcast_seen.set()
+
         mock_ws_server = AsyncMock()
-        mock_ws_server.broadcast_agent_event = AsyncMock()
+        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=broadcast_agent_event)
 
         old_callback = rb._agent_event_callback
         try:
@@ -557,9 +942,11 @@ class TestAgentEventBroadcastingCallback:
                 },
             )
 
-            await asyncio.sleep(0.01)
+            await asyncio.wait_for(broadcast_seen.wait(), timeout=1.0)
 
             mock_ws_server.broadcast_agent_event.assert_called_once()
+            assert broadcast_seen.is_set()
+            assert mock_ws_server.broadcast_agent_event.await_args.kwargs["run_id"] == "run-123"
         finally:
             rb._agent_event_callback = old_callback
 
@@ -569,8 +956,14 @@ class TestAgentEventBroadcastingCallback:
         import gobby.runner_broadcasting as rb
         from gobby.runner_broadcasting import fire_agent_event, setup_agent_event_broadcasting
 
+        broadcast_attempted = asyncio.Event()
+
+        async def fail_broadcast(**_kwargs: object) -> None:
+            broadcast_attempted.set()
+            raise Exception("Broadcast failed")
+
         mock_ws_server = AsyncMock()
-        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=Exception("Broadcast failed"))
+        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=fail_broadcast)
 
         old_callback = rb._agent_event_callback
         try:
@@ -586,7 +979,10 @@ class TestAgentEventBroadcastingCallback:
                 {"parent_session_id": "sess-456"},
             )
 
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(broadcast_attempted.wait(), timeout=1.0)
+
+            assert broadcast_attempted.is_set()
+            assert mock_ws_server.broadcast_agent_event.await_count == 1
         finally:
             rb._agent_event_callback = old_callback
 
@@ -596,8 +992,14 @@ class TestAgentEventBroadcastingCallback:
         import gobby.runner_broadcasting as rb
         from gobby.runner_broadcasting import fire_agent_event, setup_agent_event_broadcasting
 
+        broadcast_attempted = asyncio.Event()
+
+        async def cancel_broadcast(**_kwargs: object) -> None:
+            broadcast_attempted.set()
+            raise asyncio.CancelledError
+
         mock_ws_server = AsyncMock()
-        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=asyncio.CancelledError())
+        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=cancel_broadcast)
 
         old_callback = rb._agent_event_callback
         try:
@@ -613,7 +1015,10 @@ class TestAgentEventBroadcastingCallback:
                 {},
             )
 
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(broadcast_attempted.wait(), timeout=1.0)
+
+            assert broadcast_attempted.is_set()
+            assert mock_ws_server.broadcast_agent_event.await_count == 1
         finally:
             rb._agent_event_callback = old_callback
 
@@ -623,8 +1028,13 @@ class TestAgentEventBroadcastingCallback:
         import gobby.runner_broadcasting as rb
         from gobby.runner_broadcasting import fire_agent_event, setup_agent_event_broadcasting
 
+        broadcast_seen = asyncio.Event()
+
+        async def broadcast_agent_event(**_kwargs: object) -> None:
+            broadcast_seen.set()
+
         mock_ws_server = AsyncMock()
-        mock_ws_server.broadcast_agent_event = AsyncMock()
+        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=broadcast_agent_event)
 
         old_callback = rb._agent_event_callback
         try:
@@ -640,9 +1050,14 @@ class TestAgentEventBroadcastingCallback:
                 {"parent_session_id": "sess-456"},
             )
 
-            await asyncio.sleep(0.01)
+            await asyncio.wait_for(broadcast_seen.wait(), timeout=1.0)
 
             mock_ws_server.broadcast_agent_event.assert_called_once()
+            assert broadcast_seen.is_set()
+            assert (
+                mock_ws_server.broadcast_agent_event.await_args.kwargs["parent_session_id"]
+                == "sess-456"
+            )
         finally:
             rb._agent_event_callback = old_callback
 
@@ -705,16 +1120,21 @@ class TestShutdownLoop:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    main_loop_slept = False
 
-                    async def trigger_shutdown():
-                        await asyncio.sleep(0.1)
+                    async def trigger_shutdown(_seconds: float) -> None:
+                        nonlocal main_loop_slept
+                        main_loop_slept = True
                         runner._shutdown_requested = True
 
-                    shutdown_task = asyncio.create_task(trigger_shutdown())
+                    with patch(
+                        "gobby.runner_lifecycle.asyncio.sleep",
+                        side_effect=trigger_shutdown,
+                    ):
+                        await asyncio.wait_for(runner.run(), timeout=5.0)
 
-                    await asyncio.wait_for(runner.run(), timeout=5.0)
-
-                    await shutdown_task
+                    assert main_loop_slept is True
+                    assert runner._shutdown_requested is True
 
 
 class TestMetricsCleanupLoopDetailed:
@@ -745,28 +1165,32 @@ class TestMetricsCleanupLoopDetailed:
             def is_shutdown():
                 return shutdown_requested
 
-            original_sleep = asyncio.sleep
+            intervals: list[float] = []
 
-            async def fast_sleep(seconds):
+            async def complete_first_cycle(seconds: float) -> None:
                 nonlocal shutdown_requested
-                if seconds > 1:
-                    shutdown_requested = True
-                    return
-                await original_sleep(seconds)
+                intervals.append(seconds)
+                shutdown_requested = True
 
-            with patch("asyncio.sleep", side_effect=fast_sleep):
-                task = asyncio.create_task(
-                    metrics_cleanup_loop(runner.metrics_manager, is_shutdown)
+            task = asyncio.create_task(
+                metrics_cleanup_loop(
+                    runner.metrics_manager,
+                    is_shutdown,
+                    interval_seconds=1,
+                    sleep=complete_first_cycle,
                 )
-                await asyncio.wait_for(task, timeout=2.0)
+            )
+            await asyncio.wait_for(task, timeout=2.0)
 
+            assert intervals == [1]
             assert cleanup_call_count == 1
 
     @pytest.mark.asyncio
-    async def test_metrics_cleanup_loop_logs_deleted_entries(self, mock_config):
+    async def test_metrics_cleanup_loop_logs_deleted_entries(self, mock_config, caplog):
         """Test that metrics cleanup loop logs when entries are deleted."""
         from gobby.runner_maintenance import metrics_cleanup_loop
 
+        caplog.set_level(logging.INFO, logger="gobby.runner_maintenance")
         patches = create_base_patches(mock_config=mock_config)
 
         with ExitStack() as stack:
@@ -780,20 +1204,25 @@ class TestMetricsCleanupLoopDetailed:
             def is_shutdown():
                 return shutdown_requested
 
-            original_sleep = asyncio.sleep
+            intervals: list[float] = []
 
-            async def fast_sleep(seconds):
+            async def complete_first_cycle(seconds: float) -> None:
                 nonlocal shutdown_requested
-                if seconds > 1:
-                    shutdown_requested = True
-                    return
-                await original_sleep(seconds)
+                intervals.append(seconds)
+                shutdown_requested = True
 
-            with patch("asyncio.sleep", side_effect=fast_sleep):
-                task = asyncio.create_task(
-                    metrics_cleanup_loop(runner.metrics_manager, is_shutdown)
+            task = asyncio.create_task(
+                metrics_cleanup_loop(
+                    runner.metrics_manager,
+                    is_shutdown,
+                    interval_seconds=1,
+                    sleep=complete_first_cycle,
                 )
-                await asyncio.wait_for(task, timeout=2.0)
+            )
+            await asyncio.wait_for(task, timeout=2.0)
+
+            assert intervals == [1]
+            assert "Periodic metrics cleanup: removed 10 old entries" in caplog.text
 
     @pytest.mark.asyncio
     async def test_metrics_cleanup_loop_continues_on_error(self, mock_config):
@@ -822,24 +1251,27 @@ class TestMetricsCleanupLoopDetailed:
             def is_shutdown():
                 return shutdown_requested
 
-            original_sleep = asyncio.sleep
             iteration = 0
+            intervals: list[float] = []
 
-            async def fast_sleep(seconds):
+            async def complete_after_retry(seconds: float) -> None:
                 nonlocal iteration, shutdown_requested
-                if seconds > 1:
-                    iteration += 1
-                    if iteration >= 2:
-                        shutdown_requested = True
-                    return
-                await original_sleep(seconds)
+                intervals.append(seconds)
+                iteration += 1
+                if iteration >= 2:
+                    shutdown_requested = True
 
-            with patch("asyncio.sleep", side_effect=fast_sleep):
-                task = asyncio.create_task(
-                    metrics_cleanup_loop(runner.metrics_manager, is_shutdown)
+            task = asyncio.create_task(
+                metrics_cleanup_loop(
+                    runner.metrics_manager,
+                    is_shutdown,
+                    interval_seconds=1,
+                    sleep=complete_after_retry,
                 )
-                await asyncio.wait_for(task, timeout=2.0)
+            )
+            await asyncio.wait_for(task, timeout=2.0)
 
+            assert intervals == [1, 1]
             assert call_count == 2
 
 
@@ -854,6 +1286,7 @@ class TestMainFunctionExtended:
         ):
             main()
             mock_asyncio_run.assert_called_once()
+        assert mock_asyncio_run.call_count == 1
 
     def test_main_exits_when_daemon_running(self) -> None:
         """Test that main() exits with code 0 when daemon already running."""
@@ -907,7 +1340,8 @@ class TestAgentRestartRecoveryHelpers:
         recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
 
         assert recovered == 1
-        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=1000)
+        assert runner.completion_registry.register.call_count == 1
+        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=500)
         runner.completion_registry.register.assert_called_once_with(
             "run-1",
             subscribers=["sess-1"],
@@ -964,6 +1398,7 @@ class TestAgentRestartRecoveryHelpers:
             cancelled = await runner_lifecycle._cancel_active_agent_runs_for_shutdown(runner)
 
         assert cancelled == 1
+        assert runner.agent_lifecycle_monitor.terminalize_cancelled_run.await_count == 1
         mock_kill.assert_awaited_once_with(
             run,
             runner.database,
@@ -972,7 +1407,45 @@ class TestAgentRestartRecoveryHelpers:
         )
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
             "run-1",
-            terminal_reason="daemon_restart",
+            terminal_reason="daemon_stop",
         )
         runner.pipeline_execution_manager.remove_completion_subscribers.assert_not_called()
         runner.completion_registry.cleanup.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stop_shutdown_policy_cancels_active_agents(self) -> None:
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock()),
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+        )
+        cancel_active = AsyncMock(return_value=2)
+
+        await runner_lifecycle_shutdown._stop_started_services(
+            runner,
+            cancel_active,
+            shutdown_intent=ShutdownIntent.STOP,
+        )
+
+        cancel_active.assert_awaited_once_with(runner)
+        runner.agent_lifecycle_monitor.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_restart_shutdown_policy_preserves_active_agents(self) -> None:
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=SimpleNamespace(stop=AsyncMock()),
+            cron_scheduler=None,
+            message_processor=None,
+            communications_manager=None,
+        )
+        cancel_active = AsyncMock(return_value=2)
+
+        await runner_lifecycle_shutdown._stop_started_services(
+            runner,
+            cancel_active,
+            shutdown_intent=ShutdownIntent.RESTART,
+        )
+
+        cancel_active.assert_not_awaited()
+        runner.agent_lifecycle_monitor.stop.assert_awaited_once()

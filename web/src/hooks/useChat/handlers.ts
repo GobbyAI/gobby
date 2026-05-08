@@ -287,16 +287,12 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
         }
       }
     } else {
-      // New tool call — append to last tool_chain or create new one
-      const lastBlock = blocks[blocks.length - 1];
-      if (lastBlock?.type === "tool_chain") {
-        blocks[blocks.length - 1] = {
-          ...lastBlock,
-          tool_calls: [...lastBlock.tool_calls, callRef],
-        };
-      } else {
-        blocks.push({ type: "tool_chain" as const, tool_calls: [callRef] });
-      }
+      // New tool call — always start a fresh tool_chain block to match the
+      // historical-replay parser, which emits one tool_chain block per tool
+      // call (transcript_renderer.py never merges tool_chain blocks). The
+      // frontend then groups visually via groupToolCalls when 3+ same-tool
+      // calls run consecutively.
+      blocks.push({ type: "tool_chain" as const, tool_calls: [callRef] });
     }
 
     updated[idx] = { ...msg, toolCalls, contentBlocks: blocks };
@@ -319,14 +315,34 @@ const handleChatThinking = useCallback((msg: ChatThinkingMessage) => {
     const existingIndex = prev.findIndex((m) => m.id === msg.message_id);
     if (existingIndex >= 0) {
       const updated = [...prev];
+      const existing = updated[existingIndex];
+      const blocks = [...(existing.contentBlocks || [])];
+      // Mirror the historical-replay rule: thinking is its own content block,
+      // which forces any subsequent tool calls to start a fresh tool_chain
+      // block instead of clumping into the previous one. Coalesce contiguous
+      // thinking deltas into the last thinking block.
+      if (msg.content) {
+        const lastBlock = blocks[blocks.length - 1];
+        if (lastBlock?.type === "thinking") {
+          blocks[blocks.length - 1] = {
+            ...lastBlock,
+            content: lastBlock.content + msg.content,
+          };
+        } else {
+          blocks.push({ type: "thinking", content: msg.content });
+        }
+      }
       updated[existingIndex] = {
-        ...updated[existingIndex],
+        ...existing,
         thinkingContent:
-          (updated[existingIndex].thinkingContent || "") +
-          (msg.content || ""),
+          (existing.thinkingContent || "") + (msg.content || ""),
+        contentBlocks: blocks,
       };
       return updated;
     } else {
+      const initialBlocks = msg.content
+        ? [{ type: "thinking" as const, content: msg.content }]
+        : [];
       return [
         ...prev,
         {
@@ -335,6 +351,7 @@ const handleChatThinking = useCallback((msg: ChatThinkingMessage) => {
           content: "",
           timestamp: new Date(),
           thinkingContent: msg.content || "",
+          contentBlocks: initialBlocks,
         },
       ];
     }

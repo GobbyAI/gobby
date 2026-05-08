@@ -4,7 +4,7 @@ Exercises the real create_search_registry function and its registered
 tools (search_tasks, reindex_tasks) with all code paths:
 - Empty/whitespace query
 - Successful search with real task data
-- Comma-separated status filter
+- Comma-separated current stage-state filter
 - Project filter error
 - Parent task ID resolution (success and failure)
 - Reindex success and error
@@ -149,6 +149,8 @@ class TestSearchTasksProjectFilter:
 
         func(query="test", project="my-project", all_projects=True)
         ctx.resolve_project_filter.assert_called_once_with("my-project", True)
+        assert ctx.resolve_project_filter.call_count == 1
+        assert ctx.resolve_project_filter.call_args is not None
 
 
 class TestSearchTasksResults:
@@ -203,7 +205,7 @@ class TestSearchTasksResults:
             first = result["tasks"][0]
             # Should have brief fields from to_brief() plus score
             assert "title" in first
-            assert "status" in first
+            assert "state" in first
             assert "score" in first
 
     def test_query_is_stripped(
@@ -236,10 +238,10 @@ class TestSearchTasksResults:
         assert result["tasks"] == []
 
 
-class TestSearchTasksStatusFilter:
-    """Tests for status filter handling."""
+class TestSearchTasksStageStateFilter:
+    """Tests for current-stage-state filter handling."""
 
-    def test_comma_separated_status_split_into_list(
+    def test_comma_separated_stage_state_split_into_list(
         self,
         task_manager: LocalTaskManager,
         real_project: dict,
@@ -249,33 +251,30 @@ class TestSearchTasksStatusFilter:
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
 
-        # The function should split comma-separated status
-        result = func(query="test", status="open,in_progress")
+        result = func(query="test", current_stage_state="ready,in_progress")
 
-        # We need to check the actual behavior - all seeded tasks are 'open'
-        # so filtering by open,in_progress should return them
         assert isinstance(result, dict)
         assert "tasks" in result
 
-    def test_single_status_passed_as_string(
+    def test_single_stage_state_passed_as_string(
         self,
         task_manager: LocalTaskManager,
         real_project: dict,
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
-        # Use a mock to verify the status is passed as-is
+        # Use a mock to verify the stage state is passed as-is.
         ctx.task_manager = MagicMock()
         ctx.task_manager.search_tasks.return_value = []
 
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
 
-        func(query="test", status="open")
+        func(query="test", current_stage_state="ready")
 
         call_kwargs = ctx.task_manager.search_tasks.call_args[1]
-        assert call_kwargs["status"] == "open"
+        assert call_kwargs["current_stage_state"] == "ready"
 
-    def test_list_status_passed_through(
+    def test_list_stage_state_passed_through(
         self,
         task_manager: LocalTaskManager,
     ) -> None:
@@ -286,12 +285,12 @@ class TestSearchTasksStatusFilter:
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
 
-        func(query="test", status=["open", "closed"])
+        func(query="test", current_stage_state=["ready", "needs_review"])
 
         call_kwargs = ctx.task_manager.search_tasks.call_args[1]
-        assert call_kwargs["status"] == ["open", "closed"]
+        assert call_kwargs["current_stage_state"] == ["ready", "needs_review"]
 
-    def test_comma_status_splits_correctly(
+    def test_comma_stage_state_splits_correctly(
         self,
         task_manager: LocalTaskManager,
     ) -> None:
@@ -302,10 +301,14 @@ class TestSearchTasksStatusFilter:
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
 
-        func(query="test", status="open, in_progress, closed")
+        func(query="test", current_stage_state="ready, in_progress, needs_review")
 
         call_kwargs = ctx.task_manager.search_tasks.call_args[1]
-        assert call_kwargs["status"] == ["open", "in_progress", "closed"]
+        assert call_kwargs["current_stage_state"] == [
+            "ready",
+            "in_progress",
+            "needs_review",
+        ]
 
 
 class TestSearchTasksParentFilter:
@@ -383,7 +386,7 @@ class TestSearchTasksAllFilters:
 
         func(
             query="  test query  ",
-            status="open",
+            current_stage_state="ready",
             task_type="bug",
             priority=1,
             category="code",
@@ -393,7 +396,7 @@ class TestSearchTasksAllFilters:
 
         call_kwargs = ctx.task_manager.search_tasks.call_args[1]
         assert call_kwargs["query"] == "test query"
-        assert call_kwargs["status"] == "open"
+        assert call_kwargs["current_stage_state"] == "ready"
         assert call_kwargs["task_type"] == "bug"
         assert call_kwargs["priority"] == 1
         assert call_kwargs["category"] == "code"
@@ -433,6 +436,8 @@ class TestReindexTasks:
         func(project="my-project")
 
         ctx.resolve_project_filter.assert_called_once_with("my-project", False)
+        assert ctx.resolve_project_filter.call_count == 1
+        assert ctx.resolve_project_filter.call_args is not None
 
     def test_reindex_all_projects(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
@@ -445,6 +450,8 @@ class TestReindexTasks:
         func(all_projects=True)
 
         ctx.resolve_project_filter.assert_called_once_with(None, True)
+        assert ctx.resolve_project_filter.call_count == 1
+        assert ctx.resolve_project_filter.call_args is not None
 
     def test_reindex_project_filter_error(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)

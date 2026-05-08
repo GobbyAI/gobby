@@ -15,9 +15,9 @@ rules:
         mcp_tools:
           - "gobby-tasks:close_task"
           - "gobby-tasks:de_escalate_task"
-          - "gobby-tasks:mark_task_needs_review"
-          - "gobby-tasks:mark_task_review_approved"
-          - "gobby-tasks:mark_task_review_rejected"
+          - "gobby-tasks-ops:submit_for_review"
+          - "gobby-tasks-ops:approve_review"
+          - "gobby-tasks-ops:reject_review"
         reason: |
           Uncommitted changes detected. Stage and commit dirty files before changing task status.
           1. git add <files>
@@ -40,9 +40,9 @@ rules:
         mcp_tools:
           - "gobby-tasks:close_task"
           - "gobby-tasks:de_escalate_task"
-          - "gobby-tasks:mark_task_needs_review"
-          - "gobby-tasks:mark_task_review_approved"
-          - "gobby-tasks:mark_task_review_rejected"
+          - "gobby-tasks-ops:submit_for_review"
+          - "gobby-tasks-ops:approve_review"
+          - "gobby-tasks-ops:reject_review"
         reason: |
           No commit linked to this task. Gobby auto-detects commits from Bash `git commit`
           and from `link_commit()`. If you already committed, try again — if the issue

@@ -328,8 +328,10 @@ class TestListMCPTools:
             session_id="123e4567-e89b-12d3-a456-426614174000",
         )
 
-    def test_list_tools_emits_proxy_after_tool(self, session_storage: SessionManager) -> None:
-        """Successful list_tools should emit the synthetic proxy AFTER_TOOL event."""
+    def test_list_tools_does_not_emit_proxy_after_tool(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Successful list_tools should not emit a proxy AFTER_TOOL event."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -347,14 +349,7 @@ class TestListMCPTools:
             )
 
         assert response.status_code == 200
-        result = response.json()
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="123e4567-e89b-12d3-a456-426614174000",
-            tool_name="list_tools",
-            tool_input={"server_name": "gobby-tasks"},
-            result=result,
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
     def test_list_tools_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test listing tools falls through to MCP manager when internal registry not found."""
@@ -824,15 +819,10 @@ class TestGetToolSchema:
         assert data["server"] == "gobby-tasks"
         assert "inputSchema" in data
 
-    def test_get_schema_emits_after_tool_with_session_header(
+    def test_get_schema_does_not_emit_after_tool_with_session_header(
         self, session_storage: SessionManager
     ) -> None:
-        """Session header should propagate to the synthetic AFTER_TOOL event.
-
-        ``unlocked_tools`` is now owned by the ``track-schema-lookup`` rule
-        firing off this synthetic event (no direct mutation), so the test
-        asserts the dispatch carries the session id.
-        """
+        """Session header should not trigger proxy AFTER_TOOL synthesis."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -854,17 +844,12 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        result = response.json()
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="123e4567-e89b-12d3-a456-426614174000",
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
-            result=result,
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
-    def test_get_schema_emits_proxy_after_tool(self, session_storage: SessionManager) -> None:
-        """Successful get_tool_schema should emit the synthetic proxy AFTER_TOOL event."""
+    def test_get_schema_does_not_emit_proxy_after_tool(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Successful get_tool_schema should not emit a proxy AFTER_TOOL event."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -886,14 +871,7 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        result = response.json()
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id="123e4567-e89b-12d3-a456-426614174000",
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
-            result=result,
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
     def test_get_schema_resolves_numeric_body_session_ref_via_header_session_project(
         self,
@@ -931,13 +909,7 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
-            session_id=session.id,
-            tool_name="get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
-            result=response.json(),
-            is_failure=False,
-        )
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_not_awaited()
 
     def test_get_schema_internal_server_tool_not_found(
         self, session_storage: SessionManager
@@ -1034,6 +1006,17 @@ class TestCallMCPTool:
         response = client.post("/api/mcp/tools/call", json={"tool_name": "test"})
         assert response.status_code == 400
         assert "server_name" in response.json()["detail"]["error"]
+
+    def test_call_tool_invalid_json_returns_400(self, client: TestClient) -> None:
+        """Malformed JSON should be a client error."""
+        response = client.post(
+            "/api/mcp/tools/call",
+            content='{"server_name":"gobby-tasks"}{"tool_name":"list_tasks"}',
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["error"].startswith("Invalid JSON:")
 
     def test_call_tool_tool_proxy_failure_is_flattened(
         self, session_storage: SessionManager
@@ -2230,7 +2213,9 @@ class TestHooksEndpoints:
             )
 
         assert response.status_code == 400
-        assert "Unsupported source" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "Unsupported source" in detail
+        assert "droid" in detail
 
     def test_execute_hook_no_hook_manager(self, session_storage: SessionManager) -> None:
         """Test execute hook when hook manager not initialized."""
@@ -2347,12 +2332,79 @@ class TestHooksEndpoints:
 
         assert response.status_code == 200
 
+    def test_execute_hook_droid_source(self, session_storage: SessionManager) -> None:
+        """Test execute hook with Droid source."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.droid.DroidAdapter") as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "PreToolUse",
+                    "source": "droid",
+                    "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        MockAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        assert mock_adapter.handle_native.call_args.args[0] == {
+            "hook_type": "PreToolUse",
+            "source": "droid",
+            "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+        }
+
+    def test_execute_hook_droid_adapter_error_is_graceful(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Droid adapter failures should return Droid-shaped non-fatal output."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.handle.side_effect = RuntimeError("droid adapter failed")
+        server.app.state.hook_manager = mock_hook_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "PreToolUse",
+                    "source": "droid",
+                    "input_data": {"session_id": "droid-123", "tool_name": "Read"},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["continue"] is True
+        assert "droid adapter failed" in data["systemMessage"]
+        assert "hookSpecificOutput" not in data
+
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),
         [
             ("claude", "pre-tool-use", "gobby.adapters.claude_code.ClaudeCodeAdapter"),
             ("gemini", "BeforeTool", "gobby.adapters.gemini.GeminiAdapter"),
             ("qwen", "BeforeTool", "gobby.adapters.qwen.QwenAdapter"),
+            ("droid", "PreToolUse", "gobby.adapters.droid.DroidAdapter"),
         ],
     )
     def test_execute_hook_normalizes_provider_pre_tool_use_for_hold_open(
@@ -2437,6 +2489,78 @@ class TestHooksEndpoints:
             "source": "codex",
             "input_data": {"session_id": "test-123", "cwd": "/tmp"},
         }
+
+    def test_execute_hook_codex_root_cwd_project_miss_logs_debug(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Benign Codex GUI root-cwd hooks must not emit invalid-hook warnings."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
+            patch("gobby.servers.routes.mcp.hooks.logger.debug") as debug,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.side_effect = ValueError(
+                "No .gobby/project.json found in /. "
+                "Run 'gobby init' in your project directory first."
+            )
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "SessionStart",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-123", "cwd": "/"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        warning.assert_not_called()
+        debug.assert_called()
+
+    def test_execute_hook_codex_pre_compact_error_is_graceful(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Codex compact hook errors should return Codex-valid non-fatal output."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.handle.side_effect = RuntimeError("compact failed")
+        server.app.state.hook_manager = mock_hook_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "PreCompact",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-compact", "cwd": "/tmp"},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["continue"] is True
+        assert "compact failed" in data["systemMessage"]
+        assert "hookSpecificOutput" not in data
+        assert "decision" not in data
+        assert "reason" not in data
+        assert "stopReason" not in data
+        mock_hook_manager.handle.assert_called_once()
 
     def test_execute_hook_codex_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Codex requests should normalize before adapter dispatch."""
@@ -2726,9 +2850,15 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         # Must use CodexHooksAdapter, NOT the app-server adapter
         MockHooksAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        assert MockHooksAdapter.call_count == 1
+        assert MockHooksAdapter.call_args is not None
         mock_adapter.handle_native.assert_called_once()
+        assert mock_adapter.handle_native.call_count == 1
+        assert mock_adapter.handle_native.call_args is not None
         # The app-server adapter must NOT have been called
         ws_adapter.handle_native.assert_not_called()
+        assert ws_adapter.handle_native.call_count == 0
+        assert not ws_adapter.handle_native.called
 
     def test_execute_hook_codex_stop_block_propagates(
         self, session_storage: SessionManager

@@ -20,6 +20,8 @@ class _ManagerState(Protocol):
 
     def get(self, session_id: str) -> Session | None: ...
 
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
 
 class _BulkUpdateMixin:
     def update(
@@ -114,7 +116,11 @@ class _BulkUpdateMixin:
 
         with self.db.transaction():
             self.db.safe_update("sessions", values, "id = ?", (session_id,))
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is not None:
+            event = "session_expired" if status == "expired" else "session_updated"
+            self._notify_session_change(event, session_id)
+        return updated
 
     def update_stats(
         self: _ManagerState,

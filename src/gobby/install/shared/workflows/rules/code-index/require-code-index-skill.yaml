@@ -1,0 +1,20 @@
+tags: [code-index, gobby, default]
+
+rules:
+  require-code-index-skill:
+    description: "Block first code navigation until code-index skill is loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('code-index')
+      and (
+        (event.data.get('canonical_tool_kind') == 'read'
+         and event.data.get('canonical_file_path', '').rpartition('.')[2]
+             in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
+                 'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala'))
+        or event.data.get('canonical_tool_kind') == 'search'
+      )
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="code-index") on gobby-skills, then continue.'

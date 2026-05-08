@@ -9,7 +9,12 @@ rules:
     when: >
       tool_input.get('skip_validation')
       and (variables.get('task_has_commits') or tool_input.get('commit_sha'))
-      and event.data.get('tool_name') == 'close_task'
+      and (
+        (event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+         and tool_input.get('server_name') == 'gobby-tasks'
+         and tool_input.get('tool_name') == 'close_task')
+        or event.data.get('tool_name') == 'close_task'
+      )
     effects:
       - type: inject_context
         template: |

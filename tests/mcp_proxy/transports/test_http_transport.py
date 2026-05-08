@@ -16,6 +16,7 @@ import pytest
 
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.http import HTTPTransportConnection
+from tests._timing import drain_asyncio_tasks, wait_forever
 
 pytestmark = pytest.mark.unit
 
@@ -276,7 +277,7 @@ class TestHTTPConnectTimeout:
 
         # Patch _run_connection to just sleep forever (never signals ready)
         async def slow_connection() -> None:
-            await asyncio.sleep(100)
+            await wait_forever()
 
         with patch.object(conn, "_run_connection", slow_connection):
             with pytest.raises(MCPError, match="Connection timeout"):
@@ -291,7 +292,7 @@ class TestHTTPConnectTimeout:
         c = HTTPTransportConnection(cfg)
 
         async def slow() -> None:
-            await asyncio.sleep(100)
+            await wait_forever()
 
         with patch.object(c, "_run_connection", slow):
             with pytest.raises(MCPError, match="my-server"):
@@ -530,7 +531,7 @@ class TestHTTPCleanupOwnerTask:
     @pytest.mark.asyncio
     async def test_done_task(self, conn: HTTPTransportConnection) -> None:
         """Already-done task is just set to None."""
-        done_task = asyncio.create_task(asyncio.sleep(0))
+        done_task = asyncio.create_task(drain_asyncio_tasks())
         await done_task  # Let it finish
         conn._owner_task = done_task
         conn._disconnect_event = asyncio.Event()
@@ -547,7 +548,7 @@ class TestHTTPCleanupOwnerTask:
         """A running task is cancelled if it does not exit after the grace period."""
 
         async def long_running() -> None:
-            await asyncio.sleep(100)
+            await wait_forever()
 
         task = asyncio.create_task(long_running())
         conn._owner_task = task
@@ -571,7 +572,7 @@ class TestHTTPCleanupOwnerTask:
 
         async def stubborn() -> None:
             try:
-                await asyncio.sleep(100)
+                await wait_forever()
             except asyncio.CancelledError:
                 await release.wait()
 
@@ -632,7 +633,7 @@ class TestHTTPDisconnect:
         conn._disconnect_event = event
 
         # Simulate an already-done owner task
-        done_task = asyncio.create_task(asyncio.sleep(0))
+        done_task = asyncio.create_task(drain_asyncio_tasks())
         await done_task
         conn._owner_task = done_task
         conn._session_ready = asyncio.Event()

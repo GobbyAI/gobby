@@ -16,6 +16,7 @@ from gobby.cli.installers.git_hooks import (
     _has_precommit_config,
     _is_precommit_framework_hook,
     _remove_gobby_section,
+    _remove_legacy_import_section,
     _wrap_gobby_section,
     install_git_hooks,
     uninstall_git_hooks,
@@ -200,6 +201,43 @@ echo "after"
 
         # Should not have more than 2 consecutive newlines
         assert "\n\n\n" not in result
+
+
+class TestRemoveLegacyImportSection:
+    """Tests for legacy JSONL import hook cleanup."""
+
+    def test_removes_only_gobby_import_section(self) -> None:
+        """Legacy import sections are removed while surrounding hook content remains."""
+        content = f"""#!/bin/bash
+echo "before"
+{GOBBY_HOOK_START}
+# Gobby task sync - import tasks after merge/pull
+gobby tasks sync --import --quiet 2>/dev/null || true
+{GOBBY_HOOK_END}
+echo "after"
+"""
+
+        result, removed = _remove_legacy_import_section(content)
+
+        assert removed is True
+        assert "gobby tasks sync --import" not in result
+        assert GOBBY_HOOK_START not in result
+        assert "before" in result
+        assert "after" in result
+
+    def test_preserves_non_import_gobby_section(self) -> None:
+        """Gobby sections unrelated to JSONL imports are left alone."""
+        content = f"""#!/bin/bash
+{GOBBY_HOOK_START}
+gobby hooks run post-merge
+{GOBBY_HOOK_END}
+"""
+
+        result, removed = _remove_legacy_import_section(content)
+
+        assert removed is False
+        assert "gobby hooks run post-merge" in result
+        assert GOBBY_HOOK_START in result
 
 
 class TestBackupHook:
@@ -431,7 +469,7 @@ class TestInstallGitHooks:
         hooks_dir.mkdir()
 
         # Create existing hook with specific shebang
-        existing_hook = hooks_dir / "post-merge"
+        existing_hook = hooks_dir / "pre-push"
         existing_hook.write_text("#!/usr/bin/env zsh\necho 'zsh hook'\n")
 
         install_git_hooks(tmp_path)
@@ -599,7 +637,7 @@ class TestInstallGitHooks:
         hooks_dir.mkdir()
 
         # Create existing hook without shebang
-        existing_hook = hooks_dir / "post-checkout"
+        existing_hook = hooks_dir / "post-commit"
         existing_hook.write_text("echo 'no shebang'\n")
 
         install_git_hooks(tmp_path)
@@ -616,7 +654,7 @@ class TestInstallGitHooks:
         hooks_dir.mkdir()
 
         # Create empty hook file
-        empty_hook = hooks_dir / "post-merge"
+        empty_hook = hooks_dir / "post-commit"
         empty_hook.write_text("")
 
         result = install_git_hooks(tmp_path)
@@ -635,7 +673,7 @@ class TestInstallGitHooks:
         hooks_dir.mkdir()
 
         # Create hook file with only whitespace
-        whitespace_hook = hooks_dir / "post-checkout"
+        whitespace_hook = hooks_dir / "pre-merge-commit"
         whitespace_hook.write_text("   \n\n  \n")
 
         result = install_git_hooks(tmp_path)
@@ -645,6 +683,48 @@ class TestInstallGitHooks:
         content = whitespace_hook.read_text()
         assert content.startswith("#!/usr/bin/env bash")
         assert GOBBY_HOOK_START in content
+
+    def test_does_not_install_post_merge_or_post_checkout_hooks(self, tmp_path: Path) -> None:
+        """Fresh installs do not create automatic JSONL import hooks."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir()
+
+        result = install_git_hooks(tmp_path)
+
+        assert result["success"] is True
+        assert "post-merge" not in result["installed"]
+        assert "post-checkout" not in result["installed"]
+        assert not (hooks_dir / "post-merge").exists()
+        assert not (hooks_dir / "post-checkout").exists()
+
+    def test_cleans_legacy_import_hooks(self, tmp_path: Path) -> None:
+        """Existing managed post-merge/post-checkout import blocks are removed."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir()
+
+        legacy_section = _wrap_gobby_section(
+            """
+# Gobby task sync - import tasks after merge/pull
+gobby tasks sync --import --quiet 2>/dev/null || true
+"""
+        )
+        post_merge = hooks_dir / "post-merge"
+        post_merge.write_text(f"#!/bin/bash\necho before\n{legacy_section}echo after\n")
+        post_checkout = hooks_dir / "post-checkout"
+        post_checkout.write_text(f"#!/bin/bash\n{legacy_section}")
+
+        result = install_git_hooks(tmp_path)
+
+        assert result["success"] is True
+        assert set(result["removed_legacy_imports"]) == {"post-merge", "post-checkout"}
+        assert "gobby tasks sync --import" not in post_merge.read_text()
+        assert "echo before" in post_merge.read_text()
+        assert "echo after" in post_merge.read_text()
+        assert "gobby tasks sync --import" not in post_checkout.read_text()
 
 
 class TestUninstallGitHooks:
@@ -794,13 +874,17 @@ class TestHookTemplates:
             "pre-commit",
             "pre-push",
             "pre-merge-commit",
-            "post-merge",
-            "post-checkout",
             "post-commit",
         }
         assert set(HOOK_TEMPLATES.keys()) == expected_hooks
 
     def test_prepush_template_contains_gobby_sync(self) -> None:
-        """Test that pre-push template contains gobby sync command."""
+        """Test that pre-push template keeps JSONL export commands."""
         content = HOOK_TEMPLATES["pre-push"]
-        assert "gobby tasks sync" in content
+        assert "gobby tasks sync --export" in content
+        assert "gobby memory backup" in content
+
+    def test_templates_do_not_import_jsonl(self) -> None:
+        """No installed hook template automatically imports JSONL."""
+        for content in HOOK_TEMPLATES.values():
+            assert "gobby tasks sync --import" not in content

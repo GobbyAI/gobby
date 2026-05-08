@@ -111,6 +111,32 @@ async def test_import_from_files(sync_manager, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_import_skips_ephemeral_implementation_notes(sync_manager, tmp_path):
+    """Run-specific implementation notes are not imported from JSONL."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    mem_file.write_text(
+        json.dumps(
+            {
+                "content": "Gobby build #epic E2E docs test #14353 completed.",
+                "type": "implementation_note",
+                "tags": ["gobby", "build-e2e", "#14353"],
+            }
+        )
+        + "\n"
+        + json.dumps({"content": "durable memory", "type": "fact"})
+        + "\n"
+    )
+
+    count = await sync_manager.import_from_files()
+
+    assert count == 1
+    sync_manager.memory_manager.storage.create_memory.assert_called_once()
+    call_args = sync_manager.memory_manager.storage.create_memory.call_args.kwargs
+    assert call_args["content"] == "durable memory"
+
+
+@pytest.mark.asyncio
 async def test_get_export_path_context_error(sync_manager):
     """Test _get_export_path falls back to cwd on context error."""
     sync_manager.export_path = Path(".gobby/memories.jsonl")
@@ -332,6 +358,60 @@ async def test_export_to_files_no_memory_manager(mock_db):
     count = await sync_manager.export_to_files()
 
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_export_skips_ephemeral_implementation_notes(sync_manager, tmp_path):
+    """Run-specific implementation notes are dropped from DB and file export."""
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    mem_file.write_text(
+        json.dumps(
+            {
+                "id": "file-ephemeral",
+                "content": "Gobby build #epic E2E docs test #14353 completed.",
+                "type": "implementation_note",
+                "tags": ["build-e2e"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sync_manager.memory_manager.list_memories.return_value = [
+        Memory(
+            id="db-ephemeral",
+            content="Gobby build #epic E2E docs test #14353 completed.",
+            memory_type="implementation_note",
+            created_at="2026-05-07T00:00:00Z",
+            updated_at="2026-05-07T00:00:00Z",
+            access_count=0,
+            last_accessed_at=None,
+            tags=["gobby", "build-e2e", "#14353"],
+            project_id="p1",
+            source_type="agent",
+            source_session_id=None,
+        ),
+        Memory(
+            id="db-durable",
+            content="durable memory",
+            memory_type="fact",
+            created_at="2026-05-07T00:00:00Z",
+            updated_at="2026-05-07T00:00:00Z",
+            access_count=0,
+            last_accessed_at=None,
+            tags=[],
+            project_id="p1",
+            source_type="agent",
+            source_session_id=None,
+        ),
+    ]
+
+    count = await sync_manager.export_to_files()
+
+    lines = mem_file.read_text(encoding="utf-8").splitlines()
+    assert count == 1
+    assert len(lines) == 1
+    assert json.loads(lines[0])["id"] == "db-durable"
 
 
 def test_import_memories_sync_no_manager(mock_db, tmp_path) -> None:

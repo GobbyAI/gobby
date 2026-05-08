@@ -5,8 +5,8 @@ bidirectional sync mechanism - memories are stored in the database via
 MemoryBackendProtocol. This module handles:
 
 - Backup export to .gobby/memories.jsonl for disaster recovery
-- One-time migration import from existing JSONL files
-- On-demand backup via CLI, pre-commit hook, and daemon shutdown
+- Explicit restore/import from existing JSONL files
+- On-demand backup via CLI, pre-push hook, and MCP export
 
 Classes:
     MemoryBackupManager: Main backup manager (formerly MemorySyncManager)
@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,31 @@ def _parse_updated_at(value: Any) -> tuple[int, str]:
     return (0, "")
 
 
+_EPHEMERAL_IMPLEMENTATION_TAGS = {"build-e2e"}
+_EPHEMERAL_CONTENT_MARKERS = ("build #epic", "docs test #", "merged into local")
+
+
+def is_ephemeral_implementation_note(record: Mapping[str, Any]) -> bool:
+    """Return True for run-specific implementation notes that should not persist."""
+    memory_type = str(record.get("type") or record.get("memory_type") or "").lower()
+    if memory_type != "implementation_note":
+        return False
+
+    raw_tags = record.get("tags")
+    tags = (
+        {str(tag).strip().lower() for tag in raw_tags if str(tag).strip()}
+        if isinstance(raw_tags, list)
+        else set()
+    )
+    if tags & _EPHEMERAL_IMPLEMENTATION_TAGS:
+        return True
+    if any(tag.startswith("#") and tag[1:].isdigit() for tag in tags):
+        return True
+
+    content = str(record.get("content") or "").lower()
+    return any(marker in content for marker in _EPHEMERAL_CONTENT_MARKERS)
+
+
 class MemoryBackupManager:
     """
     Manages backup of memories from the database to filesystem.
@@ -51,8 +77,8 @@ class MemoryBackupManager:
     This is a backup/export utility, NOT a sync mechanism. Memories are stored
     in the database (via the configured backend) and this class provides:
     - JSONL backup export (to .gobby/memories.jsonl)
-    - One-time migration import from existing JSONL files
-    - On-demand backup via CLI, pre-commit hook, and daemon shutdown
+    - Explicit restore/import from existing JSONL files
+    - On-demand backup via CLI, pre-push hook, and MCP export
 
     For actual memory storage, see gobby.memory.backends.
     """
@@ -142,7 +168,7 @@ class MemoryBackupManager:
         """
         Import memories from filesystem synchronously (blocking).
 
-        Used on startup to restore memories from a synced JSONL file
+        Used by explicit restore/import commands to restore memories from a JSONL file
         (e.g. pulled from git on a new machine) before exporting.
         Only imports if the JSONL file has more entries than the DB.
         """
@@ -238,6 +264,9 @@ class MemoryBackupManager:
 
                     content = data.get("content", "")
                     data["content"] = self._sanitize_content(content)
+                    if is_ephemeral_implementation_note(data):
+                        skipped += 1
+                        continue
                     parsed_records.append(data)
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON in memories file: {line[:50]}...")
@@ -418,7 +447,8 @@ class MemoryBackupManager:
                             try:
                                 data = json.loads(line)
                                 if data.get("id") or data.get("content", "").strip():
-                                    existing_records.append(data)
+                                    if not is_ephemeral_implementation_note(data):
+                                        existing_records.append(data)
                             except json.JSONDecodeError as e:
                                 logger.debug(f"Skipping malformed JSONL line in {file_path}: {e}")
                                 continue
@@ -442,19 +472,19 @@ class MemoryBackupManager:
             db_records: list[dict[str, Any]] = []
             for memory in unique_memories:
                 sanitized = self._sanitize_content(memory.content)
-                db_records.append(
-                    {
-                        "id": memory.id,
-                        "content": sanitized,
-                        "type": memory.memory_type,
-                        "tags": memory.tags,
-                        "created_at": memory.created_at,
-                        "updated_at": memory.updated_at,
-                        "source": memory.source_type,
-                        "source_id": memory.source_session_id,
-                        "project_id": memory.project_id,
-                    }
-                )
+                record = {
+                    "id": memory.id,
+                    "content": sanitized,
+                    "type": memory.memory_type,
+                    "tags": memory.tags,
+                    "created_at": memory.created_at,
+                    "updated_at": memory.updated_at,
+                    "source": memory.source_type,
+                    "source_id": memory.source_session_id,
+                    "project_id": memory.project_id,
+                }
+                if not is_ephemeral_implementation_note(record):
+                    db_records.append(record)
 
             # 3. Merge: keep one canonical record per id, preferring the latest updated_at
             # When scoped to a project, drop file records that belong to

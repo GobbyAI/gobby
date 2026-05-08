@@ -154,6 +154,41 @@ class LocalPipelineExecutionManager:
 
         return self.get_execution(execution_id)
 
+    def _build_executions_filter(
+        self,
+        *,
+        status: ExecutionStatus | None = None,
+        pipeline_name: str | None = None,
+        session_id: str | None = None,
+        parent_execution_id: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        """Build the WHERE fragment + params shared by list/count/status_summary.
+
+        Returns a fragment that always begins with ``WHERE `` and is scoped to
+        ``self.project_id`` (NULL-aware).
+        """
+        params: list[Any] = []
+        if self.project_id is None:
+            where = "WHERE project_id IS NULL"
+        else:
+            where = "WHERE project_id = ?"
+            params.append(self.project_id)
+
+        if status is not None:
+            where += " AND status = ?"
+            params.append(status.value)
+        if pipeline_name is not None:
+            where += " AND pipeline_name = ?"
+            params.append(pipeline_name)
+        if session_id is not None:
+            where += " AND session_id = ?"
+            params.append(session_id)
+        if parent_execution_id is not None:
+            where += " AND parent_execution_id = ?"
+            params.append(parent_execution_id)
+
+        return where, params
+
     def list_executions(
         self,
         status: ExecutionStatus | None = None,
@@ -161,6 +196,7 @@ class LocalPipelineExecutionManager:
         session_id: str | None = None,
         parent_execution_id: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[PipelineExecution]:
         """List executions for the project.
 
@@ -169,39 +205,127 @@ class LocalPipelineExecutionManager:
             pipeline_name: Filter by pipeline name
             session_id: Filter by triggering session
             parent_execution_id: Filter by parent execution (nested pipelines)
-            limit: Maximum number of results
+            limit: Maximum number of results (must be > 0)
+            offset: Number of leading rows to skip (must be >= 0)
 
         Returns:
             List of PipelineExecution instances
+
+        Raises:
+            ValueError: If ``limit <= 0`` or ``offset < 0``.
         """
-        params: list[Any] = []
-        if self.project_id is None:
-            query = "SELECT * FROM pipeline_executions WHERE project_id IS NULL"
-        else:
-            query = "SELECT * FROM pipeline_executions WHERE project_id = ?"
-            params.append(self.project_id)
+        if limit <= 0:
+            raise ValueError(f"limit must be > 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
 
-        if status is not None:
-            query += " AND status = ?"
-            params.append(status.value)
+        where, params = self._build_executions_filter(
+            status=status,
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+        )
+        sql = (
+            f"SELECT * FROM pipeline_executions {where} "  # nosec B608 # fragment built from typed inputs
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+        params.extend([limit, offset])
 
-        if pipeline_name is not None:
-            query += " AND pipeline_name = ?"
-            params.append(pipeline_name)
-
-        if session_id is not None:
-            query += " AND session_id = ?"
-            params.append(session_id)
-
-        if parent_execution_id is not None:
-            query += " AND parent_execution_id = ?"
-            params.append(parent_execution_id)
-
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
-
-        rows = self.db.fetchall(query, tuple(params))
+        rows = self.db.fetchall(sql, tuple(params))
         return [PipelineExecution.from_row(row) for row in rows]
+
+    def count_executions(
+        self,
+        status: ExecutionStatus | None = None,
+        pipeline_name: str | None = None,
+        session_id: str | None = None,
+        parent_execution_id: str | None = None,
+    ) -> int:
+        """Count executions matching the same filters as ``list_executions``.
+
+        Returns:
+            Total number of matching executions (independent of limit/offset).
+        """
+        where, params = self._build_executions_filter(
+            status=status,
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+        )
+        sql = f"SELECT COUNT(*) AS cnt FROM pipeline_executions {where}"  # nosec B608
+        row = self.db.fetchone(sql, tuple(params))
+        return int(row["cnt"]) if row else 0
+
+    def execution_metrics(
+        self,
+        status: ExecutionStatus | None = None,
+        pipeline_name: str | None = None,
+        session_id: str | None = None,
+        parent_execution_id: str | None = None,
+    ) -> tuple[int, dict[str, int]]:
+        """Return filtered total and status summary in one query."""
+        where, params = self._build_executions_filter(
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+        )
+        status_value = status.value if status is not None else None
+        sql = f"""
+            WITH filtered AS (
+                SELECT status FROM pipeline_executions {where}
+            ),
+            total AS (
+                SELECT COUNT(*) AS cnt
+                FROM filtered
+                WHERE (? IS NULL OR status = ?)
+            ),
+            summary AS (
+                SELECT status, COUNT(*) AS cnt
+                FROM filtered
+                GROUP BY status
+            )
+            SELECT '__total__' AS status, cnt FROM total
+            UNION ALL
+            SELECT status, cnt FROM summary
+        """  # nosec B608 # WHERE fragment built from typed inputs.
+        rows = self.db.fetchall(sql, (*params, status_value, status_value))
+        total = 0
+        summary: dict[str, int] = {}
+        for row in rows:
+            row_status = str(row["status"])
+            count = int(row["cnt"])
+            if row_status == "__total__":
+                total = count
+            else:
+                summary[row_status] = count
+        return total, summary
+
+    def status_summary_for_executions(
+        self,
+        pipeline_name: str | None = None,
+        session_id: str | None = None,
+        parent_execution_id: str | None = None,
+    ) -> dict[str, int]:
+        """Filter-scoped status counts.
+
+        Applies the same filters as ``list_executions`` minus the ``status``
+        predicate, then groups by status. Useful for paginated UIs that want
+        to show "X running / Y completed" within the active filter scope.
+
+        Returns:
+            Dict mapping status values to counts.
+        """
+        where, params = self._build_executions_filter(
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+        )
+        sql = (
+            f"SELECT status, COUNT(*) AS cnt FROM pipeline_executions {where} "  # nosec B608
+            "GROUP BY status"
+        )
+        rows = self.db.fetchall(sql, tuple(params))
+        return {row["status"]: int(row["cnt"]) for row in rows}
 
     def get_unreviewed_completions(self, limit: int = 10) -> list[PipelineExecution]:
         """Get terminal executions that have no review.
@@ -257,6 +381,7 @@ class LocalPipelineExecutionManager:
         search_outputs: bool = False,
         status: ExecutionStatus | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> list[PipelineExecution]:
         """Search executions by text across pipeline_name and optionally step errors/outputs.
 
@@ -265,11 +390,19 @@ class LocalPipelineExecutionManager:
             search_errors: Also search step_executions.error text
             search_outputs: Also search step_executions.output_json text
             status: Filter by status
-            limit: Maximum number of results
+            limit: Maximum number of results (must be > 0)
+            offset: Number of leading rows to skip (must be >= 0)
 
         Returns:
             List of matching PipelineExecution instances
+
+        Raises:
+            ValueError: If limit <= 0 or offset < 0.
         """
+        if limit <= 0:
+            raise ValueError(f"limit must be > 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
         escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         like_pattern = f"%{escaped_query}%"
         params: list[Any] = []
@@ -301,7 +434,7 @@ class LocalPipelineExecutionManager:
         else:
             status_clause = ""
 
-        params.append(limit)
+        params.extend([limit, offset])
 
         sql = f"""
             SELECT DISTINCT pe.* FROM pipeline_executions pe
@@ -309,11 +442,64 @@ class LocalPipelineExecutionManager:
             WHERE {project_clause}
               AND ({like_clause}){status_clause}
             ORDER BY pe.created_at DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
         """  # nosec B608
 
         rows = self.db.fetchall(sql, tuple(params))
         return [PipelineExecution.from_row(row) for row in rows]
+
+    def count_search_executions(
+        self,
+        query: str,
+        search_errors: bool = True,
+        search_outputs: bool = False,
+        status: ExecutionStatus | None = None,
+    ) -> int:
+        """Count executions matching the same filters as ``search_executions``.
+
+        Returns:
+            Total number of matching executions (independent of limit/offset).
+        """
+        escaped_query = (
+            query.replace(chr(92), chr(92) * 2)
+            .replace("%", chr(92) + "%")
+            .replace("_", chr(92) + "_")
+        )
+        like_pattern = f"%{escaped_query}%"
+        params: list[Any] = []
+
+        if self.project_id is None:
+            project_clause = "pe.project_id IS NULL"
+        else:
+            project_clause = "pe.project_id = ?"
+            params.append(self.project_id)
+
+        like_conditions = ["pe.pipeline_name LIKE ? ESCAPE '" + chr(92) + "'"]
+        params.append(like_pattern)
+        if search_errors:
+            like_conditions.append("se.error LIKE ? ESCAPE '" + chr(92) + "'")
+            params.append(like_pattern)
+        if search_outputs:
+            like_conditions.append("se.output_json LIKE ? ESCAPE '" + chr(92) + "'")
+            params.append(like_pattern)
+        like_clause = " OR ".join(like_conditions)
+
+        if status is not None:
+            status_clause = " AND pe.status = ?"
+            params.append(status.value)
+        else:
+            status_clause = ""
+
+        sql = f"""
+            SELECT COUNT(*) AS cnt FROM (
+                SELECT DISTINCT pe.id FROM pipeline_executions pe
+                LEFT JOIN step_executions se ON se.execution_id = pe.id
+                WHERE {project_clause}
+                  AND ({like_clause}){status_clause}
+            )
+        """  # nosec B608
+        row = self.db.fetchone(sql, tuple(params))
+        return int(row["cnt"]) if row else 0
 
     def get_execution_by_resume_token(self, token: str) -> PipelineExecution | None:
         """Get execution by resume token.

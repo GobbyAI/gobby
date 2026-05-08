@@ -26,9 +26,9 @@ def db():
         )
         for tid in ("task-1", "task-2", "task-3"):
             database.execute(
-                "INSERT INTO tasks (id, title, project_id, task_type, status, priority, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-                (tid, f"Task {tid}", "proj-1", "task", "open", 2),
+                "INSERT INTO tasks (id, title, project_id, task_type, priority, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                (tid, f"Task {tid}", "proj-1", "task", 2),
             )
         yield database
         database.close()

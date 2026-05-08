@@ -69,6 +69,8 @@ def create_app(server: "HTTPServer") -> FastAPI:
             "task_sync_manager": server.services.task_sync_manager,
             "agent_runner": server.services.agent_runner,
             "completion_registry": server.services.completion_registry,
+            "database": server.services.database,
+            "session_manager": server.services.session_manager,
         }
 
         # Create code index trigger for post-edit incremental indexing
@@ -94,14 +96,6 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
             app.state.hook_manager = HookManager(**hook_manager_kwargs)
             server._hook_manager = app.state.hook_manager
-
-            # Back-link HookManager into SessionMessageProcessor so the processor
-            # can synthesize BEFORE_TOOL/AFTER_TOOL events from the Codex
-            # rollout tail (Codex's experimental hooks don't fire for MCP tool
-            # calls; the rule engine would otherwise never see them).
-            mp = server.services.message_processor
-            if mp is not None:
-                mp._hook_manager = app.state.hook_manager
         logger.debug("HookManager initialized in daemon")
 
         # Initialize PendingInteractionManager for web chat approval flows
@@ -163,20 +157,18 @@ def create_app(server: "HTTPServer") -> FastAPI:
         if server.session_manager is not None:
             listener_loop = asyncio.get_running_loop()
 
-            def _broadcast_title_update(session_id: str, _title: str) -> None:
+            def _broadcast_session_change(event: str, session_id: str) -> None:
                 if not ws_server or listener_loop.is_closed():
                     return
 
                 def _schedule() -> None:
-                    listener_loop.create_task(
-                        ws_server.broadcast_session_event("session_updated", session_id)
-                    )
+                    listener_loop.create_task(ws_server.broadcast_session_event(event, session_id))
 
                 listener_loop.call_soon_threadsafe(_schedule)
 
-            server.session_manager.register_title_listener(_broadcast_title_update)
-            app.state.title_update_listener = _broadcast_title_update
-            logger.debug("Title update listener connected to session manager")
+            server.session_manager.register_session_change_listener(_broadcast_session_change)
+            app.state.session_change_listener = _broadcast_session_change
+            logger.debug("Session change listener connected to session manager")
 
         # Wire inter-session message manager for message piggyback delivery
         if (
@@ -333,10 +325,12 @@ def create_app(server: "HTTPServer") -> FastAPI:
         # Shutdown operations
         logger.debug("Shutting down Gobby HTTP server")
 
-        if hasattr(app.state, "title_update_listener") and server.session_manager is not None:
-            server.session_manager.unregister_title_listener(app.state.title_update_listener)
-            del app.state.title_update_listener
-            logger.debug("Title update listener disconnected from session manager")
+        if hasattr(app.state, "session_change_listener") and server.session_manager is not None:
+            server.session_manager.unregister_session_change_listener(
+                app.state.session_change_listener
+            )
+            del app.state.session_change_listener
+            logger.debug("Session change listener disconnected from session manager")
 
         voice_cleanup = getattr(ws_server, "cleanup_voice", None) if ws_server else None
         if voice_cleanup:
@@ -501,12 +495,14 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_admin_router,
         create_agent_spawn_router,
         create_agents_router,
+        create_build_router,
         create_chat_router,
         create_code_index_router,
         create_communications_router,
         create_configuration_router,
         create_cron_router,
         create_files_router,
+        create_github_triage_router,
         create_hooks_router,
         create_mcp_router,
         create_memory_router,
@@ -518,6 +514,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_sessions_router,
         create_skills_router,
         create_source_control_router,
+        create_stages_router,
         create_tasks_router,
         create_traces_router,
         create_voice_router,
@@ -531,10 +528,12 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_admin_router(server))
     app.include_router(create_agent_spawn_router(server))
     app.include_router(create_agents_router(server))
+    app.include_router(create_build_router(server))
     app.include_router(create_chat_router(server))
     app.include_router(create_sessions_router(server))
     app.include_router(create_memory_router(server))
     app.include_router(create_tasks_router(server))
+    app.include_router(create_stages_router(server))
     app.include_router(create_code_index_router(server))
     app.include_router(create_cron_router(server))
     app.include_router(create_mcp_router())
@@ -542,6 +541,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_webhooks_router())
     app.include_router(create_pipelines_router(server))
     app.include_router(create_files_router(server))
+    app.include_router(create_github_triage_router(server))
     app.include_router(create_projects_router(server))
     app.include_router(create_providers_router(server))
     app.include_router(create_skills_router(server))

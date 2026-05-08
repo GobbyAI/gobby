@@ -55,6 +55,13 @@ def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
             json.dumps({"reason": reason, "detail": detail}, indent=2) + "\n",
             encoding="utf-8",
         )
+    except FileNotFoundError:
+        logger.debug(
+            "Hook inbox file %s disappeared before quarantine (reason=%s)",
+            path,
+            reason,
+        )
+        return True
     except Exception as exc:
         logger.error(
             "Failed to quarantine hook inbox file %s (reason=%s, detail=%s): %s",

@@ -226,7 +226,11 @@ def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented() -> None:
         shutdown_telemetry()
 
     instrumentor.uninstrument.assert_not_called()
+    assert instrumentor.uninstrument.call_count == 0
+    assert not instrumentor.uninstrument.called
     mock_shutdown_providers.assert_called_once()
+    assert mock_shutdown_providers.call_count == 1
+    assert mock_shutdown_providers.call_args is not None
 
 
 def test_shutdown_telemetry_uninstruments_when_active() -> None:
@@ -240,7 +244,11 @@ def test_shutdown_telemetry_uninstruments_when_active() -> None:
         shutdown_telemetry()
 
     instrumentor.uninstrument.assert_called_once()
+    assert instrumentor.uninstrument.call_count == 1
+    assert instrumentor.uninstrument.call_args is not None
     mock_shutdown_providers.assert_called_once()
+    assert mock_shutdown_providers.call_count == 1
+    assert mock_shutdown_providers.call_args is not None
 
 
 def test_setup_otel_logging_clears_old_handlers(telemetry_config):

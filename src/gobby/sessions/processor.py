@@ -13,7 +13,6 @@ import asyncio
 import json
 import logging
 import os
-from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 import aiofiles
@@ -56,13 +55,10 @@ class SessionMessageProcessor:
         self.poll_interval = poll_interval
         self.websocket_server: WebSocketServer | None = websocket_server
         self.session_manager: SessionManager | None = session_manager
-        self._hook_manager: HookManager | None = hook_manager
+        self._hook_manager: Any | None = hook_manager
 
         # Track active sessions: session_id -> transcript_path
         self._active_sessions: dict[str, str] = {}
-
-        # Track session source (claude/codex/...) for hook synthesis
-        self._sources: dict[str, str] = {}
 
         # Track parsers: session_id -> TranscriptParser
         self._parsers: dict[str, TranscriptParser] = {}
@@ -82,6 +78,69 @@ class SessionMessageProcessor:
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
+
+    @staticmethod
+    def _build_codex_hook_event(
+        session: dict[str, Any],
+        tool_event: ParsedToolEvent,
+    ) -> HookEvent | None:
+        """Build a Codex tool HookEvent from a parsed transcript lifecycle record."""
+        if not tool_event.tool:
+            return None
+        if tool_event.phase == "begin":
+            event_type = HookEventType.BEFORE_TOOL
+        elif tool_event.phase == "end":
+            event_type = HookEventType.AFTER_TOOL
+        else:
+            return None
+
+        server = tool_event.server or "codex"
+        data: dict[str, Any] = {
+            "tool_name": f"mcp__{server}__{tool_event.tool}",
+            "tool_input": dict(tool_event.arguments),
+        }
+        if tool_event.call_id:
+            data["call_id"] = tool_event.call_id
+            data["item_id"] = tool_event.call_id
+        if tool_event.raw_json:
+            data["raw_json"] = tool_event.raw_json
+        if event_type == HookEventType.AFTER_TOOL:
+            if tool_event.result is not None:
+                data["tool_output"] = tool_event.result
+            if tool_event.error is not None:
+                data["tool_error"] = tool_event.error
+                data["is_error"] = True
+            if tool_event.duration_ns is not None:
+                data["duration_ns"] = tool_event.duration_ns
+
+        normalize_tool_fields(data)
+        metadata: dict[str, Any] = {"_codex_synthesized_tool_event": True}
+        platform_session_id = session.get("platform_session_id")
+        if isinstance(platform_session_id, str) and platform_session_id:
+            metadata["_platform_session_id"] = platform_session_id
+
+        external_id = session.get("external_id")
+        if not isinstance(external_id, str) or not external_id.strip():
+            logger.warning(
+                "Skipping Codex synthesized tool event without external_id",
+                extra={
+                    "platform_session_id": platform_session_id,
+                    "tool_name": data.get("tool_name"),
+                    "phase": tool_event.phase,
+                },
+            )
+            return None
+
+        return HookEvent(
+            event_type=event_type,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=tool_event.timestamp,
+            data=data,
+            machine_id=session.get("machine_id"),
+            project_id=session.get("project_id"),
+            metadata=metadata,
+        )
 
     def _accumulate_stats(self, session_id: str, messages: list[Any]) -> dict[str, Any]:
         """Accumulate incremental stats from parsed messages."""
@@ -137,8 +196,7 @@ class SessionMessageProcessor:
         appears a second or so later. Register the session anyway; the poll
         loop's ``_process_session`` gate (``if not os.path.exists``) already
         handles missing files gracefully, and once the file appears the next
-        poll picks it up from byte zero. Skipping registration here means the
-        Codex MCP-call synthesis path never sees the rollout at all.
+        poll picks it up from byte zero.
 
         Args:
             session_id: Session ID
@@ -149,8 +207,11 @@ class SessionMessageProcessor:
             return
 
         self._active_sessions[session_id] = transcript_path
-        self._sources[session_id] = source
-        self._parsers[session_id] = get_parser(source, session_id=session_id)
+        self._parsers[session_id] = get_parser(
+            source,
+            session_id=session_id,
+            transcript_path=transcript_path,
+        )
         if os.path.exists(transcript_path):
             logger.debug(f"Registered session {session_id} for processing ({source})")
         else:
@@ -175,7 +236,6 @@ class SessionMessageProcessor:
             del self._active_sessions[session_id]
             if session_id in self._parsers:
                 del self._parsers[session_id]
-            self._sources.pop(session_id, None)
             self._last_mtime.pop(session_id, None)
             self._stats.pop(session_id, None)
             self._byte_offsets.pop(session_id, None)
@@ -263,21 +323,16 @@ class SessionMessageProcessor:
 
         parsed_records = parser.parse_lines(new_lines, start_index=last_index + 1)
 
-        # Split mixed records: ParsedMessage feeds stats/rendering;
-        # ParsedToolEvent feeds the rule engine via HookManager.
+        # Split mixed records: ParsedMessage feeds stats/rendering. Codex MCP
+        # lifecycle records are parsed for transcript fidelity, while native
+        # Codex MCP hooks now own workflow lifecycle dispatch.
         parsed_messages: list[ParsedMessage] = [
             r for r in parsed_records if isinstance(r, ParsedMessage)
         ]
-        tool_events: list[ParsedToolEvent] = [
-            r for r in parsed_records if isinstance(r, ParsedToolEvent)
-        ]
 
         # Always advance the byte offset once the lines are read; otherwise
-        # a re-tail would re-fire HookEvents for already-processed lines.
+        # a re-tail would reprocess already-consumed transcript lines.
         self._byte_offsets[session_id] = valid_offset
-
-        if tool_events:
-            await self._dispatch_tool_events(session_id, tool_events)
 
         if not parsed_messages:
             return
@@ -332,135 +387,6 @@ class SessionMessageProcessor:
         self._message_indices[session_id] = new_last_index
 
         logger.debug(f"Processed {len(parsed_messages)} messages for {session_id}")
-
-    async def _dispatch_tool_events(self, session_id: str, events: list[ParsedToolEvent]) -> None:
-        """Synthesize BEFORE_TOOL/AFTER_TOOL HookEvents from rollout records.
-
-        Codex CLI's experimental hooks fire PreToolUse/PostToolUse for shell
-        tools but not MCP tool calls; this synthesis closes that gap so rules
-        like ``inject-task-creation-on-schema`` evaluate against the same
-        events on Codex that they see on Claude.
-        """
-        if self._hook_manager is None:
-            return
-
-        source = self._sources.get(session_id)
-        if source != "codex":
-            return
-
-        # ``HookEvent.session_id`` on the wire is the *external_id* (Codex
-        # thread UUID) — HookManager's session_lookup treats it that way and
-        # resolves via the composite UNIQUE index on the sessions table:
-        # (external_id, machine_id, source, project_id). Passing the platform
-        # UUID as session_id would miss the index and fall through to
-        # auto-register-as-new-session, creating a phantom duplicate row
-        # that receives all rule effects instead of the real row.
-        # Load the registered session and rehydrate the full composite so
-        # the resolver lands on the exact row deterministically.
-        session_context = self._load_session_context(session_id)
-        if session_context is None:
-            logger.debug(
-                "Skipping Codex tool synthesis for %s: session row not resolvable",
-                session_id,
-            )
-            return
-
-        for event in events:
-            try:
-                hook_event = self._build_codex_hook_event(session_context, event)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to build hook event from Codex tool record (%s): %s",
-                    event.phase,
-                    exc,
-                )
-                continue
-            if hook_event is None:
-                continue
-            try:
-                await asyncio.to_thread(self._hook_manager.handle, hook_event)
-            except Exception as exc:
-                logger.warning(
-                    "HookManager rejected synthesized %s for session %s: %s",
-                    hook_event.event_type,
-                    session_id,
-                    exc,
-                )
-
-    def _load_session_context(self, session_id: str) -> dict[str, Any] | None:
-        """Rehydrate the composite-key context HookManager needs to resolve
-        the synthesized event back to the correct platform session row."""
-        if self.session_manager is None:
-            return None
-        try:
-            session = self.session_manager.get(session_id)
-        except Exception:
-            return None
-        if session is None:
-            return None
-        external_id = getattr(session, "external_id", None)
-        if not isinstance(external_id, str) or not external_id:
-            return None
-        return {
-            "external_id": external_id,
-            "machine_id": getattr(session, "machine_id", None),
-            "project_id": getattr(session, "project_id", None),
-            "platform_session_id": session_id,
-        }
-
-    @staticmethod
-    def _build_codex_hook_event(
-        session_context: dict[str, Any],
-        event: ParsedToolEvent,
-    ) -> HookEvent | None:
-        if not event.server or not event.tool:
-            return None
-
-        tool_name = f"mcp__{event.server}__{event.tool}"
-        data: dict[str, Any] = {
-            "tool_name": tool_name,
-            "tool_input": event.arguments,
-            "server_name": event.server,
-            "mcp_server": event.server,
-            "mcp_tool": event.tool,
-        }
-        if event.call_id:
-            data["call_id"] = event.call_id
-            data["tool_use_id"] = event.call_id
-            data["item_id"] = event.call_id
-        if event.phase == "end":
-            if event.error is not None:
-                data["error"] = event.error
-                data["is_error"] = True
-            if event.result is not None:
-                data["tool_response"] = event.result
-            if event.duration_ns is not None:
-                data["duration_ns"] = event.duration_ns
-
-        normalize_tool_fields(data)
-
-        timestamp = (
-            event.timestamp if event.timestamp.tzinfo else event.timestamp.replace(tzinfo=UTC)
-        )
-
-        machine_id = session_context.get("machine_id")
-        project_id = session_context.get("project_id")
-
-        return HookEvent(
-            event_type=(
-                HookEventType.BEFORE_TOOL if event.phase == "begin" else HookEventType.AFTER_TOOL
-            ),
-            session_id=session_context["external_id"],
-            source=SessionSource.CODEX,
-            timestamp=timestamp,
-            data=data,
-            machine_id=machine_id if isinstance(machine_id, str) else None,
-            project_id=project_id if isinstance(project_id, str) else None,
-            metadata={
-                "_synthesized_from": "codex_rollout",
-                "_platform_session_id": session_context.get("platform_session_id"),
-            },
-        )
 
     async def _process_json_session(self, session_id: str, transcript_path: str) -> None:
         """

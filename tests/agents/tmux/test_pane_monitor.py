@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.agents.tmux.pane_monitor import _RECENTLY_ENDED_TTL, TmuxPaneMonitor
-from gobby.agents.tmux.session_manager import TmuxSessionInfo
+from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionInfo
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.storage.agents import AgentRun
 
@@ -81,6 +81,32 @@ async def test_no_tmux_agents_noop() -> None:
         await monitor._check_panes()
 
     callback.assert_not_called()
+    assert callback.call_count == 0
+    assert not callback.called
+
+
+@pytest.mark.asyncio
+async def test_tmux_list_timeout_is_quiet(caplog: pytest.LogCaptureFixture) -> None:
+    """A transient tmux list timeout should not emit a warning traceback."""
+    callback = MagicMock()
+    monitor = _make_monitor_with_db(callback)
+    caplog.set_level("DEBUG", logger="gobby.agents.tmux.pane_monitor")
+
+    with patch(
+        "gobby.agents.tmux.pane_monitor.TmuxSessionManager.list_sessions",
+        side_effect=TimeoutError,
+    ):
+        await monitor._check_panes()
+
+    callback.assert_not_called()
+    assert "failed to list tmux sessions" not in caplog.text
+    timeout_records = [
+        record
+        for record in caplog.records
+        if record.message == "TmuxPaneMonitor: timed out listing tmux sessions"
+    ]
+    assert timeout_records
+    assert timeout_records[0].timeout_seconds == TMUX_COMMAND_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
@@ -103,6 +129,8 @@ async def test_all_alive_noop() -> None:
         await monitor._check_panes()
 
     callback.assert_not_called()
+    assert callback.call_count == 0
+    assert not callback.called
 
 
 @pytest.mark.asyncio
@@ -157,6 +185,8 @@ async def test_recently_ended_prevents_double_fire() -> None:
         await monitor._check_panes()
 
     callback.assert_not_called()
+    assert callback.call_count == 0
+    assert not callback.called
 
 
 @pytest.mark.asyncio
@@ -184,6 +214,8 @@ async def test_recently_ended_expires() -> None:
         await monitor._check_panes()
 
     callback.assert_called_once()
+    assert callback.call_count == 1
+    assert callback.call_args is not None
 
 
 @pytest.mark.asyncio
@@ -210,3 +242,4 @@ async def test_callback_exception_no_crash() -> None:
 
     # Callback was called but raised; session should still be marked recently ended
     assert "sess-err" in monitor._recently_ended
+    assert len(monitor._recently_ended) == 1

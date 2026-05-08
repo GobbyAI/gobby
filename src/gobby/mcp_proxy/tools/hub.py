@@ -3,7 +3,7 @@ Internal MCP tools for Hub (cross-project) queries.
 
 Exposes functionality for:
 - list_all_projects(): List all unique projects in hub database
-- list_cross_project_tasks(status?): Query tasks across all projects
+- list_cross_project_tasks(state?): Query tasks across all projects
 - list_cross_project_sessions(limit?): Recent sessions across all projects
 - hub_stats(): Aggregate statistics from hub database
 
@@ -20,6 +20,59 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.database import LocalDatabase
 
 __all__ = ["create_hub_registry"]
+
+
+def _current_stage_join_sql(task_alias: str = "t") -> str:
+    return f"""
+    LEFT JOIN task_stage_states current_stage
+      ON current_stage.task_id = {task_alias}.id
+     AND current_stage.state != 'done'
+     AND current_stage.position = (
+         SELECT MIN(stage_scan.position)
+           FROM task_stage_states stage_scan
+          WHERE stage_scan.task_id = {task_alias}.id
+            AND stage_scan.state != 'done'
+     )
+    """
+
+
+def _task_state_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    closed_at = row["closed_at"]
+    escalated_at = row["escalated_at"]
+    is_closed = bool(closed_at)
+    is_escalated = not is_closed and bool(escalated_at or row["is_escalated"])
+    owner_session_id = row["claimed_by_session_id"] or row["assignee"]
+    current_stage = None
+    if row["current_stage_name"]:
+        current_stage = {
+            "name": row["current_stage_name"],
+            "display_name": row["current_stage_display_name"] or row["current_stage_name"],
+            "category": row["current_stage_category"] or "",
+            "state": row["current_stage_state"],
+            "review_policy": row["current_stage_review_policy"] or "none",
+            "updated_at": row["current_stage_updated_at"],
+        }
+    stage_state = row["current_stage_state"]
+    active_stage = stage_state in {"ready", "in_progress", "needs_review", "review_approved"}
+    return {
+        "owner_session_id": owner_session_id,
+        "current_stage": current_stage,
+        "is_claimed": bool(
+            owner_session_id and active_stage and not is_closed and not is_escalated
+        ),
+        "is_closed": is_closed,
+        "is_escalated": is_escalated,
+        "is_blocked": bool(row["is_blocked"]),
+        "is_merge_ready": bool(
+            stage_state == "review_approved" and not is_closed and not is_escalated
+        ),
+        "closed_at": closed_at,
+        "closed_reason": row["closed_reason"],
+        "closed_in_session_id": row["closed_in_session_id"],
+        "closed_commit_sha": row["closed_commit_sha"],
+        "escalated_at": escalated_at,
+        "escalation_reason": row["escalation_reason"],
+    }
 
 
 def create_hub_registry(
@@ -133,14 +186,14 @@ def create_hub_registry(
         description="Query tasks across all projects in the hub database.",
     )
     async def list_cross_project_tasks(
-        status: str | None = None,
+        state: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         """
         List tasks across all projects in the hub.
 
         Args:
-            status: Optional status filter (open, closed, in_progress)
+            state: Optional projected state filter (ready, closed, in_progress, needs_review)
             limit: Maximum number of tasks to return (default 50)
         """
         hub_db = _get_hub_db()
@@ -148,36 +201,52 @@ def create_hub_registry(
             return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
 
         try:
-            if status:
-                rows = await asyncio.to_thread(
-                    hub_db.fetchall,
-                    """
-                    SELECT id, project_id, title, status, task_type, priority, created_at, updated_at
-                    FROM tasks
-                    WHERE status = ?
-                    ORDER BY updated_at DESC
-                    LIMIT ?
-                    """,
-                    (status, limit),
-                )
+            where_clause = ""
+            params: tuple[Any, ...]
+            if state:
+                where_clause = "WHERE t.state_bucket = ?"
+                params = (state, limit)
             else:
-                rows = await asyncio.to_thread(
-                    hub_db.fetchall,
-                    """
-                    SELECT id, project_id, title, status, task_type, priority, created_at, updated_at
-                    FROM tasks
-                    ORDER BY updated_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                )
+                params = (limit,)
+            rows = await asyncio.to_thread(
+                hub_db.fetchall,
+                f"""
+                SELECT t.id, t.project_id, t.title, t.task_type, t.priority,
+                       t.created_at, t.updated_at, t.assignee, t.claimed_by_session_id,
+                       t.closed_at, t.closed_reason, t.closed_in_session_id,
+                       t.closed_commit_sha, t.escalated_at, t.escalation_reason,
+                       COALESCE(t.is_escalated, 0) as is_escalated,
+                       current_stage.stage_name as current_stage_name,
+                       current_stage.state as current_stage_state,
+                       current_stage.review_policy as current_stage_review_policy,
+                       current_stage.updated_at as current_stage_updated_at,
+                       registry.display_label as current_stage_display_name,
+                       registry.category as current_stage_category,
+                       EXISTS (
+                           SELECT 1
+                             FROM task_dependencies td
+                             JOIN tasks blocker ON td.depends_on = blocker.id
+                            WHERE td.task_id = t.id
+                              AND td.dep_type = 'blocks'
+                              AND blocker.closed_at IS NULL
+                       ) as is_blocked
+                FROM tasks t
+                {_current_stage_join_sql("t")}
+                LEFT JOIN task_stages_registry registry
+                  ON registry.name = current_stage.stage_name
+                {where_clause}
+                ORDER BY t.updated_at DESC
+                LIMIT ?
+                """,
+                params,
+            )
 
             tasks = [
                 {
                     "id": row["id"],
                     "project_id": row["project_id"],
                     "title": row["title"],
-                    "status": row["status"],
+                    "state": _task_state_from_row(dict(row)),
                     "task_type": row["task_type"],
                     "priority": row["priority"],
                     "created_at": row["created_at"],
@@ -276,14 +345,14 @@ def create_hub_registry(
 
             task_stats = db.fetchall(
                 """
-                SELECT status, COUNT(*) as count
-                FROM tasks
-                GROUP BY status
+                SELECT t.state_bucket as task_state, COUNT(*) as count
+                FROM tasks t
+                GROUP BY task_state
                 """
             )
             stats["tasks"] = {
                 "total": sum(row["count"] for row in task_stats),
-                "by_status": {row["status"]: row["count"] for row in task_stats},
+                "by_state": {row["task_state"]: row["count"] for row in task_stats},
             }
 
             session_stats = db.fetchall(

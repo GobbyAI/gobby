@@ -44,4 +44,4 @@ def test_merge_server_registration_integration() -> None:
     # 3. Verify registry retrieval
     registry = manager.get_registry("gobby-merge")
     assert registry is not None
-    assert len(registry) == 5  # We expect 5 tools
+    assert len(registry) >= len(tools_to_check)

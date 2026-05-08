@@ -18,10 +18,11 @@ ReasoningStatus = Literal[
     "unsupported_model",
 ]
 
-_TERMINAL_REASONING_PROVIDERS = frozenset({"claude", "codex"})
+_TERMINAL_REASONING_PROVIDERS = frozenset({"claude", "codex", "gemini"})
 _FALLBACK_REASONING_EFFORTS: dict[str, frozenset[str]] = {
-    "claude": frozenset({"low", "medium", "high", "max"}),
+    "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
     "codex": frozenset({"low", "medium", "high", "xhigh"}),
+    "gemini": frozenset({"low", "medium", "high"}),
 }
 _fallback_catalog: ProviderModelCatalog | None = None
 _fallback_catalog_config: DaemonConfig | None = None

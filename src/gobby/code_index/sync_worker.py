@@ -73,6 +73,7 @@ async def sync_worker_loop(
                 config=config,
                 embed_model=embed_model,
                 batch_size=batch_size,
+                embedding_dim=embeddings_config.dim,
             )
         except Exception as e:
             logger.error(f"Sync worker pass error: {e}", exc_info=True)
@@ -93,6 +94,7 @@ async def _sync_pass(
     config: CodeIndexConfig,
     embed_model: Any | None,
     batch_size: int,
+    embedding_dim: int,
 ) -> None:
     """Single sync pass across all indexed projects."""
     projects = storage.list_indexed_projects()
@@ -124,6 +126,7 @@ async def _sync_pass(
                     project_id=project.id,
                     root=root,
                     file=file,
+                    embedding_dim=embedding_dim,
                 )
                 if did_sync:
                     synced_count += 1
@@ -145,6 +148,7 @@ async def _sync_file(
     project_id: str,
     root: Path,
     file: IndexedFile,
+    embedding_dim: int,
 ) -> bool:
     """Sync a single file's vectors and/or graph edges. Returns True if any work done."""
     # Validate: file record still exists (not invalidated between poll and process)
@@ -170,6 +174,7 @@ async def _sync_file(
                     config=config,
                     project_id=project_id,
                     file=file,
+                    embedding_dim=embedding_dim,
                 )
                 storage.mark_vectors_synced(file.id)
                 did_work = True
@@ -202,6 +207,7 @@ async def _sync_vectors(
     config: CodeIndexConfig,
     project_id: str,
     file: IndexedFile,
+    embedding_dim: int,
 ) -> None:
     """Generate embeddings and upsert to Qdrant for a file's symbols."""
     symbols = storage.get_symbols_for_file(project_id, file.file_path)
@@ -209,6 +215,7 @@ async def _sync_vectors(
         return
 
     collection = f"{config.qdrant_collection_prefix}{project_id}"
+    await vector_store.ensure_collection(collection, embedding_dim)
 
     # Delete old vectors for this file's symbols
     try:

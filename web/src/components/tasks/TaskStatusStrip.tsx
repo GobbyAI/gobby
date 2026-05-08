@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { relativeTime } from '../../utils/formatTime'
-import { getCanonicalTaskState, getTaskBucketLabel } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskDisplayState, getTaskStateLabel } from '../../lib/taskState'
 
 // =============================================================================
 // Status label mapping
@@ -18,8 +18,9 @@ interface TaskStatusStripProps {
 
 export function TaskStatusStrip({ task, compact }: TaskStatusStripProps) {
   const state = getCanonicalTaskState(task)
-  const bucketLabel = getTaskBucketLabel(task)
-  const isActive = !state.is_closed && (state.is_claimed || state.lifecycle_stage === 'in_progress')
+  const displayState = getTaskDisplayState(task)
+  const stateLabel = getTaskStateLabel(task)
+  const isActive = !state.is_closed && (state.is_claimed || displayState === 'in_progress')
   const ownerLabel = task.agent_name || (state.owner_session_id ? `#${state.owner_session_id.slice(0, 6)}` : null)
 
   // Live-updating relative timestamp
@@ -32,13 +33,13 @@ export function TaskStatusStrip({ task, compact }: TaskStatusStripProps) {
   }, [task.updated_at, isActive])
 
   // Only show strip if task has active ownership or non-ready workflow state
-  if (!ownerLabel && !isActive && bucketLabel === 'Ready') return null
+  if (!ownerLabel && !isActive && displayState === 'ready') return null
 
   return (
     <div className={`task-status-strip ${isActive ? 'task-status-strip--active' : ''} ${compact ? 'task-status-strip--compact' : ''}`}>
       {isActive && <span className="task-status-strip-pulse" />}
       {ownerLabel && <span className="task-status-strip-agent">{ownerLabel}</span>}
-      <span className="task-status-strip-step">{bucketLabel}</span>
+      <span className="task-status-strip-step">{stateLabel}</span>
       <span className="task-status-strip-time">{timeLabel}</span>
     </div>
   )

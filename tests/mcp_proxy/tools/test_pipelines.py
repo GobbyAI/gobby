@@ -165,6 +165,8 @@ class TestListPipelinesTool:
         await registry.call("list_pipelines", {})
 
         mock_loader.discover_pipeline_workflows.assert_called_once()
+        assert mock_loader.discover_pipeline_workflows.call_count == 1
+        assert mock_loader.discover_pipeline_workflows.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_pipelines_returns_pipeline_info(
@@ -280,6 +282,8 @@ class TestListPipelinesTool:
         await registry.call("list_pipelines", {"project_path": "/my/project"})
 
         mock_loader.discover_pipeline_workflows.assert_called_once_with(project_path="/my/project")
+        assert mock_loader.discover_pipeline_workflows.call_count == 1
+        assert mock_loader.discover_pipeline_workflows.call_args is not None
 
     @pytest.mark.asyncio
     async def test_list_pipelines_empty_result(
@@ -362,6 +366,8 @@ class TestRunPipelineTool:
         )
 
         mock_loader.load_pipeline.assert_called_once_with("deploy")
+        assert mock_loader.load_pipeline.call_count == 1
+        assert mock_loader.load_pipeline.call_args is not None
 
     @pytest.mark.asyncio
     async def test_run_pipeline_calls_executor(
@@ -609,6 +615,8 @@ class TestApprovePipelineTool:
             token="approval-token-xyz",
             approved_by="user@example.com",
         )
+        assert mock_executor.approve.call_count == 1
+        assert mock_executor.approve.call_args is not None
 
     @pytest.mark.asyncio
     async def test_approve_pipeline_returns_execution_status(
@@ -746,6 +754,8 @@ class TestRejectPipelineTool:
             token="approval-token-xyz",
             rejected_by="user@example.com",
         )
+        assert mock_executor.reject.call_count == 1
+        assert mock_executor.reject.call_args is not None
 
     @pytest.mark.asyncio
     async def test_reject_pipeline_returns_cancelled_status(

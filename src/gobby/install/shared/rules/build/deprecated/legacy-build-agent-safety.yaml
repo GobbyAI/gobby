@@ -1,0 +1,17 @@
+audience: autonomous
+enabled: false
+deprecated: true
+deprecated_reason: "Replaced by build-agent-safety.yaml audience-scoped rules."
+tags: [build, build-agent, deprecated, gobby]
+
+rules:
+  legacy-build-agent-block-full-pytest:
+    description: "[DEPRECATED] Replaced by build-agent-block-full-pytest."
+    event: before_tool
+    enabled: false
+    priority: 45
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "^pytest\\s*$"
+        reason: "Deprecated build-agent rule."

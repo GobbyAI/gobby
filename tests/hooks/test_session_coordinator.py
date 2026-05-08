@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -68,8 +67,8 @@ class TestSessionRegistrationTracking:
     def test_unregister_nonexistent_is_safe(self) -> None:
         """Test unregistering a non-existent session doesn't raise."""
         coordinator = SessionCoordinator()
-        # Should not raise
         coordinator.unregister_session("nonexistent")
+        assert coordinator._registered_sessions == set()
 
     def test_clear_registrations(self) -> None:
         """Test clearing all registrations."""
@@ -125,8 +124,8 @@ class TestAgentMessageCache:
         message = coordinator.get_cached_message("session-123", max_age_seconds=1.0)
         assert message == "Hello world"
 
-        # Wait for expiration
-        time.sleep(1.1)
+        cached_message, timestamp = coordinator._agent_message_cache["session-123"]
+        coordinator._agent_message_cache["session-123"] = (cached_message, timestamp - 1.1)
         message = coordinator.get_cached_message("session-123", max_age_seconds=1.0)
         assert message is None
 
@@ -202,6 +201,8 @@ class TestSessionLifecycleTransitions:
         mock_message_processor.register_session.assert_any_call(
             "session-2", "/path/to/2.jsonl", source="claude"
         )
+        assert mock_message_processor.register_session.call_count >= 1
+        assert mock_message_processor.register_session.call_args is not None
 
     def test_reregister_skips_sessions_without_transcript_path(self) -> None:
         """Test re-registration skips sessions without transcript_path."""
@@ -260,6 +261,7 @@ class TestSessionLifecycleTransitions:
 
         # Should still count the successful one
         assert count == 1
+        assert mock_message_processor.register_session.call_count == 2
 
     def test_reregister_resets_agent_context_injected(self) -> None:
         """Test re-registration resets deferred persona injection flags."""
@@ -289,6 +291,8 @@ class TestSessionLifecycleTransitions:
 
         assert count == 1
         MockSVMgr.assert_called_once_with(mock_session_storage.db)
+        assert MockSVMgr.call_count == 1
+        assert MockSVMgr.call_args is not None
         mock_sv_instance.merge_variables.assert_called_once_with(
             "session-1",
             {
@@ -296,6 +300,8 @@ class TestSessionLifecycleTransitions:
                 "_agent_identity_reinject": False,
             },
         )
+        assert mock_sv_instance.merge_variables.call_count == 1
+        assert mock_sv_instance.merge_variables.call_args is not None
 
 
 class TestAgentRunCompletion:
@@ -331,6 +337,8 @@ class TestAgentRunCompletion:
         coordinator.complete_agent_run(mock_session)
 
         mock_agent_run_manager.complete.assert_not_called()
+        assert mock_agent_run_manager.complete.call_count == 0
+        assert not mock_agent_run_manager.complete.called
 
     def test_complete_agent_run_skips_terminal_states(self) -> None:
         """Test complete_agent_run skips already-completed runs."""
@@ -346,6 +354,8 @@ class TestAgentRunCompletion:
         coordinator.complete_agent_run(mock_session)
 
         mock_agent_run_manager.complete.assert_not_called()
+        assert mock_agent_run_manager.complete.call_count == 0
+        assert not mock_agent_run_manager.complete.called
 
     def test_complete_agent_run_counts_tool_calls_from_messages(self) -> None:
         """Test completing an agent run counts tool calls and turns from session_messages."""
@@ -388,6 +398,28 @@ class TestAgentRunCompletion:
         mock_agent_run_manager.fail.assert_called_once()
         fail_kwargs = mock_agent_run_manager.fail.call_args[1]
         assert fail_kwargs["run_id"] == "run-ghost"
+        assert "no activity" in fail_kwargs["error"].lower()
+        mock_agent_run_manager.complete.assert_not_called()
+
+    def test_complete_agent_run_zero_activity_reports_auth_prompt(self) -> None:
+        """Zero-activity failures include auth/trust diagnostics from pane output."""
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="running")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        mock_session = MagicMock()
+        mock_session.agent_run_id = "run-auth"
+        mock_session.id = "sess-auth"
+        mock_session.summary_markdown = "Claude Code\n/login\n"
+        mock_session.tool_call_count = 0
+        mock_session.turn_count = 0
+
+        coordinator.complete_agent_run(mock_session)
+
+        fail_kwargs = mock_agent_run_manager.fail.call_args[1]
+        assert "auth/trust prompt detected" in fail_kwargs["error"]
         assert "no activity" in fail_kwargs["error"].lower()
         mock_agent_run_manager.complete.assert_not_called()
 
@@ -496,6 +528,8 @@ class TestWorktreeRelease:
         coordinator.release_session_worktrees("session-123")
 
         mock_worktree_manager.release.assert_not_called()
+        assert mock_worktree_manager.release.call_count == 0
+        assert not mock_worktree_manager.release.called
 
     def test_release_handles_individual_errors(self) -> None:
         """Test release handles errors releasing individual worktrees."""
@@ -575,7 +609,7 @@ class TestConcurrentOperations:
             with coordinator.get_lookup_lock():
                 # Simulate work
                 current = call_count["count"]
-                time.sleep(0.01)
+                threading.Event().wait(0.01)
                 call_count["count"] = current + 1
 
         threads = [threading.Thread(target=increment_with_lock) for _ in range(10)]

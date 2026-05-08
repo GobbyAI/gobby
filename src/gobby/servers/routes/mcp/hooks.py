@@ -14,10 +14,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Request
 from starlette.requests import ClientDisconnect
 
-from gobby.adapters.claude_contract import (
-    build_graceful_error_hook_response,
-    get_claude_contract,
-)
+from gobby.adapters.claude_contract import build_graceful_error_hook_response, get_claude_contract
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     get_global_approval_rules,
@@ -43,7 +40,12 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
 SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 
 
-def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
+def _graceful_error_response(
+    hook_type: str,
+    error_msg: str,
+    *,
+    source: str | None = "claude",
+) -> dict[str, Any]:
     """
     Create a graceful degradation response for hook errors.
 
@@ -54,21 +56,53 @@ def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
 
     This prevents agents from being confused by non-fatal hook errors.
     """
+    if source == "droid":
+        from gobby.adapters.droid import DroidAdapter
+        from gobby.adapters.droid_contract import get_droid_contract
+        from gobby.hooks.events import HookResponse
+
+        message = (
+            f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
+        )
+        droid_contract = get_droid_contract(hook_type)
+        hook_response = HookResponse(
+            decision="allow",
+            context=(
+                message if droid_contract and droid_contract.allows_additional_context else None
+            ),
+            system_message=(
+                None if droid_contract and droid_contract.allows_additional_context else message
+            ),
+        )
+        result = DroidAdapter().translate_from_hook_response(hook_response, hook_type=hook_type)
+        if isinstance(result, dict):
+            return result
+
+    if source == "codex":
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        codex_response = CodexHooksAdapter().translate_from_hook_response(
+            build_graceful_error_hook_response(error_msg),
+            hook_type=hook_type,
+        )
+        if isinstance(codex_response, dict):
+            return codex_response
+
     from gobby.adapters.claude_code import ClaudeCodeAdapter
 
     adapter = ClaudeCodeAdapter()
-    response = adapter.translate_from_hook_response(
+    claude_response = adapter.translate_from_hook_response(
         build_graceful_error_hook_response(error_msg),
         hook_type=hook_type,
     )
-    if isinstance(response, dict):
-        return response
+    if isinstance(claude_response, dict):
+        return claude_response
 
     fallback: dict[str, Any] = {"continue": True}
-    contract = get_claude_contract(hook_type)
-    if contract and contract.allows_additional_context:
+    claude_contract = get_claude_contract(hook_type)
+    if claude_contract and claude_contract.allows_additional_context:
         fallback["hookSpecificOutput"] = {
-            "hookEventName": contract.hook_event_name,
+            "hookEventName": claude_contract.hook_event_name,
             "additionalContext": (
                 f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
             ),
@@ -146,6 +180,28 @@ def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
     if not hook_type:
         return None
     return HOLD_OPEN_HOOK_TYPE_MAP.get(hook_type)
+
+
+def _is_codex_root_context_miss(
+    source: str | None,
+    payload: dict[str, Any],
+    error: ValueError,
+) -> bool:
+    if source != "codex" or "No .gobby/project.json found in /" not in str(error):
+        return False
+    input_data = payload.get("input_data")
+    if not isinstance(input_data, dict):
+        return False
+    if payload.get("_platform_session_id") or input_data.get("project_id"):
+        return False
+    terminal_context = input_data.get("terminal_context")
+    if isinstance(terminal_context, dict) and terminal_context.get("gobby_session_id"):
+        return False
+
+    from gobby.hooks.project_context import is_unusable_hook_cwd
+
+    cwd = input_data.get("cwd")
+    return isinstance(cwd, str) and is_unusable_hook_cwd(cwd)
 
 
 async def _maybe_hold_open(
@@ -336,6 +392,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         start_time = time.perf_counter()
         inc_counter("hooks_total")
         hook_type: str | None = None  # Track for error handling
+        source: str | None = None  # Track for error handling
         request_metadata: dict[str, Any] = {
             "request_shape": "unknown",
             "schema_version": None,
@@ -355,6 +412,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 return {"continue": True, "decision": "approve"}
 
             payload, request_metadata = _normalize_hook_request(raw_payload)
+            platform_session_id = request.headers.get("X-Gobby-Session-Id", "").strip()
+            if platform_session_id:
+                payload["_platform_session_id"] = platform_session_id
+
             hook_type = payload.get("hook_type")
             source = payload.get("source")
 
@@ -377,6 +438,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.base import BaseAdapter
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+            from gobby.adapters.droid import DroidAdapter
             from gobby.adapters.gemini import GeminiAdapter
             from gobby.adapters.qwen import QwenAdapter
 
@@ -396,10 +458,15 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # every hook — no terminal_context, no rule enforcement, no
                 # stop gates.
                 adapter = CodexHooksAdapter(hook_manager=hook_manager)
+            elif source == "droid":
+                adapter = DroidAdapter(hook_manager=hook_manager)
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported source: {source}. Supported: claude, gemini, qwen, codex",
+                    detail=(
+                        f"Unsupported source: {source}. "
+                        "Supported: claude, gemini, qwen, codex, droid"
+                    ),
                 )
 
             # Execute hook via adapter
@@ -437,11 +504,17 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             except ValueError as e:
                 # Invalid request - still return graceful response
                 inc_counter("hooks_failed_total")
-                logger.warning(
-                    f"Invalid hook request: {hook_type}",
-                    extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
-                )
-                return _graceful_error_response(hook_type, str(e))
+                if _is_codex_root_context_miss(source, payload, e):
+                    logger.debug(
+                        f"Skipping Codex hook without project context: {hook_type}",
+                        extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
+                    )
+                else:
+                    logger.warning(
+                        f"Invalid hook request: {hook_type}",
+                        extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
+                    )
+                return _graceful_error_response(hook_type, str(e), source=source)
 
             except Exception as e:
                 # Hook execution error - return graceful response so tool proceeds
@@ -452,7 +525,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     exc_info=True,
                     extra=_hook_log_extra(hook_type, request_metadata),
                 )
-                return _graceful_error_response(hook_type, str(e))
+                return _graceful_error_response(hook_type, str(e), source=source)
 
         except HTTPException:
             # Re-raise 400 errors (bad request) - these are client errors
@@ -466,7 +539,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 extra=_hook_log_extra(hook_type, request_metadata),
             )
             if hook_type:
-                return _graceful_error_response(hook_type, str(e))
+                return _graceful_error_response(hook_type, str(e), source=source)
             # Fallback: return basic success to prevent CLI hook failure
             return {"continue": True, "decision": "approve"}
 

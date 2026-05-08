@@ -89,33 +89,6 @@ class TestSearchTasks:
 
     @patch("gobby.cli.tasks.search.get_task_manager")
     @patch("gobby.cli.tasks.search.resolve_project_ref", return_value="proj-123")
-    def test_search_with_status_single(
-        self, _proj: MagicMock, mock_mgr_fn: MagicMock, runner: CliRunner
-    ) -> None:
-        mgr = mock_mgr_fn.return_value
-        mgr.search_tasks.return_value = []
-        result = runner.invoke(search_tasks, ["test", "--status", "open"], catch_exceptions=False)
-        assert result.exit_code == 0
-        mgr.search_tasks.assert_called_once()
-        call_kwargs = mgr.search_tasks.call_args[1]
-        assert call_kwargs["status"] == "open"
-
-    @patch("gobby.cli.tasks.search.get_task_manager")
-    @patch("gobby.cli.tasks.search.resolve_project_ref", return_value="proj-123")
-    def test_search_with_status_multiple(
-        self, _proj: MagicMock, mock_mgr_fn: MagicMock, runner: CliRunner
-    ) -> None:
-        mgr = mock_mgr_fn.return_value
-        mgr.search_tasks.return_value = []
-        result = runner.invoke(
-            search_tasks, ["test", "--status", "open,in_progress"], catch_exceptions=False
-        )
-        assert result.exit_code == 0
-        call_kwargs = mgr.search_tasks.call_args[1]
-        assert call_kwargs["status"] == ["open", "in_progress"]
-
-    @patch("gobby.cli.tasks.search.get_task_manager")
-    @patch("gobby.cli.tasks.search.resolve_project_ref", return_value="proj-123")
     def test_search_with_type_and_priority(
         self, _proj: MagicMock, mock_mgr_fn: MagicMock, runner: CliRunner
     ) -> None:

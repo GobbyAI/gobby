@@ -130,6 +130,38 @@ class CloneGitManager:
             logger.error(f"Git command failed: {' '.join(cmd)}, stderr: {e.stderr}")
             raise
 
+    def run_git_command(
+        self,
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 60,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a git command in a clone and return the completed process.
+
+        Args:
+            args: Git subcommand and arguments, excluding the leading ``git``.
+            cwd: Working directory for the command. Defaults to this clone's
+                repository path when omitted.
+            timeout: Maximum runtime in seconds. Defaults to 60.
+            check: When true, non-zero exit codes raise
+                ``subprocess.CalledProcessError``.
+            env: Optional environment overrides merged with ``os.environ``.
+
+        Returns:
+            ``subprocess.CompletedProcess[str]`` with text stdout/stderr.
+
+        Raises:
+            subprocess.SubprocessError: For timeout and non-zero exit failures
+                surfaced by ``subprocess.run`` when ``check=True``.
+
+        Notes:
+            Delegates to ``_run_git``, which logs timed-out commands and failed
+            checked commands before re-raising.
+        """
+        return self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
+
     def get_remote_url(self, remote: str = "origin") -> str | None:
         """
         Get the remote URL for the repository.

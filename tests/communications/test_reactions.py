@@ -28,10 +28,16 @@ async def test_handle_reaction_approve():
     await handler.handle_reaction("test_channel", "msg_123", "+1", "user_123")
 
     store.get_message_by_platform_id.assert_called_with("test_channel", "msg_123")
+    assert store.get_message_by_platform_id.call_count >= 1
+    assert store.get_message_by_platform_id.call_args is not None
     store.get_identity_by_external.assert_called_with("test_channel", "user_123")
+    assert store.get_identity_by_external.call_count >= 1
+    assert store.get_identity_by_external.call_args is not None
     service_container.pipeline_execution_manager.approve_step.assert_awaited_once_with(
         "run_123", "step_456", "session_1"
     )
+    assert service_container.pipeline_execution_manager.approve_step.await_count == 1
+    assert service_container.pipeline_execution_manager.approve_step.await_args is not None
 
 
 @pytest.mark.asyncio
@@ -59,6 +65,8 @@ async def test_handle_reaction_reject():
     service_container.pipeline_execution_manager.reject_step.assert_awaited_once_with(
         "run_123", "step_456", "session_1"
     )
+    assert service_container.pipeline_execution_manager.reject_step.await_count == 1
+    assert service_container.pipeline_execution_manager.reject_step.await_args is not None
 
 
 @pytest.mark.asyncio
@@ -74,6 +82,8 @@ async def test_handle_reaction_unknown_message():
     await handler.handle_reaction("test_channel", "msg_123", "+1", "user_123")
 
     service_container.pipeline_execution_manager.approve_step.assert_not_called()
+    assert service_container.pipeline_execution_manager.approve_step.call_count == 0
+    assert not service_container.pipeline_execution_manager.approve_step.called
 
 
 @pytest.mark.asyncio
@@ -103,6 +113,8 @@ async def test_handle_reaction_custom_mapping():
     service_container.pipeline_execution_manager.approve_step.assert_awaited_once_with(
         "run_1", "step_1", "session_1"
     )
+    assert service_container.pipeline_execution_manager.approve_step.await_count == 1
+    assert service_container.pipeline_execution_manager.approve_step.await_args is not None
 
 
 @pytest.mark.asyncio
@@ -122,6 +134,8 @@ async def test_handle_reaction_no_action_mapped():
     await handler.handle_reaction("test_channel", "msg_1", "eyes", "user_1")
 
     service_container.pipeline_execution_manager.approve_step.assert_not_called()
+    assert service_container.pipeline_execution_manager.approve_step.call_count == 0
+    assert not service_container.pipeline_execution_manager.approve_step.called
 
 
 @pytest.mark.asyncio
@@ -142,3 +156,5 @@ async def test_handle_reaction_unknown_user():
     await handler.handle_reaction("test_channel", "msg_1", "+1", "unknown_user")
 
     service_container.pipeline_execution_manager.approve_step.assert_not_called()
+    assert service_container.pipeline_execution_manager.approve_step.call_count == 0
+    assert not service_container.pipeline_execution_manager.approve_step.called

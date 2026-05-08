@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import type { ContextUsage, SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
+import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
+import { PlusIcon } from './icons/PlusIcon'
 
 interface AgentStatusBarProps {
   viewingMeta?: SessionObservationMeta | null
@@ -12,8 +14,7 @@ interface AgentStatusBarProps {
   onAttach?: () => void
   onResume?: () => void
   onDetach?: () => void
-  onTogglePanel?: () => void
-  isPanelPinned?: boolean
+  onNewChat?: () => void
 }
 
 const CONTEXT_USAGE_REFRESH_MS = 15_000
@@ -36,10 +37,10 @@ function getSessionKindBadge(sessionType: SessionObservationMeta['sessionType'])
   className: string
 } | null {
   if (sessionType === 'web_chat') {
-    return { label: 'WEB', className: 'session-kind-badge--web' }
+    return { label: 'WEB', className: 'chip--web' }
   }
   if (sessionType === 'terminal') {
-    return { label: 'TMUX', className: 'session-kind-badge--tmux' }
+    return { label: 'TMUX', className: 'chip--tmux' }
   }
 
   return null
@@ -56,25 +57,6 @@ function formatSessionStateText(
   return 'Watching live'
 }
 
-function PanelIcon({ pinned }: { pinned: boolean }) {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <line x1="15" y1="3" x2="15" y2="21" />
-      {pinned && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
-    </svg>
-  )
-}
-
 export function AgentStatusBar({
   viewingMeta,
   interactionMode,
@@ -85,8 +67,7 @@ export function AgentStatusBar({
   onAttach,
   onResume,
   onDetach,
-  onTogglePanel,
-  isPanelPinned = false,
+  onNewChat,
 }: AgentStatusBarProps) {
   const usageClock = useSyncExternalStore(
     contextUsageUpdatedAt == null ? subscribeToClockDisabled : subscribeToClock,
@@ -99,81 +80,79 @@ export function AgentStatusBar({
   const sessionBadge = viewingMeta ? getSessionKindBadge(viewingMeta.sessionType) : null
   const stateText = viewingMeta ? formatSessionStateText(interactionMode, isAttached) : null
   const canAttach = !isAttached && !isAutonomousSession && Boolean(onAttach)
-  const canResume = !isAttached && !isAutonomousSession && Boolean(onResume)
+  const canResume = !isAutonomousSession && Boolean(onResume)
   const canDetach = isAttached && Boolean(onDetach)
-  const hasActions =
-    Boolean(onTogglePanel) ||
-    canAttach ||
-    canResume ||
-    canDetach
 
   return (
     <div className="agent-status-bar" data-testid="agent-status-bar">
       <div className="agent-status-bar__summary">
-        <div className="agent-status-bar__context">
-          <ContextUsageIndicator
-            totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-            outputTokens={contextUsage?.outputTokens ?? 0}
-            contextWindow={contextUsage?.contextWindow ?? null}
-            staleMs={contextUsageStaleMs}
-            uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-            cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-            cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-          />
-        </div>
         {viewingMeta && stateText ? (
           <div className="chat-session-status">
             <span className="chat-session-status__state">{stateText}</span>
             {sessionBadge ? (
-              <span className={`session-kind-badge ${sessionBadge.className}`}>
+              <span className={`chip ${sessionBadge.className}`}>
                 {sessionBadge.label}
               </span>
             ) : null}
           </div>
         ) : null}
+        {!isAttached && (
+          <div className="agent-status-bar__context">
+            <ContextUsageIndicator
+              totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+              outputTokens={contextUsage?.outputTokens ?? 0}
+              contextWindow={contextUsage?.contextWindow ?? null}
+              staleMs={contextUsageStaleMs}
+              uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+              cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+              cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+            />
+          </div>
+        )}
       </div>
-      {hasActions ? (
-        <div className="agent-status-bar__actions">
-          {onTogglePanel && (
-            <button
-              type="button"
-              className="session-pane-action session-pane-action--icon"
-              onClick={onTogglePanel}
-              aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
-              title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
-            >
-              <PanelIcon pinned={isPanelPinned} />
-            </button>
-          )}
-          {!isAttached && !isAutonomousSession && onAttach && (
-            <button
-              type="button"
-              className="session-pane-action"
-              onClick={onAttach}
-            >
-              Attach
-            </button>
-          )}
-          {!isAttached && !isAutonomousSession && onResume && (
-            <button
-              type="button"
-              className="session-pane-action"
-              onClick={onResume}
-            >
-              Resume
-            </button>
-          )}
-          {isAttached && onDetach && (
-            <button
-              type="button"
-              className="session-pane-action"
-              onClick={onDetach}
-            >
-              Detach
-            </button>
-          )}
-        </div>
-      ) : null}
+      <div className="agent-status-bar__actions">
+        {canAttach && (
+          <button
+            type="button"
+            className="btn btn-accent btn-sm"
+            onClick={onAttach}
+          >
+            <LinkIcon />
+            Attach
+          </button>
+        )}
+        {canDetach && (
+          <button
+            type="button"
+            className="btn btn-accent btn-sm"
+            onClick={onDetach}
+          >
+            <UnlinkIcon />
+            Detach
+          </button>
+        )}
+        {canResume && (
+          <button
+            type="button"
+            className="btn btn-accent btn-sm"
+            onClick={onResume}
+          >
+            <PlayIcon />
+            Resume
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-accent btn-sm chat-new-chat-btn"
+          onClick={onNewChat}
+          disabled={!onNewChat}
+          aria-label="New Chat"
+          title="New Chat"
+        >
+          <PlusIcon />
+          <span className="chat-new-chat-btn__label">New Chat</span>
+        </button>
+      </div>
     </div>
   )
 }

@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 # Label width for alignment in status sections
 _LW = 18
+_CODING_CLI_LABELS = (
+    ("claude", "Claude Code"),
+    ("codex", "Codex CLI"),
+    ("droid", "Droid CLI"),
+    ("gemini", "Gemini CLI"),
+    ("qwen", "Qwen CLI"),
+)
 
 
 async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> dict[str, Any]:
@@ -181,11 +188,7 @@ def format_status_message(
         clis = deps_info["coding_clis"]
         hooks = clis.get("hooks", {})
         lines.append("Coding CLIs:")
-        for name, label in [
-            ("claude", "Claude Code"),
-            ("gemini", "Gemini CLI"),
-            ("codex", "Codex CLI"),
-        ]:
+        for name, label in _CODING_CLI_LABELS:
             version = clis.get(name)
             hook_str = " (hooks installed)" if hooks.get(name) else ""
             if version:

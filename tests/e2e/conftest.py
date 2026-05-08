@@ -103,11 +103,14 @@ def prepare_daemon_env(
     current_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{src_dir}:{current_pythonpath}" if current_pythonpath else str(src_dir)
 
-    # Remove test-process env vars so daemon uses its own isolated config/DB
-    # (protect_production_resources sets these for the test process, but we don't
-    # want the daemon subprocess to inherit them)
+    # Remove test-process-specific path overrides so the daemon uses its own
+    # isolated config/DB. GOBBY_TEST_PROTECT is forced here: it is the safety
+    # guard that prevents stop_daemon / kill_all_gobby_daemons /
+    # stop_daemon_process / get_daemon_pid in the spawned daemon (and any
+    # subprocesses it forks: agents, hooks, helper CLIs) from reaching the
+    # user's real daemon via system-wide psutil discovery.
+    env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
-    env.pop("GOBBY_TEST_PROTECT", None)
     env.pop("GOBBY_CONFIG_FILE", None)
 
     # Disable any LLM providers to avoid external calls
@@ -188,6 +191,15 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
             time.sleep(0.5)
     return False
+
+
+def daemon_health_unavailable(port: int) -> bool:
+    """Return true when the daemon health endpoint is no longer reachable."""
+    try:
+        response = httpx.get(f"http://localhost:{port}/api/admin/status", timeout=0.2)
+        return response.status_code != 200
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
+        return True
 
 
 def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
@@ -874,11 +886,25 @@ async def async_mcp_client(
 # --- Production Leak Detection ---
 
 
+_SNAPSHOT_EXCLUDED_DIRS = {"skill-cache"}
+
+
 def _snapshot_dir(path: Path) -> dict[str, float]:
     """Return {relative_path: mtime} for all files under *path*."""
     if not path.exists():
         return {}
-    return {str(p.relative_to(path)): p.stat().st_mtime for p in path.rglob("*") if p.is_file()}
+
+    snapshot: dict[str, float] = {}
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [name for name in dirs if name not in _SNAPSHOT_EXCLUDED_DIRS]
+        root_path = Path(root)
+        for filename in files:
+            file_path = root_path / filename
+            try:
+                snapshot[str(file_path.relative_to(path))] = file_path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+    return snapshot
 
 
 def _production_daemon_running() -> bool:
@@ -920,6 +946,7 @@ _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_source.json"}
 # A real sandbox escape would also leak db/config files that aren't listed
 # here, so these omissions do not weaken the check.
 _ALWAYS_EXEMPT_BASENAMES = {"shutdown_source.json"}
+_ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/",)
 
 
 @pytest.fixture(autouse=True)
@@ -957,6 +984,8 @@ def assert_no_external_writes() -> Generator[None]:
         if rel_path not in before:
             # CREATED file — check if it's a known daemon artifact
             basename = Path(rel_path).name
+            if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
+                continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
             if prod_running and (

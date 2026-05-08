@@ -238,6 +238,22 @@ class LocalDatabase:
         finally:
             cursor.close()
 
+    def schema_version(self) -> int:
+        """Return the current SQLite schema version recorded in schema_version."""
+        from gobby.storage.migrations import get_current_version
+
+        return get_current_version(self)
+
+    def migrations_needed(self) -> bool:
+        """Return whether this database needs schema migration work.
+
+        The check only compares stored schema_version with the latest version
+        known to this build. It does not run startup repair routines.
+        """
+        from gobby.storage.migrations import migrations_needed
+
+        return migrations_needed(self)
+
     def safe_update(
         self,
         table: str,

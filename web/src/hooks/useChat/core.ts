@@ -9,7 +9,10 @@ import type {
   ToolResult,
 } from "../../types/chat";
 import { classifyTool } from "../../types/chat";
-import { normalizeChatRole } from "../../lib/chatMessageMapping";
+import {
+  mapRenderedMessageToChatMessage,
+  normalizeChatRole,
+} from "../../lib/chatMessageMapping";
 import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
 
 export interface ContextUsage {
@@ -25,7 +28,7 @@ const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
 const VIEWING_SESSION_ID_KEY = "gobby-viewing-session-id";
 const VIEWING_SESSION_MODE_KEY = "gobby-viewing-session-mode";
-const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex"]);
+const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex", "droid"]);
 
 export interface WebSocketMessage {
   type: string;
@@ -561,8 +564,19 @@ export function mapStoredChatMessage(m: {
   role: string;
   content: string;
   tool_calls?: ToolCall[];
+  content_blocks?: ContentBlock[];
   created_at: string;
 }): ChatMessage {
+  if (m.content_blocks?.length) {
+    return mapRenderedMessageToChatMessage({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      timestamp: m.created_at,
+      content_blocks: m.content_blocks,
+    });
+  }
+
   return {
     id: m.id,
     role: normalizeChatRole(m.role, m.content),
@@ -595,15 +609,13 @@ export function appendTextBlock(msg: ChatMessage, text: string) {
   }
 }
 
-/** Helper: append a tool call to the current tool_chain block, or start a new one. */
+/** Helper: start a fresh tool_chain block for each tool call.
+ * Matches the historical-replay parser (transcript_renderer.py) which emits one
+ * tool_chain block per tool call and never merges them. groupToolCalls()
+ * handles visual same-tool aggregation in the renderer. */
 export function appendToolBlock(msg: ChatMessage, tc: ToolCall) {
   if (!msg.contentBlocks) msg.contentBlocks = [];
-  const last = msg.contentBlocks[msg.contentBlocks.length - 1];
-  if (last?.type === "tool_chain") {
-    last.tool_calls.push(tc);
-  } else {
-    msg.contentBlocks.push({ type: "tool_chain", tool_calls: [tc] });
-  }
+  msg.contentBlocks.push({ type: "tool_chain", tool_calls: [tc] });
 }
 
 /** Find a tool call by its tool_use_id across contentBlocks and flat toolCalls. */

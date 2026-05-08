@@ -19,7 +19,7 @@ def mock_llm_service():
 def resolver(mock_llm_service):
     """MergeResolver instance with mocked LLM service."""
     res = MergeResolver()
-    res._llm_service = mock_llm_service
+    res.llm_service = mock_llm_service
     return res
 
 
@@ -86,25 +86,29 @@ async def test_git_merge_conflict(resolver):
 
 
 @pytest.mark.asyncio
-async def test_resolve_conflicts_only_success(resolver, mock_llm_service):
-    """Test conflict-only resolution success."""
+async def test_resolve_conflicts_only_success(resolver, mock_llm_service, tmp_path):
+    """Tier 2 splices the LLM hunk response into the file on disk."""
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("before\n<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> feature\nafter\n")
     conflicts = [
         {
-            "file": "file.txt",
+            "file": str(file_path),
             "hunks": [{"ours": "A", "theirs": "B", "start_line": 1, "end_line": 3}],
         }
     ]
 
-    # Mock LLM response
     mock_provider = MagicMock()
-    mock_provider.generate_text = AsyncMock(return_value="<code>RESOLVED CONTENT</code>")
+    mock_provider.generate_text = AsyncMock(return_value="RESOLVED")
     mock_llm_service.get_default_provider.return_value = mock_provider
 
     result = await resolver._resolve_conflicts_only(conflicts)
 
     assert result["success"] is True
-    # Implementation stores full response currently
-    assert result["resolutions"][0]["content"] == "<code>RESOLVED CONTENT</code>"
+    # Spliced content has the conflict block replaced; surrounding lines preserved.
+    content = result["resolutions"][0]["content"]
+    assert content == "before\nRESOLVED\nafter\n"
+    assert "<<<<<<<" not in content
+    assert ">>>>>>>" not in content
 
 
 @pytest.mark.asyncio

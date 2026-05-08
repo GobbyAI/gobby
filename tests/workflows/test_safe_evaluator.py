@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.safe_evaluator import (
+    ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
+    ASSISTANT_RESPONSE_SCAN_LIMIT,
+    SafeExpressionEvaluator,
+    build_condition_helpers,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -30,10 +36,11 @@ def mock_stop_registry() -> MagicMock:
     return reg
 
 
-def _make_task(status: str = "open") -> MagicMock:
-    """Create a mock task with given status."""
+def _make_task(*, closed: bool = False, stage_state: str = "ready") -> MagicMock:
+    """Create a mock task with canonical projected-state fields."""
     task = MagicMock()
-    task.status = status
+    task.closed_at = "2024-01-02T00:00:00Z" if closed else None
+    task.current_stage = {"state": "done" if closed else stage_state}
     return task
 
 
@@ -63,7 +70,7 @@ class TestTaskTreeComplete:
         assert ev.evaluate("task_tree_complete(None)") is True
 
     def test_returns_true_when_task_closed(self, mock_task_manager: MagicMock) -> None:
-        task = _make_task(status="closed")
+        task = _make_task(closed=True)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 
@@ -72,7 +79,7 @@ class TestTaskTreeComplete:
         assert ev.evaluate("task_tree_complete('task-123')") is True
 
     def test_returns_false_when_task_open(self, mock_task_manager: MagicMock) -> None:
-        task = _make_task(status="open")
+        task = _make_task()
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 
@@ -81,8 +88,8 @@ class TestTaskTreeComplete:
         assert ev.evaluate("task_tree_complete('task-123')") is False
 
     def test_returns_false_when_subtask_open(self, mock_task_manager: MagicMock) -> None:
-        parent = _make_task(status="closed")
-        child = _make_task(status="open")
+        parent = _make_task(closed=True)
+        child = _make_task()
         child.id = "child-1"
 
         mock_task_manager.get_task.side_effect = lambda task_id: (
@@ -287,15 +294,99 @@ class TestSkillLoaded:
         ev = _build_evaluator(ctx)
         assert ev.evaluate("skill_loaded('python')") is True
 
-    def test_returns_true_when_legacy_injected_skill_present(self) -> None:
+    def test_returns_false_when_only_legacy_injected_skill_present(self) -> None:
         ctx: dict[str, Any] = {"variables": {"injected_skills": ["python"]}}
         ev = _build_evaluator(ctx)
-        assert ev.evaluate("skill_loaded('python')") is True
+        assert ev.evaluate("skill_loaded('python')") is False
 
     def test_returns_false_when_skill_missing(self) -> None:
         ctx: dict[str, Any] = {"variables": {"loaded_skills": ["rust"]}}
         ev = _build_evaluator(ctx)
         assert ev.evaluate("skill_loaded('python')") is False
+
+
+# --- assistant_response_matches_any tests ---
+
+
+class TestAssistantResponseMatchesAny:
+    def _eval(
+        self,
+        data: dict[str, Any],
+        patterns: list[str] | None = None,
+    ) -> SafeExpressionEvaluator:
+        ctx = {
+            "variables": {},
+            "event": SimpleNamespace(data=data),
+            "patterns": patterns or [],
+        }
+        return _build_evaluator(ctx)
+
+    def test_empty_response_and_log_return_none(self) -> None:
+        ev = self._eval({"response": "", "log": ""})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") is None
+
+    def test_no_match_returns_none(self) -> None:
+        ev = self._eval({"response": "Fixed. Tests pass."})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") is None
+
+    def test_literal_match_returns_original_text(self) -> None:
+        ev = self._eval({"response": "In summary, fixed."})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") == "In summary"
+
+    def test_literal_match_is_case_insensitive(self) -> None:
+        ev = self._eval({"response": "in SUMMARY, fixed."})
+        assert ev.evaluate_value("assistant_response_matches_any(['In summary'])") == "in SUMMARY"
+
+    def test_multiple_patterns_use_pattern_order(self) -> None:
+        ev = self._eval({"response": "Certainly fixed. In summary, done."})
+        assert (
+            ev.evaluate_value("assistant_response_matches_any(['In summary', 'Certainly'])")
+            == "In summary"
+        )
+
+    def test_log_fallback_matches_literal(self) -> None:
+        ev = self._eval({"response": "", "log": "Certainly fixed."})
+        assert ev.evaluate_value("assistant_response_matches_any(['Certainly'])") == "Certainly"
+
+    def test_regex_match_uses_bundled_patterns(self) -> None:
+        ev = self._eval(
+            {"response": "This is not a workaround, but a fix."},
+            list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS),
+        )
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") == (
+            "not a workaround, but a fix"
+        )
+
+    def test_regex_skips_non_bundled_patterns(self) -> None:
+        ev = self._eval({"response": "This is not a workaround, but a fix."}, [r"not .* but"])
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
+
+    def test_regex_scan_is_bounded(self) -> None:
+        response = "A" * (ASSISTANT_RESPONSE_SCAN_LIMIT + 20) + " not a hack, but a fix"
+        ev = self._eval({"response": response}, list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS))
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
+
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            ("This is not a shortcut, but a repair.", "not a shortcut, but a repair"),
+            (
+                "This is not a hack, not a shortcut, but a repair.",
+                "not a hack, not a shortcut, but a repair",
+            ),
+            ("Use the parser, not string slicing.", "Use the parser, not string slicing"),
+        ],
+    )
+    def test_contrastive_patterns_match_expected_forms(self, response: str, expected: str) -> None:
+        ev = self._eval({"response": response}, list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS))
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") == expected
+
+    def test_contrastive_patterns_skip_unrelated_not_usage(self) -> None:
+        ev = self._eval(
+            {"response": "Do not stop until verification completes."},
+            list(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS),
+        )
+        assert ev.evaluate_value("assistant_response_matches_any(patterns, regex=true)") is None
 
 
 # --- Plugin conditions tests ---
@@ -360,7 +451,7 @@ class TestLowercaseConstants:
 class TestCombinedExpressions:
     def test_boolean_and_with_helpers(self, mock_task_manager: MagicMock) -> None:
         """Test combining task helpers with boolean logic."""
-        task = _make_task(status="closed")
+        task = _make_task(closed=True)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 
@@ -490,7 +581,7 @@ class TestCombinedExpressions:
 
     def test_helper_with_variable_reference(self, mock_task_manager: MagicMock) -> None:
         """Test calling a helper with a variable from context."""
-        task = _make_task(status="closed")
+        task = _make_task(closed=True)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
 

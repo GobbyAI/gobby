@@ -16,7 +16,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable, is_task_closed
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -219,8 +219,6 @@ def _resolve_ready_tasks(
     - in_progress_tasks: list of in-progress tasks
     - early_return: if set, caller should return this dict immediately
     """
-    from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-
     scoped_from_session_task = False
 
     # Auto-scope to session_task if session_id is provided and parent_task_id is not set
@@ -241,7 +239,7 @@ def _resolve_ready_tasks(
     # Resolve parent_task_id if it's a reference format
     if parent_task_id:
         try:
-            parent_task_id = resolve_task_id_for_mcp(task_manager, parent_task_id, project_id)
+            parent_task_id = _resolve_parent_task_id(task_manager, parent_task_id, project_id)
         except (TaskNotFoundError, ValueError) as e:
             return {"early_return": {"error": f"Invalid parent_task_id: {e}", "suggestion": None}}
 
@@ -251,7 +249,7 @@ def _resolve_ready_tasks(
         # If no ready descendants, check if the parent task itself is ready
         if not ready_tasks:
             parent_task = task_manager.get_task(parent_task_id)
-            if parent_task and not is_task_closed(parent_task) and parent_task.status == "open":
+            if parent_task and not is_task_closed(parent_task) and not parent_task.is_escalated:
                 if task_type is None or parent_task.task_type == task_type:
                     ready_check = task_manager.list_ready_tasks(project_id=project_id, limit=200)
                     if any(t.id == parent_task_id for t in ready_check):
@@ -279,14 +277,23 @@ def _resolve_ready_tasks(
             }
         }
 
-    # Find current in-progress tasks for proximity scoring and file overlap checks.
-    # This remains status-based because the readiness tool is selecting the next
-    # implementation task, not routing review/merge-ready ownership.
     in_progress_tasks = task_manager.list_tasks(
-        status="in_progress",
+        current_stage_state="in_progress",
         limit=50,
         project_id=project_id,
     )
+    claimed_tasks = task_manager.list_tasks(
+        claimed=True,
+        closed=False,
+        limit=50,
+        project_id=project_id,
+    )
+    seen_active_ids = {task.id for task in in_progress_tasks}
+    for task in claimed_tasks:
+        if task.id not in seen_active_ids and is_task_actionable(task):
+            in_progress_tasks.append(task)
+            seen_active_ids.add(task.id)
+
     active_ancestry: list[str] = []
     if in_progress_tasks:
         active_ancestry = _get_ancestry_chain(task_manager, in_progress_tasks[0].id)
@@ -296,9 +303,7 @@ def _resolve_ready_tasks(
     ready_tasks = [
         task
         for task in ready_tasks
-        if not get_claimed_session_id(task)
-        and getattr(task, "status", None) != "in_progress"
-        and getattr(task, "lifecycle_stage", None) != "in_progress"
+        if task.id not in seen_active_ids and not get_claimed_session_id(task)
     ]
     if not ready_tasks:
         return {
@@ -315,6 +320,28 @@ def _resolve_ready_tasks(
         "active_ancestry": active_ancestry,
         "in_progress_tasks": in_progress_tasks,
     }
+
+
+def _resolve_project_id(
+    task_manager: "LocalTaskManager",
+    project: str | None,
+    all_projects: bool,
+) -> str | None:
+    from gobby.mcp_proxy.tools.tasks._context import resolve_project_filter_standalone
+
+    return resolve_project_filter_standalone(project, all_projects, task_manager.db)
+
+
+def _resolve_parent_task_id(
+    task_manager: "LocalTaskManager",
+    parent_task_id: str | None,
+    project_id: str | None,
+) -> str | None:
+    if not parent_task_id:
+        return None
+    from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+
+    return resolve_task_id_for_mcp(task_manager, parent_task_id, project_id)
 
 
 def _score_tasks(
@@ -343,7 +370,7 @@ def _score_tasks(
         score += (4 - task.priority) * 110
 
         # Check if it's a leaf task (no children)
-        children = task_manager.list_tasks(parent_task_id=task.id, status="open", limit=1)
+        children = task_manager.list_tasks(parent_task_id=task.id, closed=False, limit=1)
         is_leaf = len(children) == 0
 
         if prefer_subtasks and is_leaf:
@@ -377,9 +404,6 @@ def create_readiness_registry(
     Returns:
         InternalToolRegistry with readiness tools registered
     """
-    # Lazy import to avoid circular dependency
-    from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-
     registry = InternalToolRegistry(
         name="gobby-tasks-readiness",
         description="Task readiness management tools",
@@ -405,16 +429,14 @@ def create_readiness_registry(
     ) -> dict[str, Any]:
         """List tasks that are open and have no unresolved blocking dependencies."""
         try:
-            from gobby.mcp_proxy.tools.tasks._context import resolve_project_filter_standalone
-
-            project_id = resolve_project_filter_standalone(project, all_projects, task_manager.db)
+            project_id = _resolve_project_id(task_manager, project, all_projects)
         except ValueError as e:
             return {"error": str(e), "tasks": [], "count": 0}
 
         # Resolve parent_task_id if it's a reference format
         if parent_task_id:
             try:
-                parent_task_id = resolve_task_id_for_mcp(task_manager, parent_task_id, project_id)
+                parent_task_id = _resolve_parent_task_id(task_manager, parent_task_id, project_id)
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}", "tasks": [], "count": 0}
 
@@ -476,16 +498,14 @@ def create_readiness_registry(
     ) -> dict[str, Any]:
         """List tasks that are currently blocked, including what blocks them."""
         try:
-            from gobby.mcp_proxy.tools.tasks._context import resolve_project_filter_standalone
-
-            project_id = resolve_project_filter_standalone(project, all_projects, task_manager.db)
+            project_id = _resolve_project_id(task_manager, project, all_projects)
         except ValueError as e:
             return {"error": str(e), "tasks": [], "count": 0}
 
         # Resolve parent_task_id if it's a reference format
         if parent_task_id:
             try:
-                parent_task_id = resolve_task_id_for_mcp(task_manager, parent_task_id, project_id)
+                parent_task_id = _resolve_parent_task_id(task_manager, parent_task_id, project_id)
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}", "tasks": [], "count": 0}
 
@@ -566,9 +586,7 @@ def create_readiness_registry(
         """
         # Filter by project
         try:
-            from gobby.mcp_proxy.tools.tasks._context import resolve_project_filter_standalone
-
-            project_id = resolve_project_filter_standalone(project, False, task_manager.db)
+            project_id = _resolve_project_id(task_manager, project, False)
         except ValueError as e:
             if count > 1:
                 return {"error": str(e), "suggestions": []}

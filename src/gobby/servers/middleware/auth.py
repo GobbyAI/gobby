@@ -5,6 +5,7 @@ protects UI routes and their backing API endpoints. It does NOT protect:
 - /api/auth/* (login, logout, status)
 - /api/health* (health checks)
 - /api/hooks/* (CLI agent hooks)
+- /api/github/webhooks/* (signed GitHub webhooks)
 - /api/sessions/* (CLI agent session endpoints)
 - /api/mcp/* (MCP protocol endpoints)
 - /api/admin/health, /api/admin/status, /api/admin/metrics, /api/admin/config (read-only admin)
@@ -31,6 +32,7 @@ _PUBLIC_PREFIXES = (
     "/api/auth/",
     "/api/health",
     "/api/hooks/",
+    "/api/github/webhooks/",
     "/api/sessions/",
     "/api/mcp/",
     "/api/mcp",

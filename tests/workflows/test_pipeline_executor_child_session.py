@@ -193,12 +193,16 @@ class TestPipelineChildSession:
             "list_pipeline_executions",
             session_id="child-session-mcp",
         )
+        assert tool_proxy.get_tool_schema.call_count == 1
+        assert tool_proxy.get_tool_schema.call_args is not None
         tool_proxy.call_tool.assert_called_once_with(
             "gobby-workflows",
             "list_pipeline_executions",
             {},
             session_id="child-session-mcp",
         )
+        assert tool_proxy.call_tool.call_count == 1
+        assert tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
     @pytest.mark.integration

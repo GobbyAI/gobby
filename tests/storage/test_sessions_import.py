@@ -37,12 +37,14 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "count_by_status": "(self) -> 'dict[str, int]'",
     "create_web_chat_session": "(self, *, machine_id: 'str', project_id: 'str', "
     "source: 'str', title: 'str | None' = None, model: 'str | None' = None, "
-    "chat_mode: 'str | None' = None, sandbox_enabled: 'bool', "
+    "is_local: 'bool' = False, chat_mode: 'str | None' = None, sandbox_enabled: 'bool', "
     "sandbox_policy_hash: 'str') -> 'Session'",
     "delete": "(self, session_id: 'str') -> 'bool'",
     "expire_empty_sessions": "(self, timeout_hours: 'int' = 2) -> 'int'",
     "expire_orphaned_handoff_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "expire_stale_sessions": "(self, timeout_hours: 'int' = 24) -> 'int'",
+    "fetch_task_refs_by_session": "(self, session_ids: 'Sequence[str]') -> "
+    "'dict[str, _TaskRefsByRole]'",
     "find_active_by_external_id": "(self, external_id: 'str', source: 'str') -> 'Session | None'",
     "find_by_external_id": "(self, external_id: 'str', machine_id: 'str', "
     "project_id: 'str | None', source: 'str', session_type: 'str | None' = None) "
@@ -65,7 +67,14 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "is_ancestor": "(self, ancestor_id: 'str', descendant_id: 'str') -> 'bool'",
     "list": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, limit: 'int' = 100, "
-    "exclude_subagents: 'bool' = False) -> 'list[Session]'",
+    "exclude_subagents: 'bool' = False, cursor_updated_at: 'str | None' = None, "
+    "cursor_id: 'str | None' = None, sources: 'Sequence[str] | None' = None, "
+    "statuses: 'Sequence[str] | None' = None, modes: 'Sequence[str] | None' = None, "
+    "models: 'Sequence[str] | None' = None, session_seq_min: 'int | None' = None, "
+    "session_seq_max: 'int | None' = None, task_ref_min: 'int | None' = None, "
+    "task_ref_max: 'int | None' = None, task_ref_roles: 'Sequence[str] | None' = None, "
+    "created_after: 'str | None' = None, created_before: 'str | None' = None) -> "
+    "'list[Session]'",
     "lookup_session_id": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None') -> 'str | None'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
@@ -82,7 +91,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "spawned_by_agent_id: 'str | None' = None, "
     "terminal_context: 'dict[str, Any] | None' = None, "
     "workflow_name: 'str | None' = None, session_type: 'str' = 'terminal', "
-    "sandbox_enabled: 'bool | None' = None, "
+    "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None, "
     "sandbox_policy_hash: 'str | None' = None) -> 'Session'",
     "register_session": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
     "project_id: 'str | None', parent_session_id: 'str | None' = None, "
@@ -90,13 +99,15 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "git_branch: 'str | None' = None, project_path: 'str | None' = None, "
     "terminal_context: 'dict[str, Any] | None' = None, "
     "workflow_name: 'str | None' = None, agent_depth: 'int' = 0, "
-    "sandbox_enabled: 'bool | None' = None) -> 'str'",
+    "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None) -> 'str'",
+    "register_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",
     "register_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None', session_type: 'str | None' = None) -> 'Session | None'",
     "resolve_session_reference": "(self, ref: 'str', project_id: 'str | None' = None) -> 'str'",
     "touch": "(self, session_id: 'str') -> 'None'",
+    "unregister_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",
     "unregister_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
     "update": "(self, session_id: 'str', *, external_id: 'str | None' = None, "
     "source: 'str | None' = None, model: 'str | None' = None, "

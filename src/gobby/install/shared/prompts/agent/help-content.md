@@ -6,10 +6,14 @@ required_variables: [skills_list]
 ---
 # Gobby Skills
 
-Invoke skills directly with `/gobby skillname` syntax:
+Installed skills below are generated from `discover_core_skills()`. Invoke one
+with `/gobby <skill>`:
 
 {{ skills_list }}
 
-**MCP access**: `list_skills()` / `get_skill(name="skill-name")` on `gobby-skills`.
-**Hub search**: `search_hub(query)` on `gobby-skills`.
-**MCP tools**: `list_mcp_servers()` for tool discovery.
+**Skill discovery**: `list_skills()` / `get_skill(name="skill-name")` on
+`gobby-skills`.
+**Hub search**: `search_hub(query="...")` on `gobby-skills`.
+**MCP tools**: use progressive discovery: `list_mcp_servers()`,
+`list_tools(server_name="...")`, `get_tool_schema(server_name="...", tool_name="...")`,
+then `call_tool(server_name="...", tool_name="...", arguments={...})`.

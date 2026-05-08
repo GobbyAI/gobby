@@ -238,6 +238,7 @@ class TestEmitEvent:
             llm_service=mock_llm_service,
         )
         await executor._emit_event("test", "pe-1")
+        assert executor.event_callback is None
 
     @pytest.mark.asyncio
     async def test_emit_event_callback_error_suppressed(
@@ -253,6 +254,7 @@ class TestEmitEvent:
             event_callback=callback,
         )
         await executor._emit_event("test", "pe-1")
+        assert callback.await_count == 1
 
     @pytest.mark.asyncio
     async def test_emit_event_calls_callback(
@@ -269,6 +271,8 @@ class TestEmitEvent:
         )
         await executor._emit_event("pipeline_started", "pe-1", step_count=3)
         callback.assert_called_once_with("pipeline_started", "pe-1", step_count=3)
+        assert callback.call_count == 1
+        assert callback.call_args is not None
 
 
 class TestNotifyCompletion:
@@ -286,6 +290,7 @@ class TestNotifyCompletion:
             llm_service=mock_llm_service,
         )
         await executor._notify_completion("pe-1", "completed", "test-pipe")
+        assert executor.completion_registry is None
 
     @pytest.mark.asyncio
     async def test_notify_with_outputs(
@@ -304,6 +309,8 @@ class TestNotifyCompletion:
             "pe-1", "completed", "test-pipe", outputs={"result": "ok"}
         )
         registry.notify.assert_called_once()
+        assert registry.notify.call_count == 1
+        assert registry.notify.call_args is not None
 
     @pytest.mark.asyncio
     async def test_notify_with_orchestration_complete(
@@ -342,6 +349,7 @@ class TestNotifyCompletion:
             completion_registry=registry,
         )
         await executor._notify_completion("pe-1", "failed", "test-pipe", error="oops")
+        assert registry.notify.await_count == 1
 
     @pytest.mark.asyncio
     async def test_notify_with_error_field(
@@ -376,6 +384,7 @@ class TestClosePipelineSession:
             llm_service=mock_llm_service,
         )
         executor._close_pipeline_session(None, "caller-1")
+        assert executor.session_manager is None
 
     def test_same_session_does_nothing(
         self, mock_db, mock_execution_manager, mock_llm_service
@@ -391,6 +400,8 @@ class TestClosePipelineSession:
         )
         executor._close_pipeline_session("sess-1", "sess-1")
         sm.update_status.assert_not_called()
+        assert sm.update_status.call_count == 0
+        assert not sm.update_status.called
 
     def test_closes_different_session(
         self, mock_db, mock_execution_manager, mock_llm_service
@@ -405,6 +416,7 @@ class TestClosePipelineSession:
             session_manager=sm,
         )
         executor._close_pipeline_session("pipeline-sess", "caller-sess")
+        assert sm.update_status.call_count == 1
         sm.update_status.assert_called_once_with("pipeline-sess", "deleted")
 
     def test_close_session_error_suppressed(
@@ -421,3 +433,4 @@ class TestClosePipelineSession:
             session_manager=sm,
         )
         executor._close_pipeline_session("pipeline-sess", "caller-sess")
+        assert sm.update_status.call_count == 1

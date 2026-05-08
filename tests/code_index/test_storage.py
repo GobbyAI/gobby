@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.code_index.models import CallRelation, ContentChunk, IndexedFile, IndexedProject, Symbol
+from gobby.code_index.models import (
+    CallRelation,
+    ContentChunk,
+    ImportRelation,
+    IndexedFile,
+    IndexedProject,
+    Symbol,
+)
 from gobby.code_index.storage import CodeIndexStorage
 
 pytestmark = pytest.mark.unit
@@ -286,6 +293,67 @@ def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:
     assert retrieved is not None
     assert retrieved.total_files == 20
     assert retrieved.total_symbols == 100
+
+
+def test_delete_project_index_removes_all_project_data(
+    code_storage: CodeIndexStorage,
+    sample_symbols: list[Symbol],
+) -> None:
+    """Deleting a project index removes stats and all derived index records."""
+    code_storage.upsert_project_stats(
+        IndexedProject(
+            id="proj-1",
+            root_path="/home/user/project",
+            total_files=1,
+            total_symbols=len(sample_symbols),
+        )
+    )
+    code_storage.upsert_file(
+        IndexedFile(
+            id=IndexedFile.make_id("proj-1", "src/app.py"),
+            project_id="proj-1",
+            file_path="src/app.py",
+            language="python",
+            content_hash="abc123",
+            symbol_count=len(sample_symbols),
+        )
+    )
+    code_storage.upsert_symbols(sample_symbols)
+    code_storage.upsert_imports(
+        "proj-1",
+        "src/app.py",
+        [ImportRelation(source_file="src/app.py", target_module="pathlib")],
+    )
+    code_storage.upsert_calls(
+        "proj-1",
+        "src/app.py",
+        [
+            CallRelation(
+                caller_symbol_id=sample_symbols[0].id,
+                callee_name="Path",
+                file_path="src/app.py",
+                line=3,
+            )
+        ],
+    )
+    code_storage.upsert_content_chunks(_make_chunks())
+
+    counts = code_storage.delete_project_index("proj-1")
+
+    assert counts == {
+        "symbols": len(sample_symbols),
+        "files": 1,
+        "imports": 1,
+        "calls": 1,
+        "content_chunks": 2,
+        "projects": 1,
+    }
+    assert code_storage.get_project_stats("proj-1") is None
+    assert code_storage.list_files("proj-1") == []
+    assert code_storage.count_symbols("proj-1") == 0
+    assert code_storage.get_imports_for_file("proj-1", "src/app.py") == []
+    assert code_storage.get_calls_for_file("proj-1", "src/app.py") == []
+    assert code_storage.search_content_fts("def", "proj-1") == []
 
 
 # ── Summaries ───────────────────────────────────────────────────────────

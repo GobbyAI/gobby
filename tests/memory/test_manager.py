@@ -254,7 +254,11 @@ class TestAccessStats:
 
     def test_update_access_stats_empty_list(self, memory_manager) -> None:
         """Test _update_access_stats handles empty list."""
-        memory_manager._update_access_stats([])
+        with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
+            result = memory_manager._update_access_stats([])
+
+        assert result is None
+        assert update_access_stats.call_count == 0
 
     def test_update_access_stats_invalid_timestamp(self, db, memory_config) -> None:
         """Test _update_access_stats handles invalid timestamps gracefully."""
@@ -264,8 +268,7 @@ class TestAccessStats:
         memory.id = "mm-test"
         memory.last_accessed_at = "invalid-timestamp"
 
-        # Should not raise, should proceed with update
-        manager._update_access_stats([memory])
+        assert manager._update_access_stats([memory]) is None
 
     def test_update_access_stats_no_timezone(self, db, memory_config) -> None:
         """Test _update_access_stats handles timestamps without timezone."""
@@ -494,7 +497,8 @@ class TestEdgeCases:
         with patch.object(manager.storage, "update_access_stats") as mock_update:
             mock_update.side_effect = Exception("Database error")
 
-            manager._update_access_stats([memory])
+            assert manager._update_access_stats([memory]) is None
+            assert mock_update.call_count == 1
 
 
 # =============================================================================
@@ -566,8 +570,10 @@ class TestVectorStoreIntegration:
     @pytest.mark.asyncio
     async def test_embed_and_upsert_no_vectorstore(self, memory_manager) -> None:
         """_embed_and_upsert does nothing when no VectorStore."""
-        # Should not raise
-        await memory_manager._embed_and_upsert("id", "content")
+        result = await memory_manager._embed_and_upsert("id", "content")
+
+        assert result is None
+        assert memory_manager.vector_store is None
 
     @pytest.mark.asyncio
     async def test_embed_and_upsert_failure_logged(self, db, memory_config) -> None:
@@ -583,6 +589,31 @@ class TestVectorStoreIntegration:
         # Should not raise
         await manager._embed_and_upsert("id", "content")
         mock_vs.upsert.assert_called_once()
+        assert mock_vs.upsert.call_count == 1
+        assert mock_vs.upsert.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_vectorstore_unavailable_does_not_disable_embeddings(
+        self, db, memory_config
+    ) -> None:
+        """Transient VectorStore failures should not mark embeddings unavailable."""
+        from unittest.mock import AsyncMock
+
+        from gobby.memory.vectorstore import VectorStoreUnavailableError
+
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock(side_effect=VectorStoreUnavailableError())
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        manager = MemoryManager(
+            db=db, config=memory_config, vector_store=mock_vs, embed_fn=mock_embed
+        )
+
+        await manager._embed_and_upsert("id-1", "content")
+        await manager._embed_and_upsert("id-2", "content")
+
+        assert manager._embeddings_available is True
+        assert mock_embed.call_count == 2
+        assert mock_vs.upsert.call_count == 2
 
     @pytest.mark.asyncio
     async def test_create_memory_with_vectorstore(self, db, memory_config) -> None:
@@ -597,6 +628,8 @@ class TestVectorStoreIntegration:
         )
         await manager.create_memory(content="VectorStore test")
         mock_vs.upsert.assert_called_once()
+        assert mock_vs.upsert.call_count == 1
+        assert mock_vs.upsert.call_args is not None
 
 
 # =============================================================================
@@ -623,6 +656,8 @@ class TestDeleteMemoryExtended:
         result = await manager.delete_memory(memory.id)
         assert result is True
         mock_vs.delete.assert_called_once_with(memory.id)
+        assert mock_vs.delete.call_count == 1
+        assert mock_vs.delete.call_args is not None
 
     @pytest.mark.asyncio
     async def test_delete_vectorstore_error_handled(self, db, memory_config) -> None:
@@ -639,6 +674,7 @@ class TestDeleteMemoryExtended:
         memory = await manager.create_memory(content="To delete VS fail")
         result = await manager.delete_memory(memory.id)
         assert result is True  # Still returns True since SQLite delete succeeded
+        assert mock_vs.delete.await_count == 1
 
 
 # =============================================================================
@@ -996,6 +1032,7 @@ class TestCreateCrossrefs:
         mock_vs.search = AsyncMock(return_value=[(mem2.id, 0.9)])
         result = await manager._create_crossrefs(mem1)
         assert result >= 0  # May be 0 or 1 depending on crossref logic
+        assert mock_vs.search.await_count == 1
 
 
 # =============================================================================

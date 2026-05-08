@@ -1,0 +1,17 @@
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
+---
+
+# Anime to Life
+
+The uploaded image is an anime or art or 3D rendering, you will create a photorealistic photograph featuring the same character in the same background.
+
+In the to-be-generated photograph:
+
+Important requirements you must follow and think twice before generating:
+- **The character turns to a real person cosplayer, cosplaying the character in the uploaded image.**
+- **The cosplayer must have the same physique, posture, expression, pose, position, props, eye color, and clothing as the original character**
+- The facial features should retain an anime-inspired aesthetic—like those of a cosplayer idol with refined makeup and an elegant appearance.
+- Select an appropriate ethnicity based on the character's depicted traits.
+- **The photograph shall match the angle and framing of the uploaded image**
+- The background is the same as the original image, rendered realistically.

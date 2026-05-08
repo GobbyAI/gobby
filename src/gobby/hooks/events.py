@@ -1,8 +1,8 @@
 """Unified hook event models for multi-CLI session management.
 
 This module defines the unified internal representation for hook events across
-all supported CLIs (Claude Code, Gemini CLI, Qwen CLI, Codex CLI). Adapters translate
-between CLI-specific formats and these unified types.
+all supported CLIs (Claude Code, Droid CLI, Gemini CLI, Qwen CLI, Codex CLI).
+Adapters translate between CLI-specific formats and these unified types.
 
 Design Decision: This file coexists with hook_types.py. The existing HookType enum
 in hook_types.py uses Claude-specific kebab-case names (session-start, pre-tool-use)
@@ -21,8 +21,9 @@ class HookEventType(str, Enum):
 
     These map to CLI-specific hook names via adapters:
     - Claude Code: kebab-case (session-start, pre-tool-use)
+    - Droid CLI: PascalCase (SessionStart, PreToolUse)
     - Gemini CLI: PascalCase (SessionStart, BeforeTool)
-    - Codex CLI: JSON-RPC methods (thread/started, item/completed)
+    - Codex CLI: PascalCase hooks.json names (SessionStart, PreToolUse)
     """
 
     # Session lifecycle
@@ -32,7 +33,7 @@ class HookEventType(str, Enum):
     # Agent/turn lifecycle
     BEFORE_AGENT = "before_agent"
     AFTER_AGENT = "after_agent"
-    STOP = "stop"  # Agent is about to stop/exit (Claude Code only)
+    STOP = "stop"  # Agent is about to stop/exit
 
     # Tool lifecycle
     BEFORE_TOOL = "before_tool"
@@ -44,15 +45,15 @@ class HookEventType(str, Enum):
     AFTER_MODEL = "after_model"
 
     # Context management
-    PRE_COMPACT = "pre_compact"  # Claude: PreCompact, Gemini: PreCompress
-    POST_COMPACT = "post_compact"  # Claude only
+    PRE_COMPACT = "pre_compact"  # Claude/Codex: PreCompact, Gemini: PreCompress
+    POST_COMPACT = "post_compact"  # Claude/Codex: PostCompact
 
     # Subagent lifecycle (Claude Code only)
     SUBAGENT_START = "subagent_start"
     SUBAGENT_STOP = "subagent_stop"
 
     # Permissions & notifications
-    PERMISSION_REQUEST = "permission_request"  # Claude Code only
+    PERMISSION_REQUEST = "permission_request"
     PERMISSION_DENIED = "permission_denied"  # Claude Code only
     NOTIFICATION = "notification"
 
@@ -75,6 +76,7 @@ class SessionSource(str, Enum):
     """Identifies which CLI originated the session."""
 
     CLAUDE = "claude"
+    DROID = "droid"
     GEMINI = "gemini"
     QWEN = "qwen"
     CODEX = "codex"
@@ -174,43 +176,43 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "claude": "SessionStart",
         "gemini": "SessionStart",
         "qwen": "SessionStart",
-        "codex": "thread/started",
+        "codex": "SessionStart",
     },
     HookEventType.SESSION_END: {
         "claude": "SessionEnd",
         "gemini": "SessionEnd",
         "qwen": "SessionEnd",
-        "codex": "thread/archive",
+        "codex": None,
     },
     HookEventType.BEFORE_AGENT: {
         "claude": "UserPromptSubmit",
         "gemini": "BeforeAgent",
         "qwen": "BeforeAgent",
-        "codex": "turn/started",
+        "codex": "UserPromptSubmit",
     },
     HookEventType.AFTER_AGENT: {
         "claude": "Stop",
         "gemini": "AfterAgent",
         "qwen": "AfterAgent",
-        "codex": "turn/completed",
+        "codex": None,
     },
     HookEventType.STOP: {
         "claude": "Stop",
         "gemini": None,
         "qwen": None,
-        "codex": None,
+        "codex": "Stop",
     },
     HookEventType.BEFORE_TOOL: {
         "claude": "PreToolUse",
         "gemini": "BeforeTool",
         "qwen": "BeforeTool",
-        "codex": "requestApproval",
+        "codex": "PreToolUse",
     },
     HookEventType.AFTER_TOOL: {
         "claude": "PostToolUse",
         "gemini": "AfterTool",
         "qwen": "AfterTool",
-        "codex": "item/completed",
+        "codex": "PostToolUse",
     },
     HookEventType.BEFORE_TOOL_SELECTION: {
         "claude": None,
@@ -234,13 +236,13 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "claude": "PreCompact",
         "gemini": "PreCompress",
         "qwen": "PreCompress",
-        "codex": "contextCompaction",
+        "codex": "PreCompact",
     },
     HookEventType.POST_COMPACT: {
         "claude": "PostCompact",
         "gemini": None,
         "qwen": None,
-        "codex": None,
+        "codex": "PostCompact",
     },
     HookEventType.SUBAGENT_START: {
         "claude": "SubagentStart",
@@ -258,7 +260,7 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "claude": "PermissionRequest",
         "gemini": None,
         "qwen": None,
-        "codex": None,
+        "codex": "PermissionRequest",
     },
     HookEventType.PERMISSION_DENIED: {
         "claude": "PermissionDenied",

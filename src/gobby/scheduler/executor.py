@@ -28,10 +28,12 @@ class CronExecutor:
         storage: CronJobStorage,
         agent_runner: Any | None = None,
         pipeline_executor: PipelineExecutor | None = None,
+        services: object | None = None,
     ):
         self.storage = storage
         self.agent_runner = agent_runner
         self.pipeline_executor = pipeline_executor
+        self.services = services
         self._handlers: dict[str, CronHandler] = {}
 
     def register_handler(self, name: str, handler: CronHandler) -> None:
@@ -42,6 +44,10 @@ class CronExecutor:
             handler: Async callable that receives a CronJob and returns output string
         """
         self._handlers[name] = handler
+
+    def has_handler(self, name: str) -> bool:
+        """Return whether a named handler is registered."""
+        return name in self._handlers
 
     async def execute(self, job: CronJob, run: CronRun) -> CronRun:
         """Execute a cron job and update the run record.
@@ -65,6 +71,8 @@ class CronExecutor:
                 output = await self._execute_shell(job)
             elif job.action_type == "handler":
                 output = await self._execute_handler(job)
+            elif job.action_type == "dispatcher":
+                output = await self._execute_dispatcher(job)
             else:
                 raise ValueError(f"Unknown action_type: {job.action_type}")
 
@@ -90,6 +98,15 @@ class CronExecutor:
 
     async def _execute_agent_spawn(self, job: CronJob) -> str:
         """Execute an agent_spawn action."""
+        from gobby.agents.readiness import spawn_readiness_blocker
+
+        readiness_reason = spawn_readiness_blocker(self.services)
+        if readiness_reason is not None:
+            logger.info(
+                "Cron agent spawn skipped",
+                extra={"readiness_reason": readiness_reason},
+            )
+            return f"Agent spawn skipped: {readiness_reason}"
         if not self.agent_runner:
             raise RuntimeError("agent_runner not configured for cron executor")
 
@@ -285,3 +302,23 @@ class CronExecutor:
             available = list(self._handlers.keys())
             raise ValueError(f"No handler registered: '{name}'. Available: {available}")
         return await handler(job)
+
+    async def _execute_dispatcher(self, job: CronJob) -> str:
+        """Execute the dispatcher heartbeat action."""
+        from gobby.dispatch.dispatcher import run_heartbeat
+
+        config = job.action_config
+        result = await run_heartbeat(
+            db=self.storage.db,
+            project_id=config.get("project_id", job.project_id),
+            startup=bool(config.get("startup", False)),
+            max_active_agents=config.get("max_active_agents"),
+            services=self.services,
+        )
+        return (
+            "Dispatcher heartbeat completed: "
+            f"scanned={result.scanned}, "
+            f"executed={result.executed}, "
+            f"skipped={result.skipped}, "
+            f"cap_reached={result.cap_reached}"
+        )

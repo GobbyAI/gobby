@@ -31,9 +31,9 @@ def sample_project(temp_db):
 def sample_task(temp_db, sample_project):
     """Create a sample task for tests."""
     temp_db.execute(
-        """INSERT INTO tasks (id, project_id, title, status, priority, task_type, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
-        ("gt-test123", sample_project["id"], "Test Task", "open", 2, "task"),
+        """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+        ("gt-test123", sample_project["id"], "Test Task", 2, "task"),
     )
     return {"id": "gt-test123"}
 
@@ -189,9 +189,9 @@ class TestValidationHistoryManager:
         """Test that clear_history only affects the target task."""
         # Create a second task
         temp_db.execute(
-            """INSERT INTO tasks (id, project_id, title, status, priority, task_type, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
-            ("gt-other", sample_project["id"], "Other Task", "open", 2, "task"),
+            """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+            ("gt-other", sample_project["id"], "Other Task", 2, "task"),
         )
 
         # Add history to both tasks
@@ -304,9 +304,9 @@ class TestRecurringIssueDetection:
     def sample_task(self, temp_db, sample_project):
         """Create a sample task for tests."""
         temp_db.execute(
-            """INSERT INTO tasks (id, project_id, title, status, priority, task_type, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
-            ("gt-recurring", sample_project["id"], "Test Task", "open", 2, "task"),
+            """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+            ("gt-recurring", sample_project["id"], "Test Task", 2, "task"),
         )
         return {"id": "gt-recurring"}
 

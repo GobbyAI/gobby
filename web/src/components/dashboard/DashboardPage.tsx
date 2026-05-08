@@ -39,7 +39,7 @@ export function DashboardPage() {
     <main className={dashboardPageClass}>
       <div className={dashboardToolbarClass}>
         <div className="flex items-center gap-3">
-          <h2 className="m-0 text-lg font-semibold text-foreground">Dashboard</h2>
+          <h1 className="m-0 text-lg font-semibold text-foreground">Dashboard</h1>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between md:justify-end">
           <div className={dashboardToolbarControlsClass}>

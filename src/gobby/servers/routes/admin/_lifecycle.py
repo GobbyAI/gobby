@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
 
+from gobby.shutdown_intent import ShutdownIntent
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 _restart_lock: asyncio.Lock | None = None
 _SERVICE_RESTART_HELPER = (
     "from gobby.servers.routes.admin._lifecycle import _run_service_restart_helper; "
-    "import sys; _run_service_restart_helper(int(sys.argv[1]), int(sys.argv[2]))"
+    "import sys; _run_service_restart_helper(int(sys.argv[1]), int(sys.argv[2]), sys.argv[3])"
 )
 _DIRECT_RESTART_HELPER = (
     "from gobby.servers.routes.admin._lifecycle import _run_direct_restart_helper; "
@@ -79,7 +80,7 @@ def _force_stop_process(pid: int) -> None:
     _wait_for_process_exit(pid, timeout=0.5)
 
 
-def _run_service_restart_helper(current_pid: int, port: int) -> None:
+def _run_service_restart_helper(current_pid: int, port: int, shutdown_source: str) -> None:
     """Finish a service-managed restart after the current daemon exits."""
     try:
         from gobby.cli.daemon import _wait_for_daemon_health
@@ -91,7 +92,7 @@ def _run_service_restart_helper(current_pid: int, port: int) -> None:
         if exited and _wait_for_daemon_health(port, timeout=3.0, interval=0.25) is not None:
             return
 
-        result = service_restart()
+        result = service_restart(shutdown_source=shutdown_source)
         if not result.get("success"):
             _append_restart_helper_log(
                 f"Admin restart service handoff failed: {result.get('error', 'unknown error')}"
@@ -155,10 +156,18 @@ def _should_restart_via_service_manager() -> bool:
     return bool(status.get("installed") and status.get("enabled"))
 
 
-def _spawn_restart_helper(*, current_pid: int, port: int, service_managed: bool) -> None:
+def _spawn_restart_helper(
+    *,
+    current_pid: int,
+    port: int,
+    service_managed: bool,
+    shutdown_source: str,
+) -> None:
     """Launch a detached helper that completes restart after this process exits."""
     helper = _SERVICE_RESTART_HELPER if service_managed else _DIRECT_RESTART_HELPER
-    helper_args = [str(current_pid), str(port)] if service_managed else [str(current_pid)]
+    helper_args = (
+        [str(current_pid), str(port), shutdown_source] if service_managed else [str(current_pid)]
+    )
     subprocess.Popen(  # nosec B603
         [sys.executable, "-c", helper, *helper_args],
         stdout=subprocess.DEVNULL,
@@ -167,6 +176,18 @@ def _spawn_restart_helper(*, current_pid: int, port: int, service_managed: bool)
         start_new_session=True,
         env=os.environ.copy(),
     )
+
+
+def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> None:
+    """Set the in-process runner shutdown state when this server owns one."""
+    runner = getattr(server, "_runner", None)
+    if runner is None:
+        return
+    if callable(getattr(type(runner), "request_shutdown", None)):
+        runner.request_shutdown(intent)
+        return
+    runner._shutdown_intent = intent
+    runner._shutdown_requested = True
 
 
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
@@ -183,6 +204,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         try:
             logger.debug("Shutdown requested via HTTP endpoint")
+            from gobby.runner_maintenance import write_shutdown_source
+
+            write_shutdown_source("http_shutdown", intent="stop")
+            _request_runner_shutdown(server, ShutdownIntent.STOP)
 
             # Create background task for shutdown
             task = asyncio.create_task(server._process_shutdown())
@@ -229,16 +254,17 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             current_pid = os.getpid()
 
-            # Write shutdown source in the parent before spawning restarter
-            from gobby.runner_maintenance import write_shutdown_source
-
-            write_shutdown_source("http_restart")
-
             _spawn_restart_helper(
                 current_pid=current_pid,
                 port=server.port,
                 service_managed=service_managed,
+                shutdown_source="http_restart",
             )
+
+            from gobby.runner_maintenance import write_shutdown_source
+
+            write_shutdown_source("http_restart", intent="restart")
+            _request_runner_shutdown(server, ShutdownIntent.RESTART)
 
             # Schedule shutdown of the current daemon
             task = asyncio.create_task(server._process_shutdown())

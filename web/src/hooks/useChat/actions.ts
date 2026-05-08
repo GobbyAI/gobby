@@ -126,7 +126,7 @@ const switchConversation = useCallback(
       fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (viewingSessionIdRef.current) return;
+          if (viewingSessionIdRef.current || dbSessionIdRef.current !== id) return;
           if (!data?.messages?.length || conversationIdRef.current !== id)
             return;
           const mapped = data.messages.map((m: Record<string, unknown>) =>
@@ -140,14 +140,21 @@ const switchConversation = useCallback(
           }
         })
         .catch((err) => console.error("Failed to fetch chat messages:", err))
-        .finally(() => setIsLoadingMessages(false));
+        .finally(() => {
+          if (!viewingSessionIdRef.current && conversationIdRef.current === id) {
+            setIsLoadingMessages(false);
+          }
+        });
     }
 
     fetch(`${baseUrl}/api/sessions/${id}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         const s = data?.session;
-        if (!s || conversationIdRef.current !== id) return;
+        if (!s || conversationIdRef.current !== id || dbSessionIdRef.current !== id) {
+          return;
+        }
+        if (!preserveViewing && viewingSessionIdRef.current) return;
         applyMainSessionMeta(s);
         if (s.chat_mode) {
           const restored = normalizeChatMode(s.chat_mode);
@@ -512,6 +519,24 @@ const sendMode = useCallback((mode: ChatMode) => {
   );
 }, []);
 
+// Send mode change for an attached tmux/CLI session. The daemon writes
+// the new chat_mode to that session's storage row and syncs the
+// session_variables entry; the chat composer's main session is untouched.
+const sendAttachedSessionMode = useCallback(
+  (targetSessionId: string, mode: ChatMode) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const normalizedMode = normalizeChatMode(mode);
+    wsRef.current.send(
+      JSON.stringify({
+        type: "set_mode",
+        mode: normalizedMode,
+        target_session_id: targetSessionId,
+      }),
+    );
+  },
+  [],
+);
+
 // Notify backend that the project changed — stops the CLI subprocess
 // so the next chat_message recreates it with the correct CWD.
 const sendProjectChange = useCallback((projectId: string) => {
@@ -568,6 +593,7 @@ const sendMessage = useCallback(
     projectId?: string | null,
     injectContext?: string,
     reasoningEffort?: string | null,
+    ttsEnabled?: boolean,
   ): boolean => {
     console.log(
       "sendMessage called:",
@@ -605,6 +631,7 @@ const sendMessage = useCallback(
           projectId,
           injectContext,
           normalizedReasoningEffort,
+          ttsEnabled,
         );
       });
       return true;
@@ -618,6 +645,7 @@ const sendMessage = useCallback(
         model,
         projectId,
         reasoningEffort: normalizedReasoningEffort,
+        ttsEnabled,
       });
       // Still add the user message to the UI so it's visible
       const queuedId = `user-${uuid()}`;
@@ -711,6 +739,10 @@ const sendMessage = useCallback(
 
     if (normalizedReasoningEffort) {
       payload.reasoning_effort = normalizedReasoningEffort;
+    }
+
+    if (typeof ttsEnabled === "boolean") {
+      payload.tts_enabled = ttsEnabled;
     }
 
     if (selectedProviderRef.current) {
@@ -860,6 +892,7 @@ const requestPlanChanges = useCallback((feedback: string) => {
     deleteConversation,
     stopStreaming,
     sendMode,
+    sendAttachedSessionMode,
     sendProjectChange,
     sendAgentChange,
     sendWorktreeChange,

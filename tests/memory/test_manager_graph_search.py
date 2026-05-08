@@ -173,6 +173,10 @@ class TestSearchGraphForMemories:
         )
 
         assert result == ["mem-1", "mem-2", "mem-3", "mem-4"]
+        assert manager._kg_service.find_related_memory_ids.await_args.kwargs["entity_keys"] == [
+            entity_key(None, "Python"),
+            entity_key(None, "FastAPI"),
+        ]
 
     async def test_deduplicates_traversed_ids(self) -> None:
         """_search_graph_for_memories deduplicates IDs from traversal."""
@@ -208,6 +212,7 @@ class TestSearchGraphForMemories:
 
         # mem-1 should appear only once
         assert result == ["mem-1", "mem-2"]
+        assert result.count("mem-1") == 1
 
     async def test_returns_empty_when_no_entities(self) -> None:
         """_search_graph_for_memories returns empty when no entity matches."""
@@ -228,6 +233,9 @@ class TestSearchGraphForMemories:
         )
 
         assert result == []
+        assert manager._kg_service.search_entities_by_vector.await_args.kwargs[
+            "query_embedding"
+        ] == [0.1]
 
 
 class TestSearchMemoriesGraphIntegration:
@@ -343,6 +351,8 @@ class TestSearchMemoriesGraphIntegration:
         # Graph search methods should not have been called
         if manager._kg_service:
             manager._kg_service.search_entities_by_vector.assert_not_called()
+            assert manager._kg_service.search_entities_by_vector.call_count == 0
+            assert not manager._kg_service.search_entities_by_vector.called
 
     async def test_qdrant_only_when_no_kg_service(self) -> None:
         """search_memories uses Qdrant-only path when no KG service."""
@@ -572,6 +582,8 @@ class TestCreateMemoryPassesMemoryId:
 
         # Graph is now queued via mark_pending_graph, not fired as background task
         manager.storage.mark_pending_graph.assert_called_once_with("test-mem-id")
+        assert manager.storage.mark_pending_graph.call_count == 1
+        assert manager.storage.mark_pending_graph.call_args is not None
 
 
 class TestTemporalDecayIntegration:
@@ -597,7 +609,7 @@ class TestTemporalDecayIntegration:
         vs.search = AsyncMock(return_value=[("mem-1", 0.675)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
-        manager._fts5_ranked = AsyncMock(return_value=[])
+        manager._search_service._fts5_ranked = AsyncMock(return_value=[])
 
         mem = _mock_memory("mem-1", "content")
         mem.source_type = "agent"
@@ -674,6 +686,7 @@ class TestTemporalDecayIntegration:
         result = await manager.search_memories(query="test", limit=10, min_score=0.3)
 
         assert result == []
+        assert manager.storage.get_memory.call_count == 1
 
     @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_qdrant_only(self) -> None:

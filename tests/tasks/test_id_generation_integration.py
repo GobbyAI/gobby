@@ -64,7 +64,7 @@ class TestCompleteIDGenerationFlow:
 
         # Claim task
         updated = task_manager.claim_task(task.id, session.id)
-        assert updated.status == "in_progress"
+        assert updated.claimed_by_session_id == session.id
         # ID, seq_num, path_cache should be unchanged
         assert updated.id == task.id
         assert updated.seq_num == task.seq_num

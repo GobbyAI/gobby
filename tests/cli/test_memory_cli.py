@@ -1,5 +1,6 @@
 """Tests for the memory CLI module."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -145,6 +146,8 @@ class TestMemoryUpdateCommand:
             content=None,
             tags=["tag1", "tag2", "tag3"],
         )
+        assert mock_manager.update_memory.call_count == 1
+        assert mock_manager.update_memory.call_args is not None
 
     @patch("gobby.cli.memory.resolve_memory_id")
     @patch("gobby.cli.memory.get_memory_manager")
@@ -171,6 +174,8 @@ class TestMemoryUpdateCommand:
         mock_manager.update_memory.assert_called_once_with(
             memory_id="mem-up123", content=None, tags=None
         )
+        assert mock_manager.update_memory.call_count == 1
+        assert mock_manager.update_memory.call_args is not None
 
 
 class TestMemoryRecallCommand:
@@ -367,6 +372,82 @@ class TestMemoryStatsCommand:
 
         assert result.exit_code == 0
         assert "Total Memories: 0" in result.output
+
+
+class TestMemoryRestoreCommand:
+    """Tests for gobby memory restore command."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_restore_default_path(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Default restore imports from .gobby/memories.jsonl with force=True."""
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.import_sync.return_value = 3
+        mock_backup_manager_cls.return_value = mock_backup_manager
+
+        with runner.isolated_filesystem():
+            restore_path = Path(".gobby/memories.jsonl")
+            restore_path.parent.mkdir()
+            restore_path.write_text("{}", encoding="utf-8")
+            result = runner.invoke(cli, ["memory", "restore"])
+
+        assert result.exit_code == 0
+        assert "Restored 3 memories" in result.output
+        mock_backup_manager.import_sync.assert_called_once_with(force=True)
+        config = mock_backup_manager_cls.call_args.kwargs["config"]
+        assert config.export_path == Path(".gobby/memories.jsonl")
+
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_restore_custom_input_quiet(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Custom restore path is passed through and quiet suppresses output."""
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.import_sync.return_value = 0
+        mock_backup_manager_cls.return_value = mock_backup_manager
+        restore_path = Path("/tmp/memories.jsonl")
+
+        with runner.isolated_filesystem():
+            restore_path = Path("memories.jsonl")
+            restore_path.write_text("{}", encoding="utf-8")
+            result = runner.invoke(
+                cli,
+                ["memory", "restore", "--input", str(restore_path), "--quiet"],
+            )
+
+        assert result.exit_code == 0
+        assert result.output == ""
+        mock_backup_manager.import_sync.assert_called_once_with(force=True)
+        config = mock_backup_manager_cls.call_args.kwargs["config"]
+        assert config.export_path == restore_path
+
+    def test_restore_missing_explicit_input_fails(self, runner: CliRunner) -> None:
+        """Explicit --input paths should fail when missing."""
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, ["memory", "restore", "--input", "missing.jsonl"])
+
+        assert result.exit_code != 0
+        assert "Memory backup not found: missing.jsonl" in result.output
 
 
 class TestResolveMemoryId:

@@ -95,7 +95,11 @@ async def handle_clear_chat(
     # Stop the old ChatSession
     await mixin._cancel_active_chat(conversation_id)
     await session.stop()
-    mixin._chat_sessions.pop(conversation_id, None)
+    registry = getattr(mixin, "web_chat_session_registry", None)
+    if registry is not None:
+        registry.unregister(conversation_id)
+    else:
+        mixin._chat_sessions.pop(conversation_id, None)
     if hasattr(mixin, "_session_create_locks"):
         mixin._session_create_locks.pop(conversation_id, None)
 
@@ -135,7 +139,11 @@ async def handle_delete_chat(
         await mixin._fire_session_end(conversation_id)
         await mixin._cancel_active_chat(conversation_id)
         await session.stop()
-        mixin._chat_sessions.pop(conversation_id, None)
+        registry = getattr(mixin, "web_chat_session_registry", None)
+        if registry is not None:
+            registry.unregister(conversation_id)
+        else:
+            mixin._chat_sessions.pop(conversation_id, None)
         if hasattr(mixin, "_session_create_locks"):
             mixin._session_create_locks.pop(conversation_id, None)
 

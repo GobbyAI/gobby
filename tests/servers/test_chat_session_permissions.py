@@ -7,6 +7,7 @@ import pytest
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
 
 from gobby.servers.chat_session import ChatSession
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -61,14 +62,13 @@ class TestCanUseTool:
         session._last_plan_content = "draft plan"
         session._on_mode_changed = AsyncMock()
 
-        async def delayed_approve():
-            await asyncio.sleep(0.01)
-            session._pending_post_plan_mode = "bypass"
-            session.provide_plan_decision("approve")
-
-        task = asyncio.create_task(delayed_approve())
-        result = await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
-        await task
+        task = asyncio.create_task(
+            session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
+        )
+        await wait_for_async_condition(lambda: session.has_pending_plan, description="pending plan")
+        session._pending_post_plan_mode = "bypass"
+        session.provide_plan_decision("approve")
+        result = await task
 
         assert isinstance(result, PermissionResultAllow)
         assert session.chat_mode == "bypass"
@@ -83,13 +83,12 @@ class TestCanUseTool:
         session._last_plan_content = "draft plan"
         session.set_plan_feedback("too complex")
 
-        async def delayed_reject():
-            await asyncio.sleep(0.01)
-            session.provide_plan_decision("request_changes")
-
-        task = asyncio.create_task(delayed_reject())
-        result = await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
-        await task
+        task = asyncio.create_task(
+            session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
+        )
+        await wait_for_async_condition(lambda: session.has_pending_plan, description="pending plan")
+        session.provide_plan_decision("request_changes")
+        result = await task
 
         assert isinstance(result, PermissionResultDeny)
         assert "User requested changes" in result.message
@@ -132,6 +131,30 @@ class TestCanUseTool:
         session.set_chat_mode("plan")
         result = await session._can_use_tool(
             "exec_command", {"command": "rm -rf /"}, ToolPermissionContext()
+        )
+        assert isinstance(result, PermissionResultDeny)
+        assert "Plan mode is active" in result.message
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ["exec_command", "run_shell_command"])
+    async def test_plan_mode_allows_gcode_shell_aliases(
+        self, session: ChatSession, tool_name: str
+    ) -> None:
+        session.set_chat_mode("plan")
+        result = await session._can_use_tool(
+            tool_name,
+            {"command": 'gcode search "ChatSessionPermissionsMixin"'},
+            ToolPermissionContext(),
+        )
+        assert isinstance(result, PermissionResultAllow)
+
+    @pytest.mark.asyncio
+    async def test_plan_mode_blocks_gcode_shell_redirection(self, session: ChatSession) -> None:
+        session.set_chat_mode("plan")
+        result = await session._can_use_tool(
+            "run_shell_command",
+            {"command": 'gcode search "ChatSession" > notes.txt'},
+            ToolPermissionContext(),
         )
         assert isinstance(result, PermissionResultDeny)
         assert "Plan mode is active" in result.message
@@ -233,6 +256,34 @@ class TestNeedsToolApproval:
             },
         )
 
+    def test_normal_mode_gcode_skips_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
+
+        assert not session._needs_tool_approval(
+            "Bash",
+            {"command": 'gcode search "ChatSessionPermissionsMixin"'},
+        )
+
+    def test_normal_mode_gcode_with_redirection_requires_approval(
+        self, session: ChatSession
+    ) -> None:
+        session.chat_mode = "normal"
+
+        assert session._needs_tool_approval(
+            "Bash",
+            {"command": 'gcode search "ChatSession" > notes.txt'},
+        )
+
+    def test_normal_mode_gcode_with_shell_separator_requires_approval(
+        self, session: ChatSession
+    ) -> None:
+        session.chat_mode = "normal"
+
+        assert session._needs_tool_approval(
+            "Bash",
+            {"command": 'gcode search "ChatSession"; echo done'},
+        )
+
     def test_normal_mode_safe_gsqz_input_skips_approval(self, session: ChatSession) -> None:
         session.chat_mode = "normal"
 
@@ -283,13 +334,10 @@ class TestWaitForToolApproval:
     async def test_wait_for_tool_approval_approve(self, session: ChatSession) -> None:
         session._tool_approval_callback = AsyncMock()
 
-        async def approve_delayed():
-            await asyncio.sleep(0.01)
-            session.provide_approval("approve")
-
-        task = asyncio.create_task(approve_delayed())
-        result = await session._wait_for_tool_approval("Bash", {"command": "ls"})
-        await task
+        task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
+        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        session.provide_approval("approve")
+        result = await task
 
         assert isinstance(result, PermissionResultAllow)
         assert result.updated_input == {"command": "ls"}
@@ -298,13 +346,10 @@ class TestWaitForToolApproval:
     async def test_wait_for_tool_approval_reject(self, session: ChatSession) -> None:
         session._tool_approval_callback = AsyncMock()
 
-        async def reject_delayed():
-            await asyncio.sleep(0.01)
-            session.provide_approval("reject")
-
-        task = asyncio.create_task(reject_delayed())
-        result = await session._wait_for_tool_approval("Bash", {"command": "ls"})
-        await task
+        task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
+        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        session.provide_approval("reject")
+        result = await task
 
         assert isinstance(result, PermissionResultDeny)
 
@@ -313,12 +358,10 @@ class TestWaitForToolApproval:
         session._tool_approval_callback = AsyncMock()
         session._on_approved_tools_persist = MagicMock()
 
-        async def approve_delayed():
-            await asyncio.sleep(0.01)
-            session.provide_approval("approve_always")
-
-        asyncio.create_task(approve_delayed())
-        result = await session._wait_for_tool_approval("Bash", {"command": "ls"})
+        task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
+        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        session.provide_approval("approve_always")
+        result = await task
 
         assert isinstance(result, PermissionResultAllow)
         assert "tool:Bash" in session._approved_tools
@@ -326,9 +369,18 @@ class TestWaitForToolApproval:
 
 
 class TestConsumePlanModeContext:
-    def test_consume_plan_mode_not_plan(self, session: ChatSession) -> None:
+    def test_consume_mode_context_act(self, session: ChatSession) -> None:
         session.chat_mode = "normal"
-        assert session._consume_plan_mode_context() is None
+        context = session._consume_plan_mode_context()
+        assert context is not None
+        assert 'status="act"' in context
+
+    def test_consume_mode_context_yolo(self, session: ChatSession) -> None:
+        session.chat_mode = "bypass"
+        context = session._consume_plan_mode_context()
+        assert context is not None
+        assert 'status="yolo"' in context
+        assert "YOLO MODE" in context
 
     def test_consume_plan_mode_approved(self, session: ChatSession) -> None:
         session.chat_mode = "plan"
@@ -345,3 +397,10 @@ class TestConsumePlanModeContext:
         assert context is not None
         assert "Do it better" in context
         assert session._plan_feedback is None  # Should be cleared
+
+    def test_consume_plan_mode_context_mentions_gcode(self, session: ChatSession) -> None:
+        session.chat_mode = "plan"
+        context = session._consume_plan_mode_context()
+
+        assert context is not None
+        assert "gcode outline/search/symbol" in context

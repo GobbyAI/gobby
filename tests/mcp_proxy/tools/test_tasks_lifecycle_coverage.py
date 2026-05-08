@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -104,6 +105,8 @@ class TestCloseTaskTool:
 
             assert "error" not in result
             mock_task_manager.close_task.assert_called_once()
+            assert mock_task_manager.close_task.call_count == 1
+            assert mock_task_manager.close_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_close_task_parent_with_open_children(self, mock_task_manager, mock_sync_manager):
@@ -184,6 +187,46 @@ class TestCloseTaskTool:
             )
 
             assert result == {"success": True}
+            assert mock_task_manager.close_task.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_close_task_surfaces_bootstrap_ledger_mismatch(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test close_task returns structured bootstrap ledger mismatch errors."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = None
+        mock_task.project_id = "proj-1"
+        mock_task.task_type = "epic"
+        mock_task.seq_num = 13175
+        mock_task.requires_user_review = False
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.side_effect = BootstrapLedgerMismatchError(
+            ["A8:A8.7 expected leaves ['x'], manifest has []"],
+            plan_id="task-13175-plan-coverage-contract",
+        )
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.utils.git.run_git_command", return_value="abc123"),
+        ):
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+
+            result = await registry.call(
+                "close_task",
+                {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "bootstrap_ledger_mismatch"
+        assert result["plan_id"] == "task-13175-plan-coverage-contract"
+        assert result["mismatches"] == ["A8:A8.7 expected leaves ['x'], manifest has []"]
 
     @pytest.mark.asyncio
     async def test_close_task_with_commit_sha_links_first(
@@ -379,6 +422,8 @@ class TestCloseTaskTool:
 
             assert result.get("error") == "missing_commits_for_edits"
             mock_task_manager.close_task.assert_not_called()
+            assert mock_task_manager.close_task.call_count == 0
+            assert not mock_task_manager.close_task.called
 
     @pytest.mark.asyncio
     async def test_close_task_out_of_repo_succeeds_without_session_edits(
@@ -432,6 +477,8 @@ class TestCloseTaskTool:
 
             assert result == {"success": True}
             mock_task_manager.close_task.assert_called_once()
+            assert mock_task_manager.close_task.call_count == 1
+            assert mock_task_manager.close_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_close_task_clears_task_claimed_variables(
@@ -509,6 +556,8 @@ class TestCloseTaskTool:
                     "claimed_tasks": {},
                 },
             )
+            assert mock_sv_manager.merge_variables.call_count == 1
+            assert mock_sv_manager.merge_variables.call_args is not None
 
 
 # =============================================================================
@@ -556,6 +605,8 @@ class TestReopenTaskTool:
         mock_task_manager.reopen_task.assert_called_with(
             "550e8400-e29b-41d4-a716-446655440000", reason="Needs more work"
         )
+        assert mock_task_manager.reopen_task.call_count >= 1
+        assert mock_task_manager.reopen_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_reopen_task_error(self, mock_task_manager, mock_sync_manager):
@@ -597,7 +648,11 @@ class TestReopenTaskTool:
             await registry.call("reopen_task", {"task_id": "550e8400-e29b-41d4-a716-446655440000"})
 
             mock_wt_instance.get_by_task.assert_not_called()
+            assert mock_wt_instance.get_by_task.call_count == 0
+            assert not mock_wt_instance.get_by_task.called
             mock_wt_instance.update.assert_not_called()
+            assert mock_wt_instance.update.call_count == 0
+            assert not mock_wt_instance.update.called
 
 
 # =============================================================================
@@ -734,6 +789,8 @@ class TestSessionVariableMirroring:
                     "claimed_tasks": {},
                 },
             )
+            assert mock_sv_manager.merge_variables.call_count == 1
+            assert mock_sv_manager.merge_variables.call_args is not None
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_mirrors_to_session_variables(

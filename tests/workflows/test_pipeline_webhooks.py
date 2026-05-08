@@ -148,6 +148,7 @@ class TestNotifyApprovalPending:
             call_args = mock_client.post.call_args
             headers = call_args.kwargs["headers"]
             assert headers["Authorization"] == "Bearer secret-token-value"
+            assert call_args.kwargs["json"]["token"] == "token-123"
 
     @pytest.mark.asyncio
     async def test_handles_missing_webhooks_gracefully(
@@ -156,14 +157,15 @@ class TestNotifyApprovalPending:
         """Test that missing webhooks config doesn't raise error."""
         notifier = WebhookNotifier(base_url="https://gobby.local")
 
-        # Should not raise, just return without sending
-        await notifier.notify_approval_pending(
-            execution=mock_execution,
-            pipeline=pipeline_without_webhooks,
-            step_id="deploy",
-            token="token-123",
-            message="Approve?",
-        )
+        with patch("httpx.AsyncClient") as mock_client_class:
+            await notifier.notify_approval_pending(
+                execution=mock_execution,
+                pipeline=pipeline_without_webhooks,
+                step_id="deploy",
+                token="token-123",
+                message="Approve?",
+            )
+            assert mock_client_class.call_count == 0
 
 
 class TestNotifyComplete:
@@ -216,8 +218,9 @@ class TestNotifyComplete:
         )
         notifier = WebhookNotifier(base_url="https://gobby.local")
 
-        # Should not raise
-        await notifier.notify_complete(execution=mock_execution, pipeline=pipeline)
+        with patch("httpx.AsyncClient") as mock_client_class:
+            await notifier.notify_complete(execution=mock_execution, pipeline=pipeline)
+            assert mock_client_class.call_count == 0
 
 
 class TestNotifyFailure:
@@ -270,12 +273,13 @@ class TestNotifyFailure:
         )
         notifier = WebhookNotifier(base_url="https://gobby.local")
 
-        # Should not raise
-        await notifier.notify_failure(
-            execution=mock_execution,
-            pipeline=pipeline,
-            error="Some error",
-        )
+        with patch("httpx.AsyncClient") as mock_client_class:
+            await notifier.notify_failure(
+                execution=mock_execution,
+                pipeline=pipeline,
+                error="Some error",
+            )
+            assert mock_client_class.call_count == 0
 
 
 class TestWebhookErrors:
@@ -297,11 +301,12 @@ class TestWebhookErrors:
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_class.return_value = mock_client
 
-            # Should not raise, just log
             await notifier.notify_complete(
                 execution=mock_execution,
                 pipeline=pipeline_with_webhooks,
             )
+            assert mock_client.post.await_count == 1
+            assert mock_client.post.call_args.kwargs["url"] == "https://example.com/complete"
 
     @pytest.mark.asyncio
     async def test_handles_network_error_gracefully(
@@ -317,8 +322,9 @@ class TestWebhookErrors:
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_class.return_value = mock_client
 
-            # Should not raise
             await notifier.notify_complete(
                 execution=mock_execution,
                 pipeline=pipeline_with_webhooks,
             )
+            assert mock_client.post.await_count == 1
+            assert mock_client.post.call_args.kwargs["url"] == "https://example.com/complete"

@@ -36,38 +36,56 @@ def mock_sync_manager():
     return MagicMock(spec=TaskSyncManager)
 
 
-@pytest.fixture
-def sample_task():
-    """Create a sample unclaimed task."""
+def _task(
+    *,
+    task_id: str,
+    title: str,
+    stage_state: str = "ready",
+    assignee: str | None = None,
+    description: str | None = None,
+    labels: list[str] | None = None,
+) -> Task:
     return Task(
-        id="550e8400-e29b-41d4-a716-446655440000",
+        id=task_id,
         project_id="proj-1",
-        title="Test Task",
-        status="open",
+        title=title,
         priority=2,
         task_type="task",
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
+        description=description,
+        labels=labels or [],
+        assignee=assignee,
+        claimed_by_session_id=assignee,
+        stages=(
+            {
+                "stage_name": "development",
+                "position": 0,
+                "state": stage_state,
+            },
+        ),
+    )
+
+
+@pytest.fixture
+def sample_task():
+    """Create a sample unclaimed task."""
+    return _task(
+        task_id="550e8400-e29b-41d4-a716-446655440000",
+        title="Test Task",
         description="Test description",
         labels=["test"],
-        assignee=None,  # Unclaimed
     )
 
 
 @pytest.fixture
 def claimed_task():
     """Create a sample task already claimed by another session."""
-    return Task(
-        id="550e8400-e29b-41d4-a716-446655440001",
-        project_id="proj-1",
+    return _task(
+        task_id="550e8400-e29b-41d4-a716-446655440001",
         title="Claimed Task",
-        status="in_progress",
-        priority=2,
-        task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        stage_state="in_progress",
         description="Already claimed",
-        labels=[],
         assignee="other-session-id",  # Claimed by another session
     )
 
@@ -75,17 +93,11 @@ def claimed_task():
 @pytest.fixture
 def parent_owned_task():
     """Create a sample task claimed by a spawning parent session."""
-    return Task(
-        id="550e8400-e29b-41d4-a716-446655440010",
-        project_id="proj-1",
+    return _task(
+        task_id="550e8400-e29b-41d4-a716-446655440010",
         title="Parent Owned Task",
-        status="in_progress",
-        priority=2,
-        task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        stage_state="in_progress",
         description="Delegated to child",
-        labels=[],
         assignee="parent-session-id",
     )
 
@@ -122,7 +134,6 @@ class TestClaimTaskTool:
             mock_task_manager.get_task.return_value = sample_task
             updated_task = MagicMock()
             updated_task.id = sample_task.id
-            updated_task.status = "in_progress"
             updated_task.assignee = "my-session-id"
             mock_task_manager.claim_task.return_value = updated_task
 
@@ -140,10 +151,14 @@ class TestClaimTaskTool:
                 session_id="my-session-id",
                 force=False,
             )
+            assert mock_task_manager.claim_task.call_count == 1
+            assert mock_task_manager.claim_task.call_args is not None
             # Should link task to session (best-effort)
             mock_st_instance.link_task.assert_called_once_with(
                 "my-session-id", sample_task.id, "claimed"
             )
+            assert mock_st_instance.link_task.call_count == 1
+            assert mock_st_instance.link_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_claim_task_already_claimed_by_another_session(
@@ -195,7 +210,6 @@ class TestClaimTaskTool:
             mock_task_manager.get_task.return_value = claimed_task
             updated_task = MagicMock()
             updated_task.id = claimed_task.id
-            updated_task.status = "in_progress"
             updated_task.assignee = "my-session-id"
             mock_task_manager.claim_task.return_value = updated_task
 
@@ -214,6 +228,8 @@ class TestClaimTaskTool:
                 session_id="my-session-id",
                 force=True,
             )
+            assert mock_task_manager.claim_task.call_count == 1
+            assert mock_task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_delegated_child_can_claim_parent_owned_task_without_force(
@@ -240,7 +256,6 @@ class TestClaimTaskTool:
             mock_task_manager.db.fetchone.return_value = {"id": "run-delegated"}
             updated_task = MagicMock()
             updated_task.id = parent_owned_task.id
-            updated_task.status = "in_progress"
             updated_task.assignee = "my-session-id"
             mock_task_manager.claim_task.return_value = updated_task
 
@@ -267,15 +282,10 @@ class TestClaimTaskTool:
         self, mock_task_manager, mock_sync_manager, parent_owned_task
     ) -> None:
         """Delegation only applies while the parent still owns the assigned task."""
-        third_party_owned_task = Task(
-            id=parent_owned_task.id,
-            project_id=parent_owned_task.project_id,
+        third_party_owned_task = _task(
+            task_id=parent_owned_task.id,
             title=parent_owned_task.title,
-            status=parent_owned_task.status,
-            priority=parent_owned_task.priority,
-            task_type=parent_owned_task.task_type,
-            created_at=parent_owned_task.created_at,
-            updated_at=parent_owned_task.updated_at,
+            stage_state="in_progress",
             description=parent_owned_task.description,
             labels=parent_owned_task.labels,
             assignee="third-party-session-id",
@@ -320,15 +330,10 @@ class TestClaimTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """Test claiming a task already claimed by the same session succeeds (idempotent)."""
-        task_claimed_by_self = Task(
-            id="550e8400-e29b-41d4-a716-446655440002",
-            project_id="proj-1",
+        task_claimed_by_self = _task(
+            task_id="550e8400-e29b-41d4-a716-446655440002",
             title="My Task",
-            status="in_progress",
-            priority=2,
-            task_type="task",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            stage_state="in_progress",
             assignee="my-session-id",  # Same session
         )
 
@@ -361,6 +366,7 @@ class TestClaimTaskTool:
 
             # Should succeed (idempotent operation)
             assert "error" not in result
+            assert mock_task_manager.claim_task.call_count == 1
 
     @pytest.mark.asyncio
     async def test_claim_task_not_found(self, mock_task_manager, mock_sync_manager):
@@ -580,7 +586,7 @@ class TestClaimTaskVsUpdateTask:
     async def test_claim_task_is_atomic_operation(
         self, mock_task_manager, mock_sync_manager, sample_task
     ):
-        """Test that claim_task atomically sets assignee and status together."""
+        """Test that claim_task atomically sets canonical ownership."""
         with (
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -608,14 +614,14 @@ class TestClaimTaskVsUpdateTask:
                 },
             )
 
-            # Both assignee and status should be set in a single update call
-            # (atomic operation, not two separate calls)
-            # Note: status is only set when task.status == "open"
+            # Canonical ownership should be set in a single task-manager call.
             mock_task_manager.claim_task.assert_called_once_with(
                 sample_task.id,
                 session_id="my-session-id",
                 force=False,
             )
+            assert mock_task_manager.claim_task.call_count == 1
+            assert mock_task_manager.claim_task.call_args is not None
 
     @pytest.mark.asyncio
     async def test_claim_task_detects_conflicts(
@@ -715,3 +721,4 @@ class TestClaimTaskCrossProjectBlocking:
 
             # Should succeed — can't enforce if session isn't in DB
             assert "error" not in result
+            assert mock_task_manager.claim_task.call_count == 1

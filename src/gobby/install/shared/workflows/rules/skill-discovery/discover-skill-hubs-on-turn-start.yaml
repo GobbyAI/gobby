@@ -1,0 +1,21 @@
+tags: [skill-discovery, hubs, gobby, default]
+
+rules:
+  discover-skill-hubs-on-turn-start:
+    description: "Load skill-discovery guidance and list available skill hubs once per session"
+    event: turn_start
+    enabled: true
+    priority: 15
+    when: "not variables.get('skill_discovery_instructions_shown')"
+    effects:
+      - type: load_skill
+        skill: loading-skills
+      - type: mcp_call
+        server: gobby-skills
+        tool: list_hubs
+        arguments: {}
+        background: false
+        inject_result: true
+      - type: set_variable
+        variable: skill_discovery_instructions_shown
+        value: true

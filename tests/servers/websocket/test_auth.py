@@ -133,6 +133,8 @@ class TestMissingAuthHeader:
         await server._authenticate(ws, request)
 
         callback.assert_not_called()
+        assert callback.call_count == 0
+        assert not callback.called
 
 
 class TestInvalidAuthFormat:
@@ -190,6 +192,8 @@ class TestInvalidAuthFormat:
         await server._authenticate(ws, request)
 
         callback.assert_not_called()
+        assert callback.call_count == 0
+        assert not callback.called
 
 
 class TestValidBearerToken:
@@ -224,6 +228,8 @@ class TestValidBearerToken:
         await server._authenticate(ws, request)
 
         callback.assert_called_once_with("the-actual-token")
+        assert callback.call_count == 1
+        assert callback.call_args is not None
 
     async def test_empty_string_token_still_passed(self) -> None:
         """'Bearer ' with empty token should still call callback with ''."""
@@ -235,6 +241,8 @@ class TestValidBearerToken:
         await server._authenticate(ws, request)
 
         callback.assert_called_once_with("")
+        assert callback.call_count == 1
+        assert callback.call_args is not None
 
 
 class TestInvalidToken:

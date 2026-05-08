@@ -19,10 +19,12 @@ from typing import Any
 from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.summarize import TURN_PATTERN
+from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
+from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.database import DatabaseProtocol
@@ -399,11 +401,14 @@ class SessionLifecycleManager:
             return
 
         session = self.session_manager.get(session_id)
-        if not session or session.summary_markdown:
+        if not session or is_summary_markdown_valid(session.summary_markdown):
             return
 
-        # Only generate if there's a transcript to read
-        if not session.transcript_path:
+        digest_markdown = getattr(session, "digest_markdown", None)
+        has_digest = bool(digest_markdown and digest_markdown.strip())
+
+        # Digest-backed sessions can regenerate without a readable transcript.
+        if not has_digest and not session.transcript_path:
             return
 
         try:
@@ -463,6 +468,11 @@ class SessionLifecycleManager:
             parser = QwenTranscriptParser(session_id=session_id)
         elif session.source == "codex":
             parser = CodexTranscriptParser(session_id=session_id)
+        elif session.source == "droid":
+            parser = DroidTranscriptParser(
+                session_id=session_id,
+                transcript_path=session.transcript_path,
+            )
         # Default (claude or unknown) uses Claude transcript format
 
         # Gemini/Qwen store sessions as single JSON files, not JSONL.
@@ -478,8 +488,8 @@ class SessionLifecycleManager:
             messages = parser.parse_session_json(data)
         else:
             # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
-            # records (Codex MCP tool-call lifecycle); this token-event path
-            # only consumes ParsedMessage fields (model, usage, message_id).
+            # records; this token-event path only consumes ParsedMessage
+            # fields (model, usage, message_id).
             parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
             messages = [r for r in parsed_records if isinstance(r, ParsedMessage)]
 
@@ -496,7 +506,8 @@ class SessionLifecycleManager:
         session_context_window = (
             session.context_window if isinstance(session.context_window, int) else None
         )
-        last_model: str | None = None
+        session_model = session.model if isinstance(session.model, str) and session.model else None
+        last_model: str | None = session_model
         running_totals = self.token_event_store.get_session_totals(session_id)
         ws_server = None
         app_ctx = get_app_context()
@@ -505,8 +516,9 @@ class SessionLifecycleManager:
         saw_usage = False
 
         for msg in messages:
-            if isinstance(msg.model, str) and msg.model:
-                last_model = msg.model
+            message_model = msg.model if isinstance(msg.model, str) and msg.model else None
+            if message_model:
+                last_model = message_model
 
             usage = msg.usage
             if usage is None:
@@ -540,6 +552,7 @@ class SessionLifecycleManager:
                 message_id = None
             content_type = getattr(msg, "content_type", None)
             metadata = {"content_type": content_type} if isinstance(content_type, str) else None
+            event_model = message_model or last_model
 
             event = TokenEvent(
                 session_id=session_id,
@@ -547,7 +560,7 @@ class SessionLifecycleManager:
                 message_id=message_id,
                 source=session_source,
                 origin="transcript",
-                model=msg.model,
+                model=event_model,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 cache_creation_tokens=usage.cache_creation_tokens,
@@ -574,7 +587,7 @@ class SessionLifecycleManager:
                                     "source": session_source,
                                     "origin": "transcript",
                                     "event_at": canonicalize_event_timestamp(event_timestamp),
-                                    "model": msg.model,
+                                    "model": event_model,
                                     "model_family": event.normalized_model_family(),
                                     "input_tokens": usage.input_tokens,
                                     "output_tokens": usage.output_tokens,

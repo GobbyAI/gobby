@@ -95,6 +95,8 @@ class TestHandleBeforeAgent:
 
         handler.handle_before_agent(event)
         handler._session_manager.update_session_status.assert_called_with("sess-1", "active")
+        assert handler._session_manager.update_session_status.call_count >= 1
+        assert handler._session_manager.update_session_status.call_args is not None
 
     def test_clear_command_generates_summaries(self) -> None:
         handler = _TestHandler()
@@ -106,6 +108,8 @@ class TestHandleBeforeAgent:
 
         handler.handle_before_agent(event)
         handler._dispatch_session_summaries_fn.assert_called_once_with("sess-1", False, None)
+        assert handler._dispatch_session_summaries_fn.call_count == 1
+        assert handler._dispatch_session_summaries_fn.call_args is not None
 
     def test_exit_command_generates_summaries(self) -> None:
         handler = _TestHandler()
@@ -117,6 +121,8 @@ class TestHandleBeforeAgent:
 
         handler.handle_before_agent(event)
         handler._dispatch_session_summaries_fn.assert_called_once()
+        assert handler._dispatch_session_summaries_fn.call_count == 1
+        assert handler._dispatch_session_summaries_fn.call_args is not None
 
     def test_skill_interception(self) -> None:
         handler = _TestHandler()
@@ -131,7 +137,7 @@ class TestHandleBeforeAgent:
         result = handler.handle_before_agent(event)
         assert result.decision == "allow"
 
-    def test_default_agent_auto_injects_brevity_on_first_prompt(self) -> None:
+    def test_default_agent_injects_instructions_without_active_skill_manifest(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             data={"prompt": "hello"},
@@ -156,18 +162,22 @@ class TestHandleBeforeAgent:
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
             ) as mock_merge,
             patch("gobby.workflows.agent_resolver.resolve_agent", return_value=default_agent),
-            patch("gobby.skills.manager.SkillManager.list_skills", return_value=[]),
-            patch(
-                "gobby.hooks.event_handlers._session_start.select_and_format_agent_skills",
-                return_value=("### brevity\nTerse output mode.", 1, ["brevity"]),
-            ),
         ):
             result = handler.handle_before_agent(event)
 
         assert result.decision == "allow"
         assert result.context is not None
         assert "## Instructions" in result.context
-        assert "### brevity" in result.context
+        assert "Think out loud" not in result.context
+        assert "Show your reasoning" not in result.context
+        behavior = default_agent.instructions.split("## Behavior", 1)[1].split("##", 1)[0]
+        bullets = [line.strip() for line in behavior.splitlines() if line.strip().startswith("- ")]
+        assert bullets[0] == "- Be concise — respect the reader's attention."
+        assert (
+            "You think hard, decide fast, and say only what matters." in default_agent.personality
+        )
+        assert "<active_skills>" not in result.context
+        assert "### brevity" not in result.context
         mock_merge.assert_called_once_with(
             "sess-1",
             {
@@ -372,6 +382,34 @@ class TestGenerateHelpContent:
             result = handler._generate_help_content()
         assert result == "help content"
 
+    def test_generate_help_lists_user_invoked_skills(self) -> None:
+        handler = _TestHandler()
+        expand_skill = MagicMock()
+        expand_skill.name = "expand"
+        expand_skill.description = "Expand tasks. Into subtasks."
+        expand_skill.is_always_apply.return_value = False
+
+        plan_skill = MagicMock()
+        plan_skill.name = "plan"
+        plan_skill.description = "Draft plans."
+        plan_skill.is_always_apply.return_value = False
+
+        handler._skill_manager.discover_core_skills.return_value = [
+            plan_skill,
+            expand_skill,
+        ]
+
+        with patch(
+            "gobby.hooks.event_handlers._agent._load_agent_prompt",
+            return_value="help",
+        ) as mock_load:
+            handler._generate_help_content()
+
+        skills_list = mock_load.call_args.args[1]["skills_list"]
+        assert "- `/gobby expand` — Expand tasks" in skills_list
+        assert "- `/gobby plan` — Draft plans" in skills_list
+        assert skills_list.index("/gobby expand") < skills_list.index("/gobby plan")
+
     def test_generate_help_filters_always_apply(self) -> None:
         handler = _TestHandler()
         regular_skill = MagicMock()
@@ -398,6 +436,33 @@ class TestGenerateHelpContent:
             skills_list = mock_load.call_args.args[1]["skills_list"]
             assert "expand" in skills_list
             assert "auto-inject" not in skills_list
+
+    def test_generate_help_filters_router_skill(self) -> None:
+        handler = _TestHandler()
+        regular_skill = MagicMock()
+        regular_skill.name = "expand"
+        regular_skill.description = "Expand tasks."
+        regular_skill.is_always_apply.return_value = False
+
+        router_skill = MagicMock()
+        router_skill.name = "gobby"
+        router_skill.description = "Router."
+        router_skill.is_always_apply.return_value = False
+
+        handler._skill_manager.discover_core_skills.return_value = [
+            regular_skill,
+            router_skill,
+        ]
+
+        with patch(
+            "gobby.hooks.event_handlers._agent._load_agent_prompt",
+            return_value="help",
+        ) as mock_load:
+            handler._generate_help_content()
+
+        skills_list = mock_load.call_args.args[1]["skills_list"]
+        assert "/gobby expand" in skills_list
+        assert "/gobby gobby" not in skills_list
 
     def test_no_skill_manager(self) -> None:
         handler = _TestHandler()

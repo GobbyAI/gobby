@@ -1,438 +1,328 @@
 # Code Index
 
-AST-based symbol indexing for your codebase via the `gobby-code` MCP server. Parse source files with tree-sitter, extract symbols (functions, classes, methods, types), and retrieve them by ID instead of reading entire files — saving 90%+ tokens.
+Gobby's code index is a native `gcode` CLI plus daemon-side storage and graph
+services. Use it to search symbols, inspect outlines, retrieve exact symbol
+source, and trace graph relationships without reading whole source files.
+
+The current user-facing surface is `gcode`. Older Gobby CLI and MCP examples
+for direct code-index access are stale; use the commands below.
 
 ## Quick Start
 
-Index a project and search for symbols:
+Index the current project, check status, and force a rebuild:
 
 ```bash
-# CLI: Index current project
-gobby index
-
-# CLI: Check status
-gobby index status
-
-# CLI: Force full re-index
-gobby index --full
-
-# CLI: Clear index
-gobby index invalidate
+gcode index
+gcode status
+gcode index --full
+gcode invalidate --force
 ```
 
-```python
-# MCP: Index status
-call_tool("gobby-code", "list_indexed", {})
+Use indexed navigation before opening large files:
 
-# MCP: Search for a symbol
-call_tool("gobby-code", "search_symbols", {
-    "query": "parse_config"
-})
-
-# MCP: Retrieve a specific symbol by ID
-call_tool("gobby-code", "get_symbol", {
-    "symbol_id": "a1b2c3d4-..."
-})
+```bash
+gcode search "task validation"
+gcode search-symbol "TaskValidator" --kind class
+gcode search-content "code_index_available" --path "src/**/*.py"
+gcode outline src/gobby/tasks/validation.py
+gcode symbol <symbol-id>
 ```
+
+Graph commands require the Gobby daemon. `callers`, `usages`, `imports`, and
+`blast-radius` read graph data through top-level commands; `gcode graph` is only
+for graph lifecycle operations:
+
+```bash
+gcode callers validate_task
+gcode imports src/gobby/tasks/validation.py
+gcode blast-radius validate_task --depth 3
+gcode graph rebuild
+```
+
+If `gcode` is missing, run `gobby install`. Gobby's daemon-side incremental
+trigger logs a warning and skips code indexing when the native binary is not
+installed.
 
 ## How It Works
 
-### Indexing Pipeline
-
-```
-Source files
-    ↓
-Language detection (extension → language)
-    ↓
-Security checks (path traversal, symlinks, secrets, binary, size)
-    ↓
-Tree-sitter parsing (AST → symbols, imports, calls)
-    ↓
-Storage layers:
-  ├→ SQLite (always) — symbol metadata, file hashes
-  ├→ Qdrant (optional) — semantic embeddings
-  ├→ Neo4j (optional) — call/import graph
-  └→ Claude Haiku (optional) — one-line summaries
+```mermaid
+flowchart TB
+    A[Source tree] --> B[gcode index]
+    B --> C[SQLite symbols, files, chunks]
+    C --> D[gcode search and outline commands]
+    C --> E[Daemon sync worker]
+    E --> F[Qdrant vectors]
+    E --> G[Neo4j graph]
+    E --> H[Symbol summaries]
+    G --> I[gcode callers, imports, blast-radius]
+    G --> J[/api/code-index/graph routes]
 ```
 
-### Incremental Re-Indexing
-
-Files are hashed with SHA-256. On each indexing pass, only files whose hash has changed are re-parsed. This makes re-indexing fast even on large codebases.
-
-### Graceful Degradation
-
-The code index works with SQLite alone and adds capabilities as optional backends become available:
-
-| Backend | Capability | Dependency |
-|---------|-----------|------------|
-| **SQLite** | Name search, symbol storage, file outlines | None (always available) |
-| **Qdrant** | Semantic search (find by description) | Qdrant instance |
-| **Neo4j** | Call graph, import graph, usage tracking | Neo4j instance |
-| **Claude Haiku** | One-sentence symbol summaries | LLM API key |
-
-## Tool Reference
-
-The `gobby-code` MCP server provides 15 tools across 5 sub-registries.
-
-### Indexing
-
-#### `list_indexed()`
-
-List all indexed projects with stats.
-
-**Returns:** `list[dict]` with `project_id`, `root_path`, `total_files`, `total_symbols`, `last_indexed_at`, `index_duration_ms`.
-
-#### `invalidate_index(project_id?)`
-
-Clear the index for a project, forcing a full re-index on the next run.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `project_id` | string | No | Defaults to current project |
-
-### Query
-
-#### `get_file_tree(project_id?)`
-
-File tree with symbol counts per file.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `project_id` | string | No | Defaults to current project |
-
-**Returns:** `list[dict]` with `file_path`, `language`, `symbol_count`, `byte_size`.
-
-#### `get_file_outline(file_path, project_id?)`
-
-Hierarchical symbol outline for a single file. Much cheaper than reading the full file.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `file_path` | string | Yes | Path to the file |
-| `project_id` | string | No | Defaults to current project |
-
-**Returns:** `dict` with `file_path`, `symbol_count`, and `symbols` array. Each symbol includes `id`, `name`, `qualified_name`, `kind`, `line_start`, `line_end`, `signature`, `docstring` (first 200 chars), `summary`, and `parent_id` (if nested).
-
-#### `get_symbol(symbol_id, project_id?)`
-
-Get full source code for a symbol by ID. O(1) retrieval via byte offsets.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `symbol_id` | string | Yes | Symbol UUID |
-| `project_id` | string | No | Defaults to current project |
-
-**Returns:** All symbol fields plus `source` (extracted from the file using byte offsets).
-
-#### `get_symbols(symbol_ids, project_id?)`
-
-Batch-retrieve multiple symbols by ID.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `symbol_ids` | list[string] | Yes | List of symbol UUIDs |
-| `project_id` | string | No | Defaults to current project |
-
-#### `search_symbols(query, project_id?, kind?, file_path?, limit?)`
-
-Hybrid search combining name matching, semantic similarity, and graph ranking via Reciprocal Rank Fusion.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `query` | string | Yes | Search query (name or description) |
-| `project_id` | string | No | Defaults to current project |
-| `kind` | string | No | Filter by symbol kind (function, class, method, etc.) |
-| `file_path` | string | No | Filter to a specific file |
-| `limit` | integer | No | Max results (default: 20) |
-
-**Returns:** `dict` with `results` (each including `_score` and `_sources`), `status` ("current" or "stale"), and optionally `stale_files` if the index is outdated.
-
-#### `search_text(query, project_id?, file_path?, limit?)`
-
-Full-text search across symbol names and signatures. SQLite-only, no semantic component.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `query` | string | Yes | Substring to search for |
-| `project_id` | string | No | Defaults to current project |
-| `file_path` | string | No | Filter to a specific file |
-| `limit` | integer | No | Max results (default: 20) |
-
-#### `search_content(query, project_id?, file_path?, limit?)`
-
-Full-text search across file content — comments, string literals, config values, JSX, imports, etc. Complements `search_symbols` (which searches symbol names) and `search_text` (which searches symbol signatures/docstrings).
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `query` | string | Yes | Text to search for |
-| `project_id` | string | No | Defaults to current project |
-| `file_path` | string | No | Filter to a specific file |
-| `limit` | integer | No | Max results (default: 20) |
-
-**Returns:** `list[dict]` with `file_path`, `line_start`, `line_end`, and `snippet` (highlighted match).
-
-### Graph
-
-These tools require Neo4j. They return an error dict if Neo4j is unavailable.
-
-#### `find_callers(symbol_name, project_id?, limit?)`
-
-Find symbols that call a given function or method.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `symbol_name` | string | Yes | Name of the function/method |
-| `project_id` | string | No | Defaults to current project |
-| `limit` | integer | No | Max results (default: 20) |
-
-**Returns:** `list[dict]` with `caller_id`, `caller_name`, `file`, `line`.
-
-#### `find_usages(symbol_name, project_id?, limit?)`
-
-Find all usages of a symbol (calls + imports).
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `symbol_name` | string | Yes | Name of the symbol |
-| `project_id` | string | No | Defaults to current project |
-| `limit` | integer | No | Max results (default: 20) |
-
-**Returns:** `list[dict]` with `source_id`, `source_name`, `rel_type`, `file`, `line`.
-
-### Impact Analysis
-
-#### `blast_radius(symbol_name?, file_path?, depth?, include_tasks?, project_id?)`
-
-Analyze the blast radius of changing a symbol or file. Walks the call/import graph transitively to find all affected code, then cross-references with task affected files. Provide exactly one of `symbol_name` or `file_path`.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `symbol_name` | string | No* | Symbol to analyze (provide this OR file_path) |
-| `file_path` | string | No* | File to analyze (provide this OR symbol_name) |
-| `depth` | integer | No | Max traversal depth (default: unlimited) |
-| `include_tasks` | boolean | No | Cross-reference with task affected files |
-| `project_id` | string | No | Defaults to current project |
-
-**Returns:** `dict` with affected symbols, files, and optionally related tasks.
-
-#### `get_imports(file_path, project_id?)`
-
-Get the import graph for a file.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `file_path` | string | Yes | Path to the file |
-| `project_id` | string | No | Defaults to current project |
-
-**Returns:** `list[dict]` with `module_name`.
-
-### Summary
-
-#### `get_summary(symbol_id)`
-
-Get an AI-generated one-sentence summary for a symbol. Cached after first generation.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `symbol_id` | string | Yes | Symbol UUID |
-
-**Returns:** `dict` with `symbol_id`, `name`, `summary`, `cached` (bool).
-
-#### `get_repo_outline(project_id?)`
-
-High-level project summary showing top-level directories and their symbol counts.
-
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `project_id` | string | No | Defaults to current project |
-
-**Returns:** `dict` with `project_id`, `root_path`, `total_files`, `total_symbols`, `last_indexed_at`, and `directories` (sorted by symbol count descending).
-
-## Search
-
-### Hybrid Ranking (RRF)
-
-`search_symbols` combines up to three ranked lists using Reciprocal Rank Fusion with K=60:
-
-```
-score = 1 / (60 + rank)
+`gcode index` owns parsing and writes symbols, indexed files, content chunks,
+imports, and call relationships to SQLite. The daemon owns integrations around
+that store: background maintenance, optional vector and graph sync, optional
+symbol summaries, HTTP graph routes, and session variables.
+
+Files are indexed incrementally by content hash. Changed files are re-parsed;
+unchanged files are skipped. The post-edit trigger ignores `.gobby/` internal
+edits, batches repo-relative file notifications by project root with a
+two-second debounce, and runs:
+
+```bash
+gcode index --files <changed-files> --quiet
 ```
 
-| Source | Backend | Always Available |
-|--------|---------|-----------------|
-| **Name search** | SQLite `LIKE` on `name` + `qualified_name` | Yes |
-| **Semantic search** | Qdrant vector similarity | Only with Qdrant |
-| **Graph boost** | Neo4j callers + usages | Only with Neo4j |
+The maintenance loop runs every `code_index.maintenance_interval_seconds`
+seconds. It replays `gcode index --project <root> --quiet` for each indexed
+project, purges projects whose root no longer exists, and fills missing symbol
+summaries when a summarizer is configured. A separate sync worker polls pending
+files and copies symbols to Qdrant vectors and Neo4j graph edges when those
+backends are enabled and available.
 
-Each result includes:
-- `_score`: Combined RRF score (rounded to 4 decimals)
-- `_sources`: List of sources that contributed (e.g., `["name", "semantic", "graph"]`)
+## CLI Reference
 
-## Languages
+All commands accept these global options unless noted:
 
-13 languages supported via tree-sitter:
+| Option | Description |
+| :--- | :--- |
+| `--project <PROJECT>` | Override project root detection |
+| `--format json\|text` | Select JSON or text output; JSON is the default |
+| `--quiet` | Suppress warnings |
+| `--verbose` | Enable verbose output |
+| `--no-freshness` | Skip read-time freshness checks |
 
-| Language | Extensions |
-|----------|-----------|
-| Python | `.py`, `.pyi` |
-| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
-| TypeScript | `.ts`, `.tsx` |
-| Go | `.go` |
-| Rust | `.rs` |
-| Java | `.java` |
-| PHP | `.php` |
-| Dart | `.dart` |
-| C# | `.cs` |
-| C | `.c`, `.h` |
-| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx`, `.hh` |
-| Elixir | `.ex`, `.exs` |
-| Ruby | `.rb`, `.rake`, `.gemspec` |
+### Index Lifecycle
 
-### Symbol Kinds Extracted
+| Command | Purpose |
+| :--- | :--- |
+| `gcode init` | Initialize `.gobby/gcode.json` project context |
+| `gcode index [PATH]` | Index a directory; defaults to the project root |
+| `gcode index --files <FILES>...` | Index only specific files |
+| `gcode index --full` | Force a full re-index |
+| `gcode status` | Show indexed file, symbol, and timing stats |
+| `gcode invalidate --force` | Clear index data so the next index is fresh |
+| `gcode projects` | List indexed projects |
+| `gcode prune` | Remove stale project entries |
 
-Functions, classes, methods, constants, types, imports, interfaces, enums, structs, traits, modules. The exact kinds depend on the language.
+### Search And Retrieval
 
-## Security
+| Command | Purpose |
+| :--- | :--- |
+| `gcode search <QUERY>` | Hybrid search: FTS5 plus optional semantic and graph boost |
+| `gcode search-symbol <QUERY>` | Exact-first symbol/name lookup |
+| `gcode search-text <QUERY>` | FTS5 search over symbol names, signatures, and docstrings |
+| `gcode search-content <QUERY>` | FTS5 search over file content chunks |
+| `gcode outline <FILE>` | Hierarchical symbol outline for one file |
+| `gcode symbol <ID>` | Fetch one symbol's source by byte offset |
+| `gcode symbols <IDS>...` | Fetch multiple symbols by ID |
+| `gcode kinds` | List indexed symbol kinds |
+| `gcode tree` | File tree with symbol counts |
+| `gcode repo-outline` | Directory-grouped project stats |
 
-The parser enforces multiple security checks before indexing any file:
+Search commands support `--limit`, `--offset`, `--language`, and `--path`.
+Symbol searches also support `--kind`.
 
-1. **Path traversal** — Resolved path must be within the project root
-2. **Symlink safety** — Symlink targets must resolve within the project root
-3. **Exclusion patterns** — Files matching configured patterns are skipped (e.g., `node_modules`, `.git`)
-4. **Secret detection** — Files with sensitive extensions (`.env`, `.pem`, `.key`, `.p12`, `.secret`) or names (`credentials`, `id_rsa`, `api_key`) are skipped
-5. **Size limit** — Files exceeding `max_file_size_bytes` (default 1MB) are skipped
-6. **Binary detection** — Files with null bytes in the first 8KB are skipped
+### Graph Queries
+
+These commands require the Gobby daemon and graph support:
+
+| Command | Purpose |
+| :--- | :--- |
+| `gcode callers <SYMBOL_NAME>` | Find callers of the symbol resolved from a query |
+| `gcode usages <SYMBOL_NAME>` | Find incoming call usages for the resolved symbol |
+| `gcode imports <FILE>` | Show import graph for one file |
+| `gcode blast-radius <TARGET>` | Trace transitive impact from a symbol query |
+| `gcode graph clear` | Clear the current project's graph projection |
+| `gcode graph rebuild` | Rebuild the graph projection from SQLite |
+
+`gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
+blast-radius` supports `--depth`; the HTTP blast-radius route has a `limit`
+query parameter, but the CLI command does not expose `--limit`.
+
+## Indexed Data
+
+The SQLite store tracks:
+
+| Data | Notes |
+| :--- | :--- |
+| Projects | Root path, total files, total symbols, indexed timestamp, duration |
+| Files | Path, language, content hash, symbol count, byte size, sync flags |
+| Symbols | Name, qualified name, kind, language, byte offsets, line range, signature, docstring, summary |
+| Imports | Source file to imported module |
+| Calls | Caller/callee relationships, including unresolved and external targets |
+| Content chunks | Searchable chunks for comments, strings, configs, docs, and other non-symbol text |
+
+Primary storage is always SQLite. Qdrant adds semantic search and Neo4j adds
+graph traversal when configured and available. Symbol summaries are cached in
+SQLite and invalidated when a symbol's content hash changes.
+
+## Languages And Content
+
+AST symbol extraction is configured for:
+
+| Family | Languages |
+| :--- | :--- |
+| Core app languages | Python, JavaScript, TypeScript, Go, Rust, Java |
+| Additional runtimes | PHP, Dart, C#, C, C++, Elixir, Ruby |
+| Structured docs/config | Markdown, YAML, JSON |
+
+Additional content-only extensions are indexed for text search, including
+`.html`, `.css`, `.scss`, `.less`, `.toml`, `.cfg`, `.ini`, shell scripts,
+`.sql`, `.graphql`, `.proto`, `.txt`, `.rst`, `.csv`, `.gitignore`, and
+`.editorconfig`.
 
 ## Configuration
 
-All fields in `CodeIndexConfig`:
+Configure indexing in `code_index`:
 
 ```yaml
 code_index:
-  enabled: true                           # Enable code indexing
-  auto_index_on_session_start: true       # Index when a session starts
-  auto_index_on_commit: true              # Re-index changed files on git commit
-  maintenance_interval_seconds: 300       # Background re-index interval (5 min)
-  max_file_size_bytes: 1000000            # Skip files larger than 1MB
-  exclude_patterns:                       # Glob patterns to skip
+  enabled: true
+  auto_index_on_commit: true
+  maintenance_interval_seconds: 300
+  max_file_size_bytes: 1000000
+  exclude_patterns:
     - node_modules
+    - .vite
     - .git
     - __pycache__
+    - .mypy_cache
+    - .ruff_cache
+    - .pytest_cache
+    - .tox
+    - .eggs
     - vendor
     - build
     - dist
     - .venv
-  embedding_enabled: true                 # Enable Qdrant semantic vectors
-  graph_enabled: true                     # Enable Neo4j call/import graph
-  summary_enabled: true                   # Enable AI-generated summaries
-  summary_provider: claude                # LLM provider for summaries
-  summary_model: haiku                    # Model (fast/cheap)
-  summary_batch_size: 50                  # Symbols per summary batch
-  qdrant_collection_prefix: code_symbols_ # Vector collection name prefix
-  languages:                              # Languages to index (all 13 by default)
+  embedding_enabled: true
+  graph_enabled: true
+  qdrant_collection_prefix: code_symbols_
+  summary_enabled: true
+  summary_provider: claude
+  summary_model: haiku
+  summary_batch_size: 20
+  sync_worker_interval_seconds: 5.0
+  sync_worker_batch_size: 50
+  languages:
     - python
     - javascript
     - typescript
-    # ... etc.
+    - go
+    - rust
+    - java
+    - php
+    - dart
+    - csharp
+    - c
+    - cpp
+    - elixir
+    - ruby
+    - markdown
+    - yaml
+    - json
+  content_extensions:
+    - .html
+    - .css
+    - .scss
+    - .less
+    - .toml
+    - .cfg
+    - .ini
+    - .sh
+    - .bash
+    - .zsh
+    - .fish
+    - .sql
+    - .graphql
+    - .proto
+    - .txt
+    - .rst
+    - .csv
+    - .gitignore
+    - .editorconfig
 ```
 
-## Rule Templates
-
-The `nudge-on-large-read` rule template is bundled in
-`src/gobby/install/shared/workflows/rules/code-index/`. It is disabled by
-default and must be installed and enabled via the rules engine.
-
-### `nudge-on-large-read`
-
-Injects a context hint after reading a large indexed file, suggesting `gobby-code` tools instead.
-
-- **Event:** `after_tool` (Read)
-- **Trigger:** Output > 10,000 characters and `code_index_available` is true
-- **Effect:** `inject_context` with tool suggestions (`get_file_outline`, `search_symbols`, `get_symbol`)
-
-## Auto-Indexing
-
-The code index runs automatically in three scenarios:
+## Daemon Integration
 
 ### Session Start
 
-When a session begins, `POST /api/code-index/session-start` triggers a full incremental index. If files are indexed, the session variable `code_index_available` is set to `true`, enabling rule templates.
+On session start, Gobby checks existing index stats. If the project has indexed
+symbols, the session variable `code_index_available` is set to `true`. Rules can
+then teach or enforce indexed navigation for that session.
 
-### Git Commit
+### Post-Edit Incremental Indexing
 
-After a git commit, `POST /api/code-index/incremental` re-indexes only the changed files. The request body includes the list of changed file paths.
+`CodeIndexTrigger` receives file-change notifications from post-tool hook
+handling, debounces them by root path, normalizes paths under the project root,
+and runs `gcode index --files ... --quiet` for the changed files from the root
+as the subprocess working directory. If `gcode` is not installed, the trigger
+logs a warning and skips the incremental update.
 
 ### Background Maintenance
 
-A background loop runs every `maintenance_interval_seconds` (default: 300s / 5 min), re-indexing any files whose content hash has changed since the last pass.
+The maintenance loop checks indexed projects on the configured interval and
+uses `gcode index --project <root> --quiet` for refresh. The sync worker can
+then update Qdrant vectors and Neo4j graph edges in batches. Summary generation
+runs from maintenance when `code_index.summary_enabled` is true and the daemon
+has an LLM service.
 
 ## HTTP Endpoints
 
-### `POST /api/code-index/incremental`
+The daemon exposes graph and invalidation routes under `/api/code-index`:
 
-Index specific changed files (called by git hooks).
+| Method | Route | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/api/code-index/graph` | File-level graph overview; query `project_id`, `limit` |
+| `GET` | `/api/code-index/graph/file/{file_path}` | Symbols and graph context for one file; query `project_id` |
+| `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | Symbol neighbors; query `project_id`, `limit` |
+| `GET` | `/api/code-index/graph/blast-radius` | Impact graph; query `project_id` and exactly one of `symbol_id` or `file_path`, plus `depth`, `limit` |
+| `GET` | `/api/code-index/graph/search` | Symbol search for graph UI; query `project_id`, `q`, `limit` |
+| `POST` | `/api/code-index/graph/clear` | Clear one project's graph projection and mark files pending graph sync; query `project_id` |
+| `POST` | `/api/code-index/graph/rebuild` | Rebuild one project's graph projection from indexed files; query `project_id`, `limit` |
+| `POST` | `/api/code-index/invalidate` | Clear all index data for a project; JSON body `{"project_id": "..."}` |
 
-**Request:**
-```json
-{
-  "files": ["src/app.py", "src/utils.py"],
-  "project_id": ""
-}
+All graph routes require `project_id`; missing values return `400`. The graph
+overview, file, symbol-neighbors, and blast-radius routes return `503` when the
+code graph is unavailable. Graph search, clear, rebuild, and invalidate return
+`503` when the daemon has no code indexer. Graph clear and rebuild return `400`
+when the indexer exists but the graph operation reports a failure. Blast-radius
+requests return `400` unless exactly one of `symbol_id` or `file_path` is
+provided. Invalidation returns `{"status": "ok", "note": "not indexed"}` when
+the project has no index record.
+
+## Rules
+
+Gobby includes a `require-code-index-skill` rule in the shared code-index
+ruleset. When active, it blocks first-pass code navigation reads and searches
+until the agent loads the `code-index` skill. The loaded guidance points agents
+to:
+
+```bash
+gcode outline path/to/file
+gcode search "query"
+gcode symbol <id>
 ```
 
-**Response:**
-```json
-{
-  "files_indexed": 2,
-  "symbols_found": 15,
-  "files_skipped": 0,
-  "duration_ms": 120
-}
-```
-
-### `POST /api/code-index/session-start`
-
-Full incremental index on session start.
-
-**Request:**
-```json
-{
-  "project_id": "abc-123",
-  "root_path": "/path/to/project",
-  "session_id": ""
-}
-```
-
-### `GET /api/code-index/status`
-
-Check indexing status.
-
-**Query parameter:** `project_id` (optional). Without it, returns all indexed projects.
-
-**Response:**
-```json
-{
-  "root_path": "/path/to/project",
-  "total_files": 142,
-  "total_symbols": 3580,
-  "last_indexed_at": "2026-03-06T10:00:00Z",
-  "index_duration_ms": 4200
-}
-```
+Rules are runtime state, not just template files. Check installed rule state in
+the rules engine before claiming a rule is disabled.
 
 ## Typical Workflow
 
-1. Session starts → auto-index runs → `code_index_available = true`
-2. Agent needs to understand a file → `get_file_outline("src/app.py")` instead of reading it
-3. Agent finds a symbol of interest → `get_symbol("a1b2c3d4-...")` for just that function's source
-4. Agent needs to find related code → `search_symbols("authentication handler")`
-5. Agent traces callers → `find_callers("validate_token")`
-
-This workflow reads only the symbols needed, saving 90%+ tokens compared to reading entire files.
+1. Run `gcode status` to confirm an index exists.
+2. Use `gcode search`, `gcode search-symbol`, or `gcode search-content` to find
+   the relevant code.
+3. Use `gcode outline <FILE>` before opening a large file.
+4. Use `gcode symbol <ID>` for the exact implementation when the outline points
+   to a specific function, class, or method.
+5. Use `gcode callers`, `gcode imports`, or `gcode blast-radius` when the change
+   could affect other files.
 
 ## See Also
 
-- [mcp-tools.md](mcp-tools.md) — Complete MCP tool reference
-- [search.md](search.md) — Unified search with TF-IDF and embeddings
-- [rules.md](rules.md) — Rule engine reference
-- [configuration.md](configuration.md) — Full configuration reference
+- [search.md](search.md) - Unified search with TF-IDF and embeddings
+- [rules.md](rules.md) - Rule engine reference
+- [configuration.md](configuration.md) - Full configuration reference
+- [http-endpoints.md](http-endpoints.md) - HTTP API reference
+
+_Last verified: 2026-05-07_

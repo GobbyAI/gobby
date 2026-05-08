@@ -10,7 +10,7 @@ rules:
       (
         (
           variables.get('_agent_type') == 'planner'
-          and not task_status_in(
+          and not task_state_in(
             variables.get('assigned_task_id'),
             'review_approved', 'escalated', 'closed'
           )

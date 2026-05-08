@@ -12,6 +12,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks._manager import LocalTaskManager
+from gobby.tasks.state_semantics import projected_task_state
 from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
 from gobby.workflows.pipeline_state import ExecutionStatus
 
@@ -206,21 +207,25 @@ def _create_in_progress_task(
     project_id: str = PROJECT_ID,
     assignee: str = "agent-dead",
 ) -> str:
-    """Create a task in in_progress status with an assignee."""
+    """Create a task with an in-progress current stage and an owner."""
     task = task_manager.create_task(
         title="Test stale task",
         task_type="task",
         project_id=project_id,
     )
-    task_manager.db.execute(
-        """
-        UPDATE tasks
-        SET status = 'in_progress',
-            lifecycle_stage = 'in_progress',
-            assignee = ?
-        WHERE id = ?
-        """,
-        (assignee, task.id),
+    task_manager.db.execute("UPDATE tasks SET assignee = ? WHERE id = ?", (assignee, task.id))
+    if task_manager.db.fetchone("SELECT 1 FROM sessions WHERE id = ?", (assignee,)):
+        task_manager.db.execute(
+            "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+            (assignee, task.id),
+        )
+    task_manager.initialize_task_manifest(task.id)
+    current_stage = task_manager.stage_states.current_stage(task.id)
+    assert current_stage is not None
+    task_manager.stage_states.start_stage(
+        task.id,
+        current_stage.stage_name,
+        by_session_id=None,
     )
     return task.id
 
@@ -232,7 +237,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     agent_run_manager: LocalAgentRunManager,
     temp_db: LocalDatabase,
 ) -> None:
-    """in_progress task with terminal agent run and no live agent → reset to open."""
+    """In-progress task with terminal agent run and no live agent moves back to ready."""
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager)
 
@@ -254,8 +259,9 @@ async def test_stale_task_with_terminal_agent_run_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "open"
+    assert projected_task_state(task) == "ready"
     assert task.assignee is None
+    assert task.claimed_by_session_id is None
 
 
 @pytest.mark.asyncio
@@ -265,7 +271,7 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
     agent_run_manager: LocalAgentRunManager,
     temp_db: LocalDatabase,
 ) -> None:
-    """in_progress task with linked commits but no live agent → needs_review."""
+    """In-progress task with linked commits but no live agent moves to review."""
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager)
 
@@ -295,8 +301,9 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "needs_review"
+    assert projected_task_state(task) == "needs_review"
     assert task.assignee is None
+    assert task.claimed_by_session_id is None
 
 
 @pytest.mark.asyncio
@@ -313,14 +320,21 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         project_id=PROJECT_ID,
     )
     task_manager.db.execute(
-        """
-        UPDATE tasks
-        SET status = 'needs_review',
-            lifecycle_stage = 'needs_review',
-            assignee = 'sess-does-not-exist'
-        WHERE id = ?
-        """,
-        (task.id,),
+        "UPDATE tasks SET assignee = ? WHERE id = ?",
+        ("sess-does-not-exist", task.id),
+    )
+    task_manager.initialize_task_manifest(task.id)
+    current_stage = task_manager.stage_states.current_stage(task.id)
+    assert current_stage is not None
+    task_manager.stage_states.start_stage(
+        task.id,
+        current_stage.stage_name,
+        by_session_id=None,
+    )
+    task_manager.stage_states.submit_for_review(
+        task.id,
+        current_stage.stage_name,
+        by_session_id=None,
     )
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
@@ -328,8 +342,9 @@ async def test_stale_review_task_releases_claim_without_status_regression(
 
     updated = task_manager.get_task(task.id)
     assert updated is not None
-    assert updated.status == "needs_review"
+    assert projected_task_state(updated) == "needs_review"
     assert updated.assignee is None
+    assert updated.claimed_by_session_id is None
 
 
 @pytest.mark.asyncio
@@ -357,7 +372,7 @@ async def test_task_with_active_agent_run_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "in_progress"
+    assert projected_task_state(task) == "in_progress"
 
 
 @pytest.mark.asyncio
@@ -388,7 +403,7 @@ async def test_interactive_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "in_progress"
+    assert projected_task_state(task) == "in_progress"
     assert task.assignee == SESSION_ID
 
 
@@ -398,7 +413,7 @@ async def test_expired_session_task_recovered(
     task_manager: LocalTaskManager,
     temp_db: LocalDatabase,
 ) -> None:
-    """in_progress task assigned to an expired session → reset to open."""
+    """In-progress task assigned to an expired session returns to ready."""
     _seed_db(temp_db)
     # Mark the session as expired (simulates SessionLivenessMonitor detecting dead PID)
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = ?", (SESSION_ID,))
@@ -409,8 +424,9 @@ async def test_expired_session_task_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "open"
+    assert projected_task_state(task) == "ready"
     assert task.assignee is None
+    assert task.claimed_by_session_id is None
 
 
 @pytest.mark.asyncio
@@ -419,7 +435,7 @@ async def test_paused_agent_session_task_recovered(
     task_manager: LocalTaskManager,
     temp_db: LocalDatabase,
 ) -> None:
-    """in_progress task assigned to a paused agent session (depth > 0) → reset to open."""
+    """In-progress task assigned to a paused agent session (depth > 0) returns to ready."""
     _seed_db(temp_db)
     # Mark session as paused with agent_depth > 0 (dead agent session)
     temp_db.execute(
@@ -432,8 +448,9 @@ async def test_paused_agent_session_task_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "open"
+    assert projected_task_state(task) == "ready"
     assert task.assignee is None
+    assert task.claimed_by_session_id is None
 
 
 @pytest.mark.asyncio
@@ -455,7 +472,7 @@ async def test_paused_interactive_session_task_not_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "in_progress"
+    assert projected_task_state(task) == "in_progress"
     assert task.assignee == SESSION_ID
 
 
@@ -465,7 +482,7 @@ async def test_nonexistent_session_task_recovered(
     task_manager: LocalTaskManager,
     temp_db: LocalDatabase,
 ) -> None:
-    """in_progress task assigned to unknown session → reset to open."""
+    """In-progress task assigned to unknown session returns to ready."""
     _seed_db(temp_db)
     task_id = _create_in_progress_task(task_manager, assignee="sess-does-not-exist")
 
@@ -474,5 +491,6 @@ async def test_nonexistent_session_task_recovered(
 
     task = task_manager.get_task(task_id)
     assert task is not None
-    assert task.status == "open"
+    assert projected_task_state(task) == "ready"
     assert task.assignee is None
+    assert task.claimed_by_session_id is None

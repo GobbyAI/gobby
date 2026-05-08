@@ -119,7 +119,8 @@ class TestHookResponseConverters:
         res = _response_to_pre_tool_output({"decision": "block", "reason": "No"})
         assert "hookSpecificOutput" in res
         assert res["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert res["reason"] == "No"
+        assert res["hookSpecificOutput"]["permissionDecisionReason"] == "No"
+        assert "reason" not in res
 
         # Block responses surface a denial reason, never a rewrite payload.
         res = _response_to_pre_tool_output(
@@ -135,7 +136,10 @@ class TestHookResponseConverters:
         )
         assert res["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "updatedInput" not in res["hookSpecificOutput"]
-        assert res["reason"].startswith("Rule enforced by Gobby: [require-uv]")
+        assert res["hookSpecificOutput"]["permissionDecisionReason"].startswith(
+            "Rule enforced by Gobby: [require-uv]"
+        )
+        assert "reason" not in res
 
         # Modified input
         res = _response_to_pre_tool_output(

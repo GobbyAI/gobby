@@ -411,13 +411,12 @@ class TestIsPortAvailable:
         # We can't guarantee this port is available, but it's likely
         assert isinstance(result, bool)
 
-    @pytest.mark.skip(reason="Flaky - SO_REUSEADDR allows rebind on some systems")
     def test_unavailable_port(self) -> None:
         """Test that an occupied port is not available."""
         # Bind to a port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("localhost", 0))
+        sock.listen(1)
         port = sock.getsockname()[1]
 
         try:
@@ -541,6 +540,8 @@ class TestKillAllGobbyDaemons:
                             result = kill_all_gobby_daemons()
                             assert result == 1
                             mock_proc.send_signal.assert_called_with(signal.SIGTERM)
+                            assert mock_proc.send_signal.call_count >= 1
+                            assert mock_proc.send_signal.call_args is not None
 
     def test_skips_cli_processes(self) -> None:
         """Test that CLI processes are not killed."""
@@ -558,6 +559,7 @@ class TestKillAllGobbyDaemons:
                         with patch("os.getppid", return_value=99998):
                             result = kill_all_gobby_daemons()
                             assert result == 0
+                            assert mock_proc.send_signal.call_count == 0
 
 
 # ==============================================================================
@@ -618,6 +620,8 @@ class TestStopDaemon:
                         result = stop_daemon(quiet=True)
                         assert result is True
                         mock_kill.assert_called_with(12345, signal.SIGTERM)
+                        assert mock_kill.call_count >= 1
+                        assert mock_kill.call_args is not None
 
     def test_force_kills_stubborn_process(self, temp_dir: Path) -> None:
         """Test force killing when process doesn't stop gracefully."""
@@ -664,6 +668,7 @@ class TestStopDaemon:
                     with patch("os.kill", side_effect=PermissionError()):
                         result = stop_daemon(quiet=True)
                         assert result is False
+                        assert pid_file.exists()
 
 
 # ==============================================================================
@@ -688,7 +693,11 @@ class TestInitLocalStorage:
                     mock_db_class.return_value = mock_db
                     init_local_storage()
                     mock_db_class.assert_called_once_with(db_path)
+                    assert mock_db_class.call_count == 1
+                    assert mock_db_class.call_args is not None
                     mock_migrations.assert_called_once_with(mock_db)
+                    assert mock_migrations.call_count == 1
+                    assert mock_migrations.call_args is not None
 
 
 # ==============================================================================

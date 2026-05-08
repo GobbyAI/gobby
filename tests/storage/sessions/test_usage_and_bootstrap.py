@@ -71,7 +71,11 @@ def test_ensure_system_session_logs_first_create_at_info(temp_db) -> None:
         ensure_system_session(temp_db)
 
     mock_logger.info.assert_called_once_with("Created system session %s", SYSTEM_SESSION_ID)
+    assert mock_logger.info.call_count == 1
+    assert mock_logger.info.call_args is not None
     mock_logger.warning.assert_not_called()
+    assert mock_logger.warning.call_count == 0
+    assert not mock_logger.warning.called
 
 
 def test_ensure_system_session_logs_recreation_at_warning(
@@ -93,6 +97,8 @@ def test_ensure_system_session_logs_recreation_at_warning(
         "Recreated missing system session %s",
         SYSTEM_SESSION_ID,
     )
+    assert mock_logger.warning.call_count == 1
+    assert mock_logger.warning.call_args is not None
 
 
 def test_bulk_update_wraps_safe_update_in_transaction(
@@ -107,6 +113,8 @@ def test_bulk_update_wraps_safe_update_in_transaction(
         session_manager.update(session_id, title="Updated title")
 
     txn.assert_called_once()
+    assert txn.call_count == 1
+    assert txn.call_args is not None
 
 
 def test_touch_wraps_write_in_transaction(
@@ -121,6 +129,8 @@ def test_touch_wraps_write_in_transaction(
         session_manager.touch(session_id)
 
     txn.assert_called_once()
+    assert txn.call_count == 1
+    assert txn.call_args is not None
 
 
 def test_update_summary_wraps_write_in_transaction(
@@ -135,3 +145,5 @@ def test_update_summary_wraps_write_in_transaction(
         session_manager.update_summary(session_id, summary_markdown="Summary")
 
     txn.assert_called_once()
+    assert txn.call_count == 1
+    assert txn.call_args is not None

@@ -147,9 +147,7 @@ class TestSafeSend:
 
         await host._stream_chat_response(ws, "conv-1", "test", None)
 
-        # WebSocket was disconnected — no messages should have been sent
-        # (DisconnectedWebSocket raises immediately)
-        # The important thing: no unhandled exception
+        assert ws in host.clients
 
     @pytest.mark.asyncio
     async def test_safe_send_skips_after_disconnect(self, host: ChatMixinHost) -> None:
@@ -202,8 +200,9 @@ class TestSafeSend:
         session.send_message = _fake_send_message
         host._chat_sessions["conv-3"] = session
 
-        # Should not raise despite websocket being disconnected
-        await host._stream_chat_response(ws, "conv-3", "test", None)
+        result = await host._stream_chat_response(ws, "conv-3", "test", None)
+        assert result is None
+        assert ws in host.clients
 
     @pytest.mark.asyncio
     async def test_startup_warmup_error_is_sent_to_client(self, host: ChatMixinHost) -> None:

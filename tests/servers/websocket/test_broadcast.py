@@ -5,8 +5,9 @@ Tests broadcast edge cases, subscription filtering, and event methods.
 
 from __future__ import annotations
 
+import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from websockets.exceptions import ConnectionClosed
@@ -23,12 +24,33 @@ class FakeBroadcaster(BroadcastMixin):
         self.clients: dict[Any, dict[str, Any]] = {}
 
 
-def _make_ws(subscriptions: set[str] | None = None) -> AsyncMock:
-    """Create a mock WebSocket with optional subscriptions."""
-    ws = AsyncMock()
-    ws.subscriptions = subscriptions
-    ws.send = AsyncMock()
-    return ws
+class FakeWebSocket:
+    """Minimal websocket fake that records serialized broadcast payloads."""
+
+    def __init__(
+        self,
+        subscriptions: set[str] | None = None,
+        *,
+        send_error: Exception | None = None,
+    ) -> None:
+        self.subscriptions = subscriptions
+        self.send_error = send_error
+        self.sent: list[str] = []
+
+    async def send(self, message: str) -> None:
+        if self.send_error is not None:
+            raise self.send_error
+        self.sent.append(message)
+
+
+def _make_ws(subscriptions: set[str] | None = None) -> FakeWebSocket:
+    """Create a fake WebSocket with optional subscriptions."""
+    return FakeWebSocket(subscriptions=subscriptions)
+
+
+def _sent_message(ws: FakeWebSocket) -> dict[str, Any]:
+    assert len(ws.sent) == 1
+    return json.loads(ws.sent[0])
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -125,8 +147,9 @@ class TestBroadcast:
     @pytest.mark.asyncio
     async def test_broadcast_empty_clients(self) -> None:
         b = FakeBroadcaster()
-        # Should not raise
-        await b.broadcast({"type": "test"})
+        result = await b.broadcast({"type": "test"})
+        assert result is None
+        assert b.clients == {}
 
     @pytest.mark.asyncio
     async def test_broadcast_sends_to_subscribed_clients(self) -> None:
@@ -135,7 +158,7 @@ class TestBroadcast:
         b.clients[ws] = {}
 
         await b.broadcast({"type": "test", "data": "hello"})
-        ws.send.assert_called_once()
+        assert _sent_message(ws) == {"type": "test", "data": "hello"}
 
     @pytest.mark.asyncio
     async def test_broadcast_skips_unsubscribed_clients(self) -> None:
@@ -144,27 +167,27 @@ class TestBroadcast:
         b.clients[ws] = {}
 
         await b.broadcast({"type": "agent_event", "data": "hello"})
-        ws.send.assert_not_called()
+        assert ws.sent == []
 
     @pytest.mark.asyncio
     async def test_broadcast_handles_connection_closed(self) -> None:
         b = FakeBroadcaster()
-        ws = _make_ws(subscriptions={"*"})
-        ws.send.side_effect = ConnectionClosed(None, None)
+        ws = FakeWebSocket(subscriptions={"*"}, send_error=ConnectionClosed(None, None))
         b.clients[ws] = {}
 
-        # Should not raise
-        await b.broadcast({"type": "test"})
+        result = await b.broadcast({"type": "test"})
+        assert result is None
+        assert ws in b.clients
 
     @pytest.mark.asyncio
     async def test_broadcast_handles_generic_exception(self) -> None:
         b = FakeBroadcaster()
-        ws = _make_ws(subscriptions={"*"})
-        ws.send.side_effect = RuntimeError("send failed")
+        ws = FakeWebSocket(subscriptions={"*"}, send_error=RuntimeError("send failed"))
         b.clients[ws] = {}
 
-        # Should not raise
-        await b.broadcast({"type": "test"})
+        result = await b.broadcast({"type": "test"})
+        assert result is None
+        assert ws in b.clients
 
     @pytest.mark.asyncio
     async def test_broadcast_multiple_clients(self) -> None:
@@ -177,9 +200,9 @@ class TestBroadcast:
         b.clients[ws3] = {}
 
         await b.broadcast({"type": "test"})
-        ws1.send.assert_called_once()
-        ws2.send.assert_called_once()
-        ws3.send.assert_not_called()
+        assert _sent_message(ws1) == {"type": "test"}
+        assert _sent_message(ws2) == {"type": "test"}
+        assert ws3.sent == []
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -197,10 +220,7 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_session_event("created", "sess-123", title="Test")
-        ws.send.assert_called_once()
-        import json
-
-        msg = json.loads(ws.send.call_args[0][0])
+        msg = _sent_message(ws)
         assert msg["type"] == "session_event"
         assert msg["event"] == "created"
         assert msg["session_id"] == "sess-123"
@@ -214,12 +234,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_pipeline_event("step_completed", "pe-123", step_id="s1")
-        ws.send.assert_called_once()
-        import json
-
-        msg = json.loads(ws.send.call_args[0][0])
+        msg = _sent_message(ws)
         assert msg["type"] == "pipeline_event"
         assert msg["execution_id"] == "pe-123"
+        assert msg["step_id"] == "s1"
 
     @pytest.mark.asyncio
     async def test_broadcast_agent_event(self) -> None:
@@ -228,7 +246,11 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_agent_event("spawned", "run-1", "parent-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "agent_event"
+        assert msg["event"] == "spawned"
+        assert msg["run_id"] == "run-1"
+        assert msg["parent_session_id"] == "parent-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_terminal_output(self) -> None:
@@ -237,7 +259,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_terminal_output("run-1", "hello world")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "terminal_output"
+        assert msg["run_id"] == "run-1"
+        assert msg["data"] == "hello world"
 
     @pytest.mark.asyncio
     async def test_broadcast_tmux_session_event(self) -> None:
@@ -246,7 +271,11 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_tmux_session_event("created", "my-session", "gobby")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "tmux_session_event"
+        assert msg["event"] == "created"
+        assert msg["session_name"] == "my-session"
+        assert msg["socket"] == "gobby"
 
     @pytest.mark.asyncio
     async def test_broadcast_agent_message(self) -> None:
@@ -255,7 +284,12 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_agent_message("message_sent", "from-1", "to-2", content="hi")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "agent_message"
+        assert msg["event"] == "message_sent"
+        assert msg["from_session"] == "from-1"
+        assert msg["to_session"] == "to-2"
+        assert msg["content"] == "hi"
 
     @pytest.mark.asyncio
     async def test_broadcast_agent_command(self) -> None:
@@ -264,7 +298,11 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_agent_command("command_sent", "from-1", "to-2")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "agent_command"
+        assert msg["event"] == "command_sent"
+        assert msg["from_session"] == "from-1"
+        assert msg["to_session"] == "to-2"
 
     @pytest.mark.asyncio
     async def test_broadcast_trace_event(self) -> None:
@@ -273,7 +311,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_trace_event({"trace_id": "t-1", "name": "test"})
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "trace_event"
+        assert msg["trace_id"] == "t-1"
+        assert msg["span"] == {"trace_id": "t-1", "name": "test"}
 
     @pytest.mark.asyncio
     async def test_broadcast_skill_event(self) -> None:
@@ -282,7 +323,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_skill_event("created", "skill-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "skill_event"
+        assert msg["event"] == "created"
+        assert msg["skill_id"] == "skill-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_mcp_event(self) -> None:
@@ -291,7 +335,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_mcp_event("added", "my-server")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "mcp_event"
+        assert msg["event"] == "added"
+        assert msg["server_name"] == "my-server"
 
     @pytest.mark.asyncio
     async def test_broadcast_workflow_event(self) -> None:
@@ -300,7 +347,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_workflow_event("updated", "def-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "workflow_event"
+        assert msg["event"] == "updated"
+        assert msg["definition_id"] == "def-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_project_event(self) -> None:
@@ -309,7 +359,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_project_event("updated", "proj-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "project_event"
+        assert msg["event"] == "updated"
+        assert msg["project_id"] == "proj-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_cron_event(self) -> None:
@@ -318,7 +371,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_cron_event("created", "job-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "cron_event"
+        assert msg["event"] == "created"
+        assert msg["job_id"] == "job-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_worktree_event(self) -> None:
@@ -327,7 +383,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_worktree_event("created", "wt-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "worktree_event"
+        assert msg["event"] == "created"
+        assert msg["worktree_id"] == "wt-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_autonomous_event(self) -> None:
@@ -336,7 +395,10 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_autonomous_event("started", "sess-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "autonomous_event"
+        assert msg["event"] == "started"
+        assert msg["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_canvas_event(self) -> None:
@@ -345,7 +407,11 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_canvas_event("updated", "canvas-1", "conv-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "canvas_event"
+        assert msg["event"] == "updated"
+        assert msg["canvas_id"] == "canvas-1"
+        assert msg["conversation_id"] == "conv-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_artifact_event(self) -> None:
@@ -354,7 +420,11 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_artifact_event("created", "conv-1", artifact_id="a-1")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "artifact_event"
+        assert msg["event"] == "created"
+        assert msg["conversation_id"] == "conv-1"
+        assert msg["artifact_id"] == "a-1"
 
     @pytest.mark.asyncio
     async def test_broadcast_task_event(self) -> None:
@@ -363,4 +433,8 @@ class TestBroadcastEventMethods:
         b.clients[ws] = {}
 
         await b.broadcast_task_event("created", "task-1", title="New task")
-        ws.send.assert_called_once()
+        msg = _sent_message(ws)
+        assert msg["type"] == "task_event"
+        assert msg["event"] == "created"
+        assert msg["task_id"] == "task-1"
+        assert msg["title"] == "New task"

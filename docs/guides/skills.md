@@ -1,373 +1,345 @@
 # Skills Guide
 
-This guide covers how to create, manage, and use skills in Gobby. Skills follow the [Agent Skills specification](https://agentskills.io) and are compatible with SkillPort.
+This guide covers how to create, install, discover, and load skills in Gobby
+0.4.0. Skills follow the [Agent Skills specification](https://agentskills.io)
+with Gobby-specific metadata for routing and context-aware injection.
 
-## Overview
+## What a Skill Is
 
-Skills are reusable instructions that teach AI agents how to perform specific tasks. They're stored as `SKILL.md` files and can be:
+A skill is a reusable instruction bundle stored as a `SKILL.md` file. Gobby
+stores installed skills in its database, keeps bundled skills synced from the
+install tree, and exposes skills through both CLI commands and the
+`gobby-skills` MCP server.
 
-- **Core skills**: Bundled with Gobby, always available
-- **Project skills**: Stored in `.gobby/skills/` for project-specific workflows
-- **User skills**: Stored in `~/.gobby/skills/` for personal preferences
-- **Installed skills**: Downloaded from GitHub or other sources
+Gobby uses these scopes:
 
-## SKILL.md File Format
+| Scope | How it is created | What it means |
+|-------|-------------------|---------------|
+| Bundled | Synced from `src/gobby/install/shared/skills/` | Ships with Gobby and is restored on bundled-content sync |
+| Installed | `gobby skills install <source>` or `install_skill(project_scoped=false)` | Available globally in the local Gobby database |
+| Project | `gobby skills install --project <source>` or `install_skill(project_scoped=true)` | Available for one project and preferred over a global skill with the same name |
 
-Skills use Markdown with YAML frontmatter:
+`gobby skills init` creates `.gobby/skills/` and a local config file for
+project skill authoring. Installing a skill persists it through the daemon and
+marks it as either installed or project-scoped.
+
+## SKILL.md Format
+
+Every skill needs YAML frontmatter followed by Markdown instructions:
 
 ```markdown
 ---
 name: commit-message
 description: Generate conventional commit messages following project conventions
+version: "1.0.0"
 license: MIT
 compatibility: Requires git CLI
+allowed-tools: Bash(git:*)
 metadata:
-  author: your-name
-  version: "1.0.0"
   skillport:
     category: git
     tags: [git, commits, conventions]
     alwaysApply: false
   gobby:
-    triggers: ["/commit"]
-allowed-tools: Bash(git:*)
+    triggers: [commit, git commit]
+    audience: all
+    task_categories: [code]
+    format_overrides:
+      autonomous: full
 ---
 
 # Commit Message Generator
 
-Instructions for the AI agent go here...
-
-## Format
-
-Use conventional commits format:
-- `feat:` new feature
-- `fix:` bug fix
-- `docs:` documentation only
-- `refactor:` code refactoring
+Use conventional commit format:
+- `feat:` for new behavior
+- `fix:` for bug fixes
+- `docs:` for documentation-only changes
 ```
-
-## Frontmatter Fields
 
 ### Required Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Unique skill identifier (kebab-case) |
-| `description` | string | Brief description for discovery and matching |
+| Field | Type | Notes |
+|-------|------|-------|
+| `name` | string | Lowercase letters, digits, and hyphens; starts with a letter |
+| `description` | string | Discovery text shown in lists and search results |
 
 ### Optional Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `license` | string | License identifier (MIT, Apache-2.0, etc.) |
-| `compatibility` | string | Notes on requirements or limitations |
-| `allowed-tools` | string/list | Tool patterns the skill may use |
-| `internal` | boolean | Methodology skill loaded by other skills; hidden from listings by default. See _internal field (details)_ below. |
-| `metadata` | object | Nested metadata namespaces |
+| Field | Type | Notes |
+|-------|------|-------|
+| `version` | string | Top-level or `metadata.version`; normalized to a string |
+| `license` | string | License identifier |
+| `compatibility` | string | Requirements or limitations |
+| `allowed-tools` | string/list | Tool patterns associated with the skill |
+| `alwaysApply` | boolean | Legacy top-level auto-injection flag |
+| `injectionFormat` | string | Skill default format: `summary`, `full`, or `content` |
+| `category` | string | Top-level category; also supported under `metadata.skillport.category` |
+| `internal` | boolean | Hide from generic discovery by default |
+| `triggers` | string/list | Top-level trigger phrases, split on commas when a string |
+| `metadata` | object | Namespaced extension data |
 
-#### internal field (details)
+The parser also accepts `allowed_tools` as an alias for `allowed-tools`.
 
-A skill flagged `internal: true` is a shared methodology consumed by other skills rather than a user-facing command (e.g. a drafting, review, or setup helper loaded into a workflow).
+## Metadata
 
-- **Discovery surfaces**: `list_skills` and `search_skills` hide internal skills by default. Pass `include_internal: true` to surface them.
-- **Direct resolution**: `get_skill(name=...)` always returns the skill regardless of the `internal` flag — skills that load other skills do not need to pass `include_internal`.
-- **Orthogonal to `metadata.gobby.audience`**: `internal` controls default visibility in generic discovery tools; `audience` narrows the intended caller (interactive vs autonomous vs all). Use `internal` when the skill is a building block for other skills, not when you just want to restrict which surfaces load it.
+### `metadata.skillport`
 
-### Metadata Namespaces
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `category` | string | none | Used for CLI and MCP category filtering |
+| `tags` | list | `[]` | Used by search and generated docs |
+| `alwaysApply` | boolean | `false` | Legacy auto-injection flag when no audience config is present |
 
-The `metadata` field contains namespaced data for different systems:
+Top-level `alwaysApply` and `category` take precedence over nested
+`metadata.skillport` values.
 
-#### `metadata.skillport` (SkillPort compatibility)
+### `metadata.gobby`
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `category` | string | - | Skill category for filtering |
-| `tags` | list | `[]` | Tags for search and discovery |
-| `alwaysApply` | boolean | `false` | Auto-inject at session start |
+Gobby reads this namespace for context-aware skill selection:
 
-#### `metadata.gobby` (Gobby-specific)
+| Field | Type | Notes |
+|-------|------|-------|
+| `audience` | string | `all`, `interactive`, `autonomous`, or a workflow-specific agent type |
+| `depth` | int/list/string | Exact depth, list of depths, or range such as `"0-2"` |
+| `steps` | list | Workflow step names where the skill applies |
+| `task_categories` | list | Task categories such as `code`, `docs`, or `research` |
+| `sources` | list/string | Session sources where the skill applies |
+| `format_overrides` | object | Per-audience format override |
+| `priority` | int | Lower values inject earlier |
+| `internal` | boolean | Alternate location for the internal-skill flag |
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `triggers` | list | `[]` | Slash commands that invoke this skill |
-| `project_scope` | string | - | Limit to specific project patterns |
-| `workflow_binding` | string | - | Bind to workflow step |
+When `metadata.gobby` contains audience keys, Gobby uses context-aware matching.
+When it does not, Gobby falls back to the legacy `alwaysApply` behavior.
 
-#### `metadata.author` / `metadata.version`
+## Internal Skills
 
-Top-level metadata for authorship:
+Use `internal: true` for shared methodology skills that are loaded by other
+skills rather than chosen directly by a user.
 
-```yaml
-metadata:
-  author: anthropic
-  version: "1.2.0"
-```
+- `list_skills` and `search_skills` hide internal skills by default.
+- Pass `include_internal: true` to include them.
+- `get_skill(name=...)` can load an internal skill directly.
+- `internal` controls generic discovery; `metadata.gobby.audience` controls
+  which session contexts should receive a skill.
 
 ## Directory Structure
 
-### Minimal Skill (single file)
+### Minimal Skill
 
-```
-skills/
-└── my-skill/
-    └── SKILL.md
-```
-
-### Full Skill Structure
-
-```
-skills/
-└── my-skill/
-    ├── SKILL.md          # Required: main skill file
-    ├── scripts/          # Optional: executable scripts
-    │   └── setup.sh
-    ├── references/       # Optional: reference materials
-    │   ├── api-docs.md
-    │   └── examples.md
-    └── assets/           # Optional: images, templates
-        └── template.json
+```text
+my-skill/
+└── SKILL.md
 ```
 
-### Core Skills Location
+### Multi-File Skill
 
-Gobby's built-in skills are in:
-
-```
-src/gobby/install/shared/skills/
-├── gobby-tasks/
-│   └── SKILL.md
-├── gobby-sessions/
-│   └── SKILL.md
-├── gobby-memory/
-│   └── SKILL.md
-├── gobby-mcp/
-│   └── SKILL.md
-└── ...
+```text
+my-skill/
+├── SKILL.md
+├── scripts/
+│   └── setup.sh
+├── references/
+│   └── api.md
+└── assets/
+    └── template.json
 ```
 
-### User and Project Skills
-
-| Location | Scope | Priority |
-|----------|-------|----------|
-| `~/.gobby/skills/` | User-global | Low |
-| `.gobby/skills/` | Project-specific | High |
-| `.claude/skills/` | Claude Code compatible | Medium |
-
-Project skills override user skills with the same name.
-
-## Examples
-
-### Simple Documentation Skill
-
-```markdown
----
-name: api-docs
-description: Document REST API endpoints following OpenAPI conventions
-metadata:
-  skillport:
-    category: documentation
-    tags: [api, openapi, rest]
----
-
-# API Documentation Guidelines
-
-When documenting API endpoints:
-
-1. Use OpenAPI 3.0 format
-2. Include request/response examples
-3. Document error codes
-4. Add authentication requirements
-```
-
-### Core Skill (Always Applied)
-
-```markdown
----
-name: code-review
-description: Review code for bugs, security issues, and best practices
-metadata:
-  skillport:
-    category: review
-    tags: [code-review, quality]
-    alwaysApply: true
----
-
-# Code Review Standards
-
-Always check for:
-- Security vulnerabilities (OWASP Top 10)
-- Error handling completeness
-- Test coverage
-- Documentation
-```
-
-### Skill with Triggers
-
-```markdown
----
-name: test-runner
-description: Run tests with coverage and reporting
-metadata:
-  gobby:
-    triggers: ["/test", "/coverage"]
-  skillport:
-    category: testing
-    tags: [testing, pytest, coverage]
-allowed-tools: Bash(pytest:*, coverage:*)
----
-
-# Test Runner
-
-## Usage
-
-Invoke with `/test` or `/coverage`.
-
-## Commands
-
-- Full test suite: `pytest tests/ -v`
-- With coverage: `pytest --cov=src --cov-report=html`
-```
-
-### Skill with References
-
-```markdown
----
-name: database-migrations
-description: Manage SQLite database schema migrations
-metadata:
-  skillport:
-    category: database
-    tags: [sqlite, migrations]
-references:
-  - docs/migration-guide.md
-  - examples/migrations/
----
-
-# Database Migrations
-
-See the referenced migration guide for detailed instructions.
-```
+Gobby stores text files from `scripts/`, `references/`, `reference/`, and
+`assets/` as skill files. License files are classified separately, and common
+binary formats are skipped.
 
 ## CLI Commands
 
-```bash
-# List all skills
-gobby skills list
+These commands are implemented by `src/gobby/cli/skills.py`.
 
-# List with JSON output (for CI)
+```bash
+# List installed skills
+gobby skills list
+gobby skills list --category documentation --tags docs,api --enabled --limit 20
 gobby skills list --json
 
 # Show skill details
-gobby skills show commit-message
+gobby skills show tech-writer
+gobby skills show tech-writer --json
 
-# Create new skill
-gobby skills new my-skill
-
-# Initialize skill in current directory
+# Create local authoring files
 gobby skills init
+gobby skills new my-skill --description "Explain project release steps"
 
-# Install from GitHub
-gobby skills install github:user/repo/path/to/skill
+# Validate a skill file or directory
+gobby skills validate ./my-skill
+gobby skills validate ./my-skill/SKILL.md --json
 
-# Install from local path
-gobby skills install /path/to/skill-dir
+# Install through the daemon
+gobby skills install ./my-skill
+gobby skills install --project ./my-skill
+gobby skills install github:owner/repo/path/to/skill
+gobby skills install clawdhub:commit-message
 
-# Update installed skill
+# Search hubs and manage hub config
+gobby skills search "code review"
+gobby skills search "code review" --hub skillsmp --limit 10 --json
+gobby skills hub list
+gobby skills hub add company-skills --type github --repo myorg/skills
+
+# Manage installed skills
 gobby skills update my-skill
-
-# Remove skill
+gobby skills update --all
 gobby skills remove my-skill
-
-# Validate skill format
-gobby skills validate /path/to/SKILL.md
-
-# Generate documentation
-gobby skills doc my-skill
-
-# Get/set metadata
-gobby skills meta get my-skill version
-gobby skills meta set my-skill version "2.0.0"
-gobby skills meta unset my-skill custom-field
-
-# Enable/disable skill
 gobby skills enable my-skill
 gobby skills disable my-skill
+
+# Metadata and generated docs
+gobby skills meta get my-skill skillport.category
+gobby skills meta set my-skill skillport.category docs
+gobby skills meta unset my-skill skillport.tags
+gobby skills doc --format markdown
+gobby skills doc --format json --output skills.json
 ```
+
+Commands that install, update, remove, search hubs, or list hubs call the
+daemon-backed `gobby-skills` MCP server. Local listing, showing, metadata
+editing, enabling, disabling, scaffolding, validation, and doc generation read
+or write the local database and filesystem directly.
 
 ## MCP Tools
 
-The `gobby-skills` server provides programmatic access:
+Use progressive discovery before calling a skill tool:
+
+1. `list_mcp_servers`
+2. `list_tools(server_name="gobby-skills")`
+3. `get_tool_schema(server_name="gobby-skills", tool_name="...")`
+4. `call_tool(server_name="gobby-skills", tool_name="...", arguments={...})`
+
+Current `gobby-skills` tools:
+
+| Tool | Purpose |
+|------|---------|
+| `list_skills` | Lightweight installed/project skill metadata |
+| `get_skill` | Full skill content and file metadata |
+| `get_skill_file` | One stored file from a multi-file skill |
+| `search_skills` | Search installed/project skills |
+| `install_skill` | Install from local path, GitHub reference, ZIP, or hub reference |
+| `update_skill` | Refresh an installed skill from its source |
+| `remove_skill` | Soft-delete a skill |
+| `restore_skill` | Restore a soft-deleted skill |
+| `move_skill_to_project` | Move an installed skill into project scope |
+| `move_skill_to_installed` | Move a project skill back to installed scope |
+| `list_hubs` | List configured skill hubs |
+| `search_hub` | Search all hubs or one named hub |
+
+Common calls:
 
 ```python
-# List all skills
-mcp__gobby__call_tool(
+call_tool(
     server_name="gobby-skills",
     tool_name="list_skills",
-    arguments={"category": "git"}
+    arguments={"limit": 50, "include_internal": False},
 )
 
-# Get skill details
-mcp__gobby__call_tool(
-    server_name="gobby-skills",
-    tool_name="get_skill",
-    arguments={"name": "commit-message"}
-)
-
-# Search skills by query
-mcp__gobby__call_tool(
+call_tool(
     server_name="gobby-skills",
     tool_name="search_skills",
-    arguments={"query": "testing coverage", "limit": 5}
+    arguments={"query": "documentation", "top_k": 5, "include_internal": True},
 )
 
-# Install skill
-mcp__gobby__call_tool(
+call_tool(
+    server_name="gobby-skills",
+    tool_name="get_skill",
+    arguments={"name": "tech-writer"},
+)
+
+call_tool(
     server_name="gobby-skills",
     tool_name="install_skill",
-    arguments={"source": "github:user/repo/skills/my-skill"}
+    arguments={"source": "skillsmp:code-review", "project_scoped": True},
+)
+
+call_tool(
+    server_name="gobby-skills",
+    tool_name="search_hub",
+    arguments={"query": "testing", "hub_name": "skillsmp", "limit": 10},
 )
 ```
+
+`list_skills` accepts `category`, `enabled`, `limit`, `session_id`, and
+`include_internal`. `search_skills` accepts `query`, `category`, `tags_any`,
+`tags_all`, `top_k`, `session_id`, and `include_internal`.
+
+## Skill Hubs
+
+Gobby 0.4.0 configures these hub types by default:
+
+| Hub | Type |
+|-----|------|
+| `anthropic-skills` | `github-collection` |
+| `claude-plugins` | `claude-plugins` |
+| `clawdhub` | `clawdhub` |
+| `skillsmp` | `skillsmp` |
+
+Hub references use `hub:slug` syntax, for example
+`gobby skills install skillsmp:code-review`. GitHub references can use
+`owner/repo`, `owner/repo#branch`, `github:owner/repo`, or
+`https://github.com/owner/repo/tree/branch/path/to/skill`.
 
 ## Skill Injection
 
-### Core Skills (alwaysApply)
+Skill injection is selected by `src/gobby/skills/injector.py`.
 
-Skills with `metadata.skillport.alwaysApply: true` are automatically injected at session start. The injection format is configurable:
+Selection order:
+
+1. Agent skill profiles can include or exclude explicit skill names.
+2. Skills with `metadata.gobby` audience config are matched against agent type,
+   depth, workflow step, task category, and session source.
+3. Skills without audience config use legacy `alwaysApply`.
+
+Format resolution order:
+
+1. Agent profile `default_format`
+2. `metadata.gobby.format_overrides[agent_type]`
+3. Skill `injectionFormat`
+
+The global skills config supports:
 
 ```yaml
-# In ~/.gobby/config.yaml
 skills:
   inject_core_skills: true
-  injection_format: summary  # summary, full, or none
+  injection_format: summary
 ```
 
-### Task-Based Recommendations
+Rules that load or advertise skills should use semantic lifecycle events such
+as `turn_start` and `turn_end`. Raw provider hook names are runtime details.
 
-When using `suggest_next_task`, Gobby recommends relevant skills based on task category:
+## Behavioral Skill Validation
 
-| Task Category | Recommended Skills |
-|---------------|-------------------|
-| `code` | gobby-tasks, gobby-expand, gobby-worktrees |
-| `test` | gobby-tasks, gobby-expand |
-| `docs` | gobby-tasks, gobby-plan |
-| `config` | gobby-tasks, gobby-mcp |
-| `refactor` | gobby-tasks, gobby-expand, gobby-worktrees |
-| `planning` | gobby-tasks, gobby-plan, gobby-expand |
-| `research` | gobby-tasks, gobby-memory |
+Bundled skills that materially change agent behavior should have a pressure
+scenario under `tests/skills/scenarios/<skill-name>/`. Each scenario records a
+run with the skill excluded and a run with the skill loaded, then asserts the
+behavioral delta.
+
+Run focused skill scenarios with:
+
+```bash
+GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/ -m skill_tdd
+```
 
 ## Best Practices
 
-1. **Keep skills focused**: One skill, one purpose
-2. **Write clear descriptions**: Help discovery and matching
-3. **Use appropriate categories**: Aid filtering and organization
-4. **Add tags**: Improve search results
-5. **Include examples**: Show expected behavior
-6. **Document requirements**: Note dependencies in `compatibility`
-7. **Version your skills**: Track changes with `metadata.version`
+1. Keep each skill focused on one repeatable task.
+2. Write the description for discovery; it is the text agents see first.
+3. Use `internal: true` for helper methodology that should stay out of generic
+   lists.
+4. Use `metadata.gobby` audience fields for context-specific injection.
+5. Put long references in `references/` and load them only when needed.
+6. Validate skill files before installing or publishing them.
+7. Install project-specific behavior with `--project` so it does not affect
+   unrelated projects.
 
 ## See Also
 
 - [Agent Skills Specification](https://agentskills.io)
-- [SkillPort](https://github.com/gotalab/skillport) - Compatible skill format
-- [Rules Guide](./rules.md) - Integrate skills with rules
-- [MCP Tools Guide](./mcp-tools.md) - Full MCP tool reference
+- [Rules Guide](./rules.md)
+- [MCP Tools Guide](./mcp-tools.md)
+- [Variables Guide](./variables.md)
+
+_Last verified: 2026-05-07_

@@ -1,9 +1,5 @@
 import { useState, useEffect } from 'react'
 
-// =============================================================================
-// Types
-// =============================================================================
-
 interface MCPServer {
   name: string
   state: string
@@ -24,19 +20,35 @@ interface CapabilityItem {
   detail?: string
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
+const STATE_CLS = 'py-2 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const ROOT_CLS = 'flex flex-col gap-[0.6rem]'
+const SUMMARY_CLS = 'flex items-center gap-[0.35rem] py-[0.3rem]'
+const SUMMARY_COUNT_CLS =
+  'font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-semibold text-[var(--text-primary)]'
+const SUMMARY_LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const GROUP_CLS = 'flex flex-col gap-1'
+const GROUP_LABEL_CLS =
+  'text-[length:calc(var(--font-size-base)*0.7)] font-semibold uppercase tracking-[0.04em] text-[var(--text-muted)]'
+const GROUP_ITEMS_CLS = 'flex flex-wrap gap-[0.3rem]'
+const ITEM_CLS =
+  'inline-flex items-center gap-1 rounded-full border px-[0.45rem] py-[0.15rem] text-[length:calc(var(--font-size-base)*0.7)]'
+const ITEM_ACTIVE_CLS =
+  'border-[color-mix(in_srgb,var(--color-success-foreground)_25%,transparent)] bg-[color-mix(in_srgb,var(--color-success-foreground)_8%,transparent)] text-[var(--text-primary)]'
+const ITEM_INACTIVE_CLS =
+  'border-[var(--border)] bg-[color-mix(in_srgb,var(--text-muted)_6%,transparent)] text-[var(--text-muted)] opacity-70'
+const ITEM_DOT_CLS = 'h-1.5 w-1.5 shrink-0 rounded-full'
+const ITEM_DOT_ACTIVE_CLS = 'bg-[var(--color-success-foreground)]'
+const ITEM_DOT_INACTIVE_CLS = 'bg-[var(--text-muted)]'
+const ITEM_NAME_CLS = 'font-medium'
+const ITEM_DETAIL_CLS = 'text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
 
 function getBaseUrl(): string {
   return ''
 }
 
-/** Categorize MCP servers into capability groups. */
 function categorizeServers(servers: MCPServer[]): CapabilityGroup[] {
   const groups: CapabilityGroup[] = []
 
-  // Task management
   const taskServer = servers.find(s => s.name === 'gobby-tasks')
   const workflowServer = servers.find(s => s.name === 'gobby-workflows')
   groups.push({
@@ -47,7 +59,6 @@ function categorizeServers(servers: MCPServer[]): CapabilityGroup[] {
     ],
   })
 
-  // Memory & Knowledge
   const memoryServer = servers.find(s => s.name === 'gobby-memory')
   const skillsServer = servers.find(s => s.name === 'gobby-skills')
   groups.push({
@@ -58,7 +69,6 @@ function categorizeServers(servers: MCPServer[]): CapabilityGroup[] {
     ],
   })
 
-  // Code & Git
   const worktreeServer = servers.find(s => s.name === 'gobby-worktrees')
   const cloneServer = servers.find(s => s.name === 'gobby-clones')
   const mergeServer = servers.find(s => s.name === 'gobby-merge')
@@ -73,7 +83,6 @@ function categorizeServers(servers: MCPServer[]): CapabilityGroup[] {
     ],
   })
 
-  // Agent Orchestration
   const agentServer = servers.find(s => s.name === 'gobby-agents')
   const orchestration = servers.find(s => s.name === 'gobby-orchestration')
   const pipelines = servers.find(s => s.name === 'gobby-pipelines')
@@ -86,7 +95,6 @@ function categorizeServers(servers: MCPServer[]): CapabilityGroup[] {
     ],
   })
 
-  // External services
   const external = servers.filter(
     s => !s.name.startsWith('gobby-') && s.name !== 'github'
   )
@@ -103,10 +111,6 @@ function categorizeServers(servers: MCPServer[]): CapabilityGroup[] {
 
   return groups
 }
-
-// =============================================================================
-// CapabilityScope
-// =============================================================================
 
 interface CapabilityScopeProps {
   sessionId?: string
@@ -147,37 +151,33 @@ export function CapabilityScope({ sessionId: _sessionId }: CapabilityScopeProps)
     return () => { cancelled = true; controller.abort() }
   }, [])
 
-  if (isLoading) return <div className="capability-loading">Loading capabilities...</div>
-  if (error) return <div className="capability-empty">{error}</div>
-  if (servers.length === 0) return <div className="capability-empty">No capability data</div>
+  if (isLoading) return <div className={STATE_CLS}>Loading capabilities...</div>
+  if (error) return <div className={STATE_CLS}>{error}</div>
+  if (servers.length === 0) return <div className={STATE_CLS}>No capability data</div>
 
   const groups = categorizeServers(servers)
   const totalAvailable = servers.filter(s => s.available).length
   const totalServers = servers.length
 
   return (
-    <div className="capability-scope">
-      {/* Summary bar */}
-      <div className="capability-summary">
-        <span className="capability-summary-count">{totalAvailable}/{totalServers}</span>
-        <span className="capability-summary-label">servers available</span>
+    <div className={ROOT_CLS}>
+      <div className={SUMMARY_CLS}>
+        <span className={SUMMARY_COUNT_CLS}>{totalAvailable}/{totalServers}</span>
+        <span className={SUMMARY_LABEL_CLS}>servers available</span>
       </div>
 
-      {/* Capability groups */}
       {groups.map(group => (
-        <div key={group.label} className="capability-group">
-          <div className="capability-group-label">{group.label}</div>
-          <div className="capability-group-items">
+        <div key={group.label} className={GROUP_CLS}>
+          <div className={GROUP_LABEL_CLS}>{group.label}</div>
+          <div className={GROUP_ITEMS_CLS}>
             {group.items.map(item => (
               <div
                 key={item.name}
-                className={`capability-item ${item.available ? 'capability-item--active' : 'capability-item--inactive'}`}
+                className={`${ITEM_CLS} ${item.available ? ITEM_ACTIVE_CLS : ITEM_INACTIVE_CLS}`}
               >
-                <span className="capability-item-dot" />
-                <span className="capability-item-name">{item.name}</span>
-                {item.detail && (
-                  <span className="capability-item-detail">{item.detail}</span>
-                )}
+                <span className={`${ITEM_DOT_CLS} ${item.available ? ITEM_DOT_ACTIVE_CLS : ITEM_DOT_INACTIVE_CLS}`} />
+                <span className={ITEM_NAME_CLS}>{item.name}</span>
+                {item.detail && <span className={ITEM_DETAIL_CLS}>{item.detail}</span>}
               </div>
             ))}
           </div>
