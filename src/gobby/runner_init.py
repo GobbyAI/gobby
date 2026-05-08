@@ -921,6 +921,7 @@ def init_servers(runner: GobbyRunner) -> None:
         test_mode=runner.config.test_mode,
         codex_client=codex_client,
     )
+    # Intentional GobbyRunner <-> HTTPServer back-reference for HTTP shutdown/restart.
     runner.http_server._runner = runner
 
     # Ensure message_processor property is set (redundant but explicit):

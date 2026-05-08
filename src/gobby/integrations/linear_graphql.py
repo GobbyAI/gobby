@@ -53,14 +53,14 @@ class LinearGraphQLClient:
         }
         payload = {"query": query, "variables": variables or {}}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response: httpx.Response | None = None
             for attempt in range(_MAX_ATTEMPTS):
                 try:
                     response = await client.post(self.endpoint, headers=headers, json=payload)
                 except (httpx.TransportError, httpx.TimeoutException) as exc:
                     if _is_final_attempt(attempt):
                         raise LinearGraphQLError(
-                            "Linear GraphQL request failed after 3 attempts due to a "
-                            "network error."
+                            "Linear GraphQL request failed after 3 attempts due to a network error."
                         ) from exc
                     await asyncio.sleep(_retry_delay(attempt))
                     continue
@@ -75,19 +75,22 @@ class LinearGraphQLClient:
                     continue
 
                 break
-        response.raise_for_status()
-        body = response.json()
-        errors = body.get("errors")
-        if errors:
-            messages = [
-                str(error.get("message", error)) if isinstance(error, dict) else str(error)
-                for error in errors
-            ]
-            raise LinearGraphQLError("; ".join(messages))
-        data = body.get("data")
-        if not isinstance(data, dict):
-            raise LinearGraphQLError("Linear GraphQL response did not include data.")
-        return cast(dict[str, Any], data)
+
+            if response is None:
+                raise LinearGraphQLError("Linear GraphQL request did not produce a response.")
+            response.raise_for_status()
+            body = response.json()
+            errors = body.get("errors")
+            if errors:
+                messages = [
+                    str(error.get("message", error)) if isinstance(error, dict) else str(error)
+                    for error in errors
+                ]
+                raise LinearGraphQLError("; ".join(messages))
+            data = body.get("data")
+            if not isinstance(data, dict):
+                raise LinearGraphQLError("Linear GraphQL response did not include data.")
+            return cast(dict[str, Any], data)
 
     async def list_teams(self) -> list[dict[str, Any]]:
         data = await self.execute(

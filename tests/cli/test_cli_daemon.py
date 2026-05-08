@@ -636,7 +636,11 @@ class TestStopCommand:
         result = runner.invoke(cli, ["stop"])
 
         assert result.exit_code == 0
-        mock_stop_daemon.assert_called_once_with(quiet=False)
+        mock_stop_daemon.assert_called_once_with(
+            quiet=False,
+            shutdown_intent="stop",
+            shutdown_source="cli_stop",
+        )
         assert mock_stop_daemon.call_count == 1
         assert mock_stop_daemon.call_args is not None
 
@@ -657,7 +661,11 @@ class TestStopCommand:
         result = runner.invoke(cli, ["stop"])
 
         assert result.exit_code == 1
-        mock_stop_daemon.assert_called_once_with(quiet=False)
+        mock_stop_daemon.assert_called_once_with(
+            quiet=False,
+            shutdown_intent="stop",
+            shutdown_source="cli_stop",
+        )
         assert mock_stop_daemon.call_count == 1
         assert mock_stop_daemon.call_args is not None
 

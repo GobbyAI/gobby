@@ -13,8 +13,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
+
 from gobby.integrations.linear import LinearIntegration
-from gobby.integrations.linear_graphql import LinearGraphQLClient
+from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed, is_task_escalated
 from gobby.utils.project_init import update_project_json_fields
 
@@ -721,7 +723,7 @@ class LinearSyncService:
                     team_id=effective_team_id,
                     project_id=self._get_linear_project_id(),
                 )
-            except Exception as graphql_error:
+            except (LinearGraphQLError, httpx.HTTPError) as graphql_error:
                 logger.error(f"Failed to fetch Linear issues: {graphql_error}")
                 stats["errors"] = len(rows)
                 return stats

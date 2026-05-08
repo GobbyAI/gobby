@@ -82,6 +82,24 @@ class TestIsNeo4jHealthy:
             assert await is_neo4j_healthy("http://localhost:8474") is False
 
     @pytest.mark.asyncio
+    async def test_server_error_logs_debug_without_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(return_value=httpx.Response(500))
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_neo4j_healthy("http://localhost:8474") is False
+
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Neo4j health check failed: http://localhost:8474 returned 500"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_unhealthy_when_no_url(self) -> None:
         assert await is_neo4j_healthy(None) is False
 
@@ -90,12 +108,18 @@ class TestIsNeo4jHealthy:
         self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        caplog.set_level(logging.WARNING, logger="gobby.cli.services")
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
 
         with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
             assert await is_neo4j_healthy("http://localhost:8474") is False
 
-        assert "Neo4j health check failed" not in caplog.text
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Neo4j health check failed: http://localhost:8474 unreachable: refused"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
 
 
 class TestIsQdrantHealthy:
@@ -106,12 +130,36 @@ class TestIsQdrantHealthy:
         self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_async_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        caplog.set_level(logging.WARNING, logger="gobby.cli.services")
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
 
         with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
             assert await is_qdrant_healthy("http://localhost:6333") is False
 
-        assert "Qdrant health check failed" not in caplog.text
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Qdrant health check failed: http://localhost:6333/healthz unreachable: refused"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_non_200_response_logs_debug_without_warning(
+        self, mock_async_client: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_async_client.get = AsyncMock(return_value=httpx.Response(503))
+        caplog.set_level(logging.DEBUG, logger="gobby.cli.services")
+
+        with patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client):
+            assert await is_qdrant_healthy("http://localhost:6333") is False
+
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Qdrant health check failed: http://localhost:6333/healthz returned 503"
+            in record.getMessage()
+            for record in caplog.records
+        )
+        assert not any(record.levelno >= logging.WARNING for record in caplog.records)
 
 
 class TestGetNeo4jStatus:

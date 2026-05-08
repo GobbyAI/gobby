@@ -407,6 +407,26 @@ class TestLinearSyncServiceSync:
         sync_service._update_synced_at.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_sync_all_does_not_update_cursor_when_push_has_errors(
+        self, sync_service: LinearSyncService
+    ) -> None:
+        """sync_all preserves the cursor when Linear push fails."""
+        sync_service.pull_linear_updates = AsyncMock(
+            return_value={"updated": 1, "skipped": 0, "errors": 0}
+        )
+        sync_service.push_dirty_tasks = AsyncMock(
+            return_value={"pushed": 0, "skipped": 0, "errors": 1}
+        )
+        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
+        sync_service._update_synced_at = MagicMock()
+
+        result = await sync_service.sync_all(team_id="team-123")
+
+        assert result["cursor_updated"] is False
+        assert result["synced_at"] == "old-cursor"
+        sync_service._update_synced_at.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_sync_all_updates_cursor_when_pull_and_push_succeed(
         self, sync_service: LinearSyncService
     ) -> None:

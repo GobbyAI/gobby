@@ -691,6 +691,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
     expect(counters.currentMessageFetches).toBeGreaterThanOrEqual(2);
     expect(counters.otherMessageFetches).toBe(0);
     expect(counters.otherSessionDetailFetches).toBe(0);
+    expect(counters.taskLinkedSessionDetailFetches).toBe(1);
   });
 
   test("stale terminal restore state fails clear instead of restoring the wrong main chat", async ({

@@ -47,8 +47,11 @@ uv run gobby import prompt --from-project /path/to/project
 Use the Configuration page for browser editing:
 
 ```text
-http://localhost:60889/#configuration
+http://localhost:<ui_port>/#configuration
 ```
+
+`ui_port` defaults to `60889` and is configurable. Check config/bootstrap output or
+daemon startup logs for the active value.
 
 ## Precedence And Scope
 

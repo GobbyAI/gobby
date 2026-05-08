@@ -51,6 +51,13 @@ function installedAgent(name: string) {
   }
 }
 
+function deletedAgent(name: string) {
+  return {
+    ...installedAgent(name),
+    deleted_at: '2026-05-01T00:00:00Z',
+  }
+}
+
 describe('AgentsTab card actions', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -145,5 +152,56 @@ describe('AgentsTab card actions', () => {
       '/api/agents/definitions',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  it('allows duplicate save when the matching name is soft-deleted', async () => {
+    const fetchStub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/agents/definitions')) {
+        if (init?.method === 'POST') {
+          return Response.json({ status: 'success' })
+        }
+        return Response.json({
+          status: 'success',
+          definitions: [installedAgent('source-agent'), deletedAgent('existing-agent')],
+        })
+      }
+      if (url.includes('/api/source-control/branches')) {
+        return Response.json({ branches: [] })
+      }
+      if (url.includes('/api/source-control/status')) {
+        return Response.json({ repo_path: null })
+      }
+      if (url.includes('/api/workflows')) {
+        return Response.json({ workflows: [] })
+      }
+      return Response.json({ status: 'success', method: init?.method })
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    render(
+      <AgentsTab
+        searchText=""
+        sourceFilter="installed"
+        devMode={false}
+        showCreateForm={false}
+        onToggleCreateForm={() => {}}
+        filterProvider="all"
+        onProvidersChange={() => {}}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByText('source-agent')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate agent' }))
+    fireEvent.change(screen.getByLabelText('New name'), { target: { value: 'existing-agent' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate' }))
+
+    await waitFor(() => {
+      expect(fetchStub).toHaveBeenCalledWith(
+        '/api/agents/definitions',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(screen.queryByText('Agent "existing-agent" already exists')).not.toBeInTheDocument()
   })
 })

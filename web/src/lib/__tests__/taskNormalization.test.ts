@@ -73,7 +73,9 @@ describe('normalizeStageRow display_name fallback', () => {
     expect(task.current_stage?.name).toBe('development')
     expect(task.stages.map(stage => stage.name)).toEqual(['development'])
   })
+})
 
+describe('parseReviewerAgentSelector', () => {
   it('parses reviewer agent selector JSON for future stage registry callers', () => {
     expect(
       parseReviewerAgentSelector(

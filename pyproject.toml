@@ -99,6 +99,8 @@ override-dependencies = [
     "torch>=2.8.0",
     # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts voice extra)
     "diffusers>=0.38.0",
+    # Temporary chatterbox-tts==0.1.7 override; move to safetensors>=0.8.0 or remove
+    # this once stable 0.8.0 is published.
     "safetensors>=0.8.0rc0",
 ]
 

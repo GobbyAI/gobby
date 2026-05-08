@@ -100,6 +100,7 @@ def test_set_toml_value_raises_when_descending_through_scalar() -> None:
 def test_codex_hook_trust_hash_matches_codex_discovery() -> None:
     from gobby.cli.installers.codex import _normalized_codex_command_hook_hash
 
+    # Codex canonicalizes the event name plus command-hook payload before SHA-256 hashing.
     hook = {"type": "command", "command": "python3 /tmp/user.py"}
 
     assert (

@@ -407,7 +407,9 @@ export function AgentsTab({
     if (!duplicateAgent) return
     const name = duplicateName.trim()
     if (!name) return
-    if (definitions.some(definition => definition.definition.name === name)) {
+    if (
+      definitions.some(definition => !definition.deleted_at && definition.definition.name === name)
+    ) {
       showToast(`Agent "${name}" already exists`, 'error')
       return
     }

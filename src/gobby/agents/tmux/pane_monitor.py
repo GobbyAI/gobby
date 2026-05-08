@@ -117,8 +117,20 @@ class TmuxPaneMonitor:
         mgr = TmuxSessionManager(self._config)
         try:
             live_sessions = await mgr.list_sessions()
-        except TimeoutError:
-            logger.debug("TmuxPaneMonitor: timed out listing tmux sessions")
+        except TimeoutError as exc:
+            logger.debug(
+                "TmuxPaneMonitor: timed out listing tmux sessions",
+                extra={
+                    "tmux_command": self._config.command,
+                    "tmux_subcommand": "list-sessions",
+                    "socket_name": self._config.socket_name,
+                    "socket_path": self._config.socket_path,
+                    "config_file": self._config.config_file,
+                    "timeout_seconds": 10.0,
+                    "poll_interval_seconds": self._poll_interval,
+                    "error": str(exc),
+                },
+            )
             return
         except Exception:
             logger.warning("TmuxPaneMonitor: failed to list tmux sessions", exc_info=True)

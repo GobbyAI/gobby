@@ -95,10 +95,10 @@ def write_shutdown_intent(
         "sender_pid": sender_pid or os.getpid(),
         "timestamp": time.time(),
     }
-    marker.write_text(json.dumps(data))
+    marker.write_text(json.dumps(data), encoding="utf-8")
     active_marker = get_active_shutdown_marker_path(home)
     try:
-        active_marker.write_text(json.dumps(data))
+        active_marker.write_text(json.dumps(data), encoding="utf-8")
     except OSError:
         pass
 
@@ -134,10 +134,11 @@ def read_shutdown_intent(
             )
 
         try:
-            data = json.loads(marker.read_text())
+            data = json.loads(marker.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise TypeError("shutdown marker must be a JSON object")
         finally:
+            # Always consume malformed markers when requested so future SIGTERM handling is clean.
             if consume:
                 marker.unlink(missing_ok=True)
 
