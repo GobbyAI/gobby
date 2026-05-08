@@ -42,7 +42,13 @@ logger = logging.getLogger(__name__)
 
 
 class SupportsTaskDecomposition(Protocol):
-    def create_task_with_decomposition(self, **kwargs: Any) -> dict[str, Any]: ...
+    def create_task_with_decomposition(
+        self,
+        *,
+        project_id: str,
+        title: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]: ...
 
 
 # Helper to get current project context

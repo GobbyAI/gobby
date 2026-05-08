@@ -16,8 +16,29 @@ vi.mock('../../../hooks/useStagesRegistry', () => ({
 }))
 
 import { TasksPage } from '../TasksPage'
+import type { GobbyTask } from '../../../hooks/useTasks'
+import type { CanonicalTaskState } from '../../../lib/taskState'
 
-function baseTask() {
+function makeState(overrides: Partial<CanonicalTaskState> = {}): CanonicalTaskState {
+  return {
+    owner_session_id: null,
+    current_stage: null,
+    is_claimed: false,
+    is_closed: false,
+    is_escalated: false,
+    is_blocked: false,
+    is_merge_ready: false,
+    closed_at: null,
+    closed_reason: null,
+    closed_in_session_id: null,
+    closed_commit_sha: null,
+    escalated_at: null,
+    escalation_reason: null,
+    ...overrides,
+  }
+}
+
+function baseTask(): GobbyTask {
   return {
     id: 'task-1',
     ref: '#1',
@@ -31,13 +52,15 @@ function baseTask() {
     seq_num: 1,
     path_cache: '1',
     requires_user_review: false,
-    state: null as { owner_session_id: string | null } | null,
+    state: null,
     assignee: null,
-    agent_name: null as string | null,
+    agent_name: null,
     sequence_order: null,
     start_date: null,
     due_date: null,
     project_id: 'proj-1',
+    current_stage: null,
+    stages: [],
   }
 }
 
@@ -116,7 +139,7 @@ describe('TasksPage lifecycle board integration', () => {
         ref: '#1',
         title: 'First task',
         agent_name: 'Reviewer',
-        state: { owner_session_id: ownerA },
+        state: makeState({ owner_session_id: ownerA }),
       },
       {
         ...baseTask(),
@@ -125,7 +148,7 @@ describe('TasksPage lifecycle board integration', () => {
         seq_num: 2,
         title: 'Second task',
         agent_name: 'Reviewer',
-        state: { owner_session_id: ownerB },
+        state: makeState({ owner_session_id: ownerB }),
       },
     ]))
 

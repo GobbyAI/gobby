@@ -397,7 +397,10 @@ def _parse_retry_after(value: str | None) -> float | None:
 def _bounded_retry_after_delay(delay: float) -> float:
     capped_delay = min(delay, _MAX_RETRY_DELAY_SECONDS)
     jitter_max = min(capped_delay * _RETRY_AFTER_JITTER_FRACTION, _MAX_RETRY_AFTER_JITTER_SECONDS)
-    return min(_MAX_RETRY_DELAY_SECONDS, capped_delay + random.uniform(0.0, jitter_max))
+    return min(
+        _MAX_RETRY_DELAY_SECONDS,
+        capped_delay + random.uniform(0.0, jitter_max),  # nosec B311  retry jitter, not security-sensitive
+    )
 
 
 def _status_error(response: httpx.Response) -> httpx.HTTPStatusError:
