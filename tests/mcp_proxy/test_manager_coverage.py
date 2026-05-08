@@ -1608,6 +1608,49 @@ class TestMCPClientManagerMonitorHealth:
         assert "Health check failed for test-server" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_monitor_health_debugs_repeated_unhealthy_failure_with_context(self, caplog):
+        """Repeated unhealthy health failures are logged at debug with context."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config], health_check_interval=0.01)
+        mock_connection = AsyncMock()
+        mock_connection.is_connected = True
+        mock_connection.health_check.return_value = False
+        manager._connections["test-server"] = mock_connection
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTED,
+            health=HealthState.UNHEALTHY,
+            consecutive_failures=5,
+        )
+        manager._running = True
+        caplog.set_level("DEBUG", logger="gobby.mcp.manager")
+
+        async def one_interval(_delay: float) -> None:
+            manager._running = False
+
+        with (
+            patch("gobby.mcp_proxy.manager.asyncio.sleep", side_effect=one_interval),
+            patch.object(manager, "_reconnect", new_callable=AsyncMock),
+        ):
+            await manager._monitor_health()
+
+        debug_records = [
+            record
+            for record in caplog.records
+            if record.levelname == "DEBUG"
+            and record.message == "Health check failed for test-server"
+        ]
+        assert debug_records
+        assert debug_records[0].server_name == "test-server"
+        assert debug_records[0].previous_health == HealthState.UNHEALTHY.value
+        assert debug_records[0].consecutive_failures == 6
+
+    @pytest.mark.asyncio
     async def test_monitor_health_continues_when_no_connections(self):
         """Test _monitor_health continues loop when no connected servers."""
         manager = MCPClientManager(

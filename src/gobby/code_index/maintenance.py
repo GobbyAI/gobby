@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SUMMARY_DB_WRITE_CONCURRENCY = 4
+
 
 async def code_index_maintenance_loop(
     context: CodeIndexContext,
@@ -173,12 +175,7 @@ async def _summarize_unsummarized(
 
     results = await summarizer.summarize_batch(symbols, read_source)
 
-    await asyncio.gather(
-        *(
-            asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
-            for symbol_id, summary in results.items()
-        )
-    )
+    await _update_symbol_summaries(context, results)
 
     if results:
         logger.info(
@@ -189,6 +186,24 @@ async def _summarize_unsummarized(
 
 def _read_symbol_sources(root: Path, symbols: list[Any]) -> dict[str, str | None]:
     return {symbol.id: _read_symbol_source(root, symbol) for symbol in symbols}
+
+
+async def _update_symbol_summaries(
+    context: CodeIndexContext,
+    results: dict[str, str],
+    *,
+    concurrency: int = _SUMMARY_DB_WRITE_CONCURRENCY,
+) -> None:
+    """Persist generated summaries with bounded DB write concurrency."""
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def update_one(symbol_id: str, summary: str) -> None:
+        async with semaphore:
+            await asyncio.to_thread(context.storage.update_symbol_summary, symbol_id, summary)
+
+    await asyncio.gather(
+        *(update_one(symbol_id, summary) for symbol_id, summary in results.items())
+    )
 
 
 def _read_symbol_source(root: Path, symbol: Any) -> str | None:

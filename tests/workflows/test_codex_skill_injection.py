@@ -259,6 +259,34 @@ async def test_synthesized_event_not_skipped_when_skill_legacy_injected(
     )
 
 
+def test_synthesized_event_requires_non_empty_external_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tool_event = ParsedToolEvent(
+        phase="begin",
+        call_id="call_missing_external",
+        server="gobby",
+        tool="get_tool_schema",
+        arguments={"server_name": "gobby-tasks", "tool_name": "create_task"},
+        timestamp=datetime.now(UTC),
+        raw_json={},
+    )
+    caplog.set_level("WARNING", logger="gobby.sessions.processor")
+
+    hook_event = SessionMessageProcessor._build_codex_hook_event(
+        {
+            "external_id": "",
+            "machine_id": "machine-xyz",
+            "project_id": "project-abc",
+            "platform_session_id": "platform-sid",
+        },
+        tool_event,
+    )
+
+    assert hook_event is None
+    assert "without external_id" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_synthesized_event_for_unrelated_server_does_not_fire(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager

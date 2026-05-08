@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.code_index.maintenance import _run_maintenance
+from gobby.code_index.maintenance import _run_maintenance, _update_symbol_summaries
 from gobby.code_index.models import IndexedProject
 
 pytestmark = pytest.mark.unit
@@ -53,3 +55,29 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     graph.clear_project.assert_awaited_once_with("proj-missing")
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-missing")
     create_proc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_summary_updates_are_concurrency_limited() -> None:
+    """Summary DB writes stay bounded even when a batch contains many updates."""
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def update_symbol_summary(_symbol_id: str, _summary: str) -> None:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.01)
+        finally:
+            with lock:
+                active -= 1
+
+    context = SimpleNamespace(storage=SimpleNamespace(update_symbol_summary=update_symbol_summary))
+    results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
+
+    await _update_symbol_summaries(context, results)
+
+    assert max_active <= 4

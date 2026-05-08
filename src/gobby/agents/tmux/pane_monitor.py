@@ -15,7 +15,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 
@@ -126,7 +126,7 @@ class TmuxPaneMonitor:
                     "socket_name": self._config.socket_name,
                     "socket_path": self._config.socket_path,
                     "config_file": self._config.config_file,
-                    "timeout_seconds": 10.0,
+                    "timeout_seconds": TMUX_COMMAND_TIMEOUT_SECONDS,
                     "poll_interval_seconds": self._poll_interval,
                     "error": str(exc),
                 },

@@ -858,11 +858,32 @@ class MCPClientManager:
                     if isinstance(result, Exception) or result is False:
                         previous_health = self.health[name].health
                         self.health[name].record_failure("Health check failed")
+                        failure_context = {
+                            "server_name": name,
+                            "previous_health": previous_health.value,
+                            "current_health": self.health[name].health.value,
+                            "consecutive_failures": self.health[name].consecutive_failures,
+                            "last_error": self.health[name].last_error,
+                        }
                         if self.health[name].health == HealthState.UNHEALTHY:
                             if previous_health != HealthState.UNHEALTHY:
-                                logger.warning(f"Health check failed for {name}")
+                                logger.warning(
+                                    "Health check failed for %s; server is unhealthy",
+                                    name,
+                                    extra=failure_context,
+                                )
+                            else:
+                                logger.debug(
+                                    "Health check failed for %s",
+                                    name,
+                                    extra=failure_context,
+                                )
                         else:
-                            logger.debug(f"Health check failed for {name}")
+                            logger.debug(
+                                "Health check failed for %s",
+                                name,
+                                extra=failure_context,
+                            )
 
                         # Trigger reconnect if critical
                         if self.health[name].health == HealthState.UNHEALTHY:

@@ -27,6 +27,7 @@ TERMINAL_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = (
 
 
 def _positive_rowcount(cursor: Any) -> int:
+    """Return cursor.rowcount when it is a positive int, otherwise zero."""
     rowcount = getattr(cursor, "rowcount", 0)
     return rowcount if isinstance(rowcount, int) and rowcount > 0 else 0
 

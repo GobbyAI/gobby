@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 _MISSING_SESSION_ERRORS = ("can't find session", "no such session")
+TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass
@@ -102,7 +103,7 @@ class TmuxSessionManager:
     async def _run(
         self,
         *tmux_args: str,
-        timeout: float = 10.0,
+        timeout: float = TMUX_COMMAND_TIMEOUT_SECONDS,
     ) -> tuple[int, str, str]:
         """Run a tmux subcommand and return (returncode, stdout, stderr)."""
         cmd = [*self._base_args(), *tmux_args]

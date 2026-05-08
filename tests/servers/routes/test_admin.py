@@ -10,6 +10,19 @@ from gobby.shutdown_intent import ShutdownIntent
 pytestmark = pytest.mark.unit
 
 
+class RunnerShutdownStub:
+    def __init__(self) -> None:
+        self._shutdown_requested = False
+        self._shutdown_intent: ShutdownIntent | None = None
+        self.request_shutdown_calls: list[ShutdownIntent | None] = []
+
+    def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
+        self.request_shutdown_calls.append(intent)
+        if intent is not None:
+            self._shutdown_intent = intent
+        self._shutdown_requested = True
+
+
 class TestAdminRoutes:
     @pytest.fixture(autouse=True)
     def reset_restart_state(self):
@@ -55,9 +68,7 @@ class TestAdminRoutes:
         server.memory_manager._neo4j_client = None
 
         server._background_tasks = set()
-        server._runner = MagicMock()
-        server._runner._shutdown_requested = False
-        server._runner._shutdown_intent = None
+        server._runner = RunnerShutdownStub()
 
         # Shutdown support
         server._process_shutdown = AsyncMock()
@@ -181,6 +192,7 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_shutdown", intent="stop")
         assert mock_server._runner._shutdown_requested is True
         assert mock_server._runner._shutdown_intent is ShutdownIntent.STOP
+        assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.STOP]
 
         # Verify shutdown was initiated
         # Note: TestClient runs synchronous, but create_task might loop issues.
@@ -223,6 +235,7 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
         assert mock_server._runner._shutdown_requested is True
         assert mock_server._runner._shutdown_intent is ShutdownIntent.RESTART
+        assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.RESTART]
 
         mock_server._process_shutdown.assert_called()
 
@@ -263,6 +276,7 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
         assert mock_server._runner._shutdown_requested is True
         assert mock_server._runner._shutdown_intent is ShutdownIntent.RESTART
+        assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.RESTART]
 
         mock_server._process_shutdown.assert_called()
 

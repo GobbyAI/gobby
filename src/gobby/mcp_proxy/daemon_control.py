@@ -5,12 +5,15 @@ import logging
 import os
 import signal
 import sys
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import psutil
 
 logger = logging.getLogger("gobby.daemon.control")
+
+DaemonShutdownIntent = Literal["stop", "restart"]
+DaemonShutdownSource = Literal["mcp_stop", "mcp_restart"]
 
 
 async def check_daemon_http_health(port: int, timeout: float = 5.0) -> bool:
@@ -145,8 +148,8 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
 async def stop_daemon_process(
     pid: int | None = None,
     *,
-    shutdown_intent: str = "stop",
-    shutdown_source: str = "mcp_stop",
+    shutdown_intent: DaemonShutdownIntent = "stop",
+    shutdown_source: DaemonShutdownSource = "mcp_stop",
 ) -> dict[str, Any]:
     """Stop running daemon."""
     # SAFETY: never SIGTERM the production daemon during tests. Mirrors the

@@ -7,12 +7,15 @@ diagnostics keep working while restart/stop can carry explicit policy.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class ShutdownIntent(StrEnum):
@@ -99,8 +102,13 @@ def write_shutdown_intent(
     active_marker = get_active_shutdown_marker_path(home)
     try:
         active_marker.write_text(json.dumps(data), encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning(
+            "Failed to write active shutdown marker %s for intent %s: %s",
+            active_marker,
+            data["intent"],
+            exc,
+        )
 
 
 def write_stop_intent(source: str, sender_pid: int | None = None) -> None:
@@ -125,51 +133,16 @@ def read_shutdown_intent(
     """
     marker = get_shutdown_marker_path(home)
     try:
-        if not marker.exists():
-            return ShutdownIntentRecord(
-                intent=ShutdownIntent.STOP,
-                source="external_sigterm",
-                sender_pid=None,
-                timestamp=None,
-            )
-
-        try:
-            data = json.loads(marker.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                raise TypeError("shutdown marker must be a JSON object")
-        finally:
-            # Always consume malformed markers when requested so future SIGTERM handling is clean.
-            if consume:
-                marker.unlink(missing_ok=True)
-
-        source = str(data.get("source", "unknown"))
-        timestamp = _optional_float(data.get("timestamp"))
-        age = (time.time() - timestamp) if timestamp is not None else None
-        stale = age is None or age >= max_age_seconds
-        if stale:
-            return ShutdownIntentRecord(
-                intent=ShutdownIntent.STOP,
-                source=source,
-                sender_pid=_optional_int(data.get("sender_pid")),
-                timestamp=timestamp,
-                stale=True,
-                raw=data,
-            )
-
-        raw_intent = data.get("intent")
-        intent = (
-            coerce_shutdown_intent(str(raw_intent))
-            if raw_intent is not None
-            else infer_shutdown_intent(source)
-        )
+        raw = marker.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return ShutdownIntentRecord(
-            intent=intent,
-            source=source,
-            sender_pid=_optional_int(data.get("sender_pid")),
-            timestamp=timestamp,
-            raw=data,
+            intent=ShutdownIntent.STOP,
+            source="external_sigterm",
+            sender_pid=None,
+            timestamp=None,
         )
-    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+    except OSError as exc:
+        logger.warning("Failed to read shutdown marker %s: %s", marker, exc)
         return ShutdownIntentRecord(
             intent=ShutdownIntent.STOP,
             source="unknown",
@@ -177,6 +150,64 @@ def read_shutdown_intent(
             timestamp=None,
             error=str(exc),
         )
+
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise TypeError("shutdown marker must be a JSON object")
+    except (json.JSONDecodeError, TypeError) as exc:
+        if consume:
+            _quarantine_malformed_marker(marker, raw, exc)
+        else:
+            logger.warning(
+                "Malformed shutdown marker at %s: %s; content=%r",
+                marker,
+                exc,
+                raw,
+            )
+        return ShutdownIntentRecord(
+            intent=ShutdownIntent.STOP,
+            source="unknown",
+            sender_pid=None,
+            timestamp=None,
+            error=str(exc),
+        )
+
+    if consume:
+        try:
+            marker.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Failed to consume shutdown marker %s: %s", marker, exc)
+
+    source = str(data.get("source", "unknown"))
+    timestamp = _optional_float(data.get("timestamp"))
+    age = (time.time() - timestamp) if timestamp is not None else None
+    stale = age is None or age >= max_age_seconds
+    if stale:
+        return ShutdownIntentRecord(
+            intent=ShutdownIntent.STOP,
+            source=source,
+            sender_pid=_optional_int(data.get("sender_pid")),
+            timestamp=timestamp,
+            stale=True,
+            raw=data,
+        )
+
+    raw_intent = data.get("intent")
+    intent = (
+        coerce_shutdown_intent(str(raw_intent))
+        if raw_intent is not None
+        else infer_shutdown_intent(source)
+    )
+    return ShutdownIntentRecord(
+        intent=intent,
+        source=source,
+        sender_pid=_optional_int(data.get("sender_pid")),
+        timestamp=timestamp,
+        raw=data,
+    )
 
 
 def format_shutdown_source(record: ShutdownIntentRecord) -> str:
@@ -193,12 +224,46 @@ def format_shutdown_source(record: ShutdownIntentRecord) -> str:
 def _optional_int(value: Any) -> int | None:
     try:
         return int(value) if value is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "Failed to convert shutdown marker value to int",
+            extra={"shutdown_value": repr(value), "error": str(exc)},
+        )
         return None
 
 
 def _optional_float(value: Any) -> float | None:
     try:
         return float(value) if value is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug(
+            "Failed to convert shutdown marker value to float",
+            extra={"shutdown_value": repr(value), "error": str(exc)},
+        )
         return None
+
+
+def _quarantine_malformed_marker(marker: Path, content: str, exc: BaseException) -> None:
+    malformed_marker = marker.with_name(f"{marker.name}.malformed")
+    logger.warning(
+        "Malformed shutdown marker at %s: %s; content=%r; moving to %s",
+        marker,
+        exc,
+        content,
+        malformed_marker,
+    )
+    try:
+        marker.replace(malformed_marker)
+    except OSError as rename_exc:
+        logger.warning(
+            "Failed to rename malformed shutdown marker %s to %s: %s",
+            marker,
+            malformed_marker,
+            rename_exc,
+        )
+        try:
+            marker.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as unlink_exc:
+            logger.warning("Failed to remove malformed shutdown marker %s: %s", marker, unlink_exc)

@@ -119,9 +119,21 @@ class SessionMessageProcessor:
         if isinstance(platform_session_id, str) and platform_session_id:
             metadata["_platform_session_id"] = platform_session_id
 
+        external_id = session.get("external_id")
+        if not isinstance(external_id, str) or not external_id.strip():
+            logger.warning(
+                "Skipping Codex synthesized tool event without external_id",
+                extra={
+                    "platform_session_id": platform_session_id,
+                    "tool_name": data.get("tool_name"),
+                    "phase": tool_event.phase,
+                },
+            )
+            return None
+
         return HookEvent(
             event_type=event_type,
-            session_id=str(session.get("external_id") or ""),
+            session_id=external_id,
             source=SessionSource.CODEX,
             timestamp=tool_event.timestamp,
             data=data,

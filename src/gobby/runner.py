@@ -232,6 +232,12 @@ class GobbyRunner:
 
         await run_daemon(self)
 
+    def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
+        """Request daemon shutdown and optionally set the semantic intent."""
+        if intent is not None:
+            self._shutdown_intent = intent
+        self._shutdown_requested = True
+
 
 async def run_gobby(config_path: Path | None = None, verbose: bool = False) -> None:
     runner = GobbyRunner(config_path=config_path, verbose=verbose)

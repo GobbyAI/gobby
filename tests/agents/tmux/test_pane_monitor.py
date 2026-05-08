@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.agents.tmux.pane_monitor import _RECENTLY_ENDED_TTL, TmuxPaneMonitor
-from gobby.agents.tmux.session_manager import TmuxSessionInfo
+from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionInfo
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.storage.agents import AgentRun
 
@@ -90,7 +90,7 @@ async def test_tmux_list_timeout_is_quiet(caplog: pytest.LogCaptureFixture) -> N
     """A transient tmux list timeout should not emit a warning traceback."""
     callback = MagicMock()
     monitor = _make_monitor_with_db(callback)
-    caplog.set_level("WARNING", logger="gobby.agents.tmux.pane_monitor")
+    caplog.set_level("DEBUG", logger="gobby.agents.tmux.pane_monitor")
 
     with patch(
         "gobby.agents.tmux.pane_monitor.TmuxSessionManager.list_sessions",
@@ -100,6 +100,13 @@ async def test_tmux_list_timeout_is_quiet(caplog: pytest.LogCaptureFixture) -> N
 
     callback.assert_not_called()
     assert "failed to list tmux sessions" not in caplog.text
+    timeout_records = [
+        record
+        for record in caplog.records
+        if record.message == "TmuxPaneMonitor: timed out listing tmux sessions"
+    ]
+    assert timeout_records
+    assert timeout_records[0].timeout_seconds == TMUX_COMMAND_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

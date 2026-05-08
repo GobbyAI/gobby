@@ -745,8 +745,9 @@ class ProviderModelCatalog:
         if not shutil.which(client_cls.cli_name):
             raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-        cwd = await asyncio.to_thread(_model_discovery_cwd)
-        await asyncio.to_thread(pre_approve_directory, client_cls.cli_name, cwd)
+        cwd = _model_discovery_cwd()
+        # TODO: replace process-wide trust pre-approval with provider-scoped model discovery auth.
+        pre_approve_directory(client_cls.cli_name, cwd)
         client = client_cls(
             cwd=os.fspath(cwd),
             purpose="model-discovery",
