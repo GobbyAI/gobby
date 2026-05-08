@@ -83,3 +83,40 @@ def test_ghook_guard_runs_child_for_stale_shutdown_marker(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 17
+
+
+def test_ghook_guard_treats_file_daemon_url_as_unreachable(tmp_path: Path) -> None:
+    marker = tmp_path / "shutdown_intent_active.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "source": "cli_restart",
+                "intent": "restart",
+                "timestamp": time.time(),
+            }
+        )
+    )
+    file_target = tmp_path / "not-a-daemon"
+    file_target.write_text("not http")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--",
+            sys.executable,
+            "-c",
+            "import sys; sys.exit(17)",
+            "--type=Stop",
+        ],
+        input=b"{}",
+        capture_output=True,
+        check=False,
+        env={
+            "GOBBY_HOME": str(tmp_path),
+            "GOBBY_DAEMON_URL": file_target.as_uri(),
+        },
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {"continue": True}

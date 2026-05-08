@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from pathlib import Path
 
 DEFAULT_DAEMON_URL = "http://localhost:60887"
@@ -53,13 +53,40 @@ def _is_stop_hook(args: list[str]) -> bool:
 
 
 def _daemon_is_reachable() -> bool:
-    url = _daemon_url().rstrip("/") + "/api/admin/health"
-    try:
-        with urllib.request.urlopen(url, timeout=0.35) as response:
-            status = int(response.getcode())
-            return 200 <= status < 500
-    except (OSError, urllib.error.URLError, TimeoutError):
+    target = _daemon_health_target()
+    if target is None:
         return False
+
+    scheme, host, port, path = target
+    connection_cls = (
+        http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+    )
+    connection = connection_cls(host, port=port, timeout=0.35)
+    try:
+        connection.request("GET", path)
+        response = connection.getresponse()
+        return 200 <= int(response.status) < 500
+    except (OSError, TimeoutError, ValueError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
+
+
+def _daemon_health_target() -> tuple[str, str, int | None, str] | None:
+    url = _daemon_url().rstrip("/") + "/api/admin/health"
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+
+    path = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+    return parsed.scheme, parsed.hostname, port, path
 
 
 def _daemon_url() -> str:
