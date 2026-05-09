@@ -37,7 +37,7 @@ function makeSession(overrides: Partial<TestSession> = {}): TestSession {
 const NOW = new Date("2026-04-29T12:00:00.000Z");
 
 describe("defaultSessionsFilters", () => {
-  it("starts with empty filters except claimed-only task ref roles", () => {
+  it("starts with all filter sets empty", () => {
     const f = defaultSessionsFilters();
     expect(f.modes.size).toBe(0);
     expect(f.providers.size).toBe(0);
@@ -46,7 +46,7 @@ describe("defaultSessionsFilters", () => {
     expect(f.sessionRefMax).toBeNull();
     expect(f.taskRefMin).toBeNull();
     expect(f.taskRefMax).toBeNull();
-    expect([...f.taskRefRoles]).toEqual(["claimed"]);
+    expect([...f.taskRefRoles]).toEqual([]);
     expect(f.datePreset).toBe("all");
   });
 });
@@ -115,13 +115,22 @@ describe("serializeSessionsFilters", () => {
     expect(params.get("session_seq_max")).toBe("200");
   });
 
-  it("serializes task ref range with default 'claimed' role", () => {
+  it("serializes task ref range without role params when default roles are empty", () => {
     const f = defaultSessionsFilters();
     f.taskRefMin = 5000;
     f.taskRefMax = 5500;
     const params = serializeSessionsFilters(f, NOW);
     expect(params.get("task_ref_min")).toBe("5000");
     expect(params.get("task_ref_max")).toBe("5500");
+    expect(params.getAll("task_ref_role")).toEqual([]);
+  });
+
+  it("serializes explicit task ref roles when set alongside the range", () => {
+    const f = defaultSessionsFilters();
+    f.taskRefMin = 5000;
+    f.taskRefMax = 5500;
+    f.taskRefRoles.add("claimed");
+    const params = serializeSessionsFilters(f, NOW);
     expect(params.getAll("task_ref_role")).toEqual(["claimed"]);
   });
 
@@ -318,7 +327,7 @@ describe("storage round-trip", () => {
   it("returns defaults when storage is null", () => {
     const restored = deserializeFromStorage(null);
     expect(restored.datePreset).toBe("all");
-    expect([...restored.taskRefRoles]).toEqual(["claimed"]);
+    expect([...restored.taskRefRoles]).toEqual([]);
   });
 
   it("returns defaults on malformed JSON without throwing", () => {

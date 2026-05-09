@@ -45,7 +45,7 @@ export function defaultSessionsFilters(): SessionsFilters {
     sessionRefMax: null,
     taskRefMin: null,
     taskRefMax: null,
-    taskRefRoles: new Set<TaskRefRole>(["claimed"]),
+    taskRefRoles: new Set<TaskRefRole>(),
     datePreset: "all",
     dateCustomFrom: null,
     dateCustomTo: null,

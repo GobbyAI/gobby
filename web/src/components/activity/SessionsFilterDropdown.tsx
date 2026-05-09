@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button } from "../chat/ui/Button";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { getProviderDisplayName } from "../../lib/providerModels";
 import { useIsMobile } from "../../hooks/useIsMobile";
@@ -290,23 +289,17 @@ export function SessionsFilterDropdown({
           className="flex items-center justify-between border-t border-border px-2 py-1.5"
           style={{ background: "var(--bg-secondary)" }}
         >
-          <Button
+          <button
             type="button"
-            variant="ghost"
-            size="sm"
+            className="btn btn-ghost btn-sm"
             onClick={handleReset}
             disabled={activeCount === 0}
           >
             Reset
-          </Button>
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            onClick={onClose}
-          >
+          </button>
+          <button type="button" className="btn btn-accent btn-sm" onClick={onClose}>
             Apply
-          </Button>
+          </button>
         </div>
       </div>
     </>
