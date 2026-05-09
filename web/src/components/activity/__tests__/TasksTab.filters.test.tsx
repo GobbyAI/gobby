@@ -143,9 +143,10 @@ describe("TasksTab — filters", () => {
     fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
 
     await waitFor(() => {
-      const taskFetch = mockFetch.fn.mock.calls.find(([url]) =>
-        String(url).includes("/api/tasks?"),
-      );
+      const taskFetch = mockFetch.fn.mock.calls.find(([url]) => {
+        const s = String(url);
+        return s.includes("/api/tasks?") && !s.includes("parent_task_id=");
+      });
       expect(String(taskFetch?.[0])).toContain("stage=development");
       expect(String(taskFetch?.[0])).toContain("include_stages=1");
     });

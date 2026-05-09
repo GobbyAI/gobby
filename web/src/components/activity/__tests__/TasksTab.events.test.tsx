@@ -165,8 +165,13 @@ describe("TasksTab — events and row actions", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
+    const isListFetch = (url: unknown) => {
+      const s = String(url);
+      return s.includes("/api/tasks?") && !s.includes("parent_task_id=");
+    };
+
     const initialTaskListFetches = mockFetch.fn.mock.calls.filter(([url]) =>
-      String(url).includes("/api/tasks?"),
+      isListFetch(url),
     ).length;
 
     const reviewTaskRow = screen
@@ -198,7 +203,7 @@ describe("TasksTab — events and row actions", () => {
     });
 
     const finalTaskListFetches = mockFetch.fn.mock.calls.filter(([url]) =>
-      String(url).includes("/api/tasks?"),
+      isListFetch(url),
     ).length;
     expect(finalTaskListFetches).toBe(initialTaskListFetches);
   });
