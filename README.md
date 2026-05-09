@@ -24,7 +24,7 @@ worktrees, dispatched agents, hook-time guardrails, validation, review gates,
 and a commit-linked close. If something goes off the rails, Gobby stops and
 escalates instead of merging garbage.
 
-**Gobby built Gobby.** 5K+ commits. 15K+ tasks across my projects. Two
+**Gobby built Gobby.** 7K+ commits. 15K+ tasks across my projects. Two
 paying clients running production systems on it. The 0.4.0 release was assembled
 through Gobby's own task, dispatch, review, and documentation flows — the
 receipts live in this repo's `.gobby/tasks.jsonl`.
@@ -87,7 +87,7 @@ gets to "hands-off" without lying about it.
 Your database, transcripts, hooks, task ledger, workflows, and rules stay on
 your machine. No cloud control plane. No SaaS dependency. Apache 2.0.
 
-The repo you're reading was built through its own build loop. 4,484 commits.
+The repo you're reading was built through its own build loop. 7,800+ commits.
 15,000+ tasks. 0.4.0 was assembled by spawned agents working through staged
 manifests, with the dispatcher routing review and merge. That's the production
 test bed: every regression in dispatch, hooks, isolation, or task lifecycle
@@ -198,9 +198,10 @@ I'm aware of that does that locally.
 path, not a power-user trick.
 
 - **`gobby build`** as the single entry point: CLI, MCP, and HTTP all resolve
-  to one shared build service with the same `BuildResult` shape. Profiles
-  (`quick`, `review`, `full`, `full-yolo`), task-scoped controls (`stop`,
-  `resume`, `clean`, `restart`), branch cleanup, retry recovery.
+  to one shared build service with the same `BuildResult` shape. `--quick` for
+  one-step lifecycles, `--skip-stage` and per-stage cap overrides for shape
+  control, task-scoped controls (`stop`, `resume`, `clean`, `restart`), branch
+  cleanup, retry recovery.
 - **Stage-native lifecycle**: `task_stage_states`, `task_dispatch_mutex`,
   `task_artifacts`, `task_lifecycle_events`. Review verdicts attached to
   manifest rows. PR and merge delivery artifacts.
@@ -324,7 +325,7 @@ Then either start interactive work in your CLI of choice — Gobby will track it
 quietly — or hand it a task and let the build loop run:
 
 ```bash
-gobby tasks create "Add OAuth refresh-token rotation" --category code
+gobby tasks create "Add OAuth refresh-token rotation" --type feature
 gobby build '#<id>'
 ```
 
