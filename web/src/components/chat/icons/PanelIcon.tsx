@@ -4,7 +4,7 @@ interface PanelIconProps {
   className?: string
 }
 
-export function PanelIcon({ pinned = false, size = 18, className }: PanelIconProps) {
+export function PanelIcon({ pinned = false, size = 14, className }: PanelIconProps) {
   return (
     <svg
       className={className}

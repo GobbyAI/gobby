@@ -843,7 +843,8 @@
    that share the same specificity. !important is needed to beat Tailwind
    utility classes (px-2.5) on SelectTrigger / BranchIndicator buttons. */
 @container chat-column (max-width: 479px) {
-  .chat-new-chat-btn__label {
+  .chat-new-chat-btn__label,
+  .chat-action-btn__label {
     display: none;
   }
   .chat-input-toolbar {

@@ -110,9 +110,11 @@ export function AgentStatusBar({
             type="button"
             className="btn btn-accent btn-sm"
             onClick={onAttach}
+            aria-label="Attach"
+            title="Attach"
           >
             <LinkIcon />
-            Attach
+            <span className="chat-action-btn__label">Attach</span>
           </button>
         )}
         {canDetach && (
@@ -120,9 +122,11 @@ export function AgentStatusBar({
             type="button"
             className="btn btn-accent btn-sm"
             onClick={onDetach}
+            aria-label="Detach"
+            title="Detach"
           >
             <UnlinkIcon />
-            Detach
+            <span className="chat-action-btn__label">Detach</span>
           </button>
         )}
         {canResume && (
@@ -130,9 +134,11 @@ export function AgentStatusBar({
             type="button"
             className="btn btn-accent btn-sm"
             onClick={onResume}
+            aria-label="Resume"
+            title="Resume"
           >
             <PlayIcon />
-            Resume
+            <span className="chat-action-btn__label">Resume</span>
           </button>
         )}
         <button

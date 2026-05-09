@@ -172,6 +172,14 @@
     width: 3rem;
     min-height: 3rem;
   }
+  /* Compact action pills (.btn-xs / .btn-sm) sit below the WCAG 2.2 AA / Apple
+     HIG 44px floor for fine pointers. On coarse pointers, promote them so chat
+     action rows (Attach/Detach/Resume/+ New Chat, Sessions row actions, filter
+     popover Apply/Reset) all clear the touch-target threshold together. */
+  .btn-xs,
+  .btn-sm {
+    min-height: 2.75rem;
+  }
 }
 
 /* Block — full-width. */
