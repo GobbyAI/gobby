@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState } from 'react'
 import type { ContextUsage, SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
@@ -22,14 +22,6 @@ const CONTEXT_USAGE_REFRESH_MS = 15_000
 function subscribeToClock(onStoreChange: () => void): () => void {
   const interval = window.setInterval(onStoreChange, CONTEXT_USAGE_REFRESH_MS)
   return () => window.clearInterval(interval)
-}
-
-function subscribeToClockDisabled(): () => void {
-  return () => {}
-}
-
-function getClockSnapshot(): number {
-  return Date.now()
 }
 
 function getSessionKindBadge(sessionType: SessionObservationMeta['sessionType']): {
@@ -69,11 +61,13 @@ export function AgentStatusBar({
   onDetach,
   onNewChat,
 }: AgentStatusBarProps) {
-  const usageClock = useSyncExternalStore(
-    contextUsageUpdatedAt == null ? subscribeToClockDisabled : subscribeToClock,
-    getClockSnapshot,
-    getClockSnapshot,
-  )
+  const [usageClock, setUsageClock] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (contextUsageUpdatedAt == null) return undefined
+
+    return subscribeToClock(() => setUsageClock(Date.now()))
+  }, [contextUsageUpdatedAt])
 
   const contextUsageStaleMs =
     contextUsageUpdatedAt != null ? Math.max(0, usageClock - contextUsageUpdatedAt) : null
