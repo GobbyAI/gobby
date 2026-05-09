@@ -514,6 +514,10 @@ class TestDispatchBatchIsolationParity:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
                 new_callable=AsyncMock,
             ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
         ):
             project_ctx = {
                 "id": "proj-123",

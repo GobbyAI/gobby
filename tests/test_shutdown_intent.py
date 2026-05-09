@@ -125,6 +125,7 @@ def test_write_shutdown_intent_records_non_consuming_active_marker(tmp_path: Pat
 def test_read_shutdown_intent_logs_malformed_content(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    enable_log_propagation: None,
 ) -> None:
     marker = tmp_path / "shutdown_source.json"
     marker.write_text("[]", encoding="utf-8")

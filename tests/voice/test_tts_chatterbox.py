@@ -254,7 +254,10 @@ class TestChatterboxTurboProvider:
         assert inference_calls[0]["max_gen_len"] == 8
 
     def test_generate_with_token_cap_warns_when_t3_missing(
-        self, caplog: pytest.LogCaptureFixture, voice_config: VoiceConfig
+        self,
+        caplog: pytest.LogCaptureFixture,
+        voice_config: VoiceConfig,
+        enable_log_propagation: None,
     ) -> None:
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
@@ -272,7 +275,10 @@ class TestChatterboxTurboProvider:
         )
 
     def test_generate_with_token_cap_warns_when_inference_turbo_not_callable(
-        self, caplog: pytest.LogCaptureFixture, voice_config: VoiceConfig
+        self,
+        caplog: pytest.LogCaptureFixture,
+        voice_config: VoiceConfig,
+        enable_log_propagation: None,
     ) -> None:
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 

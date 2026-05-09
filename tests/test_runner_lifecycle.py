@@ -400,6 +400,7 @@ class TestInitSubsystems:
     async def test_agent_lifecycle_monitor_startup_failures_are_non_fatal(
         self,
         caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         from gobby.runner_lifecycle_subsystems import _start_agent_lifecycle_monitor
 
@@ -872,6 +873,7 @@ class TestSignalHandlerBehavior:
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         from gobby.runner_maintenance import setup_signal_handlers
 
@@ -1186,7 +1188,9 @@ class TestMetricsCleanupLoopDetailed:
             assert cleanup_call_count == 1
 
     @pytest.mark.asyncio
-    async def test_metrics_cleanup_loop_logs_deleted_entries(self, mock_config, caplog):
+    async def test_metrics_cleanup_loop_logs_deleted_entries(
+        self, mock_config, caplog, enable_log_propagation
+    ):
         """Test that metrics cleanup loop logs when entries are deleted."""
         from gobby.runner_maintenance import metrics_cleanup_loop
 
