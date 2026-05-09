@@ -1,7 +1,7 @@
 [project]
 name = "gobby"
 version = "0.4.0"
-description = "A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Gemini CLI, Qwen CLI, and Codex. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks."
+description = "Gobby is a local-first agent control plane for AI coding tools: shared sessions, tasks, memory, MCP discovery, and workflow guardrails across Claude Code, Codex, Gemini CLI, Qwen CLI, and Factory Droid."
 readme = "README.md"
 license = "Apache-2.0"
 authors = [
@@ -88,7 +88,7 @@ constraint-dependencies = [
     "tokenizers>=0.21",
     # authlib <1.6.11 has GHSA-jj8c-mmj3-mmgv (transitive via fastmcp)
     "authlib>=1.6.11",
-    # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) — see override-dependencies below
+    # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) - see override-dependencies below
     "torch>=2.8.0",
 ]
 # torch, diffusers, and safetensors are exact-pinned by chatterbox-tts==0.1.7 to
