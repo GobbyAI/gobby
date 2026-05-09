@@ -181,6 +181,21 @@
     sans-serif;
   /* stylelint-enable value-keyword-case */
   --sidebar-width: 260px;
+
+  /* Primary control row height — drives SegmentedControl, search input,
+     status badges, chat textarea, filter pill button. Promotes to 2.75rem on
+     pointer:coarse so adjacent controls keep matching baselines on touch. */
+  --control-row-height: 2.25rem;
+
+  /* Pane status-bar height — promoted from .activity-panel scope so chat-pane
+     surfaces (.agent-status-bar) outside the activity panel can match. */
+  --activity-panel-bar-height: 2.5rem;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --control-row-height: 2.75rem;
+  }
 }
 
 [data-theme="light"] {

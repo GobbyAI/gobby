@@ -836,7 +836,8 @@ export function ChatInput({
           <div className="flex items-start gap-2">
             <textarea
               ref={textareaRef}
-              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
+              style={{ minHeight: 'var(--control-row-height)' }}
+              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
