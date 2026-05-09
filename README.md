@@ -231,9 +231,11 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 - Optional Qdrant + FalkorDB for vector and graph-backed search
 - Companion Rust toolchain via [gobby-cli](https://github.com/GobbyAI/gobby-cli)
 
-Git is the source of truth for project task state through `.gobby/tasks.jsonl`.
-The database gives the daemon fast local state; task-linked commits make the
-history auditable. The two stay reconciled.
+The SQLite database at `~/.gobby/gobby-hub.db` is the source of truth for task
+state. `.gobby/tasks.jsonl` is the git-native sync projection — checked in,
+diffable in PRs, and reconciled with the DB so task-linked commits stay
+auditable across machines. Linear is supported as an optional external sync
+target for teams that already track work there.
 
 The guides set is the source of truth for behavior:
 
