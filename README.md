@@ -1,9 +1,8 @@
 <p align="center">
-  <p align="center">
     <img src="logo.png" alt="Gobby" width="200" />
-  </p>
-  <h1 align="center">Gobby</h1>  <strong>Start with a task. End with a PR. Hands-off.</strong>
+    <h3 align="center">Start with a task. Walk away. End with a PR.</h3>
 </p>
+
 
 <p align="center">
   <a href="https://github.com/GobbyAI/gobby"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
