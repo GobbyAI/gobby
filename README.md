@@ -1,5 +1,8 @@
 <p align="center">
-  <strong>Start with a task. End with a PR. Hands-off.</strong>
+  <p align="center">
+    <img src="logo.png" alt="Gobby" width="200" />
+  </p>
+  <h1 align="center">Gobby</h1>  <strong>Start with a task. End with a PR. Hands-off.</strong>
 </p>
 
 <p align="center">
