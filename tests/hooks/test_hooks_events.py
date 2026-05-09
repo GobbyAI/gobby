@@ -211,9 +211,9 @@ class TestEventTypeCLISupport:
 
     def test_codex_support(self) -> None:
         """Test Codex CLI support in mapping."""
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["codex"] == "thread/started"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["codex"] == "requestApproval"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["codex"] == "item/completed"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["codex"] == "SessionStart"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["codex"] == "PreToolUse"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["codex"] == "PostToolUse"
 
     def test_cli_specific_events(self) -> None:
         """Test CLI-specific event support."""

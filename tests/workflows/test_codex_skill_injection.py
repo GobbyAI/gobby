@@ -261,6 +261,7 @@ async def test_synthesized_event_not_skipped_when_skill_legacy_injected(
 
 def test_synthesized_event_requires_non_empty_external_id(
     caplog: pytest.LogCaptureFixture,
+    enable_log_propagation: None,
 ) -> None:
     tool_event = ParsedToolEvent(
         phase="begin",

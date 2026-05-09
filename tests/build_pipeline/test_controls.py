@@ -645,7 +645,7 @@ def test_default_branch_dir_name_uses_untitled_for_empty_slug(
     temp_db,
     sample_project,
 ) -> None:
-    from gobby.build.controls import _default_branch_dir_name
+    from gobby.build.branch_cleanup import default_task_branch_name
 
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -654,4 +654,4 @@ def test_default_branch_dir_name_uses_untitled_for_empty_slug(
         task_type="task",
     )
 
-    assert _default_branch_dir_name(task) == f"task-{task.seq_num}-untitled"
+    assert default_task_branch_name(task) == f"task-{task.seq_num}-untitled"

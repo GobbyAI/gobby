@@ -62,9 +62,13 @@ def test_install_droid_global_writes_hooks_and_mcp(
     assert tuple(hooks) == DROID_PASCAL_HOOK_NAMES
     for hook_type in DROID_PASCAL_HOOK_NAMES:
         command = hooks[hook_type][0]["hooks"][0]["command"]
-        assert (
-            command == f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
-        )
+        base = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
+        if hook_type == "Stop":
+            # Stop hooks run through ghook_guard.py for stable shutdown.
+            assert command.endswith(f" -- {base}")
+            assert "ghook_guard.py" in command
+        else:
+            assert command == base
 
     mcp = _load_json(droid_env / ".factory" / "mcp.json")
     assert mcp["mcpServers"]["gobby"]["type"] == "stdio"
