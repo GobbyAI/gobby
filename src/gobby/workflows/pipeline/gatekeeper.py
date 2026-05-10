@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.pipeline_state import (
@@ -30,10 +31,17 @@ class ApprovalManager:
         execution_manager: LocalPipelineExecutionManager,
         webhook_notifier: Any | None = None,
         event_callback: Any | None = None,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self.execution_manager = execution_manager
         self.webhook_notifier = webhook_notifier
         self.event_callback = event_callback
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def _emit_event(self, event: str, execution_id: str, **kwargs: Any) -> None:
         """Emit a pipeline event via the callback if configured."""
@@ -83,7 +91,7 @@ class ApprovalManager:
 
         # Update step status to WAITING_APPROVAL and store token
         timeout_seconds = step.approval.timeout_seconds if step.approval else None
-        await asyncio.to_thread(
+        await self._run_sqlite(
             self.execution_manager.update_step_execution,
             step_execution_id=step_execution.id,
             status=StepStatus.WAITING_APPROVAL,
@@ -92,7 +100,7 @@ class ApprovalManager:
         )
 
         # Update execution status to WAITING_APPROVAL
-        await asyncio.to_thread(
+        await self._run_sqlite(
             self.execution_manager.update_execution_status,
             execution_id=execution.id,
             status=ExecutionStatus.WAITING_APPROVAL,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry.trace import Status, StatusCode
@@ -88,6 +89,7 @@ class PipelineExecutor:
         tool_proxy_getter: Any | None = None,
         session_manager: Any | None = None,
         completion_registry: Any | None = None,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ):
         """Initialize the pipeline executor.
 
@@ -103,6 +105,7 @@ class PipelineExecutor:
             tool_proxy_getter: Optional callable returning ToolProxyService for MCP steps
             session_manager: Optional SessionManager for session creation
             completion_registry: Optional CompletionEventRegistry for wait steps
+            run_db: Optional bounded executor bridge for SQLite work
         """
         self.db = db
         self.execution_manager = execution_manager
@@ -113,12 +116,14 @@ class PipelineExecutor:
         self.tool_proxy_getter = tool_proxy_getter
         self.session_manager = session_manager
         self.completion_registry = completion_registry
+        self.run_db = run_db
 
         self.renderer = StepRenderer(template_engine)
         self.approval_manager = ApprovalManager(
             execution_manager=execution_manager,
             webhook_notifier=webhook_notifier,
             event_callback=event_callback,
+            run_db=run_db,
         )
 
     async def _emit_event(self, event: str, execution_id: str, **kwargs: Any) -> None:

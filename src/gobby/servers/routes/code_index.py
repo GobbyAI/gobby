@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
@@ -26,6 +28,14 @@ def _require_project_id(project_id: str | None) -> str:
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
     return project_id
+
+
+async def _run_db(server: HTTPServer, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run SQLite work through the daemon executor when the server exposes it."""
+    runner = getattr(server, "run_db", None)
+    if inspect.iscoroutinefunction(runner):
+        return await runner(func, *args, **kwargs)
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 def create_code_index_router(server: HTTPServer) -> APIRouter:
@@ -170,7 +180,8 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
 
         scoped_project = _require_project_id(project_id)
         try:
-            results = await asyncio.to_thread(
+            results = await _run_db(
+                server,
                 code_indexer.storage.search_symbols_fts,
                 q,
                 scoped_project,
@@ -179,7 +190,8 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                 limit=limit,
             )
             if not results:
-                results = await asyncio.to_thread(
+                results = await _run_db(
+                    server,
                     code_indexer.storage.search_symbols_by_name,
                     q,
                     scoped_project,
@@ -271,7 +283,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                 content={"error": "project_id is required"},
             )
 
-        stats = await asyncio.to_thread(code_indexer.storage.get_project_stats, project_id)
+        stats = await _run_db(server, code_indexer.storage.get_project_stats, project_id)
         if stats is None:
             return JSONResponse(
                 content={"status": "ok", "project_id": project_id, "note": "not indexed"},

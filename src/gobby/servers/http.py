@@ -364,6 +364,10 @@ class HTTPServer:
             return self._tools_handler.tool_proxy
         return None
 
+    async def run_db(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        """Run daemon SQLite work on the bounded DB executor."""
+        return await self.services.run_db(func, *args, **kwargs)
+
     async def _terminate_streamable_http_sessions(self) -> None:
         """Best-effort termination of active FastMCP Streamable HTTP sessions."""
         if self._mcp_server is None:

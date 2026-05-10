@@ -5,13 +5,13 @@ Handles plan_approval_response and recovered plan approval after daemon restart.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.servers.websocket.db import run_db
 from gobby.storage.config_store import ConfigStore
 
 if TYPE_CHECKING:
@@ -169,7 +169,7 @@ async def handle_recovered_plan_approval(
     # Primary path: conversation_id is the canonical DB session ID for web chat.
     db_session = None
     try:
-        db_session = await asyncio.to_thread(session_manager.get, conversation_id)
+        db_session = await run_db(mixin, session_manager.get, conversation_id)
     except Exception as e:
         logger.debug(f"Failed to load recovered web-chat session {conversation_id}: {e}")
 
@@ -177,8 +177,8 @@ async def handle_recovered_plan_approval(
     if not db_session:
         for source in ("claude", "gemini", "qwen", "codex", "droid"):
             try:
-                db_session = await asyncio.to_thread(
-                    session_manager.find_active_by_external_id, conversation_id, source
+                db_session = await run_db(
+                    mixin, session_manager.find_active_by_external_id, conversation_id, source
                 )
                 if db_session:
                     break
@@ -194,7 +194,7 @@ async def handle_recovered_plan_approval(
     if decision == "approve":
         post_plan_mode = _resolve_post_plan_mode(mixin)
         try:
-            await asyncio.to_thread(session_manager.update_chat_mode, db_session.id, post_plan_mode)
+            await run_db(mixin, session_manager.update_chat_mode, db_session.id, post_plan_mode)
         except Exception:
             logger.debug(
                 "Failed to persist recovered post-plan mode for %s",

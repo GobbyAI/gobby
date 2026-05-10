@@ -190,9 +190,13 @@ class ServerManagementService:
         try:
             # Create importer lazily with required dependencies
             from gobby.mcp_proxy.importer import MCPServerImporter
-            from gobby.storage.database import LocalDatabase
 
-            db = LocalDatabase()
+            db = getattr(self._config_manager, "db", None)
+            if db is None:
+                return {
+                    "success": False,
+                    "error": "Daemon database unavailable for import operations",
+                }
             importer = MCPServerImporter(
                 config=self._config,
                 db=db,

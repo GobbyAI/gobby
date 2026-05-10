@@ -33,6 +33,7 @@ from gobby.sessions.processor import SessionMessageProcessor
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import LocalDatabase
+from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.migrations import run_migrations
 from gobby.storage.session_tasks import SessionTaskManager
@@ -194,6 +195,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     # Initialize local storage with dual-write if in project context
     runner.database = init_hub_database(runner.config)
+    runner.db_executor = DatabaseExecutor(max_workers=4)
 
     # Phase 2: Reload config from DB (secrets > env vars)
     # Phase 1 (above) used env vars only to bootstrap the database path.
@@ -375,6 +377,7 @@ def init_services(runner: GobbyRunner) -> None:
                 neo4j_rrf_k=db_cfg.neo4j.rrf_k,
                 embedding_dim=emb_cfg.dim,
                 collection_prefix=db_cfg.qdrant.collection_prefix,
+                run_db=runner.db_executor.run,
             )
         except Exception as e:
             logger.error(f"Failed to initialize MemoryManager: {e}")
@@ -628,6 +631,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 template_engine=TemplateEngine(),
                 session_manager=runner.session_manager,
                 completion_registry=runner.completion_registry,
+                run_db=runner.db_executor.run,
             )
             logger.info("Pipeline executor initialized at startup")
         except Exception as e:
@@ -712,6 +716,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 task_manager=runner.task_manager,
                 agent_run_manager=LocalAgentRunManager(runner.database),
                 session_manager=runner.session_manager,
+                run_db=runner.db_executor.run,
             )
             cron_executor.register_handler("pipeline_heartbeat", heartbeat)
 
@@ -840,6 +845,7 @@ def init_servers(runner: GobbyRunner) -> None:
     services = ServiceContainer(
         config=runner.config,
         database=runner.database,
+        db_executor=runner.db_executor,
         session_manager=runner.session_manager,
         task_manager=runner.task_manager,
         span_storage=runner.span_storage,
@@ -944,6 +950,7 @@ def init_servers(runner: GobbyRunner) -> None:
             config=websocket_config,
             mcp_manager=runner.mcp_proxy,
             session_manager=runner.session_manager,
+            db_executor=runner.db_executor,
             daemon_config=runner.config,
             internal_manager=runner.http_server._internal_manager,
             web_chat_session_registry=web_chat_session_registry,

@@ -33,6 +33,7 @@ class IndexingService:
         fts_searcher_factory: Callable[[], MemoryFTS5Searcher],
         crossref_service: CrossrefService,
         kg_rebuilder: Callable[[str | None], Awaitable[dict[str, Any]]],
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
@@ -41,6 +42,12 @@ class IndexingService:
         self._fts_searcher_factory = fts_searcher_factory
         self._crossref_service = crossref_service
         self._kg_rebuilder = kg_rebuilder
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     @property
     def kg_service(self) -> KnowledgeGraphService | None:
@@ -52,7 +59,7 @@ class IndexingService:
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
         """Reconcile Qdrant and Neo4j with SQLite source of truth."""
-        sqlite_ids = set(self._storage.list_all_ids())
+        sqlite_ids = set(await self._run_sqlite(self._storage.list_all_ids))
         report: dict[str, Any] = {
             "dry_run": dry_run,
             "sqlite_count": len(sqlite_ids),
@@ -162,11 +169,9 @@ class IndexingService:
 
         try:
             if project_id:
-                deleted = await asyncio.to_thread(
-                    self._storage.delete_project_crossrefs, project_id
-                )
+                deleted = await self._run_sqlite(self._storage.delete_project_crossrefs, project_id)
             else:
-                deleted = await asyncio.to_thread(self._delete_all_memory_crossrefs)
+                deleted = await self._run_sqlite(self._delete_all_memory_crossrefs)
             report["crossrefs_cleared"] = deleted
         except Exception as e:
             logger.error(f"Failed to clear crossrefs: {e}")
@@ -175,7 +180,7 @@ class IndexingService:
 
         try:
             fts = self._fts_searcher_factory()
-            await asyncio.to_thread(lambda: fts._db.execute("DELETE FROM memories_fts"))
+            await self._run_sqlite(lambda: fts._db.execute("DELETE FROM memories_fts"))
             report["fts_cleared"] = True
         except Exception as e:
             logger.error(
@@ -200,7 +205,7 @@ class IndexingService:
         if project_id:
             all_memories = await self.fetch_all_project_memories(project_id)
         else:
-            all_memories = await asyncio.to_thread(
+            all_memories = await self._run_sqlite(
                 self._storage.list_memories, project_id, None, MAX_REINDEX_LIMIT
             )
         total = len(all_memories)
@@ -235,7 +240,7 @@ class IndexingService:
             report["graph_rebuilt"] = await self._kg_rebuilder(project_id)
 
         try:
-            report["fts5"] = await asyncio.to_thread(self._fts_searcher_factory().reindex)
+            report["fts5"] = await self._run_sqlite(self._fts_searcher_factory().reindex)
         except Exception as e:
             logger.error(
                 f"Failed to rebuild memory FTS5 index: {e} "
@@ -260,7 +265,7 @@ class IndexingService:
         offset = 0
         batch_size = 500
         while True:
-            batch = await asyncio.to_thread(
+            batch = await self._run_sqlite(
                 self._storage.list_memories,
                 project_id,
                 None,

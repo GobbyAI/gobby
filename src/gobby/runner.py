@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from gobby.storage.cron import CronJobStorage
     from gobby.storage.cron_models import CronJob
     from gobby.storage.database import DatabaseProtocol, LocalDatabase
+    from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.prompts import LocalPromptManager
@@ -168,6 +169,7 @@ class GobbyRunner:
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
     database: LocalDatabase
+    db_executor: DatabaseExecutor
     secret_store: SecretStore
     config_store: ConfigStore
     session_manager: SessionManager

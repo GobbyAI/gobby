@@ -230,9 +230,8 @@ async def import_mcp_server(
 
         # Create importer
         from gobby.mcp_proxy.importer import MCPServerImporter
-        from gobby.storage.database import LocalDatabase
 
-        db = LocalDatabase()
+        db = server.services.database
         importer = MCPServerImporter(
             config=server.config,
             db=db,

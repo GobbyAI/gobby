@@ -162,7 +162,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         if server.session_manager is not None:
             try:
                 # Use count_by_status for efficient grouped counts
-                status_counts = server.session_manager.count_by_status()
+                status_counts = await server.run_db(server.session_manager.count_by_status)
                 session_stats["total"] = sum(status_counts.values())
                 session_stats["active"] = status_counts.get("active", 0)
                 session_stats["paused"] = status_counts.get("paused", 0)
@@ -184,21 +184,27 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         }
         if server.task_manager is not None:
             try:
-                # Use count_by_state for efficient grouped counts
-                state_counts = server.task_manager.count_by_state()
-                for key in (
-                    "ready",
-                    "in_progress",
-                    "closed",
-                    "needs_review",
-                    "review_approved",
-                    "escalated",
-                ):
-                    task_stats[key] = state_counts.get(key, 0)
-                # Keep availability and recent closure counters alongside state buckets.
-                task_stats["ready_unblocked"] = server.task_manager.count_ready_tasks()
-                task_stats["blocked"] = server.task_manager.count_blocked_tasks()
-                task_stats["closed_24h"] = server.task_manager.count_closed_since(hours=24)
+
+                def _collect_task_stats() -> dict[str, Any]:
+                    # Use count_by_state for efficient grouped counts
+                    state_counts = server.task_manager.count_by_state()
+                    stats = dict(task_stats)
+                    for key in (
+                        "ready",
+                        "in_progress",
+                        "closed",
+                        "needs_review",
+                        "review_approved",
+                        "escalated",
+                    ):
+                        stats[key] = state_counts.get(key, 0)
+                    # Keep availability and recent closure counters alongside state buckets.
+                    stats["ready_unblocked"] = server.task_manager.count_ready_tasks()
+                    stats["blocked"] = server.task_manager.count_blocked_tasks()
+                    stats["closed_24h"] = server.task_manager.count_closed_since(hours=24)
+                    return stats
+
+                task_stats = await server.run_db(_collect_task_stats)
             except Exception as e:
                 logger.warning(f"Failed to get task stats: {e}")
 
@@ -206,7 +212,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         memory_stats: dict[str, Any] = {"count": 0, "by_type": {}, "recent_count": 0}
         if server.memory_manager is not None:
             try:
-                stats = server.memory_manager.get_stats()
+                stats = await server.run_db(server.memory_manager.get_stats)
                 memory_stats["count"] = stats.get("total_count", 0)
                 memory_stats["by_type"] = stats.get("by_type", {})
                 memory_stats["recent_count"] = stats.get("recent_count", 0)
@@ -229,15 +235,24 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                                 qdrant_client.count, vector_store._collection_name
                             )
                             qdrant_healthy = True
-                        except Exception:
-                            logger.debug("Qdrant health check failed", exc_info=True)
+                        except Exception as e:
+                            logger.debug(
+                                "Qdrant health check failed: %s: %s",
+                                type(e).__name__,
+                                e,
+                                exc_info=True,
+                            )
                             qdrant_healthy = False
                 memory_stats["qdrant"] = {
                     "configured": qdrant_configured,
                     "healthy": qdrant_healthy,
                 }
             except Exception as e:
-                logger.warning(f"Failed to check Qdrant status: {e}")
+                logger.warning(
+                    "Failed to check Qdrant status: %s: %s",
+                    type(e).__name__,
+                    e,
+                )
                 memory_stats["qdrant"] = {"configured": False, "healthy": False}
 
             # Neo4j knowledge graph status
@@ -255,7 +270,11 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "url": neo4j_url,
                 }
             except Exception as e:
-                logger.warning(f"Failed to check Neo4j status: {e}")
+                logger.warning(
+                    "Failed to check Neo4j status: %s: %s",
+                    type(e).__name__,
+                    e,
+                )
                 memory_stats["neo4j"] = {"configured": False, "installed": False, "healthy": False}
 
         # Get pipeline execution statistics
@@ -269,13 +288,18 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         try:
             from gobby.storage.pipelines import LocalPipelineExecutionManager
 
-            mgr = LocalPipelineExecutionManager(db=server.services.database, project_id="")
-            status_counts = mgr.count_by_status()
-            for key in ["running", "waiting_approval", "completed", "failed"]:
-                pipeline_stats[key] = status_counts.get(key, 0)
-            pipeline_stats["total"] = sum(
-                pipeline_stats[k] for k in ["running", "waiting_approval", "completed", "failed"]
-            )
+            def _collect_pipeline_stats() -> dict[str, Any]:
+                mgr = LocalPipelineExecutionManager(db=server.services.database, project_id="")
+                status_counts = mgr.count_by_status()
+                stats = dict(pipeline_stats)
+                for key in ["running", "waiting_approval", "completed", "failed"]:
+                    stats[key] = status_counts.get(key, 0)
+                stats["total"] = sum(
+                    stats[k] for k in ["running", "waiting_approval", "completed", "failed"]
+                )
+                return stats
+
+            pipeline_stats = await server.run_db(_collect_pipeline_stats)
         except Exception as e:
             logger.warning(f"Failed to get pipeline stats: {e}")
 
@@ -283,7 +307,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         skills_stats: dict[str, Any] = {"total": 0}
         if server.skill_manager is not None:
             try:
-                skills_stats["total"] = server.skill_manager.count_skills()
+                skills_stats["total"] = await server.run_db(server.skill_manager.count_skills)
             except Exception as e:
                 logger.warning(f"Failed to get skills stats: {e}")
 
@@ -305,8 +329,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             tracker = _get_tracker(server)
             if tracker:
-                today = tracker.get_summary(days=1)
-                cumulative = tracker.get_cumulative(days=30)
+                today, cumulative = await server.run_db(
+                    lambda: (tracker.get_summary(days=1), tracker.get_cumulative(days=30))
+                )
                 savings_stats = {
                     "today_tokens_saved": today.get("total_tokens_saved", 0),
                     "today_events": today.get("total_events", 0),
@@ -363,8 +388,11 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         try:
             from gobby.storage.agents import LocalAgentRunManager
 
-            arm = LocalAgentRunManager(server.services.database)
-            runs = arm.list_running()
+            def _list_running_agents() -> list[Any]:
+                arm = LocalAgentRunManager(server.services.database)
+                return arm.list_running()
+
+            runs = await server.run_db(_list_running_agents)
             agent_stats["running"] = len(runs)
         except Exception:
             pass
@@ -379,6 +407,17 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 provider_model_status = provider_model_catalog.status_snapshot()
             except Exception as e:
                 logger.warning(f"Failed to get provider model catalog status: {e}")
+
+        database_status: dict[str, Any] = {}
+        db = getattr(server.services, "database", None)
+        if db is not None:
+            connection_count = getattr(db, "connection_count", None)
+            database_status["connection_count"] = (
+                connection_count if isinstance(connection_count, int) else None
+            )
+        executor_stats = server.services.db_executor_stats()
+        if executor_stats is not None:
+            database_status["executor"] = executor_stats
 
         return {
             "status": "healthy" if server._running else "degraded",
@@ -402,6 +441,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "skills": skills_stats,
             "pipelines": pipeline_stats,
             "provider_models": provider_model_status,
+            "database": database_status,
             "savings": savings_stats,
             "agents": agent_stats,
             "fd_usage": fd_usage,

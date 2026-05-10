@@ -569,7 +569,6 @@ async def find_duplicate_memories(
     Returns:
         List of dicts: {keep_id, delete_id, score, delete_content_preview}.
     """
-    import asyncio
 
     memories = storage.list_memories(project_id=project_id, limit=limit)
     if not memories:
@@ -762,7 +761,7 @@ async def execute_cleanup(
 
     # --- Stale ---
     if "stale" in active:
-        stale = await asyncio.to_thread(
+        stale = await memory_manager.run_db(
             find_stale_memories,
             db=memory_manager.db,
             max_age_days=max_stale_age_days,
@@ -826,7 +825,7 @@ async def execute_cleanup(
 
     # --- Orphaned ---
     if "orphaned" in active:
-        orphaned = await asyncio.to_thread(
+        orphaned = await memory_manager.run_db(
             find_orphaned_memories,
             db=memory_manager.db,
             min_age_days=max_stale_age_days,

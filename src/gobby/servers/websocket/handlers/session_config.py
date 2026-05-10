@@ -6,11 +6,12 @@ message types.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
 from typing import TYPE_CHECKING, Any
+
+from gobby.servers.websocket.db import run_db
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -37,7 +38,7 @@ async def _set_attached_session_mode(
         return
 
     try:
-        session = await asyncio.to_thread(session_manager.get, target_session_id)
+        session = await run_db(mixin, session_manager.get, target_session_id)
     except Exception as exc:
         logger.warning("Failed to look up target session %s: %s", target_session_id, exc)
         await mixin._send_error(
@@ -63,7 +64,7 @@ async def _set_attached_session_mode(
         return
 
     try:
-        await asyncio.to_thread(session_manager.update_chat_mode, target_session_id, mode)
+        await run_db(mixin, session_manager.update_chat_mode, target_session_id, mode)
     except ValueError as exc:
         await mixin._send_error(websocket, str(exc))
         return
@@ -204,7 +205,8 @@ async def handle_set_project(
             session_manager = getattr(mixin, "session_manager", None)
             if session_manager:
                 try:
-                    await asyncio.to_thread(
+                    await run_db(
+                        mixin,
                         session_manager.update,
                         session.db_session_id,
                         status="paused",
@@ -294,7 +296,8 @@ async def handle_set_worktree(
             session_manager = getattr(mixin, "session_manager", None)
             if session_manager:
                 try:
-                    await asyncio.to_thread(
+                    await run_db(
+                        mixin,
                         session_manager.update,
                         session.db_session_id,
                         status="paused",
@@ -355,13 +358,14 @@ async def handle_set_agent(
     session_manager = getattr(mixin, "session_manager", None)
     if session_manager and agent_name != "default":
         try:
-            existing_row = await asyncio.to_thread(session_manager.get, conversation_id)
+            existing_row = await run_db(mixin, session_manager.get, conversation_id)
         except Exception:
             existing_row = None
         try:
             from gobby.workflows.agent_resolver import resolve_agent
 
-            agent_body = await asyncio.to_thread(
+            agent_body = await run_db(
+                mixin,
                 resolve_agent,
                 agent_name,
                 session_manager.db,
@@ -393,7 +397,8 @@ async def handle_set_agent(
         if session.db_session_id:
             if session_manager:
                 try:
-                    await asyncio.to_thread(
+                    await run_db(
+                        mixin,
                         session_manager.update,
                         session.db_session_id,
                         status="paused",
@@ -453,7 +458,8 @@ async def handle_set_provider(
             session_manager = getattr(mixin, "session_manager", None)
             if session_manager:
                 try:
-                    await asyncio.to_thread(
+                    await run_db(
+                        mixin,
                         session_manager.update,
                         session.db_session_id,
                         source=provider,

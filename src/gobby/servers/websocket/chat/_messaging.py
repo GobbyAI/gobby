@@ -19,6 +19,7 @@ from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat.local_openai_warmup import (
     LocalOpenAIModelWarmupError,
 )
+from gobby.servers.websocket.db import run_db
 
 logger = logging.getLogger(__name__)
 
@@ -391,7 +392,8 @@ class ChatMessagingMixin:
                 if sm and sm.db:
                     chat_session_id = getattr(session, "db_session_id", None) or conversation_id
                     blocks_json = json.dumps(content_blocks) if content_blocks else None
-                    await asyncio.to_thread(
+                    await run_db(
+                        self,
                         cm_store.save_message,
                         sm.db,
                         conversation_id=chat_session_id,
@@ -507,7 +509,7 @@ class ChatMessagingMixin:
                     session_mgr = getattr(self, "session_manager", None)
                     if db_sid and session_mgr:
                         try:
-                            await asyncio.to_thread(session_mgr.update_model, db_sid, model)
+                            await run_db(self, session_mgr.update_model, db_sid, model)
                         except Exception:
                             logger.debug("Failed to persist switched model", exc_info=True)
                     await websocket.send(
@@ -550,7 +552,7 @@ class ChatMessagingMixin:
                 _sm = getattr(self, "session_manager", None)
                 if _sm:
                     try:
-                        await asyncio.to_thread(_sm.update, db_sid, status="active")
+                        await run_db(self, _sm.update, db_sid, status="active")
                     except Exception:
                         logger.debug("Failed to set session status to active", exc_info=True)
 
@@ -747,9 +749,7 @@ class ChatMessagingMixin:
                         session_mgr = getattr(self, "session_manager", None)
                         if db_sid and session_mgr:
                             try:
-                                await asyncio.to_thread(
-                                    session_mgr.update, db_sid, external_id=sdk_sid
-                                )
+                                await run_db(self, session_mgr.update, db_sid, external_id=sdk_sid)
                             except Exception:
                                 logger.debug(
                                     f"Failed to update external_id to SDK session_id for {db_sid}",
@@ -771,7 +771,8 @@ class ChatMessagingMixin:
                                 new_output = prev_output + (event.output_tokens or 0)
                                 session._accumulated_output_tokens = new_output
 
-                                await asyncio.to_thread(
+                                await run_db(
+                                    self,
                                     session_manager.update_usage,
                                     db_sid,
                                     input_tokens=event.total_input_tokens or 0,
@@ -796,7 +797,8 @@ class ChatMessagingMixin:
                                     updates["model"] = last_model
                                 if updates:
                                     updates["updated_at"] = datetime.now(UTC).isoformat()
-                                    await asyncio.to_thread(
+                                    await run_db(
+                                        self,
                                         session_manager.db.safe_update,
                                         "sessions",
                                         updates,
@@ -812,7 +814,7 @@ class ChatMessagingMixin:
                     # Mark session as paused now that streaming is done
                     if db_sid and session_manager:
                         try:
-                            await asyncio.to_thread(session_manager.update, db_sid, status="paused")
+                            await run_db(self, session_manager.update, db_sid, status="paused")
                         except Exception:
                             logger.debug("Failed to set session status to paused", exc_info=True)
 

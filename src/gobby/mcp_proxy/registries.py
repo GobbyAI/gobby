@@ -338,7 +338,7 @@ def setup_internal_registries(
         from gobby.mcp_proxy.tools.hub import create_hub_registry
 
         hub_db_path = Path(_config.database_path).expanduser()
-        hub_registry = create_hub_registry(hub_db_path=hub_db_path)
+        hub_registry = create_hub_registry(hub_db_path=hub_db_path, db=db)
         manager.add_registry(hub_registry)
         logger.debug("Hub registry initialized")
 

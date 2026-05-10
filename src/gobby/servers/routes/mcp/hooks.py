@@ -5,11 +5,10 @@ Provides hook execution endpoint for CLI adapters.
 Extracted from base.py as part of Strangler Fig decomposition.
 """
 
-import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.requests import ClientDisconnect
@@ -219,22 +218,23 @@ async def _maybe_hold_open(
     """
     from gobby.storage.sessions import SessionManager
 
-    db = request.app.state.server.services.database
+    server = request.app.state.server
+    db = server.services.database
     if not db:
         return None
     session_store = SessionManager(db)
-    db_session = await asyncio.to_thread(session_store.get, session_id)
+    db_session = await server.run_db(session_store.get, session_id)
     if not db_session:
         try:
-            resolved_session_id = await asyncio.to_thread(
+            resolved_session_id = await server.run_db(
                 session_store.resolve_session_reference, session_id
             )
         except Exception:
             resolved_session_id = None
         if resolved_session_id:
-            db_session = await asyncio.to_thread(session_store.get, resolved_session_id)
+            db_session = await server.run_db(session_store.get, resolved_session_id)
     if not db_session:
-        db_session = await asyncio.to_thread(
+        db_session = await server.run_db(
             session_store.find_active_by_external_id, session_id, source
         )
 
@@ -249,7 +249,7 @@ async def _maybe_hold_open(
         try:
             from gobby.storage.projects import LocalProjectManager
 
-            project = LocalProjectManager(db).get(db_session.project_id)
+            project = await server.run_db(LocalProjectManager(db).get, db_session.project_id)
             if project and project.repo_path:
                 project_path = project.repo_path
         except Exception:
@@ -338,9 +338,7 @@ async def _maybe_hold_open(
             key = approval_key_for_tool(tool_name, arguments)
             updated_rules = set(session_rules)
             updated_rules.add(key)
-            await asyncio.to_thread(
-                session_store.update_approved_tools, db_session.id, updated_rules
-            )
+            await server.run_db(session_store.update_approved_tools, db_session.id, updated_rules)
             return {"decision": "approve"}
         if decision == "approve":
             return {"decision": "approve"}
@@ -471,7 +469,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             # Execute hook via adapter
             try:
-                result = await asyncio.to_thread(adapter.handle_native, payload, hook_manager)
+                result = await server.run_db(adapter.handle_native, payload, hook_manager)
 
                 # After existing hook processing, check for web chat hold-open.
                 # Terminal sessions pass straight through; only web_chat sessions
@@ -499,7 +497,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ),
                 )
 
-                return result
+                return cast(dict[str, Any], result)
 
             except ValueError as e:
                 # Invalid request - still return graceful response

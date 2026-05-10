@@ -77,9 +77,11 @@ class MemoryManager:
         neo4j_rrf_k: int = 60,
         embedding_dim: int = 768,
         collection_prefix: str = "code_symbols_",
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ):
         self.db = db
         self.config = config
+        self._run_db = run_db
         self._llm_service = llm_service
         self._vector_store = vector_store
         self._embed_fn = embed_fn
@@ -89,7 +91,7 @@ class MemoryManager:
 
         self.storage = LocalMemoryManager(db)
         self._fts_searcher: MemoryFTS5Searcher | None = None
-        self._backend: MemoryBackendProtocol = StorageAdapter(self.storage)
+        self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
         self._ingestion_service = IngestionService(
             storage=self.storage,
             backend=self._backend,
@@ -156,12 +158,14 @@ class MemoryManager:
             neo4j_graph_min_score=neo4j_graph_min_score,
             neo4j_rrf_k=neo4j_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
+            run_db=run_db,
         )
         self._crossref_service = CrossrefService(
             storage=self.storage,
             vector_store=vector_store,
             embed_fn=embed_fn,
             config=config,
+            run_db=run_db,
         )
         self._indexing_service = IndexingService(
             storage=self.storage,
@@ -171,7 +175,14 @@ class MemoryManager:
             fts_searcher_factory=self._get_fts_searcher,
             crossref_service=self._crossref_service,
             kg_rebuilder=self.rebuild_knowledge_graph,
+            run_db=run_db,
         )
+
+    async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run memory SQLite work on the daemon DB executor when available."""
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def close(self) -> None:
         """Close underlying clients (Neo4j httpx.AsyncClient, etc.)."""
@@ -752,11 +763,15 @@ class MemoryManager:
         project_id: str | None = None,
     ) -> list[Memory]:
         """Get memories linked to this one via cross-references."""
-        return self._crossref_service.get_related(
-            memory_id,
-            limit=limit,
-            min_similarity=min_similarity,
-            project_id=project_id,
+        return cast(
+            list[Memory],
+            await self.run_db(
+                self._crossref_service.get_related,
+                memory_id,
+                limit,
+                min_similarity,
+                project_id,
+            ),
         )
 
     async def clear_knowledge_graph(self, project_id: str | None = None) -> dict[str, Any]:
@@ -764,7 +779,7 @@ class MemoryManager:
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
         cleared = await self._kg_service.clear_graph(project_id=project_id)
-        pending = await asyncio.to_thread(self.storage.mark_pending_graphs, project_id)
+        pending = await self.run_db(self.storage.mark_pending_graphs, project_id)
         return {"success": True, "memories_marked_pending": pending, **cleared}
 
     async def rebuild_knowledge_graph(
@@ -780,7 +795,7 @@ class MemoryManager:
         if project_id:
             all_memories = (await self._fetch_all_project_memories(project_id))[:limit]
         else:
-            all_memories = await asyncio.to_thread(self.list_memories, None, None, limit)
+            all_memories = await self.run_db(self.list_memories, None, None, limit)
 
         status_counts = {status.value: 0 for status in KnowledgeGraphStatus}
         errors = 0
@@ -822,7 +837,7 @@ class MemoryManager:
                     KnowledgeGraphStatus.SUCCESS,
                     KnowledgeGraphStatus.NOOP_NO_ENTITIES,
                 ):
-                    await asyncio.to_thread(self.mark_graph_processed, mem.id)
+                    await self.run_db(self.mark_graph_processed, mem.id)
                     processed += 1
                 else:
                     errors += 1
