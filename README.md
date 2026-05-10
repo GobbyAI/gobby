@@ -87,8 +87,8 @@ gets to "hands-off" without lying about it.
 Your database, transcripts, hooks, task ledger, workflows, and rules stay on
 your machine. No cloud control plane. No SaaS dependency. Apache 2.0.
 
-The repo you're reading was built through its own build loop. 7,800+ commits.
-15,000+ tasks. 0.4.0 was assembled by spawned agents working through staged
+The repo you're reading was built through its own build loop. 5K+ commits.
+15K+ tasks. 0.4.0 was assembled by spawned agents working through staged
 manifests, with the dispatcher routing review and merge. That's the production
 test bed: every regression in dispatch, hooks, isolation, or task lifecycle
 shows up as a stalled build the next morning.
