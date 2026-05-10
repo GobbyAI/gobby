@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "0.4.0"
+version = "0.4.1"
 description = "Gobby is a local-first agent control plane for AI coding tools: shared sessions, tasks, memory, MCP discovery, and workflow guardrails across Claude Code, Codex, Gemini CLI, Qwen CLI, and Factory Droid."
 readme = "README.md"
 license = "Apache-2.0"
