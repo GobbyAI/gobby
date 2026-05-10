@@ -98,13 +98,13 @@ def create_hub_registry(
 
     def _get_hub_db() -> tuple[DatabaseProtocol | None, bool]:
         """Get hub database connection if it exists."""
-        if not hub_db_path.exists():
+        if not resolved_hub_db_path.exists():
             return None, False
         if db is not None:
             db_path = getattr(db, "db_path", None)
             if db_path is not None and Path(db_path).expanduser().resolve() == resolved_hub_db_path:
                 return db, False
-        return LocalDatabase(hub_db_path), True
+        return LocalDatabase(resolved_hub_db_path), True
 
     async def _run_sqlite(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         from gobby.app_context import get_app_context
@@ -167,8 +167,8 @@ def create_hub_registry(
         Args:
             include_system: Include system projects (_orphaned, _migrated, _personal, _global)
         """
-        if not hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
         try:
 
@@ -224,8 +224,8 @@ def create_hub_registry(
             state: Optional projected state filter (ready, closed, in_progress, needs_review)
             limit: Maximum number of tasks to return (default 50)
         """
-        if not hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
         try:
             where_clause = ""
@@ -306,8 +306,8 @@ def create_hub_registry(
         Args:
             limit: Maximum number of sessions to return (default 20)
         """
-        if not hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
         try:
 
@@ -356,8 +356,8 @@ def create_hub_registry(
 
         Returns counts of projects, tasks, sessions, memories, etc.
         """
-        if not hub_db_path.exists():
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
         def _collect_stats(db: DatabaseProtocol) -> dict[str, Any]:
             stats: dict[str, Any] = {}

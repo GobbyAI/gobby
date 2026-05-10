@@ -49,6 +49,7 @@ class DatabaseExecutor:
             max_workers=max_workers,
             thread_name_prefix=thread_name_prefix,
         )
+        self._thread_name_prefix = thread_name_prefix
         self._lock = threading.Lock()
         self._submitted = 0
         self._completed = 0
@@ -85,7 +86,10 @@ class DatabaseExecutor:
             shutdown = self._shutdown
 
         queued = max(0, submitted - completed - active)
-        threads = len(getattr(self._executor, "_threads", ()))
+        thread_prefix = f"{self._thread_name_prefix}_"
+        threads = sum(
+            1 for thread in threading.enumerate() if thread.name.startswith(thread_prefix)
+        )
         return DatabaseExecutorStats(
             max_workers=self.max_workers,
             active=active,

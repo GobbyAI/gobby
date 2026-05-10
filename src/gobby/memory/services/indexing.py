@@ -180,7 +180,7 @@ class IndexingService:
 
         try:
             fts = self._fts_searcher_factory()
-            await self._run_sqlite(lambda: fts._db.execute("DELETE FROM memories_fts"))
+            await self._run_sqlite(fts.clear)
             report["fts_cleared"] = True
         except Exception as e:
             logger.error(

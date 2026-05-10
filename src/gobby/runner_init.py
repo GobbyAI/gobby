@@ -195,7 +195,12 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     # Initialize local storage with dual-write if in project context
     runner.database = init_hub_database(runner.config)
-    runner.db_executor = DatabaseExecutor(max_workers=4)
+    try:
+        db_max_workers = int(os.environ.get("RUNNER_MAX_WORKERS", "4"))
+    except ValueError:
+        db_max_workers = 4
+    db_max_workers = db_max_workers if db_max_workers > 0 else 4
+    runner.db_executor = DatabaseExecutor(max_workers=db_max_workers)
 
     # Phase 2: Reload config from DB (secrets > env vars)
     # Phase 1 (above) used env vars only to bootstrap the database path.

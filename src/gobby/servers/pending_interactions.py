@@ -62,7 +62,7 @@ class PendingInteractionManager:
 
     async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
-            return func(*args, **kwargs)
+            return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
 
     async def create(
