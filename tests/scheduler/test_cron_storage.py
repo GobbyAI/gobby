@@ -255,6 +255,74 @@ def test_toggle_job(cron_storage: CronJobStorage) -> None:
     assert toggled2.next_run_at is not None
 
 
+def test_park_system_job_clears_next_run_without_disabling(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Parking a system job clears next_run_at but preserves enabled=true."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+        enabled=True,
+        is_system=True,
+    )
+    assert job.next_run_at is not None
+
+    parked = cron_storage.park_system_job(job.id)
+
+    assert parked is not None
+    assert parked.enabled is True
+    assert parked.next_run_at is None
+
+
+def test_wake_system_job_recomputes_next_run_for_enabled_row(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Waking a parked enabled system job schedules its next run."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+        enabled=True,
+        is_system=True,
+    )
+    cron_storage.park_system_job(job.id)
+
+    woken = cron_storage.wake_system_job(job.id)
+
+    assert woken is not None
+    assert woken.enabled is True
+    assert woken.next_run_at is not None
+
+
+def test_wake_system_job_leaves_disabled_hard_stop_parked(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Disabled system rows represent hard stops and do not wake."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+        enabled=False,
+        is_system=True,
+    )
+
+    woken = cron_storage.wake_system_job(job.id)
+
+    assert woken is not None
+    assert woken.enabled is False
+    assert woken.next_run_at is None
+
+
 def test_get_due_jobs(cron_storage: CronJobStorage) -> None:
     """get_due_jobs returns jobs whose next_run_at has passed."""
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()

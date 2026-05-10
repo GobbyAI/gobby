@@ -705,7 +705,12 @@ def init_orchestration(runner: GobbyRunner) -> None:
         if runner.project_id:
             from gobby.runner import install_dispatcher_cron_row
 
-            install_dispatcher_cron_row(runner.database, project_id=runner.project_id)
+            dispatcher_job = install_dispatcher_cron_row(
+                runner.database,
+                project_id=runner.project_id,
+            )
+            if dispatcher_job.enabled:
+                runner.cron_storage.wake_system_job(dispatcher_job.id)
             logger.info("Installed system cron job: gobby:dispatcher")
 
         # Register pipeline heartbeat handler
@@ -737,8 +742,31 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     action_type="handler",
                     action_config={"handler": "pipeline_heartbeat"},
                     enabled=True,
+                    is_system=True,
                 )
                 logger.info("Created system cron job: gobby:pipeline-heartbeat")
+            elif existing:
+                if not existing.is_system:
+                    runner.cron_storage.db.execute(
+                        "UPDATE cron_jobs SET is_system = 1 WHERE id = ?",
+                        (existing.id,),
+                    )
+                runner.cron_storage.reconcile_system_job_definition(
+                    existing.id,
+                    description=(
+                        "Safety net: detects stalled pipelines and marks dead executions as failed"
+                    ),
+                    schedule_type="interval",
+                    cron_expr=None,
+                    interval_seconds=60,
+                    run_at=None,
+                    timezone="UTC",
+                    action_type="handler",
+                    action_config={"handler": "pipeline_heartbeat"},
+                )
+                refreshed = runner.cron_storage.get_job(existing.id)
+                if refreshed and refreshed.enabled:
+                    runner.cron_storage.wake_system_job(refreshed.id)
             logger.debug("PipelineHeartbeat handler registered")
         except Exception as e:
             logger.error(f"Failed to register pipeline heartbeat: {e}")

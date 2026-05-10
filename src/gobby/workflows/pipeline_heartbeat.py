@@ -25,9 +25,54 @@ if TYPE_CHECKING:
     from gobby.storage.cron_models import CronJob
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.sessions import SessionManager
-    from gobby.storage.tasks._manager import LocalTaskManager
+    from gobby.storage.tasks import LocalTaskManager, Task
 
 logger = logging.getLogger(__name__)
+
+
+class PipelineHeartbeatResult(str):
+    """String result with structured idle-state fields for the cron executor."""
+
+    stalled_handled: int
+    stale_tasks_recovered: int
+    running_pipeline_executions: int
+    stale_task_candidates: int
+
+    def __new__(
+        cls,
+        *,
+        stalled_handled: int,
+        stale_tasks_recovered: int,
+        running_pipeline_executions: int,
+        stale_task_candidates: int,
+    ) -> PipelineHeartbeatResult:
+        parts = [
+            f"{stalled_handled} stalled handled",
+            f"{stale_tasks_recovered} stale tasks recovered",
+            f"{running_pipeline_executions} running executions",
+            f"{stale_task_candidates} stale task candidates",
+        ]
+        obj = str.__new__(cls, f"Heartbeat: {', '.join(parts)}")
+        obj.stalled_handled = stalled_handled
+        obj.stale_tasks_recovered = stale_tasks_recovered
+        obj.running_pipeline_executions = running_pipeline_executions
+        obj.stale_task_candidates = stale_task_candidates
+        return obj
+
+    @property
+    def found_work(self) -> bool:
+        return any(
+            (
+                self.stalled_handled,
+                self.stale_tasks_recovered,
+                self.running_pipeline_executions,
+                self.stale_task_candidates,
+            )
+        )
+
+    @property
+    def should_park(self) -> bool:
+        return not self.found_work
 
 
 def _submit_current_stage_for_review(
@@ -85,14 +130,18 @@ class PipelineHeartbeat:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
 
-    async def __call__(self, job: CronJob) -> str:
+    async def __call__(self, job: CronJob) -> PipelineHeartbeatResult:
         """Cron handler entry point."""
         stalled = await self.check_stalled_executions()
         recovered = await self.check_stale_tasks()
-        parts = [f"{stalled} stalled handled"]
-        if recovered:
-            parts.append(f"{recovered} stale tasks recovered")
-        return f"Heartbeat: {', '.join(parts)}"
+        running = await self.count_running_executions()
+        stale_candidates = await self.count_stale_task_candidates()
+        return PipelineHeartbeatResult(
+            stalled_handled=stalled,
+            stale_tasks_recovered=recovered,
+            running_pipeline_executions=running,
+            stale_task_candidates=stale_candidates,
+        )
 
     async def check_stalled_executions(self) -> int:
         """Find stalled RUNNING executions and take corrective action.
@@ -206,23 +255,10 @@ class PipelineHeartbeat:
         if not task_manager or not agent_run_manager:
             return 0
 
-        try:
-            active_claims = await self._run_sqlite(
-                task_manager.list_tasks,
-                current_stage_state=list(ACTIVE_STAGE_STATES),
-                closed=False,
-                limit=100,
-            )
-        except Exception:
-            logger.exception("Heartbeat: failed to query claimed tasks")
-            return 0
-
         recovered = 0
-        for task in active_claims:
+        for task in await self._claimed_task_candidates():
             owner_session_id = get_claimed_session_id(task)
-            if not owner_session_id:
-                continue
-            if not is_task_actively_claimed(task, owner_session_id):
+            if owner_session_id is None:
                 continue
             try:
                 has_active = await self._run_sqlite(
@@ -283,3 +319,42 @@ class PipelineHeartbeat:
             except Exception:
                 logger.exception(f"Heartbeat: error checking task {task.id} for staleness")
         return recovered
+
+    async def count_running_executions(self) -> int:
+        """Count running pipeline executions that need heartbeat monitoring."""
+        return int(
+            await self._run_sqlite(
+                self._execution_manager.count_executions,
+                status=ExecutionStatus.RUNNING,
+            )
+        )
+
+    async def count_stale_task_candidates(self) -> int:
+        """Count active claimed tasks that need stale-claim monitoring."""
+        return len(await self._claimed_task_candidates())
+
+    async def _claimed_task_candidates(self) -> list[Task]:
+        task_manager = self._task_manager
+        agent_run_manager = self._agent_run_manager
+        if not task_manager or not agent_run_manager:
+            return []
+
+        try:
+            active_claims = await self._run_sqlite(
+                task_manager.list_tasks,
+                current_stage_state=list(ACTIVE_STAGE_STATES),
+                closed=False,
+                limit=100,
+            )
+        except Exception:
+            logger.exception("Heartbeat: failed to query claimed tasks")
+            return []
+
+        candidates: list[Task] = []
+        for task in active_claims:
+            owner_session_id = get_claimed_session_id(task)
+            if not owner_session_id:
+                continue
+            if is_task_actively_claimed(task, owner_session_id):
+                candidates.append(task)
+        return candidates

@@ -402,6 +402,36 @@ class CronJobStorage:
 
         return self._update_job_fields(job_id, **update_fields)
 
+    def park_system_job(self, job_id: str) -> CronJob | None:
+        """Park an enabled system cron row by clearing its next scheduled run."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; park_system_job "
+                "is reserved for gobby-managed system cron rows."
+            )
+        return self.update_system_job_bookkeeping(job_id, next_run_at=None)
+
+    def wake_system_job(self, job_id: str) -> CronJob | None:
+        """Wake an enabled system cron row by recomputing its next scheduled run."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; wake_system_job "
+                "is reserved for gobby-managed system cron rows."
+            )
+        if not job.enabled:
+            return job
+        next_run = compute_next_run(job)
+        return self.update_system_job_bookkeeping(
+            job_id,
+            next_run_at=next_run.isoformat() if next_run else None,
+        )
+
     def reconcile_system_job_definition(
         self,
         job_id: str,

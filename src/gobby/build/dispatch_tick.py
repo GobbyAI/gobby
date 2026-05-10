@@ -6,9 +6,12 @@ import logging
 from dataclasses import dataclass
 
 from gobby.runner import install_dispatcher_cron_row
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
+
+PIPELINE_HEARTBEAT_CRON_JOB_NAME = "gobby:pipeline-heartbeat"
 
 
 @dataclass
@@ -33,12 +36,12 @@ async def kick_dispatcher_tick(
     max_active_agents: int | None = None,
 ) -> DispatcherTickSummary:
     """Fire a bounded dispatcher heartbeat burst when the bundled cron row is enabled."""
-    if dispatcher_enabled is None:
-        if db is None or project_id is None:
-            dispatcher_enabled = True
-        else:
-            job = install_dispatcher_cron_row(db, project_id=project_id)
-            dispatcher_enabled = job.enabled
+    woke_system_jobs = False
+    if db is not None and project_id is not None and dispatcher_enabled is not False:
+        dispatcher_enabled = _wake_build_system_jobs(db, project_id)
+        woke_system_jobs = dispatcher_enabled
+    elif dispatcher_enabled is None:
+        dispatcher_enabled = True
 
     if not dispatcher_enabled:
         logger.info(
@@ -71,4 +74,23 @@ async def kick_dispatcher_tick(
         )
         if result.executed == 0 or result.cap_reached or result.reason:
             break
+    if woke_system_jobs:
+        _wake_existing_system_job(CronJobStorage(db), PIPELINE_HEARTBEAT_CRON_JOB_NAME)
     return summary
+
+
+def _wake_build_system_jobs(db: DatabaseProtocol, project_id: str) -> bool:
+    storage = CronJobStorage(db)
+    dispatcher = install_dispatcher_cron_row(db, project_id=project_id)
+    if not dispatcher.enabled:
+        return False
+    storage.wake_system_job(dispatcher.id)
+    _wake_existing_system_job(storage, PIPELINE_HEARTBEAT_CRON_JOB_NAME)
+    return True
+
+
+def _wake_existing_system_job(storage: CronJobStorage, name: str) -> None:
+    job = storage.get_job_by_name(name)
+    if job is None or not job.is_system:
+        return
+    storage.wake_system_job(job.id)

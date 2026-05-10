@@ -229,6 +229,38 @@ def test_build_stop_cli_runs_migrations_before_control_service() -> None:
     assert build_stop.call_args is not None
 
 
+def test_build_resume_cli_kicks_dispatcher() -> None:
+    from gobby.build.service import BuildControlResult, BuildLifecycleEvent
+    from gobby.cli import cli
+
+    control_result = BuildControlResult(
+        project_id="project-1",
+        enabled=True,
+        cron_job_id="cron-1",
+        lifecycle_event=BuildLifecycleEvent(
+            id=1,
+            project_id="project-1",
+            event="build_resume",
+            reason="gobby build resume",
+            by_actor="build",
+            created_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build.build_resume", return_value=control_result) as build_resume,
+        patch("gobby.cli.build._kick_dispatcher_tick", new=AsyncMock()) as tick,
+    ):
+        result = CliRunner().invoke(cli, ["build", "resume"])
+
+    assert result.exit_code == 0
+    build_resume.assert_called_once_with(db=db_cls.return_value, project_id="project-1")
+    tick.assert_awaited_once_with(db_cls.return_value, "project-1")
+
+
 def test_build_stop_cli_accepts_task_ref() -> None:
     from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
     from gobby.cli import cli

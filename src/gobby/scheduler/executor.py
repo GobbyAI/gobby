@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Type for registered cron handlers: async callables that receive a CronJob and return output
-CronHandler = Callable[[CronJob], Awaitable[str]]
+# Type for registered cron handlers: async callables that receive a CronJob and return output.
+CronHandler = Callable[[CronJob], Awaitable[object]]
 
 
 class CronExecutor:
@@ -63,6 +63,7 @@ class CronExecutor:
         self.storage.update_run(run.id, status="running", started_at=now)
 
         try:
+            output: object
             if job.action_type == "agent_spawn":
                 output = await self._execute_agent_spawn(job)
             elif job.action_type == "pipeline":
@@ -76,12 +77,13 @@ class CronExecutor:
             else:
                 raise ValueError(f"Unknown action_type: {job.action_type}")
 
+            output_text = "" if output is None else str(output)
             completed_at = datetime.now(UTC).isoformat()
             updated = self.storage.update_run(
                 run.id,
                 status="completed",
                 completed_at=completed_at,
-                output=output[:10000] if output and len(output) > 10000 else output,
+                output=output_text[:10000] if len(output_text) > 10000 else output_text,
             )
             return updated or run
 
@@ -288,7 +290,7 @@ class CronExecutor:
                 process.terminate()
             raise RuntimeError(f"Shell command timed out after {timeout}s") from err
 
-    async def _execute_handler(self, job: CronJob) -> str:
+    async def _execute_handler(self, job: CronJob) -> object:
         """Execute a registered handler action.
 
         The handler name is read from action_config["handler"] and dispatched
@@ -301,7 +303,9 @@ class CronExecutor:
         if not handler:
             available = list(self._handlers.keys())
             raise ValueError(f"No handler registered: '{name}'. Available: {available}")
-        return await handler(job)
+        result = await handler(job)
+        self._park_pipeline_heartbeat_if_idle(job, result)
+        return result
 
     async def _execute_dispatcher(self, job: CronJob) -> str:
         """Execute the dispatcher heartbeat action."""
@@ -315,6 +319,14 @@ class CronExecutor:
             max_active_agents=config.get("max_active_agents"),
             services=self.services,
         )
+        if (
+            job.name == "gobby:dispatcher"
+            and result.scanned == 0
+            and result.executed == 0
+            and not result.cap_reached
+            and result.reason is None
+        ):
+            self._park_system_job(job)
         return (
             "Dispatcher heartbeat completed: "
             f"scanned={result.scanned}, "
@@ -322,3 +334,16 @@ class CronExecutor:
             f"skipped={result.skipped}, "
             f"cap_reached={result.cap_reached}"
         )
+
+    def _park_pipeline_heartbeat_if_idle(self, job: CronJob, result: object) -> None:
+        if job.name != "gobby:pipeline-heartbeat":
+            return
+        if bool(getattr(result, "should_park", False)):
+            self._park_system_job(job)
+
+    def _park_system_job(self, job: CronJob) -> None:
+        if not job.is_system:
+            return
+        updated = self.storage.park_system_job(job.id)
+        if updated is not None:
+            logger.debug("Parked idle system cron job %s (%s)", job.id, job.name)
