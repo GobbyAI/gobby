@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,6 +32,11 @@ def _make_request(
     """Build a fake Request with app.state wired up."""
     request = MagicMock()
     request.app.state.server.services.database = db
+
+    async def _run_db_passthrough(func: Any, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    request.app.state.server.run_db = AsyncMock(side_effect=_run_db_passthrough)
     if pending_manager is not None:
         request.app.state.pending_interaction_manager = pending_manager
     else:
