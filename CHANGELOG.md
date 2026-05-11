@@ -8,6 +8,49 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1]
+
+A patch release on top of `0.4.0` focused on daemon stability, runner
+decomposition, and a transitive postcss security bump.
+
+### Added
+
+- Add idle parking for build system crons so the dispatch heartbeat stops
+  waking the daemon when there is no automatable work to do (#14499).
+
+### Changed
+
+- Decompose runner initialization into focused helpers to keep `runner.py`
+  under the source-file budget and untangle startup ordering, with follow-up
+  review findings folded in (#14500, #14503).
+- Update the package description in `pyproject.toml` with the YC-positioned
+  "babysitting" tagline that replaces the prior control-plane wording
+  (#14495).
+
+### Fixed
+
+- Bound daemon SQLite execution so long-running queries can no longer pin
+  the connection pool and stall hook ingest (#14496).
+- Address proxy and storage review findings carried over from the 0.4.0
+  release hardening pass (#14497).
+- Isolate async test helpers so per-test event loops no longer leak fixtures
+  into neighboring suites (#14502).
+
+### Security
+
+- Bump the transitive postcss dependency (via vite) from 8.5.6 to 8.5.14 to
+  clear dependabot alert GHSA-qx2v-qp2m-jg93 / CVE-2026-41305 (#14501).
+
+### Documentation
+
+- Refresh the commit and task count metrics in README so the public
+  numbers match the current repo state.
+
+### Release
+
+- Bump the package and `src/gobby/__init__.py` version to 0.4.1 and
+  regenerate the workspace lockfile entry (#14494).
+
 ## [0.4.0]
 
 This section summarizes the non-merge changes since `v0.3.8`.
