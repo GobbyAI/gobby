@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -369,6 +370,11 @@ class TestExecuteCleanup:
         mgr._vector_store = None
         mgr._embed_fn = None
         mgr.delete_memory = AsyncMock(return_value=True)
+
+        async def _run_db_passthrough(func: Any, *args: Any, **kwargs: Any) -> Any:
+            return func(*args, **kwargs)
+
+        mgr.run_db = AsyncMock(side_effect=_run_db_passthrough)
         return mgr
 
     @pytest.mark.asyncio

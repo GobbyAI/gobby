@@ -1017,6 +1017,7 @@ class TestCreateCrossrefs:
     @pytest.mark.asyncio
     async def test_crossrefs_with_vectorstore(self, db, memory_config) -> None:
         """_create_crossrefs creates cross-references from VectorStore results."""
+        import asyncio
         from unittest.mock import AsyncMock
 
         mock_vs = MagicMock()
@@ -1029,6 +1030,9 @@ class TestCreateCrossrefs:
         # Create two memories so crossref can find the other
         mem1 = await manager.create_memory(content="First memory")
         mem2 = await manager.create_memory(content="Second memory")
+        # Drain background dedup tasks so they don't pollute search.await_count.
+        if manager._background_tasks:
+            await asyncio.gather(*manager._background_tasks, return_exceptions=True)
         mock_vs.search = AsyncMock(return_value=[(mem2.id, 0.9)])
         result = await manager._create_crossrefs(mem1)
         assert result >= 0  # May be 0 or 1 depending on crossref logic

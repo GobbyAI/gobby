@@ -115,7 +115,7 @@ class TestIsNeo4jHealthy:
 
         assert any(
             record.levelno == logging.DEBUG
-            and "Neo4j health check failed: http://localhost:8474 unreachable: refused"
+            and "Neo4j health check failed: http://localhost:8474 unreachable: ConnectError: refused"
             in record.getMessage()
             for record in caplog.records
         )
@@ -137,7 +137,7 @@ class TestIsQdrantHealthy:
 
         assert any(
             record.levelno == logging.DEBUG
-            and "Qdrant health check failed: http://localhost:6333/healthz unreachable: refused"
+            and "Qdrant health check failed: http://localhost:6333/healthz unreachable: ConnectError: refused"
             in record.getMessage()
             for record in caplog.records
         )
