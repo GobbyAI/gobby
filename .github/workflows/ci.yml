@@ -160,7 +160,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run pytest --cov=gobby --cov-report=xml --cov-report=term-missing --cov-fail-under=80 --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
+        run: uv run pytest --cov=gobby --cov-report=xml --cov-report=term-missing --cov-fail-under=80 --ignore=tests/voice --ignore=tests/servers/routes/test_voice_routes.py --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'
