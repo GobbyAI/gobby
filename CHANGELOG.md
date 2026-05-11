@@ -35,6 +35,9 @@ decomposition, and a transitive postcss security bump.
   release hardening pass (#14497).
 - Isolate async test helpers so per-test event loops no longer leak fixtures
   into neighboring suites (#14502).
+- Restore the `min-h-[36px]` Tailwind class on the ChatInput textarea
+  alongside the `var(--control-row-height)` inline style from #14490 so the
+  phase 1 sizing contract test stays green (#14505).
 
 ### Security
 
