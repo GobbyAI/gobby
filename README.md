@@ -24,8 +24,8 @@ worktrees, dispatched agents, hook-time guardrails, validation, review gates,
 and a commit-linked close. If something goes off the rails, Gobby stops and
 escalates instead of merging garbage.
 
-**Gobby built Gobby.** 7K+ commits. 15K+ tasks across my projects. Two
-paying clients running production systems on it. The 0.4.0 release was assembled
+**Gobby built Gobby.** 5K+ commits. 15K+ tasks across my projects. Two
+paying clients running production systems on it. The 0.4.x line was assembled
 through Gobby's own task, dispatch, review, and documentation flows — the
 receipts live in this repo's `.gobby/tasks.jsonl`.
 
@@ -88,7 +88,7 @@ Your database, transcripts, hooks, task ledger, workflows, and rules stay on
 your machine. No cloud control plane. No SaaS dependency. Apache 2.0.
 
 The repo you're reading was built through its own build loop. 5K+ commits.
-15K+ tasks. 0.4.0 was assembled by spawned agents working through staged
+15K+ tasks. 0.4.x was assembled by spawned agents working through staged
 manifests, with the dispatcher routing review and merge. That's the production
 test bed: every regression in dispatch, hooks, isolation, or task lifecycle
 shows up as a stalled build the next morning.
@@ -192,16 +192,15 @@ I'm aware of that does that locally.
 
 ---
 
-## What shipped in 0.4.0
+## What shipped in 0.4.x
 
-0.4.0 is the first release where the full task → PR loop is the supported
+0.4.x is the first release line where the full task → PR loop is the supported
 path, not a power-user trick.
 
 - **`gobby build`** as the single entry point: CLI, MCP, and HTTP all resolve
-  to one shared build service with the same `BuildResult` shape. `--quick` for
-  one-step lifecycles, `--skip-stage` and per-stage cap overrides for shape
-  control, task-scoped controls (`stop`, `resume`, `clean`, `restart`), branch
-  cleanup, retry recovery.
+  to one shared build service with the same `BuildResult` shape. Profiles
+  (`quick`, `review`, `full`, `full-yolo`), task-scoped controls (`stop`,
+  `resume`, `clean`, `restart`), branch cleanup, retry recovery.
 - **Stage-native lifecycle**: `task_stage_states`, `task_dispatch_mutex`,
   `task_artifacts`, `task_lifecycle_events`. Review verdicts attached to
   manifest rows. PR and merge delivery artifacts.
@@ -325,7 +324,7 @@ Then either start interactive work in your CLI of choice — Gobby will track it
 quietly — or hand it a task and let the build loop run:
 
 ```bash
-gobby tasks create "Add OAuth refresh-token rotation" --type feature
+gobby tasks create "Add OAuth refresh-token rotation" --type feature --category code
 gobby build '#<id>'
 ```
 
@@ -335,11 +334,11 @@ For agent operating instructions in this repository, read [CLAUDE.md](CLAUDE.md)
 
 ## Where it's going
 
-0.4.0 is the platform baseline. The next chunk of work is hardening that
+0.4.x is the platform baseline. The next chunk of work is hardening that
 baseline, then porting the hot path to Rust, then opening up multi-machine and
 team surfaces.
 
-### Post-0.4.0: hardening
+### Post-0.4.x: hardening
 
 - **PostgreSQL hub migration** (`#12761`) — replace SQLite as the runtime hub
   with `psycopg` v3, `pg_search`, dual-backend test infra, and a one-shot
