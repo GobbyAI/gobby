@@ -1,6 +1,6 @@
 <p align="center">
     <img src="logo.png" alt="Gobby" width="200" />
-    <h3 align="center">Start with a task. Walk away. End with a PR.</h3>
+    <h3 align="center">Gobby<br>Start with a task. Walk away. End with a PR.</h3>
 </p>
 
 
