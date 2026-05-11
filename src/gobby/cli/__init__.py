@@ -4,8 +4,6 @@ Gobby CLI entry point.
 
 import click
 
-from gobby.config.app import load_config
-
 from .agents import agents
 from .auth import auth
 from .build import build_command
@@ -40,6 +38,7 @@ from .tasks import tasks
 from .test_quality import test_quality
 from .tokens import tokens
 from .ui import ui
+from .utils import load_full_config_from_db
 from .workflows import workflows
 from .worktrees import worktrees
 
@@ -53,9 +52,8 @@ from .worktrees import worktrees
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:
     """Gobby - Local-first daemon for AI coding assistants."""
-    # Store config in context for subcommands
     ctx.ensure_object(dict)
-    ctx.obj["config"] = load_config(config)
+    ctx.obj["config"] = load_full_config_from_db(config)
 
 
 # Register commands

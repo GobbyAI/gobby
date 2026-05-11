@@ -213,7 +213,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_no_clis_detected_no_git(
         self,
         mock_load_config: MagicMock,
@@ -245,7 +245,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_claude_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -284,7 +284,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_gemini_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -324,7 +324,7 @@ class TestInstallCommand:
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_qwen")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_qwen_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -357,7 +357,7 @@ class TestInstallCommand:
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_droid")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_droid_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -391,7 +391,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_codex_only_flag_codex_detected(
         self,
         mock_load_config: MagicMock,
@@ -431,7 +431,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_codex_only_flag_codex_not_detected(
         self,
         mock_load_config: MagicMock,
@@ -510,7 +510,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_hooks_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -547,7 +547,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_hooks_with_skipped(
         self,
         mock_load_config: MagicMock,
@@ -582,7 +582,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_hooks_failure(
         self,
         mock_load_config: MagicMock,
@@ -617,7 +617,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_all_flag_auto_detect(
         self,
         mock_load_config: MagicMock,
@@ -675,7 +675,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_default_acts_like_all(
         self,
         mock_load_config: MagicMock,
@@ -714,7 +714,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_claude_failure(
         self,
         mock_load_config: MagicMock,
@@ -749,7 +749,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
     @patch("gobby.cli.install.get_install_dir")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_shows_dev_mode(
         self,
         mock_load_config: MagicMock,
@@ -786,7 +786,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_shows_created_config(
         self,
         mock_load_config: MagicMock,
@@ -821,7 +821,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_codex_config_already_configured(
         self,
         mock_load_config: MagicMock,
@@ -877,7 +877,7 @@ class TestUninstallCommand:
         assert "--all" in result.output
         assert "--yes" in result.output or "-y" in result.output
 
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_no_hooks_found(
         self,
         mock_load_config: MagicMock,
@@ -899,7 +899,7 @@ class TestUninstallCommand:
         assert "No Gobby hooks found" in result.output
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_claude_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -930,7 +930,7 @@ class TestUninstallCommand:
         mock_uninstall_claude.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_gemini")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_gemini_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -959,7 +959,7 @@ class TestUninstallCommand:
         mock_uninstall_gemini.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_codex_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -985,7 +985,7 @@ class TestUninstallCommand:
         mock_uninstall_codex.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_qwen")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_qwen_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -1013,7 +1013,7 @@ class TestUninstallCommand:
         mock_uninstall_qwen.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_droid")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_droid_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -1038,7 +1038,7 @@ class TestUninstallCommand:
         mock_uninstall_droid.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_claude_failure(
         self,
         mock_load_config: MagicMock,
@@ -1064,7 +1064,7 @@ class TestUninstallCommand:
         assert "Some uninstallations failed" in result.output
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_no_hooks_to_remove(
         self,
         mock_load_config: MagicMock,
@@ -1088,7 +1088,7 @@ class TestUninstallCommand:
         assert "(no hooks found to remove)" in result.output
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_codex_no_integration_found(
         self,
         mock_load_config: MagicMock,
@@ -1114,7 +1114,7 @@ class TestUninstallCommand:
     @patch("gobby.cli.install.uninstall_codex")
     @patch("gobby.cli.install.uninstall_claude")
     @patch("gobby.cli.install.uninstall_gemini")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_all_auto_detect(
         self,
         mock_load_config: MagicMock,
@@ -1163,7 +1163,7 @@ class TestUninstallCommand:
         mock_uninstall_claude.assert_called_once()
         mock_uninstall_gemini.assert_called_once()
 
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_requires_confirmation(
         self,
         mock_load_config: MagicMock,
@@ -1185,7 +1185,7 @@ class TestUninstallCommand:
         assert "Aborted" in result.output
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_confirms_with_yes_input(
         self,
         mock_load_config: MagicMock,
@@ -1214,7 +1214,7 @@ class TestUninstallCommand:
     @patch("gobby.cli.install.uninstall_codex")
     @patch("gobby.cli.install.uninstall_claude")
     @patch("gobby.cli.install.uninstall_gemini")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_default_acts_like_all(
         self,
         mock_load_config: MagicMock,
@@ -1348,7 +1348,7 @@ class TestInstallEdgeCases:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_multiple_flags(
         self,
         mock_load_config: MagicMock,
@@ -1395,7 +1395,7 @@ class TestInstallEdgeCases:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_cli_and_hooks_together(
         self,
         mock_load_config: MagicMock,
@@ -1439,7 +1439,7 @@ class TestInstallEdgeCases:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_hooks_empty_result(
         self,
         mock_load_config: MagicMock,
@@ -1477,7 +1477,7 @@ class TestUninstallEdgeCases:
         return CliRunner()
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_codex_checks_home_path(
         self,
         mock_load_config: MagicMock,
@@ -1513,7 +1513,7 @@ class TestUninstallEdgeCases:
         mock_uninstall_codex.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_gemini")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_gemini_failure(
         self,
         mock_load_config: MagicMock,
@@ -1537,7 +1537,7 @@ class TestUninstallEdgeCases:
         assert "Failed: Permission denied" in result.output
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_codex_failure(
         self,
         mock_load_config: MagicMock,
@@ -1573,7 +1573,7 @@ class TestInstallFullOutput:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_claude_with_all_content_types(
         self,
         mock_load_config: MagicMock,
@@ -1619,7 +1619,7 @@ class TestInstallFullOutput:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_gemini_with_all_content_types(
         self,
         mock_load_config: MagicMock,
@@ -1661,7 +1661,7 @@ class TestInstallFullOutput:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_gemini_failure(
         self,
         mock_load_config: MagicMock,
@@ -1696,7 +1696,7 @@ class TestInstallFullOutput:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_codex_with_all_content_types(
         self,
         mock_load_config: MagicMock,
@@ -1739,7 +1739,7 @@ class TestInstallFullOutput:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_codex_failure(
         self,
         mock_load_config: MagicMock,
@@ -1779,7 +1779,7 @@ class TestUninstallFullOutput:
         return CliRunner()
 
     @patch("gobby.cli.install.uninstall_gemini")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_gemini_with_files_removed(
         self,
         mock_load_config: MagicMock,
@@ -1808,7 +1808,7 @@ class TestUninstallFullOutput:
         assert "Removed 2 files" in result.output
 
     @patch("gobby.cli.install.uninstall_gemini")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_gemini_no_hooks_found(
         self,
         mock_load_config: MagicMock,
@@ -1849,7 +1849,7 @@ class TestInstallWithCodexAllDetected:
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_all_with_codex_detected(
         self,
         mock_load_config: MagicMock,

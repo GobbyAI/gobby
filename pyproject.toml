@@ -111,7 +111,8 @@ override-dependencies = [
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_backend"
+backend-path = ["."]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -125,6 +126,7 @@ gobby = [
     "install/shared/**/*",
     "storage/*.sql",
     "data/*",
+    "ui/web/dist/**/*",
 ]
 
 [tool.pytest.ini_options]

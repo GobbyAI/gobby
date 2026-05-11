@@ -11,8 +11,11 @@ import click
 
 from .utils import find_web_dir, get_gobby_home, spawn_ui_server, stop_ui_server
 
-# Path to web UI directory (legacy fallback)
-WEB_UI_DIR = Path(__file__).parent.parent / "ui" / "web"
+
+def _resolve_source_web_dir(ctx: click.Context | None) -> Path | None:
+    """Locate the web/ source tree (with package.json) for npm dev/build."""
+    config = ctx.obj.get("config") if ctx is not None and ctx.obj else None
+    return find_web_dir(config, require_source=True)
 
 
 def _get_ui_pid() -> int | None:
@@ -145,18 +148,19 @@ def ui_status(ctx: click.Context) -> None:
 @ui.command()
 @click.option("--port", "-p", default=60889, help="Dev server port")
 @click.option("--host", "-h", default="localhost", help="Dev server host")
-def dev(port: int, host: str) -> None:
+@click.pass_context
+def dev(ctx: click.Context, port: int, host: str) -> None:
     """Start the web UI development server with hot-reload (foreground)."""
-    if not WEB_UI_DIR.exists():
-        click.echo(f"Error: Web UI directory not found at {WEB_UI_DIR}", err=True)
+    web_dir = _resolve_source_web_dir(ctx)
+    if web_dir is None:
+        click.echo(
+            "Error: web/ source tree with package.json not found. "
+            "Run from a repo checkout or set ui.web_dir in config.",
+            err=True,
+        )
         sys.exit(1)
 
-    package_json = WEB_UI_DIR / "package.json"
-    if not package_json.exists():
-        click.echo(f"Error: package.json not found at {package_json}", err=True)
-        sys.exit(1)
-
-    if not _ensure_npm_deps_installed(WEB_UI_DIR):
+    if not _ensure_npm_deps_installed(web_dir):
         click.echo("Failed to install dependencies", err=True)
         sys.exit(1)
 
@@ -167,7 +171,7 @@ def dev(port: int, host: str) -> None:
     try:
         subprocess.run(  # nosec B603 B607
             ["npm", "run", "dev", "--", "--host", host, "--port", str(port)],
-            cwd=WEB_UI_DIR,
+            cwd=web_dir,
             check=True,
         )
     except KeyboardInterrupt:
@@ -178,25 +182,31 @@ def dev(port: int, host: str) -> None:
 
 
 @ui.command()
-def build() -> None:
+@click.pass_context
+def build(ctx: click.Context) -> None:
     """Build the web UI for production."""
-    if not WEB_UI_DIR.exists():
-        click.echo(f"Error: Web UI directory not found at {WEB_UI_DIR}", err=True)
+    web_dir = _resolve_source_web_dir(ctx)
+    if web_dir is None:
+        click.echo(
+            "Error: web/ source tree with package.json not found. "
+            "Run from a repo checkout or set ui.web_dir in config.",
+            err=True,
+        )
         sys.exit(1)
 
-    if not _ensure_npm_deps_installed(WEB_UI_DIR):
+    if not _ensure_npm_deps_installed(web_dir):
         click.echo("Failed to install dependencies", err=True)
         sys.exit(1)
 
     click.echo("Building web UI...")
     result = subprocess.run(  # nosec B603 B607
         ["npm", "run", "build"],
-        cwd=WEB_UI_DIR,
+        cwd=web_dir,
         capture_output=False,
     )
 
     if result.returncode == 0:
-        dist_dir = WEB_UI_DIR / "dist"
+        dist_dir = web_dir / "dist"
         click.echo(f"Build complete: {dist_dir}")
     else:
         click.echo("Build failed", err=True)
@@ -204,13 +214,19 @@ def build() -> None:
 
 
 @ui.command()
-def install_deps() -> None:
+@click.pass_context
+def install_deps(ctx: click.Context) -> None:
     """Install web UI dependencies."""
-    if not WEB_UI_DIR.exists():
-        click.echo(f"Error: Web UI directory not found at {WEB_UI_DIR}", err=True)
+    web_dir = _resolve_source_web_dir(ctx)
+    if web_dir is None:
+        click.echo(
+            "Error: web/ source tree with package.json not found. "
+            "Run from a repo checkout or set ui.web_dir in config.",
+            err=True,
+        )
         sys.exit(1)
 
-    if _ensure_npm_deps_installed(WEB_UI_DIR):
+    if _ensure_npm_deps_installed(web_dir):
         click.echo("Dependencies installed")
     else:
         click.echo("Failed to install dependencies", err=True)

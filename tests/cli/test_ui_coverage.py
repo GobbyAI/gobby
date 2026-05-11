@@ -308,71 +308,67 @@ class TestUiStatus:
 class TestUiDev:
     @patch("gobby.cli.ui.subprocess.run")
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=True)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_dev_success(
         self,
-        mock_dir: MagicMock,
+        mock_find: MagicMock,
         _npm: MagicMock,
         mock_run: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        mock_dir.exists.return_value = True
-        mock_dir.__truediv__ = lambda self, key: tmp_path / key
-        (tmp_path / "package.json").write_text("{}")
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        (web_dir / "package.json").write_text("{}")
+        mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=0)
-        result = runner.invoke(ui, ["dev"], catch_exceptions=False)
+        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Starting dev server" in result.output
+        mock_find.assert_called_with(mock_find.call_args.args[0], require_source=True)
 
-    @patch("gobby.cli.ui.WEB_UI_DIR", new=Path("/nonexistent/path"))
-    def test_dev_no_web_dir(self, runner: CliRunner) -> None:
-        result = runner.invoke(ui, ["dev"], catch_exceptions=False)
+    @patch("gobby.cli.ui.find_web_dir", return_value=None)
+    def test_dev_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:
+        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code != 0
-
-    @patch("gobby.cli.ui.WEB_UI_DIR")
-    def test_dev_no_package_json(
-        self, mock_dir: MagicMock, runner: CliRunner, tmp_path: Path
-    ) -> None:
-        mock_dir.__truediv__ = lambda self, key: tmp_path / key
-        mock_dir.exists.return_value = True
-        result = runner.invoke(ui, ["dev"], catch_exceptions=False)
-        assert result.exit_code != 0
+        assert "not found" in result.output
 
     @patch("gobby.cli.ui.subprocess.run")
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=True)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_dev_keyboard_interrupt(
         self,
-        mock_dir: MagicMock,
+        mock_find: MagicMock,
         _npm: MagicMock,
         mock_run: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        mock_dir.exists.return_value = True
-        mock_dir.__truediv__ = lambda self, key: tmp_path / key
-        (tmp_path / "package.json").write_text("{}")
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        (web_dir / "package.json").write_text("{}")
+        mock_find.return_value = web_dir
         mock_run.side_effect = KeyboardInterrupt
-        result = runner.invoke(ui, ["dev"], catch_exceptions=False)
+        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code == 0
 
     @patch("gobby.cli.ui.subprocess.run")
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=True)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_dev_called_process_error(
         self,
-        mock_dir: MagicMock,
+        mock_find: MagicMock,
         _npm: MagicMock,
         mock_run: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        mock_dir.exists.return_value = True
-        mock_dir.__truediv__ = lambda self, key: tmp_path / key
-        (tmp_path / "package.json").write_text("{}")
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        (web_dir / "package.json").write_text("{}")
+        mock_find.return_value = web_dir
         mock_run.side_effect = subprocess.CalledProcessError(returncode=2, cmd="npm")
-        result = runner.invoke(ui, ["dev"], catch_exceptions=False)
+        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code == 2
 
 
@@ -380,55 +376,59 @@ class TestUiDev:
 # ui build
 # ---------------------------------------------------------------------------
 class TestUiBuild:
-    @patch("gobby.cli.ui.WEB_UI_DIR", new=Path("/nonexistent"))
-    def test_build_no_web_dir(self, runner: CliRunner) -> None:
-        result = runner.invoke(ui, ["build"], catch_exceptions=False)
+    @patch("gobby.cli.ui.find_web_dir", return_value=None)
+    def test_build_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:
+        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code != 0
+        assert "not found" in result.output
 
     @patch("gobby.cli.ui.subprocess.run")
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=True)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_build_success(
         self,
-        mock_dir: MagicMock,
+        mock_find: MagicMock,
         _npm: MagicMock,
         mock_run: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        mock_dir.exists.return_value = True
-        mock_dir.__truediv__ = lambda self, key: tmp_path / key
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=0)
-        result = runner.invoke(ui, ["build"], catch_exceptions=False)
+        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Build complete" in result.output
 
     @patch("gobby.cli.ui.subprocess.run")
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=True)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_build_failure(
         self,
-        mock_dir: MagicMock,
+        mock_find: MagicMock,
         _npm: MagicMock,
         mock_run: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        mock_dir.exists.return_value = True
-        mock_dir.__truediv__ = lambda self, key: tmp_path / key
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=1)
-        result = runner.invoke(ui, ["build"], catch_exceptions=False)
+        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code != 0
         assert "Build failed" in result.output
 
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=False)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_build_npm_deps_fail(
-        self, mock_dir: MagicMock, _npm: MagicMock, runner: CliRunner, tmp_path: Path
+        self, mock_find: MagicMock, _npm: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
-        mock_dir.exists.return_value = True
-        mock_dir.__truediv__ = lambda self, key: tmp_path / key
-        result = runner.invoke(ui, ["build"], catch_exceptions=False)
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        mock_find.return_value = web_dir
+        result = runner.invoke(ui, ["build"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code != 0
 
 
@@ -436,26 +436,33 @@ class TestUiBuild:
 # ui install-deps
 # ---------------------------------------------------------------------------
 class TestUiInstallDeps:
-    @patch("gobby.cli.ui.WEB_UI_DIR", new=Path("/nonexistent"))
-    def test_install_deps_no_web_dir(self, runner: CliRunner) -> None:
-        result = runner.invoke(ui, ["install-deps"], catch_exceptions=False)
+    @patch("gobby.cli.ui.find_web_dir", return_value=None)
+    def test_install_deps_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:
+        result = runner.invoke(
+            ui, ["install-deps"], obj={"config": MagicMock()}, catch_exceptions=False
+        )
         assert result.exit_code != 0
+        assert "not found" in result.output
 
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=True)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_install_deps_success(
-        self, mock_dir: MagicMock, _npm: MagicMock, runner: CliRunner
+        self, mock_find: MagicMock, _npm: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
-        mock_dir.exists.return_value = True
-        result = runner.invoke(ui, ["install-deps"], catch_exceptions=False)
+        mock_find.return_value = tmp_path
+        result = runner.invoke(
+            ui, ["install-deps"], obj={"config": MagicMock()}, catch_exceptions=False
+        )
         assert result.exit_code == 0
         assert "installed" in result.output.lower()
 
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=False)
-    @patch("gobby.cli.ui.WEB_UI_DIR")
+    @patch("gobby.cli.ui.find_web_dir")
     def test_install_deps_failure(
-        self, mock_dir: MagicMock, _npm: MagicMock, runner: CliRunner
+        self, mock_find: MagicMock, _npm: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
-        mock_dir.exists.return_value = True
-        result = runner.invoke(ui, ["install-deps"], catch_exceptions=False)
+        mock_find.return_value = tmp_path
+        result = runner.invoke(
+            ui, ["install-deps"], obj={"config": MagicMock()}, catch_exceptions=False
+        )
         assert result.exit_code != 0
