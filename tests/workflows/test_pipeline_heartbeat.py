@@ -11,7 +11,7 @@ import pytest
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob
+from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks._manager import LocalTaskManager
@@ -116,7 +116,7 @@ async def _execute_pipeline_heartbeat_cron(
     storage: CronJobStorage,
     heartbeat: PipelineHeartbeat,
     job: CronJob,
-):
+) -> CronRun:
     executor = CronExecutor(storage)
     executor.register_handler("pipeline_heartbeat", heartbeat)
     return await executor.execute(job, storage.create_run(job.id))

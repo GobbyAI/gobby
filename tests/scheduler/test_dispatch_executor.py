@@ -8,11 +8,12 @@ import pytest
 
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
+from gobby.storage.database import DatabaseProtocol
 
 pytestmark = pytest.mark.unit
 
 
-def _seed_project(temp_db) -> None:
+def _seed_project(temp_db: DatabaseProtocol) -> None:
     temp_db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (?, ?, datetime('now'), datetime('now'))",
@@ -52,6 +53,7 @@ async def test_dispatcher_action_invokes_run_heartbeat(
     assert calls == ["project-1"]
 
 
+@pytest.mark.asyncio
 async def test_idle_dispatcher_cron_run_parks_system_job(
     temp_db,
     monkeypatch: pytest.MonkeyPatch,
@@ -87,6 +89,7 @@ async def test_idle_dispatcher_cron_run_parks_system_job(
     assert parked.next_run_at is None
 
 
+@pytest.mark.asyncio
 async def test_dispatcher_cron_run_with_work_does_not_park(
     temp_db,
     monkeypatch: pytest.MonkeyPatch,

@@ -252,13 +252,15 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
         patch("gobby.cli.build.LocalDatabase") as db_cls,
         patch("gobby.cli.build.run_migrations"),
         patch("gobby.cli.build.build_resume", return_value=control_result) as build_resume,
+        patch("gobby.cli.build.asyncio.run", return_value=None) as run,
         patch("gobby.cli.build._kick_dispatcher_tick", new=AsyncMock()) as tick,
     ):
         result = CliRunner().invoke(cli, ["build", "resume"])
 
     assert result.exit_code == 0
     build_resume.assert_called_once_with(db=db_cls.return_value, project_id="project-1")
-    tick.assert_awaited_once_with(db_cls.return_value, "project-1")
+    tick.assert_called_once_with(db_cls.return_value, "project-1")
+    run.assert_called_once()
 
 
 def test_build_stop_cli_accepts_task_ref() -> None:
