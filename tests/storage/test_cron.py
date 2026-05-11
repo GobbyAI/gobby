@@ -32,10 +32,8 @@ def _job(storage: CronJobStorage, *, is_system: bool) -> CronJob:
         action_config={"handler": "dispatch.tick"},
         interval_seconds=60,
     )
-    storage.db.execute(
-        "UPDATE cron_jobs SET is_system = ? WHERE id = ?",
-        (1 if is_system else 0, job.id),
-    )
+    if is_system:
+        storage.mark_as_system_job(job.id)
     stored = storage.get_job(job.id)
     assert stored is not None
     return stored
@@ -48,6 +46,16 @@ def test_list_jobs_filters_by_is_system(cron_storage: CronJobStorage) -> None:
     jobs = cron_storage.list_jobs(project_id=PROJECT_ID, is_system=True)
 
     assert [job.id for job in jobs] == [system.id]
+
+
+def test_mark_as_system_job_sets_system_flag(cron_storage: CronJobStorage) -> None:
+    job = _job(cron_storage, is_system=False)
+
+    cron_storage.mark_as_system_job(job.id)
+
+    updated = cron_storage.get_job(job.id)
+    assert updated is not None
+    assert updated.is_system is True
 
 
 def test_delete_refuses_system_row(cron_storage: CronJobStorage) -> None:

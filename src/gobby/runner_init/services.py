@@ -29,6 +29,17 @@ logger = logging.getLogger(__name__)
 
 def init_services(runner: GobbyRunner) -> None:
     """Initialize LLM, memory, code indexer, MCP proxy, sync, and messaging."""
+    _init_llm_service(runner)
+    _init_memory_stack(runner)
+    _init_code_indexer(runner)
+    _init_mcp_stack(runner)
+    _init_sync_managers(runner)
+    _init_message_processor(runner)
+    _init_task_validator(runner)
+    _init_project_context(runner)
+
+
+def _init_llm_service(runner: GobbyRunner) -> None:
     runner.llm_service = None
     try:
         runner.llm_service = create_llm_service(runner.config)
@@ -36,6 +47,8 @@ def init_services(runner: GobbyRunner) -> None:
     except Exception as e:
         logger.error(f"Failed to initialize LLM service: {e}")
 
+
+def _init_memory_stack(runner: GobbyRunner) -> None:
     runner.vector_store = None
     runner.memory_manager = None
     if hasattr(runner.config, "memory"):
@@ -85,6 +98,8 @@ def init_services(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.error(f"Failed to initialize MemoryManager: {e}")
 
+
+def _init_code_indexer(runner: GobbyRunner) -> None:
     runner.code_indexer = None
     if hasattr(runner.config, "code_index") and runner.config.code_index.enabled:
         try:
@@ -94,9 +109,7 @@ def init_services(runner: GobbyRunner) -> None:
 
             ci_config = runner.config.code_index
             ci_storage = CodeIndexStorage(runner.database)
-            ci_neo4j = None
-            if runner.memory_manager and getattr(runner.memory_manager, "_neo4j_client", None):
-                ci_neo4j = runner.memory_manager._neo4j_client
+            ci_neo4j = runner.memory_manager.neo4j_client if runner.memory_manager else None
             ci_graph = CodeGraph(neo4j_client=ci_neo4j)
 
             ci_vector_store = runner.vector_store if ci_config.embedding_enabled else None
@@ -112,6 +125,8 @@ def init_services(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.warning(f"Failed to initialize code indexer: {e}")
 
+
+def _init_mcp_stack(runner: GobbyRunner) -> None:
     runner.mcp_db_manager = LocalMCPManager(runner.database)
     try:
         bundled_mcp_stats = runner.mcp_db_manager.normalize_bundled_servers()
@@ -138,6 +153,8 @@ def init_services(runner: GobbyRunner) -> None:
         metrics_manager=runner.metrics_manager,
     )
 
+
+def _init_sync_managers(runner: GobbyRunner) -> None:
     runner.task_sync_manager = TaskSyncManager(runner.task_manager)
 
     runner.memory_sync_manager = None
@@ -154,6 +171,8 @@ def init_services(runner: GobbyRunner) -> None:
             except Exception as e:
                 logger.error(f"Failed to initialize MemorySyncManager: {e}")
 
+
+def _init_message_processor(runner: GobbyRunner) -> None:
     runner.message_processor = None
     if getattr(runner.config, "message_tracking", None) and runner.config.message_tracking.enabled:
         runner.message_processor = SessionMessageProcessor(
@@ -162,6 +181,8 @@ def init_services(runner: GobbyRunner) -> None:
             session_manager=runner.session_manager,
         )
 
+
+def _init_task_validator(runner: GobbyRunner) -> None:
     runner.task_validator = None
 
     if runner.llm_service:
@@ -176,6 +197,8 @@ def init_services(runner: GobbyRunner) -> None:
             except Exception as e:
                 logger.error(f"Failed to initialize TaskValidator: {e}")
 
+
+def _init_project_context(runner: GobbyRunner) -> None:
     runner.worktree_storage = LocalWorktreeManager(runner.database)
 
     runner.clone_storage = LocalCloneManager(runner.database)

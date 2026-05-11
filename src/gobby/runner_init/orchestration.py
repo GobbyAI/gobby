@@ -47,50 +47,34 @@ def init_orchestration(runner: GobbyRunner) -> None:
         message: str,
         tmux_socket_path: str | None,
     ) -> None:
-        text = message.rstrip("\n")
         tmux_cmd = ["tmux"]
         if tmux_socket_path:
             tmux_cmd.extend(["-S", tmux_socket_path])
-        proc = await asyncio.create_subprocess_exec(
-            *tmux_cmd,
-            "send-keys",
-            "-t",
-            pane_id,
-            "-l",
-            text,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-        except TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            raise RuntimeError(f"tmux send-keys to {pane_id} timed out after 10s") from None
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"tmux send-keys to {pane_id} failed: {stderr.decode(errors='replace')}"
-            )
 
-        proc = await asyncio.create_subprocess_exec(
-            *tmux_cmd,
-            "send-keys",
-            "-t",
-            pane_id,
-            "Enter",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-        except TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            raise RuntimeError(f"tmux send-keys to {pane_id} timed out after 10s") from None
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"tmux send-keys to {pane_id} failed: {stderr.decode(errors='replace')}"
+        async def _run_tmux_cmd(*args: str) -> None:
+            proc = await asyncio.create_subprocess_exec(
+                *tmux_cmd,
+                "send-keys",
+                "-t",
+                pane_id,
+                *args,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
+            try:
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            except TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                raise RuntimeError(f"tmux send-keys to {pane_id} timed out after 10s") from None
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"tmux send-keys to {pane_id} failed: {stderr.decode(errors='replace')}"
+                )
+
+        text = message.rstrip("\n")
+        await _run_tmux_cmd("-l", text)
+        await _run_tmux_cmd("Enter")
 
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
@@ -138,7 +122,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
     except Exception as e:
         logger.error(f"Failed to initialize AgentRunner: {e}")
 
-    from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.checkpoints import LocalCheckpointManager
 
     try:
@@ -195,7 +178,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
             logger.info("Installed system cron job: gobby:dispatcher")
 
         try:
-            from gobby.storage.agents import LocalAgentRunManager
             from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
 
             if runner.pipeline_execution_manager is None:
@@ -226,10 +208,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 logger.info("Created system cron job: gobby:pipeline-heartbeat")
             elif existing:
                 if not existing.is_system:
-                    runner.cron_storage.db.execute(
-                        "UPDATE cron_jobs SET is_system = 1 WHERE id = ?",
-                        (existing.id,),
-                    )
+                    runner.cron_storage.mark_as_system_job(existing.id)
                 runner.cron_storage.reconcile_system_job_definition(
                     existing.id,
                     description=(

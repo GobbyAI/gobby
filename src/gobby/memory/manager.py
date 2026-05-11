@@ -224,6 +224,11 @@ class MemoryManager:
         self._llm_service = service
         self._ingestion_service.llm_service = service
 
+    @property
+    def neo4j_client(self) -> Neo4jClient | None:
+        """Shared Neo4j client for graph-backed subsystems, when configured."""
+        return self._neo4j_client
+
     def _get_fts_searcher(self) -> MemoryFTS5Searcher:
         """Lazily initialize the SQLite FTS5 searcher."""
         if self._fts_searcher is None:

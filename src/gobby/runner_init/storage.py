@@ -71,6 +71,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._hook_inbox_task = None
     runner._bin_freshness_task = None
     runner._expired_isolation_task = None
+    runner._pending_tasks = set()
 
     runner.database = init_hub_database(runner.config)
     try:
@@ -122,7 +123,9 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
             if hasattr(runner, "websocket_server") and runner.websocket_server:
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(runner.websocket_server.broadcast_trace_event(span))
+                    task = loop.create_task(runner.websocket_server.broadcast_trace_event(span))
+                    runner._pending_tasks.add(task)
+                    task.add_done_callback(runner._pending_tasks.discard)
                 except RuntimeError as e:
                     logger.debug(f"Trace broadcast skipped (no running loop): {e}")
 

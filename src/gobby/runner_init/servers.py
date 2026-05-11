@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import TYPE_CHECKING
 
 from gobby.app_context import ServiceContainer, set_app_context
@@ -22,6 +23,11 @@ logger = logging.getLogger(__name__)
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
     web_chat_session_registry = WebChatSessionRegistry()
+    http_server_ref: weakref.ReferenceType[HTTPServer] | None = None
+
+    def tool_proxy_getter() -> object | None:
+        http_server = http_server_ref() if http_server_ref is not None else None
+        return http_server.tool_proxy if http_server is not None else None
 
     services = ServiceContainer(
         config=runner.config,
@@ -62,7 +68,7 @@ def init_servers(runner: GobbyRunner) -> None:
         web_chat_session_registry=web_chat_session_registry,
         prompt_manager=runner.prompt_manager,
         dev_mode=runner._dev_mode,
-        tool_proxy_getter=lambda: runner.http_server.tool_proxy,
+        tool_proxy_getter=tool_proxy_getter,
     )
 
     set_app_context(services)
@@ -73,7 +79,7 @@ def init_servers(runner: GobbyRunner) -> None:
         from gobby.communications.reactions import ReactionHandler
 
         runner.communications_manager.reaction_handler = ReactionHandler(
-            runner.communications_manager._store, services
+            runner.communications_manager.store, services
         )
 
     codex_client = None
@@ -105,12 +111,13 @@ def init_servers(runner: GobbyRunner) -> None:
         test_mode=runner.config.test_mode,
         codex_client=codex_client,
     )
-    runner.http_server._runner = runner
+    http_server_ref = weakref.ref(runner.http_server)
+    runner.http_server.set_runner_getter(weakref.ref(runner))
 
     runner.http_server.message_processor = runner.message_processor
 
     if runner.pipeline_executor is not None:
-        runner.pipeline_executor.tool_proxy_getter = lambda: runner.http_server.tool_proxy
+        runner.pipeline_executor.tool_proxy_getter = tool_proxy_getter
 
     runner.websocket_server = None
     if runner.config.websocket and getattr(runner.config.websocket, "enabled", True):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.broadcaster import HookEventBroadcaster
@@ -103,8 +104,19 @@ class HTTPServer:
         self._running = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._daemon: Any = None  # Set externally by daemon
-        # Assigned by runner_init.py after GobbyRunner construction; nullable until then.
+        self._runner_getter: Callable[[], GobbyRunner | None] | None = None
+        # Backward-compatible test hook; production code uses _runner_getter.
         self._runner: GobbyRunner | None = None
+
+    def set_runner_getter(self, runner_getter: Callable[[], GobbyRunner | None]) -> None:
+        """Set a weak runner accessor for admin lifecycle requests."""
+        self._runner_getter = runner_getter
+
+    def get_runner(self) -> GobbyRunner | None:
+        """Return the owning runner without requiring a strong server-to-runner reference."""
+        if self._runner_getter is not None:
+            return self._runner_getter()
+        return self._runner
 
     def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""

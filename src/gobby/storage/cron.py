@@ -232,6 +232,10 @@ class CronJobStorage:
         row = self.db.fetchone("SELECT * FROM cron_jobs WHERE name = ?", (name,))
         return CronJob.from_row(row) if row else None
 
+    def mark_as_system_job(self, job_id: str) -> None:
+        """Mark an existing cron row as gobby-managed system infrastructure."""
+        self.db.execute("UPDATE cron_jobs SET is_system = 1 WHERE id = ?", (job_id,))
+
     def list_jobs(
         self,
         project_id: str | None = None,

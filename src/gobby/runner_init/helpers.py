@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
 logger = logging.getLogger(__name__)
+
+
+class DatabasePathConfig(Protocol):
+    """Configuration object exposing the hub database path."""
+
+    database_path: str
 
 
 def resolve_embedding_api_key(secret_store: Any, model: str) -> str | None:
@@ -31,10 +37,7 @@ def resolve_embedding_api_key(secret_store: Any, model: str) -> str | None:
             result: str | None = secret_store.get(secret_name)
             return result
 
-    if model.startswith("local/"):
-        return None
-
-    if model.startswith("ollama/"):
+    if model.startswith(("local/", "ollama/")):
         return None
 
     default_key: str | None = secret_store.get("openai_api_key")
@@ -73,7 +76,7 @@ def _ensure_headless_settings() -> None:
         logger.error(f"Failed to create headless settings at {_HEADLESS_SETTINGS}: {e}")
 
 
-def init_hub_database(config: Any) -> Any:
+def init_hub_database(config: DatabasePathConfig) -> LocalDatabase:
     """Initialize hub database."""
     hub_db_path = Path(config.database_path).expanduser()
 
