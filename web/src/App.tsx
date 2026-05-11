@@ -663,7 +663,7 @@ export default function App() {
             <HamburgerIcon />
           </Button>
           <GobbyLogo size={44} />
-          <span className="truncate text-3xl font-semibold text-foreground">Gobby</span>
+          <span className="min-w-0 truncate text-3xl font-semibold text-foreground">Gobby</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
           {projectOptions.length > 0 && (
@@ -676,7 +676,8 @@ export default function App() {
           )}
           <Badge
             variant={isConnected ? "success" : "error"}
-            className="h-9 gap-2 px-3 py-1 uppercase tracking-[0.05em]"
+            style={{ height: "var(--control-row-height)" }}
+            className="gap-2 px-3 py-1 uppercase tracking-[0.05em]"
           >
             <span
               aria-hidden="true"

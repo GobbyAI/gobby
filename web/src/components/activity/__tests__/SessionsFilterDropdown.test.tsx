@@ -97,11 +97,11 @@ describe("SessionsFilterDropdown", () => {
     expect(next.sessionRefMin).toBeNull();
   });
 
-  it("toggling a task ref role emits onChange with updated roles", () => {
+  it("toggling a task ref role emits onChange with the role added to an empty default", () => {
     const { onChange } = renderDropdown();
     fireEvent.click(screen.getByLabelText("Created"));
     const next: SessionsFilters = onChange.mock.calls[0][0];
-    expect([...next.taskRefRoles].sort()).toEqual(["claimed", "created"]);
+    expect([...next.taskRefRoles].sort()).toEqual(["created"]);
   });
 
   it("date preset SegmentedControl drives onChange", () => {

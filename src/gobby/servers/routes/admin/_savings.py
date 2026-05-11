@@ -1,6 +1,5 @@
 """Savings tracking API endpoints."""
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +38,11 @@ def register_savings_routes(router: APIRouter, server: "HTTPServer") -> None:
                 effective_days = max(1, -(-hours // 24))  # ceiling division
         else:
             effective_days = days
-        result: dict[str, Any] = tracker.get_summary(days=effective_days, project_id=project_id)
+        result: dict[str, Any] = await server.run_db(
+            tracker.get_summary,
+            days=effective_days,
+            project_id=project_id,
+        )
         return result
 
     @router.get("/savings/cumulative")
@@ -50,7 +53,11 @@ def register_savings_routes(router: APIRouter, server: "HTTPServer") -> None:
         tracker = _get_tracker(server)
         if tracker is None:
             return {"error": "Savings tracker not available", "days": days}
-        result: dict[str, Any] = tracker.get_cumulative(days=days, project_id=project_id)
+        result: dict[str, Any] = await server.run_db(
+            tracker.get_cumulative,
+            days=days,
+            project_id=project_id,
+        )
         return result
 
     @router.post("/savings/record")
@@ -82,7 +89,8 @@ def register_savings_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         # Support both chars and tokens
         if "original_tokens" in body:
-            tracker.record_tokens(
+            await server.run_db(
+                tracker.record_tokens,
                 category=category,
                 original_tokens=body.get("original_tokens", 0),
                 actual_tokens=body.get("actual_tokens", 0),
@@ -92,7 +100,8 @@ def register_savings_routes(router: APIRouter, server: "HTTPServer") -> None:
                 metadata=body.get("metadata"),
             )
         else:
-            tracker.record(
+            await server.run_db(
+                tracker.record,
                 category=category,
                 original_chars=body.get("original_chars", 0),
                 actual_chars=body.get("actual_chars", 0),
@@ -108,7 +117,7 @@ def register_savings_routes(router: APIRouter, server: "HTTPServer") -> None:
 async def _resolve_active_model(server: "HTTPServer") -> str | None:
     """Look up the model from the most recently updated session."""
     try:
-        row = await asyncio.to_thread(
+        row = await server.run_db(
             server.services.database.fetchone,
             "SELECT model FROM sessions WHERE model IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
         )

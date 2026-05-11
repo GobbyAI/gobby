@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from gobby.hooks.broadcaster import HookEventBroadcaster
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.hooks.webhooks import WebhookDispatcher
+    from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -72,6 +73,7 @@ class WebSocketServer(
         auth_callback: Callable[[str], Coroutine[Any, Any, str | None]] | None = None,
         stop_registry: Any = None,
         session_manager: "SessionManager | None" = None,
+        db_executor: "DatabaseExecutor | None" = None,
         daemon_config: Any = None,
         internal_manager: Any = None,
         web_chat_session_registry: WebChatSessionRegistry | None = None,
@@ -88,6 +90,7 @@ class WebSocketServer(
                           If None, all connections are accepted (local-first mode).
             stop_registry: Optional StopRegistry for handling stop requests from clients.
             session_manager: Optional SessionManager for persisting web-chat sessions.
+            db_executor: Optional bounded executor for daemon SQLite work.
             message_manager: Deprecated, ignored. Kept for backwards compatibility.
             daemon_config: Optional DaemonConfig for voice and other features.
             internal_manager: Optional InternalRegistryManager for routing to internal MCP servers.
@@ -99,6 +102,7 @@ class WebSocketServer(
         self.stop_registry = stop_registry
         self.internal_manager = internal_manager
         self.session_manager = session_manager
+        self.db_executor = db_executor
         self.daemon_config = daemon_config
         self.workflow_handler: WorkflowHookHandler | None = None
         self.event_handlers: EventHandlers | None = None
@@ -155,6 +159,12 @@ class WebSocketServer(
         self._server: Any = None
         self._serve_task: asyncio.Task[None] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
+
+    async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run daemon SQLite work on the bounded DB executor."""
+        if self.db_executor is None:
+            raise RuntimeError("Database executor is not configured")
+        return await self.db_executor.run(func, *args, **kwargs)
 
     async def __aenter__(self) -> "WebSocketServer":
         """Async context manager entry."""

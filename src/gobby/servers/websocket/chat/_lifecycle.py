@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.websocket.db import run_db
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +155,7 @@ class ChatLifecycleMixin:
                 f"_fire_lifecycle: {event_type.name} event_data={ ({k: (v if k != 'tool_input' else '...') for k, v in (data or {}).items()}) }",
             )
             # WorkflowHookHandler.evaluate is sync (bridges to async internally)
-            response: HookResponse = await asyncio.to_thread(workflow_handler.evaluate, event)
+            response: HookResponse = await run_db(self, workflow_handler.evaluate, event)
             logger.debug(
                 f"_fire_lifecycle: {event_type.name} → decision={response.decision}, context_len={(len(response.context) if response.context else 0)}",
             )
@@ -385,7 +386,7 @@ class ChatLifecycleMixin:
             return None
 
         try:
-            handler_response: HookResponse = await asyncio.to_thread(handler, event)
+            handler_response: HookResponse = await run_db(self, handler, event)
             if handler_response and handler_response.context:
                 return handler_response.context
         except Exception as exc:

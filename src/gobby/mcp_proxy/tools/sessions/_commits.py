@@ -218,12 +218,13 @@ Args:
             if db is None:
                 from gobby.storage.database import LocalDatabase
 
-                local_db = LocalDatabase()
-                session_var_manager = SessionVariableManager(local_db)
+                with LocalDatabase() as local_db:
+                    SessionVariableManager(local_db).set_variable(
+                        session.id, "stop_reason", "completed"
+                    )
             else:
                 session_var_manager = SessionVariableManager(db)
-
-            session_var_manager.set_variable(session.id, "stop_reason", "completed")
+                session_var_manager.set_variable(session.id, "stop_reason", "completed")
         except Exception as e:
             logger.warning(f"Failed to set stop_reason for session {session.id}: {e}")
             return {

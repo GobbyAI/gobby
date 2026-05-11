@@ -7,7 +7,9 @@ and other components.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +18,7 @@ from gobby.llm import LLMService
 from gobby.memory.manager import MemoryManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -37,6 +40,7 @@ class ServiceContainer:
     # Core Managers
     session_manager: SessionManager
     task_manager: LocalTaskManager
+    db_executor: DatabaseExecutor | None = None
     span_storage: Any | None = None  # SpanStorage
 
     # Sync Managers
@@ -111,6 +115,18 @@ class ServiceContainer:
     # Lazy wiring for per-project executors
     tool_proxy_getter: Any | None = None  # Callable[[], ToolProxyService]
     _project_infra_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run daemon SQLite work on the bounded DB executor."""
+        if self.db_executor is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self.db_executor.run(func, *args, **kwargs)
+
+    def db_executor_stats(self) -> dict[str, int | bool] | None:
+        """Return DB executor diagnostics when configured."""
+        if self.db_executor is None:
+            return None
+        return self.db_executor.stats().as_dict()
 
     def get_git_manager(self, project_id: str) -> Any | None:
         """Get or create a WorktreeGitManager for a project.
@@ -191,6 +207,7 @@ class ServiceContainer:
                 template_engine=TemplateEngine(),
                 session_manager=self.session_manager,
                 completion_registry=self.completion_registry,
+                run_db=self.run_db,
             )
 
             # Wire event broadcasting via WebSocket

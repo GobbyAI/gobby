@@ -93,7 +93,9 @@ class TestGobbyRunnerInitialization:
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
-        patches.append(patch("gobby.runner_init.MemoryManager", return_value=mock_memory_manager))
+        patches.append(
+            patch("gobby.runner_init.services.MemoryManager", return_value=mock_memory_manager)
+        )
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
@@ -117,7 +119,10 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.MemoryManager", side_effect=Exception("Memory init error"))
+            patch(
+                "gobby.runner_init.services.MemoryManager",
+                side_effect=Exception("Memory init error"),
+            )
         )
 
         with ExitStack() as stack:
@@ -146,9 +151,14 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
         patches = [p for p in patches if "MemorySyncManager" not in str(p)]
-        patches.append(patch("gobby.runner_init.MemoryManager", return_value=mock_memory_manager))
         patches.append(
-            patch("gobby.runner_init.MemorySyncManager", return_value=mock_memory_sync_manager)
+            patch("gobby.runner_init.services.MemoryManager", return_value=mock_memory_manager)
+        )
+        patches.append(
+            patch(
+                "gobby.runner_init.services.MemorySyncManager",
+                return_value=mock_memory_sync_manager,
+            )
         )
 
         with ExitStack() as stack:
@@ -175,7 +185,7 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "TaskSyncManager" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.TaskSyncManager", return_value=mock_task_sync_manager)
+            patch("gobby.runner_init.services.TaskSyncManager", return_value=mock_task_sync_manager)
         )
 
         with ExitStack() as stack:
@@ -204,10 +214,13 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
         patches = [p for p in patches if "MemorySyncManager" not in str(p)]
-        patches.append(patch("gobby.runner_init.MemoryManager", return_value=mock_memory_manager))
+        patches.append(
+            patch("gobby.runner_init.services.MemoryManager", return_value=mock_memory_manager)
+        )
         patches.append(
             patch(
-                "gobby.runner_init.MemorySyncManager", side_effect=Exception("Sync manager error")
+                "gobby.runner_init.services.MemorySyncManager",
+                side_effect=Exception("Sync manager error"),
             )
         )
 
@@ -235,7 +248,10 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "SessionMessageProcessor" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.SessionMessageProcessor", return_value=mock_message_processor)
+            patch(
+                "gobby.runner_init.services.SessionMessageProcessor",
+                return_value=mock_message_processor,
+            )
         )
 
         with ExitStack() as stack:
@@ -268,8 +284,12 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
         patches = [p for p in patches if "TaskValidator" not in str(p)]
-        patches.append(patch("gobby.runner_init.create_llm_service", return_value=mock_llm_service))
-        patches.append(patch("gobby.runner_init.TaskValidator", return_value=mock_task_validator))
+        patches.append(
+            patch("gobby.runner_init.services.create_llm_service", return_value=mock_llm_service)
+        )
+        patches.append(
+            patch("gobby.runner_init.services.TaskValidator", return_value=mock_task_validator)
+        )
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
@@ -300,9 +320,13 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
         patches = [p for p in patches if "TaskValidator" not in str(p)]
-        patches.append(patch("gobby.runner_init.create_llm_service", return_value=mock_llm_service))
         patches.append(
-            patch("gobby.runner_init.TaskValidator", side_effect=Exception("Validator error"))
+            patch("gobby.runner_init.services.create_llm_service", return_value=mock_llm_service)
+        )
+        patches.append(
+            patch(
+                "gobby.runner_init.services.TaskValidator", side_effect=Exception("Validator error")
+            )
         )
 
         with ExitStack() as stack:
@@ -324,7 +348,10 @@ class TestGobbyRunnerInitialization:
 
         patches = create_base_patches(mock_config=mock_config)
         patches.append(
-            patch("gobby.runner_init.AgentRunner", side_effect=Exception("Agent runner error"))
+            patch(
+                "gobby.runner_init.orchestration.AgentRunner",
+                side_effect=Exception("Agent runner error"),
+            )
         )
 
         with ExitStack() as stack:
@@ -347,7 +374,10 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.create_llm_service", side_effect=Exception("LLM init error"))
+            patch(
+                "gobby.runner_init.services.create_llm_service",
+                side_effect=Exception("LLM init error"),
+            )
         )
 
         with ExitStack() as stack:
@@ -437,7 +467,10 @@ class TestGobbyRunnerInitEdgeCases:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.create_llm_service", side_effect=Exception("LLM init error"))
+            patch(
+                "gobby.runner_init.services.create_llm_service",
+                side_effect=Exception("LLM init error"),
+            )
         )
 
         with ExitStack() as stack:

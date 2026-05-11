@@ -103,7 +103,8 @@ def create_app(server: "HTTPServer") -> FastAPI:
             from gobby.servers.pending_interactions import PendingInteractionManager
 
             app.state.pending_interaction_manager = PendingInteractionManager(
-                server.services.database
+                server.services.database,
+                run_db=server.run_db,
             )
             try:
                 await app.state.pending_interaction_manager.expire_all_pending()

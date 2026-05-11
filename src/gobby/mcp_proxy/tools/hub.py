@@ -13,11 +13,12 @@ These tools query the hub database directly (not the project db).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.database import LocalDatabase
+from gobby.storage.database import DatabaseProtocol, LocalDatabase
 
 __all__ = ["create_hub_registry"]
 
@@ -77,6 +78,7 @@ def _task_state_from_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def create_hub_registry(
     hub_db_path: Path,
+    db: DatabaseProtocol | None = None,
 ) -> InternalToolRegistry:
     """
     Create a hub query tool registry with cross-project tools.
@@ -92,11 +94,35 @@ def create_hub_registry(
         description="Hub (cross-project) queries and system info - get_machine_id, list_all_projects (for cross-project task creation), list_cross_project_tasks, list_cross_project_sessions, hub_stats",
     )
 
-    def _get_hub_db() -> LocalDatabase | None:
+    resolved_hub_db_path = hub_db_path.expanduser().resolve()
+
+    def _get_hub_db() -> tuple[DatabaseProtocol | None, bool]:
         """Get hub database connection if it exists."""
-        if not hub_db_path.exists():
+        if not resolved_hub_db_path.exists():
+            return None, False
+        if db is not None:
+            db_path = getattr(db, "db_path", None)
+            if db_path is not None and Path(db_path).expanduser().resolve() == resolved_hub_db_path:
+                return db, False
+        return LocalDatabase(resolved_hub_db_path), True
+
+    async def _run_sqlite(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        from gobby.app_context import get_app_context
+
+        app_context = get_app_context()
+        if app_context is not None and app_context.db_executor is not None:
+            return await app_context.run_db(func, *args, **kwargs)
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+    async def _run_with_hub_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        hub_db, owned = _get_hub_db()
+        if hub_db is None:
             return None
-        return LocalDatabase(hub_db_path)
+        try:
+            return await _run_sqlite(func, hub_db, *args, **kwargs)
+        finally:
+            if owned:
+                hub_db.close()
 
     @registry.tool(
         name="get_machine_id",
@@ -141,14 +167,14 @@ def create_hub_registry(
         Args:
             include_system: Include system projects (_orphaned, _migrated, _personal, _global)
         """
-        hub_db = _get_hub_db()
-        if hub_db is None:
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
         try:
-            rows = await asyncio.to_thread(
-                hub_db.fetchall,
-                """
+
+            def _query_projects(hub_db: DatabaseProtocol) -> list[Any]:
+                return hub_db.fetchall(
+                    """
                 SELECT p.id, p.name, p.repo_path,
                        COUNT(DISTINCT t.id) as task_count,
                        COUNT(DISTINCT s.id) as session_count
@@ -159,7 +185,9 @@ def create_hub_registry(
                 GROUP BY p.id, p.name, p.repo_path
                 ORDER BY p.name
                 """,
-            )
+                )
+
+            rows = await _run_with_hub_db(_query_projects)
             projects = [
                 {
                     "project_id": r["id"],
@@ -196,9 +224,8 @@ def create_hub_registry(
             state: Optional projected state filter (ready, closed, in_progress, needs_review)
             limit: Maximum number of tasks to return (default 50)
         """
-        hub_db = _get_hub_db()
-        if hub_db is None:
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
         try:
             where_clause = ""
@@ -208,9 +235,10 @@ def create_hub_registry(
                 params = (state, limit)
             else:
                 params = (limit,)
-            rows = await asyncio.to_thread(
-                hub_db.fetchall,
-                f"""
+
+            def _query_tasks(hub_db: DatabaseProtocol) -> list[Any]:
+                return hub_db.fetchall(
+                    f"""
                 SELECT t.id, t.project_id, t.title, t.task_type, t.priority,
                        t.created_at, t.updated_at, t.assignee, t.claimed_by_session_id,
                        t.closed_at, t.closed_reason, t.closed_in_session_id,
@@ -238,8 +266,10 @@ def create_hub_registry(
                 ORDER BY t.updated_at DESC
                 LIMIT ?
                 """,
-                params,
-            )
+                    params,
+                )
+
+            rows = await _run_with_hub_db(_query_tasks)
 
             tasks = [
                 {
@@ -276,22 +306,24 @@ def create_hub_registry(
         Args:
             limit: Maximum number of sessions to return (default 20)
         """
-        hub_db = _get_hub_db()
-        if hub_db is None:
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
         try:
-            rows = await asyncio.to_thread(
-                hub_db.fetchall,
-                """
+
+            def _query_sessions(hub_db: DatabaseProtocol) -> list[Any]:
+                return hub_db.fetchall(
+                    """
                 SELECT id, project_id, source, status, machine_id, created_at, updated_at
                 FROM sessions
                 WHERE source != 'system'
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (limit,),
-            )
+                    (limit,),
+                )
+
+            rows = await _run_with_hub_db(_query_sessions)
 
             sessions = [
                 {
@@ -324,11 +356,10 @@ def create_hub_registry(
 
         Returns counts of projects, tasks, sessions, memories, etc.
         """
-        hub_db = _get_hub_db()
-        if hub_db is None:
-            return {"success": False, "error": f"Hub database not found: {hub_db_path}"}
+        if not resolved_hub_db_path.exists():
+            return {"success": False, "error": f"Hub database not found: {resolved_hub_db_path}"}
 
-        def _collect_stats(db: LocalDatabase) -> dict[str, Any]:
+        def _collect_stats(db: DatabaseProtocol) -> dict[str, Any]:
             stats: dict[str, Any] = {}
 
             project_count_result = db.fetchone(
@@ -377,7 +408,7 @@ def create_hub_registry(
             return stats
 
         try:
-            stats = await asyncio.to_thread(_collect_stats, hub_db)
+            stats = await _run_with_hub_db(_collect_stats)
             return {"success": True, "stats": stats}
         except Exception as e:
             return {"success": False, "error": str(e)}

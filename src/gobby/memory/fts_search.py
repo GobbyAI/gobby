@@ -32,6 +32,11 @@ class MemoryFTS5Searcher:
     def __init__(self, db: DatabaseProtocol) -> None:
         self._db = db
 
+    def clear(self) -> None:
+        """Clear the FTS5 index using the database transaction boundary."""
+        with self._db.transaction() as conn:
+            conn.execute("DELETE FROM memories_fts")
+
     def search(
         self,
         query: str,

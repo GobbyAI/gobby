@@ -22,6 +22,7 @@ from gobby.build import (
     build_stop,
     build_stop_target,
 )
+from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
 if TYPE_CHECKING:
@@ -176,16 +177,20 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         try:
             project_id = server.resolve_project_id(project_id=None, cwd=None)
             if request_data.input_ref is None:
-                return _result_json(
-                    build_resume(db=server.services.database, project_id=project_id)
+                result = build_resume(db=server.services.database, project_id=project_id)
+                await _kick_dispatcher_tick(
+                    server.services.database,
+                    project_id,
+                    services=server.services,
                 )
-            result = await build_resume_target(
+                return _result_json(result)
+            target_result = await build_resume_target(
                 request_data.input_ref,
                 db=server.services.database,
                 project_id=project_id,
                 services=server.services,
             )
-            return _result_json(result)
+            return _result_json(target_result)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

@@ -380,6 +380,13 @@ async def shutdown_daemon_services(
     except Exception as e:
         logger.warning(f"Telemetry shutdown failed: {e}")
 
+    db_executor = getattr(runner, "db_executor", None)
+    if db_executor is not None:
+        try:
+            db_executor.shutdown(wait=True)
+        except Exception as e:
+            logger.warning(f"Database executor shutdown failed: {e}")
+
     try:
         runner.database.close()
     except Exception as e:

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from gobby.storage.cron import CronJobStorage
     from gobby.storage.cron_models import CronJob
     from gobby.storage.database import DatabaseProtocol, LocalDatabase
+    from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.prompts import LocalPromptManager
@@ -112,10 +113,7 @@ def install_dispatcher_cron_row(db: DatabaseProtocol, *, project_id: str) -> Cro
         )
 
     if not existing.is_system:
-        storage.db.execute(
-            "UPDATE cron_jobs SET is_system = 1 WHERE id = ?",
-            (existing.id,),
-        )
+        storage.mark_as_system_job(existing.id)
 
     reconciled = storage.reconcile_system_job_definition(
         existing.id,
@@ -163,11 +161,13 @@ class GobbyRunner:
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
     _provider_model_refresh_task: asyncio.Task[dict[str, dict[str, Any]]] | None
+    _pending_tasks: set[asyncio.Task[Any]]
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
     database: LocalDatabase
+    db_executor: DatabaseExecutor
     secret_store: SecretStore
     config_store: ConfigStore
     session_manager: SessionManager

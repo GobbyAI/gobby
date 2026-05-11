@@ -86,6 +86,7 @@ describe("TasksTab", () => {
 
     mockFetch.fn.mockClear();
     fireEvent.click(screen.getByLabelText("Development"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       const taskRequest = mockFetch.fn.mock.calls
@@ -202,13 +203,16 @@ describe("TasksTab", () => {
     expect(screen.getByLabelText("Review Rejected")).toBeChecked();
 
     fireEvent.click(screen.getByLabelText("Ready"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       expect(screen.getByText("Review rejected task")).toBeTruthy();
       expect(screen.queryByText("Plain ready task")).toBeNull();
     });
 
+    fireEvent.click(screen.getByTitle("Filter by task state"));
     fireEvent.click(screen.getByLabelText("Review Rejected"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       expect(screen.queryByText("Review rejected task")).toBeNull();
@@ -255,6 +259,7 @@ describe("TasksTab", () => {
 
     fireEvent.click(screen.getByTitle("Filter by task state"));
     fireEvent.click(screen.getByLabelText("Closed"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       expect(screen.getByText("Closed task 1")).toBeTruthy();

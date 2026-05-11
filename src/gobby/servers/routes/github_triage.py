@@ -34,7 +34,7 @@ def create_github_triage_router(server: HTTPServer) -> APIRouter:
         raw_body = await request.body()
         service = _service(server)
         try:
-            accepted = await asyncio.to_thread(
+            accepted = await server.run_db(
                 service.accept_webhook_delivery,
                 project_id,
                 dict(request.headers),

@@ -101,13 +101,12 @@ class UpdateAgentDefinitionRequest(BaseModel):
 
 
 async def _batch_load_session_info(
-    database: Any, session_ids: list[str]
+    server: "HTTPServer", database: Any, session_ids: list[str]
 ) -> dict[str, dict[str, Any]]:
     """Load session token usage data for a batch of session IDs.
 
     Returns dict mapping session_id to enrichment fields.
     """
-    import asyncio
     import sqlite3
 
     if not session_ids:
@@ -129,7 +128,7 @@ async def _batch_load_session_info(
                 )
             )
 
-        rows = await asyncio.to_thread(do_query)
+        rows = await server.run_db(do_query)
         result = {}
         for row in rows:
             result[row["id"]] = {
@@ -604,7 +603,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             # Enrich with session data (token usage, cost)
             enriched = []
             session_ids = [r.child_session_id for r in runs if r.child_session_id]
-            session_map = await _batch_load_session_info(server.services.database, session_ids)
+            session_map = await _batch_load_session_info(
+                server, server.services.database, session_ids
+            )
 
             for r in runs:
                 d = r.to_dict()
@@ -637,7 +638,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             # Session enrichment
             if run.child_session_id:
                 session_info = await _batch_load_session_info(
-                    server.services.database, [run.child_session_id]
+                    server, server.services.database, [run.child_session_id]
                 )
                 if run.child_session_id in session_info:
                     d.update(session_info[run.child_session_id])

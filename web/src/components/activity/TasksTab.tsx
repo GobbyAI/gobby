@@ -328,23 +328,13 @@ export const TasksTab = memo(function TasksTab({
     };
   }, [selectedTaskId]);
 
-  const toggleFilter = useCallback((status: TaskFilterKey) => {
-    setStatusFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(status)) next.delete(status);
-      else next.add(status);
-      return next;
-    });
-  }, []);
-
-  const toggleStageFilter = useCallback((stageName: string) => {
-    setSelectedStageFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(stageName)) next.delete(stageName);
-      else next.add(stageName);
-      return next;
-    });
-  }, []);
+  const handleFiltersApply = useCallback(
+    (nextFilters: Set<TaskFilterKey>, nextStages: Set<string>) => {
+      setStatusFilters(nextFilters);
+      setSelectedStageFilters(nextStages);
+    },
+    [],
+  );
 
   // Client-side filter + display ordering. The activity Tasks tree should read
   // like a prioritized work queue: highest priority first, then oldest first.
@@ -726,8 +716,7 @@ export const TasksTab = memo(function TasksTab({
             filters={statusFilters}
             stages={stagesRegistry}
             selectedStages={selectedStageFilters}
-            onToggle={toggleFilter}
-            onToggleStage={toggleStageFilter}
+            onApply={handleFiltersApply}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}

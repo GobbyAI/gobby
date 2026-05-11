@@ -131,7 +131,7 @@ describe("TasksTab — filters", () => {
     expect(screen.getByText("Closed")).toBeTruthy();
   });
 
-  it("selecting a stage filter fetches that stage", async () => {
+  it("selecting a stage filter and applying fetches that stage", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -141,6 +141,7 @@ describe("TasksTab — filters", () => {
     mockFetch.fn.mockClear();
     fireEvent.click(screen.getByTitle("Filter by task state"));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       const taskFetch = mockFetch.fn.mock.calls.find(([url]) => {
@@ -152,7 +153,7 @@ describe("TasksTab — filters", () => {
     });
   });
 
-  it("selecting multiple stage filters fetches each stage", async () => {
+  it("selecting multiple stage filters and applying fetches each stage", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -163,6 +164,7 @@ describe("TasksTab — filters", () => {
     fireEvent.click(screen.getByTitle("Filter by task state"));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Operator Review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
       const taskFetch = mockFetch.fn.mock.calls.find(([url]) => {
@@ -218,7 +220,7 @@ describe("TasksTab — filters", () => {
     expect(funnel.querySelector(".activity-filter-badge")).toBeNull();
   });
 
-  it("shows the active-filter badge with a symmetric-difference count", async () => {
+  it("shows the active-filter badge with a symmetric-difference count after Apply", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -226,22 +228,28 @@ describe("TasksTab — filters", () => {
     });
 
     const funnel = screen.getByLabelText("Filter tasks");
-    fireEvent.click(funnel);
+    const openAndApply = (toggleLabels: string[]) => {
+      fireEvent.click(funnel);
+      for (const label of toggleLabels) {
+        fireEvent.click(screen.getByLabelText(label));
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    };
 
     // Toggle a default off (Blocked is in DEFAULT_FILTERS).
-    fireEvent.click(screen.getByLabelText("Blocked"));
+    openAndApply(["Blocked"]);
     expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("1");
 
     // Toggle a non-default on (Closed is not in DEFAULT_FILTERS) → diff = 2.
-    fireEvent.click(screen.getByLabelText("Closed"));
+    openAndApply(["Closed"]);
     expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("2");
 
     // Restore Blocked → diff = 1 (only Closed is non-default).
-    fireEvent.click(screen.getByLabelText("Blocked"));
+    openAndApply(["Blocked"]);
     expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("1");
 
     // Restore defaults completely.
-    fireEvent.click(screen.getByLabelText("Closed"));
+    openAndApply(["Closed"]);
     expect(funnel.querySelector(".activity-filter-badge")).toBeNull();
   });
 

@@ -232,6 +232,10 @@ class CronJobStorage:
         row = self.db.fetchone("SELECT * FROM cron_jobs WHERE name = ?", (name,))
         return CronJob.from_row(row) if row else None
 
+    def mark_as_system_job(self, job_id: str) -> None:
+        """Mark an existing cron row as gobby-managed system infrastructure."""
+        self.db.execute("UPDATE cron_jobs SET is_system = 1 WHERE id = ?", (job_id,))
+
     def list_jobs(
         self,
         project_id: str | None = None,
@@ -401,6 +405,36 @@ class CronJobStorage:
         update_fields = {key: value for key, value in fields.items() if value is not UNSET}
 
         return self._update_job_fields(job_id, **update_fields)
+
+    def park_system_job(self, job_id: str) -> CronJob | None:
+        """Park an enabled system cron row by clearing its next scheduled run."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; park_system_job "
+                "is reserved for gobby-managed system cron rows."
+            )
+        return self.update_system_job_bookkeeping(job_id, next_run_at=None)
+
+    def wake_system_job(self, job_id: str) -> CronJob | None:
+        """Wake an enabled system cron row by recomputing its next scheduled run."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; wake_system_job "
+                "is reserved for gobby-managed system cron rows."
+            )
+        if not job.enabled:
+            return job
+        next_run = compute_next_run(job)
+        return self.update_system_job_bookkeeping(
+            job_id,
+            next_run_at=next_run.isoformat() if next_run else None,
+        )
 
     def reconcile_system_job_definition(
         self,

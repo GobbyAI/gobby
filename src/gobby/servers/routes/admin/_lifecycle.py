@@ -182,6 +182,9 @@ def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> No
     """Set the in-process runner shutdown state when this server owns one."""
     runner = getattr(server, "_runner", None)
     if runner is None:
+        get_runner = getattr(server, "get_runner", None)
+        runner = get_runner() if callable(get_runner) else None
+    if runner is None:
         return
     if callable(getattr(type(runner), "request_shutdown", None)):
         runner.request_shutdown(intent)

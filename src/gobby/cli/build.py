@@ -21,6 +21,7 @@ from gobby.build import (
     build_stop,
     build_stop_target,
 )
+from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.config.build import StageCapOverride
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -438,6 +439,7 @@ def _run_build_resume(input_ref: str | None = None) -> None:
     try:
         if input_ref is None:
             result = build_resume(db=db, project_id=project_id)
+            asyncio.run(_kick_dispatcher_tick(db, project_id))
             payload: dict[str, object] | None = None
         else:
             target_result = asyncio.run(

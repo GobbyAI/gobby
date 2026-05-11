@@ -1,7 +1,10 @@
 """Tests for the LocalDatabase storage layer."""
 
+import gc
 import sqlite3
 import threading
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -214,3 +217,62 @@ class TestLocalDatabase:
         """Connections should wait briefly instead of failing on immediate lock contention."""
         row = temp_db.fetchone("PRAGMA busy_timeout")
         assert row[0] == 10000
+
+    def test_connection_count_tracks_open_and_closed_connections(self, temp_dir: Path) -> None:
+        """connection_count reflects tracked connections and returns to zero on close."""
+        db = LocalDatabase(temp_dir / "connection_count.db")
+
+        assert db.connection_count == 0
+        _ = db.connection
+        assert db.connection_count == 1
+
+        db.close()
+
+        assert db.connection_count == 0
+
+    def test_can_be_garbage_collected_after_refs_drop(self, temp_dir: Path) -> None:
+        """weakref.finalize cleanup must not keep LocalDatabase alive."""
+        db = LocalDatabase(temp_dir / "gc.db")
+        _ = db.connection
+        db_ref = weakref.ref(db)
+
+        del db
+        gc.collect()
+
+        assert db_ref() is None
+
+    def test_close_closes_worker_thread_connections(self, temp_dir: Path) -> None:
+        """close() closes connections opened from multiple worker threads."""
+        db = LocalDatabase(temp_dir / "worker_connections.db")
+        db.execute("CREATE TABLE worker_probe (id INTEGER PRIMARY KEY)")
+        barrier = threading.Barrier(4)
+
+        def open_connection() -> sqlite3.Connection:
+            barrier.wait(timeout=5)
+            conn = db.connection
+            conn.execute("SELECT 1")
+            return conn
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            connections = list(executor.map(lambda _: open_connection(), range(4)))
+
+        assert db.connection_count == 5  # main thread + four worker threads
+
+        db.close()
+
+        assert db.connection_count == 0
+        for conn in connections:
+            with pytest.raises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
+
+    def test_close_is_idempotent_and_rejects_future_use(self, temp_dir: Path) -> None:
+        """A closed LocalDatabase cannot reopen thread-local connections."""
+        db = LocalDatabase(temp_dir / "closed.db")
+        _ = db.connection
+
+        db.close()
+        db.close()
+
+        assert db.connection_count == 0
+        with pytest.raises(RuntimeError, match="LocalDatabase is closed"):
+            _ = db.connection

@@ -61,7 +61,12 @@ async def is_qdrant_healthy(url: str | None) -> bool:
             )
             return False
     except httpx.HTTPError as e:
-        logger.debug("Qdrant health check failed: %s unreachable: %s", healthz_url, e)
+        logger.debug(
+            "Qdrant health check failed: %s unreachable: %s: %s",
+            healthz_url,
+            type(e).__name__,
+            e,
+        )
         return False
 
 
@@ -117,7 +122,12 @@ async def is_neo4j_healthy(url: str | None) -> bool:
                 return False
             return True
     except httpx.HTTPError as e:
-        logger.debug("Neo4j health check failed: %s unreachable: %s", url, e)
+        logger.debug(
+            "Neo4j health check failed: %s unreachable: %s: %s",
+            url,
+            type(e).__name__,
+            e,
+        )
         return False
 
 

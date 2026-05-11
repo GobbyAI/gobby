@@ -169,6 +169,35 @@ def test_post_api_build_stop_preserves_project_wide_control() -> None:
     stop.assert_called_once()
 
 
+def test_post_api_build_resume_kicks_dispatcher() -> None:
+    from gobby.build.service import BuildControlResult, BuildLifecycleEvent
+
+    control_result = BuildControlResult(
+        project_id="project-1",
+        enabled=True,
+        cron_job_id="cron-1",
+        lifecycle_event=BuildLifecycleEvent(
+            id=1,
+            project_id="project-1",
+            event="build_resume",
+            reason="gobby build resume",
+            by_actor="build",
+            created_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+    with (
+        patch("gobby.servers.routes.build.build_resume", return_value=control_result) as resume,
+        patch("gobby.servers.routes.build._kick_dispatcher_tick", new=AsyncMock()) as tick,
+    ):
+        response = _client().post("/api/build/resume", json={})
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is True
+    resume.assert_called_once()
+    tick.assert_awaited_once()
+
+
 def test_post_api_build_stop_accepts_task_ref() -> None:
     from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
 

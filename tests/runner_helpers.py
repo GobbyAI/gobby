@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.SessionManager"
+RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.storage.SessionManager"
 
 
 def set_mock_default(obj: MagicMock, name: str, default):
@@ -90,35 +90,39 @@ def create_base_patches(
     mock_agent_monitor.recover_or_cleanup_agents.return_value = (0, 0)
 
     patches = [
-        patch("gobby.runner_init.init_telemetry"),
-        patch("gobby.runner_init.get_machine_id", return_value="test-machine"),
-        patch("gobby.runner_init.LocalDatabase"),
-        patch("gobby.runner_init.run_migrations"),
+        patch("gobby.runner_init.storage.init_telemetry"),
+        patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
+        patch("gobby.runner_init.helpers.LocalDatabase"),
+        patch("gobby.runner_init.helpers.run_migrations"),
         patch(RUNNER_INIT_SESSION_MANAGER_PATCH),
-        patch("gobby.runner_init.LocalTaskManager"),
-        patch("gobby.runner_init.SessionTaskManager"),
-        patch("gobby.runner_init.MCPClientManager", return_value=mock_mcp_manager),
-        patch("gobby.runner_init.TaskSyncManager"),
-        patch("gobby.runner_init.MemorySyncManager"),
-        patch("gobby.runner_init.SessionMessageProcessor", return_value=AsyncMock()),
-        patch("gobby.runner_init.TaskValidator"),
-        patch("gobby.runner_init.SessionLifecycleManager", return_value=AsyncMock()),
-        patch("gobby.runner_init.create_llm_service", return_value=None),
-        patch("gobby.runner_init.MemoryManager", return_value=None),
-        patch("gobby.runner_init.HTTPServer", return_value=mock_http),
+        patch("gobby.runner_init.storage.LocalTaskManager"),
+        patch("gobby.runner_init.storage.SessionTaskManager"),
+        patch("gobby.runner_init.services.MCPClientManager", return_value=mock_mcp_manager),
+        patch("gobby.runner_init.services.TaskSyncManager"),
+        patch("gobby.runner_init.services.MemorySyncManager"),
+        patch("gobby.runner_init.services.SessionMessageProcessor", return_value=AsyncMock()),
+        patch("gobby.runner_init.services.TaskValidator"),
+        patch("gobby.runner_init.orchestration.SessionLifecycleManager", return_value=AsyncMock()),
+        patch("gobby.runner_init.services.create_llm_service", return_value=None),
+        patch("gobby.runner_init.services.MemoryManager", return_value=None),
+        patch("gobby.runner_init.servers.HTTPServer", return_value=mock_http),
         patch("gobby.storage.secrets.SecretStore"),
         patch("gobby.storage.config_store.ConfigStore"),
-        patch("gobby.runner_init.AgentLifecycleMonitor", return_value=mock_agent_monitor),
+        patch(
+            "gobby.runner_init.orchestration.AgentLifecycleMonitor", return_value=mock_agent_monitor
+        ),
     ]
 
     if mock_config is not None:
-        patches.insert(1, patch("gobby.runner_init.load_config", return_value=mock_config))
+        patches.insert(1, patch("gobby.runner_init.storage.load_config", return_value=mock_config))
     else:
-        patches.insert(1, patch("gobby.runner_init.load_config"))
+        patches.insert(1, patch("gobby.runner_init.storage.load_config"))
 
     if mock_ws_server is not None:
-        patches.append(patch("gobby.runner_init.WebSocketServer", return_value=mock_ws_server))
+        patches.append(
+            patch("gobby.runner_init.servers.WebSocketServer", return_value=mock_ws_server)
+        )
     else:
-        patches.append(patch("gobby.runner_init.WebSocketServer"))
+        patches.append(patch("gobby.runner_init.servers.WebSocketServer"))
 
     return patches

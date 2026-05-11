@@ -136,7 +136,10 @@ class TestGobbyRunnerShutdown:
         )
         patches = [p for p in patches if "SessionLifecycleManager" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.SessionLifecycleManager", return_value=mock_lifecycle_manager)
+            patch(
+                "gobby.runner_init.orchestration.SessionLifecycleManager",
+                return_value=mock_lifecycle_manager,
+            )
         )
 
         with ExitStack() as stack:
@@ -179,7 +182,10 @@ class TestGobbyRunnerShutdown:
         )
         patches = [p for p in patches if "SessionLifecycleManager" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.SessionLifecycleManager", return_value=mock_lifecycle_manager)
+            patch(
+                "gobby.runner_init.orchestration.SessionLifecycleManager",
+                return_value=mock_lifecycle_manager,
+            )
         )
 
         with ExitStack() as stack:
@@ -283,7 +289,10 @@ class TestGobbyRunnerShutdown:
         )
         patches = [p for p in patches if "SessionMessageProcessor" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.SessionMessageProcessor", return_value=mock_message_processor)
+            patch(
+                "gobby.runner_init.services.SessionMessageProcessor",
+                return_value=mock_message_processor,
+            )
         )
 
         with ExitStack() as stack:
@@ -357,7 +366,10 @@ class TestGobbyRunnerShutdown:
         )
         patches = [p for p in patches if "SessionMessageProcessor" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.SessionMessageProcessor", return_value=mock_message_processor)
+            patch(
+                "gobby.runner_init.services.SessionMessageProcessor",
+                return_value=mock_message_processor,
+            )
         )
 
         with ExitStack() as stack:

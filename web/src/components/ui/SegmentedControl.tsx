@@ -50,7 +50,6 @@ export function SegmentedControl<T extends string>({
   }
 
   const sizeText = size === 'md' ? 'text-base' : 'text-xs'
-  const sizeHeight = size === 'md' ? 'h-9' : 'h-8'
   const sizePad = size === 'md' ? 'px-3' : 'px-2'
 
   return (
@@ -58,9 +57,9 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
+      style={{ height: 'var(--control-row-height)' }}
       className={cn(
         'inline-flex items-stretch rounded-md border border-border bg-[var(--bg-primary)]',
-        sizeHeight,
         sizeText,
         className,
       )}
@@ -89,7 +88,6 @@ export function SegmentedControl<T extends string>({
               'segmented-control__option',
               'inline-flex items-center justify-center',
               sizePad,
-              'pointer-coarse:min-h-11 pointer-coarse:min-w-11',
               'transition-colors motion-reduce:transition-none',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               index === 0 && 'rounded-l-md',

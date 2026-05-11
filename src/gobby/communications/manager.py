@@ -75,6 +75,11 @@ class CommunicationsManager:
         self.event_callback: Callable[..., Any] | None = None
         self.reaction_handler: Any | None = None
 
+    @property
+    def store(self) -> LocalCommunicationsStore:
+        """Storage backend for integrations that need communications persistence."""
+        return self._store
+
     def _get_thread_id(self, channel_name: str, session_id: str) -> str | None:
         return self._thread_manager.get_thread_id(channel_name, session_id)
 

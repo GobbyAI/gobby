@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Any, Protocol
 
+from gobby.storage.database import DatabaseProtocol
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline_state import (
     ApprovalRequired,
@@ -189,9 +190,10 @@ async def cancel_pipeline(
     try:
         from gobby.agents.kill import kill_agent
         from gobby.storage.agents import LocalAgentRunManager
-        from gobby.storage.database import LocalDatabase
 
-        _db = LocalDatabase()
+        _db: DatabaseProtocol | None = getattr(execution_manager, "db", None)
+        if _db is None:
+            raise RuntimeError("execution manager has no database")
         arm = LocalAgentRunManager(_db)
         active_runs = arm.list_by_parent(execution.session_id) if execution.session_id else []
         killed_count = 0

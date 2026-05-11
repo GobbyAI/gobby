@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.models import (
     CLEANUP_INTERVAL_SECONDS,
     IDLE_TIMEOUT_SECONDS,
@@ -71,8 +72,8 @@ async def handle_clear_chat(
         session_manager = getattr(mixin, "session_manager", None)
         if session_manager:
             try:
-                await asyncio.to_thread(
-                    session_manager.update, session.db_session_id, status="completed"
+                await run_db(
+                    mixin, session_manager.update, session.db_session_id, status="completed"
                 )
             except Exception as e:
                 logger.warning(f"Failed to update session status on clear: {e}", exc_info=True)
@@ -83,9 +84,7 @@ async def handle_clear_chat(
         try:
             from gobby.storage import chat_messages
 
-            await asyncio.to_thread(
-                chat_messages.delete_messages, session_manager.db, conversation_id
-            )
+            await run_db(mixin, chat_messages.delete_messages, session_manager.db, conversation_id)
         except Exception as e:
             logger.warning(f"Failed to delete chat messages on clear: {e}")
 
@@ -158,7 +157,7 @@ async def handle_delete_chat(
         session_manager = getattr(mixin, "session_manager", None)
         try:
             if session_manager:
-                await asyncio.to_thread(session_manager.update, db_session_id, status="expired")
+                await run_db(mixin, session_manager.update, db_session_id, status="expired")
         except Exception as e:
             logger.warning(f"Failed to soft-delete session from DB: {e}")
 
@@ -192,8 +191,11 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                     session_manager = getattr(mixin, "session_manager", None)
                     if session_manager:
                         try:
-                            await asyncio.to_thread(
-                                session_manager.update, session.db_session_id, status="paused"
+                            await run_db(
+                                mixin,
+                                session_manager.update,
+                                session.db_session_id,
+                                status="paused",
                             )
                         except Exception as e:
                             logger.warning(f"Failed to update session status: {e}")

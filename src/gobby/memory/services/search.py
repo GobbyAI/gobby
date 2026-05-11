@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +40,7 @@ class SearchService:
         neo4j_graph_min_score: float,
         neo4j_rrf_k: int,
         vector_store_failure_logger: Callable[[str, BaseException], None],
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
@@ -51,6 +52,12 @@ class SearchService:
         self._neo4j_graph_min_score = neo4j_graph_min_score
         self._neo4j_rrf_k = neo4j_rrf_k
         self._log_vector_store_failure = vector_store_failure_logger
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     @property
     def kg_service(self) -> KnowledgeGraphService | None:
@@ -484,7 +491,7 @@ class SearchService:
         project_id: str | None,
     ) -> list[str]:
         """Run FTS5 keyword search and return ranked memory IDs for RRF merge."""
-        fts_results = await asyncio.to_thread(
+        fts_results = await self._run_sqlite(
             self._fts_searcher_factory().search,
             query,
             limit,
@@ -503,7 +510,7 @@ class SearchService:
         tags_none: list[str] | None,
     ) -> list[Memory]:
         """FTS5 keyword search fallback when vector search returns nothing."""
-        fts_results = await asyncio.to_thread(
+        fts_results = await self._run_sqlite(
             self._fts_searcher_factory().search,
             query,
             limit * 2,
@@ -515,7 +522,7 @@ class SearchService:
         memories: list[Memory] = []
         for mem_id, score in fts_results:
             try:
-                mem = await asyncio.to_thread(self._storage.get_memory, mem_id)
+                mem = await self._run_sqlite(self._storage.get_memory, mem_id)
             except ValueError:
                 continue
             if memory_type and mem.memory_type != memory_type:

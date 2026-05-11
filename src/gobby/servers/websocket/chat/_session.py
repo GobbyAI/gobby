@@ -18,6 +18,7 @@ from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.tool_approvals import normalize_approved_tool_keys
+from gobby.servers.websocket.db import run_db
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.machine_id import get_machine_id
 
@@ -293,7 +294,7 @@ class ChatSessionMixin:
         existing_terminal_resume = False
         if session_manager:
             try:
-                candidate = await asyncio.to_thread(session_manager.get, session_key)
+                candidate = await run_db(self, session_manager.get, session_key)
                 if candidate:
                     candidate_session_type = getattr(candidate, "session_type", None)
                     if candidate_session_type == "web_chat":
@@ -339,7 +340,8 @@ class ChatSessionMixin:
             try:
                 from gobby.workflows.agent_resolver import resolve_agent
 
-                agent_body = await asyncio.to_thread(
+                agent_body = await run_db(
+                    self,
                     resolve_agent,
                     agent_name,
                     session_manager.db,
@@ -489,7 +491,8 @@ class ChatSessionMixin:
 
         if existing_terminal_resume and existing_db_session and session_manager:
             try:
-                normalized_session = await asyncio.to_thread(
+                normalized_session = await run_db(
+                    self,
                     session_manager.update,
                     existing_db_session.id,
                     source=provider_name,
@@ -544,7 +547,8 @@ class ChatSessionMixin:
                     raise RuntimeError(mismatch_reason)
                 if session_manager:
                     try:
-                        migrated = await asyncio.to_thread(
+                        migrated = await run_db(
+                            self,
                             session_manager.update,
                             existing_db_session.id,
                             sandbox_enabled=current_web_chat_sandbox_enabled,
@@ -594,7 +598,8 @@ class ChatSessionMixin:
             )
         elif session_manager:
             try:
-                db_session = await asyncio.to_thread(
+                db_session = await run_db(
+                    self,
                     session_manager.register,
                     external_id=session_key,
                     machine_id=get_machine_id(),
@@ -707,7 +712,8 @@ class ChatSessionMixin:
                 if persona_selected:
                     from gobby.mcp_proxy.tools.apply_persona import build_session_persona_context
 
-                    persona_context, _ = await asyncio.to_thread(
+                    persona_context, _ = await run_db(
+                        self,
                         build_session_persona_context,
                         agent_body,
                         session_manager.db,
@@ -753,7 +759,8 @@ class ChatSessionMixin:
 
             if update_kwargs:
                 try:
-                    await asyncio.to_thread(
+                    await run_db(
+                        self,
                         session_manager.update,
                         session.db_session_id,
                         **update_kwargs,
@@ -766,7 +773,8 @@ class ChatSessionMixin:
 
         if session_manager and session.db_session_id and session.model:
             try:
-                await asyncio.to_thread(
+                await run_db(
+                    self,
                     session_manager.update_model,
                     session.db_session_id,
                     session.model,

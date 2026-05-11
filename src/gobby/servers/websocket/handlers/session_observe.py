@@ -10,10 +10,11 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
+from gobby.servers.websocket.db import run_db
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.sessions.transcript_archive import restore_transcript
@@ -136,9 +137,9 @@ async def _resolve_agent_name_for_session(
     try:
         from gobby.storage.agents import LocalAgentRunManager
 
-        run = await asyncio.to_thread(LocalAgentRunManager(session_manager.db).get, agent_run_id)
+        run = await run_db(mixin, LocalAgentRunManager(session_manager.db).get, agent_run_id)
         if run and run.agent_name:
-            return run.agent_name
+            return cast(str, run.agent_name)
     except Exception as exc:
         logger.debug("Failed to resolve agent name for session %s: %s", session_id, exc)
 
@@ -209,7 +210,7 @@ async def handle_continue_in_chat(
     source_session = None
     if session_manager:
         try:
-            source_session = await asyncio.to_thread(session_manager.get, source_session_id)
+            source_session = await run_db(mixin, session_manager.get, source_session_id)
             if source_session and not project_id:
                 project_id = source_session.project_id
         except Exception as e:
@@ -278,8 +279,8 @@ async def handle_continue_in_chat(
         agent_run_mgr = getattr(mixin, "agent_run_manager", None)
         if agent_run_mgr:
             try:
-                sdk_resume_id = await asyncio.to_thread(
-                    agent_run_mgr.get_sdk_session_id_for_session, source_session_id
+                sdk_resume_id = await run_db(
+                    mixin, agent_run_mgr.get_sdk_session_id_for_session, source_session_id
                 )
             except Exception as e:
                 logger.warning(f"Failed to look up sdk_session_id: {e}")
@@ -308,7 +309,8 @@ async def handle_continue_in_chat(
 
     if session_manager and source_session and resume_in_place:
         try:
-            source_session = await asyncio.to_thread(
+            source_session = await run_db(
+                mixin,
                 session_manager.update,
                 source_session_id,
                 source=effective_provider,
@@ -333,7 +335,7 @@ async def handle_continue_in_chat(
     # source-authoritative by default.
     elif session_manager and effective_provider:
         try:
-            target_session = await asyncio.to_thread(session_manager.get, conversation_id)
+            target_session = await run_db(mixin, session_manager.get, conversation_id)
             if target_session and getattr(target_session, "session_type", None) == "web_chat":
                 if (
                     getattr(target_session, "source", None) != effective_provider
@@ -347,7 +349,8 @@ async def handle_continue_in_chat(
                         and getattr(target_session, "chat_mode", None) != effective_chat_mode
                     )
                 ):
-                    await asyncio.to_thread(
+                    await run_db(
+                        mixin,
                         session_manager.update,
                         conversation_id,
                         source=effective_provider,
@@ -386,7 +389,8 @@ async def handle_continue_in_chat(
                 if effective_model:
                     session_updates["model"] = effective_model
                 if session_updates:
-                    await asyncio.to_thread(
+                    await run_db(
+                        mixin,
                         session_manager.update,
                         session.db_session_id,
                         **session_updates,
@@ -417,7 +421,8 @@ async def handle_continue_in_chat(
     # Set parent_session_id on the DB record for lineage tracking
     if session.db_session_id and session_manager and session.db_session_id != source_session_id:
         try:
-            await asyncio.to_thread(
+            await run_db(
+                mixin,
                 session_manager.update_parent_session_id,
                 session.db_session_id,
                 source_session_id,
@@ -526,7 +531,7 @@ async def handle_attach_to_session(
 
     # Look up session
     try:
-        session = await asyncio.to_thread(session_manager.get, session_id)
+        session = await run_db(mixin, session_manager.get, session_id)
     except Exception as e:
         logger.warning(f"Failed to look up session {session_id}: {e}")
         session = None
@@ -637,7 +642,7 @@ async def handle_send_to_cli_session(
 
     # Look up the target session
     try:
-        session = await asyncio.to_thread(session_manager.get, session_id)
+        session = await run_db(mixin, session_manager.get, session_id)
     except Exception as e:
         logger.warning(f"Failed to look up session {session_id}: {e}")
         session = None
@@ -668,7 +673,8 @@ async def handle_send_to_cli_session(
     msg_id: str | None = None
     if inter_msg_manager:
         try:
-            msg = await asyncio.to_thread(
+            msg = await run_db(
+                mixin,
                 inter_msg_manager.create_message,
                 from_session=f"web:{web_session_id}",
                 to_session=session_id,
@@ -700,7 +706,7 @@ async def handle_send_to_cli_session(
                 # Mark as delivered
                 if inter_msg_manager and msg_id:
                     try:
-                        await asyncio.to_thread(inter_msg_manager.mark_delivered, msg_id)
+                        await run_db(mixin, inter_msg_manager.mark_delivered, msg_id)
                     except Exception as e:
                         logger.warning(f"Failed to mark message {msg_id} as delivered: {e}")
         except Exception as e:

@@ -68,7 +68,13 @@ async def apply_before_tool_enforcement(
         arguments=arguments,
     )
     try:
-        response = await asyncio.to_thread(workflow_handler.evaluate, event)
+        from gobby.app_context import get_app_context
+
+        app_context = get_app_context()
+        if app_context is not None and app_context.db_executor is not None:
+            response = await app_context.run_db(workflow_handler.evaluate, event)
+        else:
+            response = await asyncio.to_thread(workflow_handler.evaluate, event)
     except Exception as exc:
         logger.warning(
             "Workflow evaluation failed for %s/%s: %s",

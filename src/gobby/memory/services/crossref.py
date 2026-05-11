@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -31,11 +32,18 @@ class CrossrefService:
         vector_store: VectorStore | None,
         embed_fn: Callable[..., Awaitable[Any]] | None,
         config: MemoryConfig,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
         self._embed_fn = embed_fn
         self._config = config
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def rebuild_for_memory(
         self,
@@ -74,7 +82,7 @@ class CrossrefService:
             if count >= max_links:
                 break
             try:
-                self._storage.create_crossref(memory.id, other_id, score)
+                await self._run_sqlite(self._storage.create_crossref, memory.id, other_id, score)
                 count += 1
             except Exception as e:
                 logger.debug(f"Crossref creation failed: {e}")

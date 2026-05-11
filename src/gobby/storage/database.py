@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import atexit
 import logging
 import os
 import re
@@ -57,6 +56,7 @@ sqlite3.register_converter("date", _convert_date)
 logger = logging.getLogger(__name__)
 
 _SQLITE_BUSY_TIMEOUT_MS = 10_000
+_DB_CONNECTION_WARNING_THRESHOLD = 32
 
 
 @runtime_checkable
@@ -113,6 +113,11 @@ class DatabaseProtocol(Protocol):
 
     def close(self) -> None:
         """Close database connection."""
+        ...
+
+    @property
+    def connection_count(self) -> int:
+        """Return the number of currently tracked open connections."""
         ...
 
 
@@ -174,12 +179,17 @@ class LocalDatabase:
         # Track all connections for proper cleanup across threads
         self._all_connections: set[sqlite3.Connection] = set()
         self._connections_lock = threading.Lock()
+        self._closed = False
+        self._last_connection_warning_count = 0
         self._ensure_directory()
 
-        # Register atexit cleanup using weak reference to avoid preventing GC
-        # and to safely handle shutdown without __del__ lock issues
-        self._weak_self = weakref.ref(self)
-        atexit.register(self._cleanup_at_exit)
+        self._finalizer = weakref.finalize(
+            self,
+            self._close_tracked_connections,
+            self._all_connections,
+            self._connections_lock,
+            self._local,
+        )
 
     def _ensure_directory(self) -> None:
         """Create database directory if it doesn't exist."""
@@ -187,6 +197,9 @@ class LocalDatabase:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get thread-local database connection."""
+        if self._closed:
+            raise RuntimeError(f"LocalDatabase is closed: {self.db_path}")
+
         if not hasattr(self._local, "connection") or self._local.connection is None:
             conn = sqlite3.connect(
                 str(self.db_path),
@@ -207,7 +220,24 @@ class LocalDatabase:
             # Track for cleanup in close()
             with self._connections_lock:
                 self._all_connections.add(conn)
+                connection_count = len(self._all_connections)
+                if (
+                    connection_count > _DB_CONNECTION_WARNING_THRESHOLD
+                    and connection_count > self._last_connection_warning_count
+                ):
+                    self._last_connection_warning_count = connection_count
+                    logger.warning(
+                        "LocalDatabase has %d open SQLite connection(s) for %s",
+                        connection_count,
+                        self.db_path,
+                    )
         return cast(sqlite3.Connection, self._local.connection)
+
+    @property
+    def connection_count(self) -> int:
+        """Return the number of currently tracked open connections."""
+        with self._connections_lock:
+            return len(self._all_connections)
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -455,48 +485,36 @@ class LocalDatabase:
         for callback in self._pop_after_commit_scope(committed=True):
             callback()
 
-    def close(self) -> None:
-        """Close all database connections and clean up managers.
-
-        Can be called explicitly or via context manager. For automatic cleanup
-        at interpreter shutdown, atexit handler is used instead of __del__ to
-        avoid lock acquisition issues during GC.
-        """
-        # Close all connections from all threads
-        with self._connections_lock:
-            for conn in self._all_connections:
+    @staticmethod
+    def _close_tracked_connections(
+        connections: set[sqlite3.Connection],
+        connections_lock: threading.Lock,
+        local_state: threading.local,
+    ) -> None:
+        """Close tracked connections without retaining the LocalDatabase instance."""
+        with connections_lock:
+            for conn in list(connections):
                 try:
                     conn.close()
                 except Exception as e:
                     logger.debug(f"Connection close failed: {e}")
-            self._all_connections.clear()
+            connections.clear()
 
-        # Clear thread-local reference
-        if hasattr(self._local, "connection"):
-            self._local.connection = None
+        if hasattr(local_state, "connection"):
+            local_state.connection = None
 
-    def _cleanup_at_exit(self) -> None:
-        """Atexit handler for safe cleanup during interpreter shutdown.
+    def close(self) -> None:
+        """Close all database connections and reject future use.
 
-        Uses try/except to safely handle any errors that may occur during
-        shutdown when modules may already be partially unloaded.
+        Can be called explicitly or via context manager. For automatic cleanup
+        at interpreter shutdown, weakref.finalize handles tracked connections
+        without keeping this LocalDatabase instance alive.
         """
-        try:
-            self.close()
-        except Exception:
-            return  # Not using logger.debug here as globals may be unloaded during shutdown
+        if self._closed:
+            return
 
-    def __del__(self) -> None:
-        """Clean up connections when object is garbage collected.
-
-        Note: Most cleanup should happen via atexit or explicit close() calls.
-        This is a fallback that unregisters the atexit handler to avoid double-close.
-        """
-        try:
-            # Unregister atexit handler since we're being collected
-            atexit.unregister(self._cleanup_at_exit)
-        except Exception:
-            return  # Not using logger.debug here as globals may be unloaded during GC
+        self._closed = True
+        self._finalizer()
 
     def __enter__(self) -> LocalDatabase:
         """Enter context manager."""

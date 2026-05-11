@@ -1084,7 +1084,10 @@ class TestMessageProcessorWebSocketIntegration:
         )
         patches = [p for p in patches if "SessionMessageProcessor" not in str(p)]
         patches.append(
-            patch("gobby.runner_init.SessionMessageProcessor", return_value=mock_message_processor)
+            patch(
+                "gobby.runner_init.services.SessionMessageProcessor",
+                return_value=mock_message_processor,
+            )
         )
 
         with ExitStack() as stack:
