@@ -824,6 +824,7 @@ export default function App() {
                 paletteActions={commandPaletteActions}
                 onSttEnabledChange={updateSttEnabled}
                 onTtsEnabledChange={updateTtsEnabled}
+                onVoiceInputModeChange={updateVoiceInputMode}
                 voice={{
                   sttEnabled: settings.sttEnabled,
                   ttsEnabled: settings.ttsEnabled,
@@ -900,9 +901,6 @@ export default function App() {
         onThemeChange={updateTheme}
         onDefaultChatModeChange={updateDefaultChatMode}
         onPostPlanChatModeChange={updatePostPlanChatMode}
-        onSttEnabledChange={updateSttEnabled}
-        onTtsEnabledChange={updateTtsEnabled}
-        onVoiceInputModeChange={updateVoiceInputMode}
         onReset={resetSettings}
       />
 

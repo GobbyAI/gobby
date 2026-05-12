@@ -804,6 +804,30 @@
   color: var(--accent);
 }
 
+.chat-input-voice-controls,
+.chat-input-voice-mic {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.chat-input-voice-mic {
+  flex-shrink: 0;
+}
+
+.chat-input-voice-mode {
+  min-width: 1.75rem;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chat-input-voice-mode--disabled {
+  opacity: 0.5;
+}
+
 @keyframes voice-warmup-pulse {
   0%,
   100% {
@@ -856,4 +880,3 @@
     gap: 0.25rem;
   }
 }
-

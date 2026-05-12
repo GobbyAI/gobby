@@ -9,8 +9,9 @@ import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
-import { MicIcon, PaperclipIcon, SendIcon, SpeakerIcon, StopIcon } from './ChatInputIcons'
+import { MicIcon, PaperclipIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import { ChatInputModelControls } from './ChatInputModelControls'
+import { ChatInputVoiceControls } from './ChatInputVoiceControls'
 import { ModeSelector } from './ModeSelector'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
@@ -54,6 +55,7 @@ interface ChatInputProps {
   stopTTS?: () => void
   onSttEnabledChange?: (enabled: boolean) => void
   onTtsEnabledChange?: (enabled: boolean) => void
+  onVoiceInputModeChange?: (mode: VoiceInputMode) => void
   currentBranch?: string | null
   worktreePath?: string | null
   projectId?: string | null
@@ -135,6 +137,7 @@ export function ChatInput({
   stopTTS,
   onSttEnabledChange,
   onTtsEnabledChange,
+  onVoiceInputModeChange,
   currentBranch,
   worktreePath,
   projectId,
@@ -173,7 +176,6 @@ export function ChatInput({
   const [isDragOver, setIsDragOver] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
-  const [pendingSttStart, setPendingSttStart] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
@@ -388,7 +390,6 @@ export function ChatInput({
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
-  const ttsWarming = ttsEnabled && voiceLoading && !voiceReady
   const {
     canSelectModel,
     effectiveProvider,
@@ -446,20 +447,9 @@ export function ChatInput({
   useEffect(() => {
     if (!sttEnabled) {
       latchedRef.current = false
-      if (pendingSttStart) {
-        setPendingSttStart(false)
-      }
       resetPTTGesture()
     }
-  }, [pendingSttStart, sttEnabled, resetPTTGesture])
-
-  useEffect(() => {
-    if (!pendingSttStart) return
-    if (!sttEnabled || isRecording || !startRecording) return
-
-    setPendingSttStart(false)
-    void startRecording()
-  }, [isRecording, pendingSttStart, startRecording, sttEnabled])
+  }, [sttEnabled, resetPTTGesture])
 
   useEffect(() => {
     if (!isRecording || !cancelRecording) return
@@ -730,90 +720,22 @@ export function ChatInput({
                   disabled={disabled || agentPickerDisabled}
                 />
               )}
-              {!isAttached && onTtsEnabledChange && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  // Permit "stop speaking" even when the composer is disabled
-                  // (e.g. viewing a read-only session) — a trailing TTS playback
-                  // from the prior turn should always be interruptible. Only
-                  // block NEW starts on disabled.
-                  disabled={disabled && !isSpeaking}
-                  onClick={() => {
-                    if (isSpeaking) {
-                      stopTTS?.()
-                      return
-                    }
-                    if (!ttsEnabled) {
-                      prepareTTSPlayback?.()
-                    }
-                    onTtsEnabledChange(!ttsEnabled)
-                  }}
-                  title={
-                    isSpeaking
-                      ? 'Stop speaking'
-                      : ttsWarming
-                        ? 'Text-to-speech warming up'
-                      : ttsEnabled
-                        ? 'Disable text-to-speech'
-                        : 'Enable text-to-speech'
-                  }
-                  aria-label={ttsWarming ? 'Text-to-speech warming up' : 'Toggle text-to-speech'}
-                  aria-pressed={ttsEnabled || isSpeaking}
-                  aria-busy={ttsWarming}
-                  className={cn(
-                    'chat-input-voice-toggle',
-                    (ttsEnabled || isSpeaking) && 'chat-input-voice-toggle--active',
-                    ttsWarming && 'chat-input-voice-toggle--warming',
-                  )}
-                >
-                  <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />
-                </Button>
-              )}
-              {!isAttached && onSttEnabledChange && startRecording && stopRecording && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  // Stop-in-flight (ship audio + disable) is always allowed;
-                  // starting a NEW recording requires the composer to be enabled.
-                  disabled={disabled && !isRecording}
-                  onClick={async () => {
-                    try {
-                      if (isRecording) {
-                        // Click while recording → ship audio FIRST, then disable STT.
-                        setPendingSttStart(false)
-                        await stopRecording()
-                        onSttEnabledChange(false)
-                        return
-                      }
-                      if (sttEnabled) {
-                        // STT on, idle → disable STT.
-                        onSttEnabledChange(false)
-                        return
-                      }
-                      // STT off → enable and queue start.
-                      setPendingSttStart(true)
-                      onSttEnabledChange(true)
-                    } catch (err) {
-                      console.error('Mic toggle failed:', err)
-                    }
-                  }}
-                  title={
-                    isRecording
-                      ? 'Stop and disable speech-to-text'
-                      : sttEnabled
-                        ? 'Disable speech-to-text'
-                        : 'Enable speech-to-text'
-                  }
-                  aria-label="Toggle microphone"
-                  aria-pressed={isRecording || sttEnabled}
-                  className={cn(
-                    'chat-input-voice-toggle',
-                    (isRecording || sttEnabled) && 'chat-input-voice-toggle--active',
-                  )}
-                >
-                  <MicIcon muted={!sttEnabled && !isRecording} />
-                </Button>
+              {!isAttached && (
+                <ChatInputVoiceControls
+                  disabled={disabled}
+                  sttEnabled={sttEnabled}
+                  ttsEnabled={ttsEnabled}
+                  voiceInputMode={voiceInputMode}
+                  isRecording={isRecording}
+                  isSpeaking={isSpeaking}
+                  voiceLoading={voiceLoading}
+                  voiceReady={voiceReady}
+                  prepareTTSPlayback={prepareTTSPlayback}
+                  stopTTS={stopTTS}
+                  onSttEnabledChange={onSttEnabledChange}
+                  onTtsEnabledChange={onTtsEnabledChange}
+                  onVoiceInputModeChange={onVoiceInputModeChange}
+                />
               )}
             </div>
             {!canSelectModel && onWorktreeChange ? (
