@@ -27,6 +27,7 @@ sets `allow_automation=true`, and kicks a bounded dispatcher heartbeat.
 
 ```bash
 uv run gobby build '#14354' --quick --max-active-agents 1
+uv run gobby build '#14354' --profile submit --isolation worktree --no-unattended
 ```
 
 The same build service is exposed through MCP and HTTP:
@@ -37,8 +38,9 @@ The same build service is exposed through MCP and HTTP:
   "tool": "build_task",
   "arguments": {
     "input_ref": "#14354",
+    "profile": "submit",
     "quick": true,
-    "workspace_backend": "worktree",
+    "isolation": "worktree",
     "stage": ["development:max_review_rounds=4"],
     "max_active_agents": 1
   }
@@ -51,8 +53,9 @@ Content-Type: application/json
 
 {
   "input_ref": "#14354",
+  "profile": "submit",
   "quick": true,
-  "workspace_backend": "worktree",
+  "isolation": "worktree",
   "stage": ["development:max_review_rounds=4"],
   "max_active_agents": 1
 }
@@ -63,6 +66,15 @@ Content-Type: application/json
 `POST /api/build/resume`, `POST /api/build/clean`, and
 `POST /api/build/restart`. The task-scoped forms accept an `input_ref`; the
 project-wide stop and resume forms omit it.
+
+Build profiles are DB-backed presets over `skip_stages`, `isolation`, and
+`unattended`. Omitted profile input resolves to `default`; explicit request
+fields override profile values. Disabled profiles fail immediately instead of
+falling through to a lower-priority row. Existing manifests keep their current
+stage rows and task isolation on resume; profile `skip_stages` and profile
+isolation only shape new or rebuilt manifests. Profile rows are editable through
+`gobby profiles`, `gobby-profiles`, `/api/profiles`, and the Workflows Profiles
+tab.
 
 ## Stage Registry
 
@@ -87,6 +99,12 @@ Each registry row can define display labels, category, default agent,
 `review_policy`, reviewer selection, dispatch type, dispatch target, and
 terminal behavior. `expansion` is pipeline-backed through `dispatch_type:
 pipeline` and `dispatch_target: expand-task`.
+
+Stage names are immutable in the editable registry. Operators can update
+metadata, restore bundled rows, soft-delete unused rows, and reorder task-type
+default manifests through `gobby stages`, `gobby-tasks` stage registry tools,
+`/api/stages`, and the Workflows Stages tab. Deleted stages are hidden from
+default manifest validation and normal registry listing.
 
 ## Manifest Rows
 

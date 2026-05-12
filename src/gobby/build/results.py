@@ -16,6 +16,7 @@ class BuildResult:
     tick_dispatched: int
     dispatcher_tick: DispatcherTickSummary = field(default_factory=DispatcherTickSummary)
     manifest: list[dict[str, str | int | None]] | None = None
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def stage_manifest(self) -> list[dict[str, str | int | None]] | None:

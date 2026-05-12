@@ -8,30 +8,28 @@ from click.testing import CliRunner
 pytestmark = pytest.mark.unit
 
 
-def test_build_options_omits_removed_profile_and_yolo_fields() -> None:
+def test_build_options_includes_profiles_and_omits_yolo_fields() -> None:
     from gobby.build.service import BuildOptions
 
     fields = set(getattr(BuildOptions, "__dataclass_fields__", {}))
-    assert {"quick", "no_merge", "pr"}.issubset(fields)
+    assert {"profile", "unattended", "quick", "no_merge", "pr"}.issubset(fields)
     assert {
-        "profile",
         "stages",
         "add_stages",
-        "unattended",
         "yolo",
         "composer_yolo",
     }.isdisjoint(fields)
 
 
-def test_removed_cli_flags_are_not_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unknown_profile_exits_with_code_4(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.build import build_command
 
     monkeypatch.setattr("gobby.cli.build.resolve_project_id", lambda: "project-1")
 
     result = CliRunner().invoke(build_command, ["#42", "--profile", "quick"])
 
-    assert result.exit_code != 0
-    assert "No such option: --profile" in result.output
+    assert result.exit_code == 4
+    assert "Unknown build profile 'quick'" in result.output
 
 
 def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -91,16 +89,18 @@ def test_json_surfaces_omit_removed_fields(temp_db: Any) -> None:
     )
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
     schema = cast(dict[str, Any], tool["inputSchema"])
-    assert {"quick", "no_merge", "stage", "pr"}.issubset(schema["properties"])
+    assert {"profile", "unattended", "isolation", "quick", "no_merge", "stage", "pr"}.issubset(
+        schema["properties"]
+    )
     assert {
-        "profile",
         "stages",
         "add_stages",
-        "unattended",
         "yolo",
         "composer_yolo",
     }.isdisjoint(schema["properties"])
-    assert {"quick", "no_merge", "stage", "pr"}.issubset(BuildRequest.model_fields)
+    assert {"profile", "unattended", "isolation", "quick", "no_merge", "stage", "pr"}.issubset(
+        BuildRequest.model_fields
+    )
 
 
 class _ClosableDb:

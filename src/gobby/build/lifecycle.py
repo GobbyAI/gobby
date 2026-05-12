@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
 from gobby.build.options import BuildOptions, retry_attempt_cap
+from gobby.build.profiles import resolve_build_profile_options
 from gobby.build.results import BuildResult
 from gobby.build.stage_manifest import (
     AUTOMATED_LEAF_CATEGORIES,
@@ -63,7 +65,9 @@ async def build(
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
 
+    opts = resolve_build_profile_options(opts, db=db, project_id=project_id)
     skip_stages = _validate_skip_stages(opts.skip_stages)
+    warnings: list[str] = []
     task_manager = LocalTaskManager(db)
     input_kind, task_or_plan = _resolve_input(input_ref, task_manager, project_id)
 
@@ -80,6 +84,7 @@ async def build(
             task_or_plan,
             opts,
             skip_stages,
+            warnings,
             project_id,
             target_branch,
             services,
@@ -93,6 +98,7 @@ async def build(
             task,
             opts,
             skip_stages,
+            warnings,
             db,
             project_id,
             services,
@@ -106,6 +112,7 @@ async def build(
             task,
             opts,
             skip_stages,
+            warnings,
             target_branch,
             db,
             project_id,
@@ -117,6 +124,7 @@ async def build(
         task,
         opts,
         skip_stages,
+        warnings,
         target_branch,
         db,
         project_id,
@@ -129,6 +137,7 @@ async def _build_plan_file(
     plan_file: Path,
     opts: BuildOptions,
     skip_stages: list[str],
+    warnings: list[str],
     project_id: str,
     target_branch: str | None,
     services: object | None,
@@ -143,7 +152,7 @@ async def _build_plan_file(
     task_manager.update_task(
         task.id,
         allow_automation=True,
-        unattended=False,
+        unattended=opts.unattended,
         isolation=opts.isolation,
         assigned_agent=opts.assigned_agent,
     )
@@ -173,6 +182,7 @@ async def _build_plan_file(
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
+        warnings=warnings,
     )
 
 
@@ -181,6 +191,7 @@ async def _build_leaf(
     task: Task,
     opts: BuildOptions,
     skip_stages: list[str],
+    warnings: list[str],
     target_branch: str | None,
     db: DatabaseProtocol,
     project_id: str,
@@ -198,7 +209,7 @@ async def _build_leaf(
     task_manager.update_task(
         task.id,
         allow_automation=True,
-        unattended=False,
+        unattended=opts.unattended,
         isolation=opts.isolation,
         assigned_agent=opts.assigned_agent,
     )
@@ -225,6 +236,7 @@ async def _build_leaf(
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
+        warnings=warnings,
     )
 
 
@@ -233,6 +245,7 @@ async def _build_epic(
     task: Task,
     opts: BuildOptions,
     skip_stages: list[str],
+    warnings: list[str],
     target_branch: str | None,
     db: DatabaseProtocol,
     project_id: str,
@@ -271,7 +284,7 @@ async def _build_epic(
     task_manager.cascade_build_state_to_subtree(
         task.id,
         isolation=opts.isolation,
-        unattended=False,
+        unattended=opts.unattended,
         skip_stages=skip_stages,
         allow_automation=True,
         parent_manifest_specs=cascade_specs,
@@ -299,6 +312,7 @@ async def _build_epic(
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
+        warnings=warnings,
     )
 
 
@@ -322,22 +336,27 @@ async def _resume_existing_lifecycle(
     task: Task,
     opts: BuildOptions,
     skip_stages: list[str],
+    warnings: list[str],
     db: DatabaseProtocol,
     project_id: str,
     services: object | None,
     target_branch: str | None,
 ) -> BuildResult:
     if skip_stages:
-        raise ValueError(
-            "--skip-stage can only shape a new lifecycle; use build restart or clean first"
-        )
-    _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, opts)
-    _validate_task_ref_isolation_artifacts(task_manager, task, opts.isolation)
+        if opts.skip_stages_explicit:
+            raise ValueError(
+                "--skip-stage can only shape a new lifecycle; use build restart or clean first"
+            )
+        warnings.append("Profile skip_stages ignored because the task already has a manifest")
+    task_isolation = cast(Isolation, str(task.isolation))
+    resume_opts = replace(opts, isolation=task_isolation) if not opts.isolation_explicit else opts
+    _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
+    _validate_task_ref_isolation_artifacts(task_manager, task, resume_opts.isolation)
     task_manager.update_task(
         task.id,
         allow_automation=True,
-        unattended=False,
-        isolation=opts.isolation,
+        unattended=opts.unattended,
+        isolation=resume_opts.isolation,
         assigned_agent=(
             opts.assigned_agent if opts.assigned_agent is not None else task.assigned_agent
         ),
@@ -345,31 +364,32 @@ async def _resume_existing_lifecycle(
     if task.task_type == "epic":
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         integration_target = target_branch or artifacts.target_branch
-        if opts.isolation in {"worktree", "clone"}:
+        if resume_opts.isolation in {"worktree", "clone"}:
             if integration_target is None:
                 raise ValueError("target_branch is required for epic integration workspaces")
             await asyncio.to_thread(
                 ensure_epic_integration_workspaces,
                 task_manager=task_manager,
                 root_task=task,
-                backend=opts.workspace_backend,
+                backend=resume_opts.workspace_backend,
                 target_branch=integration_target,
                 project_id=project_id,
                 services=services,
             )
         task_manager.cascade_build_state_to_subtree(
             task.id,
-            isolation=opts.isolation,
-            unattended=False,
+            isolation=resume_opts.isolation,
+            unattended=opts.unattended,
             allow_automation=True,
-            include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
+            include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
+            and not opts.no_merge,
         )
-    elif opts.isolation in {"worktree", "clone"}:
+    elif resume_opts.isolation in {"worktree", "clone"}:
         await asyncio.to_thread(
             ensure_task_parent_integration_workspace,
             task_manager=task_manager,
             task=task,
-            backend=opts.workspace_backend,
+            backend=resume_opts.workspace_backend,
             project_id=project_id,
             services=services,
             base_branch_override=target_branch,
@@ -386,7 +406,7 @@ async def _resume_existing_lifecycle(
         max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
-        _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
+        _set_automation_for_task_tree(task_manager, task, False, isolation=resume_opts.isolation)
     return BuildResult(
         task_id=task.id,
         created=False,
@@ -395,6 +415,7 @@ async def _resume_existing_lifecycle(
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
+        warnings=warnings,
     )
 
 

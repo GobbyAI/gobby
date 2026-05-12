@@ -57,6 +57,9 @@ STAGE_REGISTRY_ENTRY_SCHEMA: dict[str, Any] = {
         "is_terminal": {"type": "boolean"},
         "default_max_work_attempts": {"type": "integer"},
         "default_max_review_rounds": {"type": "integer"},
+        "bundled_hash": {"type": ["string", "null"]},
+        "deleted_at": {"type": ["string", "null"]},
+        "is_edited": {"type": "boolean"},
     },
     "required": ["name", "display_label", "review_policy", "position_hint"],
 }
@@ -108,17 +111,22 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
         func=get_task_stages,
     )
 
-    def list_stages_registry() -> dict[str, Any]:
+    def list_stages_registry(include_deleted: bool = False) -> dict[str, Any]:
         """Return all stage registry entries."""
         entries = [
-            stage_registry_entry_view(row) for row in ctx.task_manager.stages_registry.list_all()
+            stage_registry_entry_view(row)
+            for row in ctx.task_manager.stages_registry.list_all(include_deleted=include_deleted)
         ]
         return {"ok": True, "entries": entries}
 
     registry.register(
         name="list_stages_registry",
         description="Return all stage registry entries.",
-        input_schema={"type": "object", "properties": {}, "required": []},
+        input_schema={
+            "type": "object",
+            "properties": {"include_deleted": {"type": "boolean", "default": False}},
+            "required": [],
+        },
         output_schema={
             "type": "object",
             "properties": {
@@ -128,6 +136,107 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["ok", "entries"],
         },
         func=list_stages_registry,
+    )
+
+    def update_stage(name: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Update editable stage registry metadata."""
+        entry = ctx.task_manager.stages_registry.update_stage(name, updates)
+        return {"ok": True, "stage": stage_registry_entry_view(entry)}
+
+    registry.register(
+        name="update_stage",
+        description="Update editable stage registry metadata. Stage names are immutable.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "updates": {"type": "object"},
+            },
+            "required": ["name", "updates"],
+        },
+        output_schema={"type": "object"},
+        func=update_stage,
+    )
+
+    def restore_stage(name: str) -> dict[str, Any]:
+        """Restore a bundled stage row."""
+        entry = ctx.task_manager.stages_registry.restore_stage(name)
+        return {"ok": True, "stage": stage_registry_entry_view(entry)}
+
+    registry.register(
+        name="restore_stage",
+        description="Restore a bundled stage registry row.",
+        input_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+        output_schema={"type": "object"},
+        func=restore_stage,
+    )
+
+    def delete_stage(name: str) -> dict[str, Any]:
+        """Soft-delete an unused stage registry row."""
+        entry = ctx.task_manager.stages_registry.delete_stage(name)
+        return {"ok": True, "stage": stage_registry_entry_view(entry)}
+
+    registry.register(
+        name="delete_stage",
+        description="Soft-delete an unused stage registry row.",
+        input_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+        output_schema={"type": "object"},
+        func=delete_stage,
+    )
+
+    def set_task_type_defaults(
+        task_type: str,
+        stages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Replace a task type's default stage manifest."""
+        normalized = [
+            (str(item["stage_name"]), int(item["position"]))
+            for item in stages
+            if "stage_name" in item and "position" in item
+        ]
+        ctx.task_manager.stages_registry.set_default_stages(task_type, normalized)
+        return {
+            "ok": True,
+            "task_type": task_type,
+            "stages": [
+                {"stage_name": stage_name, "position": position}
+                for stage_name, position in ctx.task_manager.stages_registry.list_default_stages(
+                    task_type
+                )
+            ],
+        }
+
+    registry.register(
+        name="set_task_type_defaults",
+        description="Replace a task type's default stage manifest.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_type": {"type": "string"},
+                "stages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "stage_name": {"type": "string"},
+                            "position": {"type": "integer"},
+                        },
+                        "required": ["stage_name", "position"],
+                    },
+                },
+            },
+            "required": ["task_type", "stages"],
+        },
+        output_schema={"type": "object"},
+        func=set_task_type_defaults,
     )
 
     def get_task_type_defaults(task_type: str) -> dict[str, Any]:

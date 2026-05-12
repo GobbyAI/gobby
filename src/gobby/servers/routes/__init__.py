@@ -23,6 +23,7 @@ from gobby.servers.routes.mcp import (
 from gobby.servers.routes.memory import create_memory_router
 from gobby.servers.routes.metrics import create_metrics_router
 from gobby.servers.routes.pipelines import create_pipelines_router
+from gobby.servers.routes.profiles import create_profiles_router
 from gobby.servers.routes.projects import create_projects_router
 from gobby.servers.routes.providers import create_providers_router
 from gobby.servers.routes.rules import create_rules_router
@@ -53,6 +54,7 @@ __all__ = [
     "create_metrics_router",
     "create_pipelines_router",
     "create_projects_router",
+    "create_profiles_router",
     "create_providers_router",
     "create_rules_router",
     "create_sessions_router",

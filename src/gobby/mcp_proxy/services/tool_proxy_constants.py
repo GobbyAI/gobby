@@ -18,6 +18,7 @@ SERVER_SUGGESTIONS = {
     "gobby-skill": "gobby-skills",
     "gobby-worktree": "gobby-worktrees",
     "gobby-clone": "gobby-clones",
+    "gobby-profile": "gobby-profiles",
     # Scheduler aliases -> gobby-cron
     "gobby-scheduler": "gobby-cron",
     "gobby-schedule": "gobby-cron",

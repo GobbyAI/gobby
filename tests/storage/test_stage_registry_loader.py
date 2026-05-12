@@ -248,10 +248,10 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
     db.execute(
         """
         UPDATE task_stages_registry
-        SET bundled_hash = ?, display_label = ?, review_policy = 'none', reviewer_agent = NULL
+        SET bundled_hash = ?
         WHERE name = ?
         """,
-        ("stale-hash", "Old Planning", "planning"),
+        ("stale-hash", "planning"),
     )
 
     result = StageRegistryLoader().sync(db)

@@ -22,6 +22,7 @@ from gobby.build import (
     build_stop_target,
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
+from gobby.build.profiles import BuildProfileError
 from gobby.config.build import StageCapOverride
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -31,6 +32,10 @@ from .utils import resolve_project_ref
 logger = logging.getLogger(__name__)
 
 DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS = 900.0
+
+
+class BuildProfileClickException(click.ClickException):
+    exit_code = 4
 
 
 def resolve_project_id() -> str:
@@ -103,6 +108,8 @@ def _stage_cap_options(stage_caps: list[StageCapOverride]) -> list[str]:
 def _echo_build_result(result: BuildResult) -> None:
     click.echo(f"Task: {result.task_id}")
     click.echo(f"Lifecycle: {result.initial_lifecycle}")
+    for warning in result.warnings:
+        click.echo(f"Warning: {warning}", err=True)
     if result.applied_stages_skipped:
         click.echo(f"Skipped stages: {', '.join(result.applied_stages_skipped)}")
     tick = result.dispatcher_tick
@@ -121,6 +128,7 @@ def _echo_build_result(result: BuildResult) -> None:
 def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
     payload: dict[str, object] = {
         "input_ref": input_ref,
+        "profile": opts.profile,
         "quick": opts.quick,
         "skip_stages": opts.skip_stages,
         "no_merge": opts.no_merge,
@@ -132,8 +140,10 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "max_active_agents": opts.max_active_agents,
         "max_retries": opts.max_retries,
     }
-    if opts.workspace_backend_explicit:
-        payload["workspace_backend"] = opts.workspace_backend
+    if opts.isolation_explicit:
+        payload["isolation"] = opts.isolation
+    if opts.unattended_explicit:
+        payload["unattended"] = opts.unattended
     return payload
 
 
@@ -153,6 +163,7 @@ def _result_from_payload(payload: dict[str, object]) -> BuildResult:
         tick_dispatched=_payload_int(payload.get("tick_dispatched"), dispatcher_tick.ticks),
         dispatcher_tick=dispatcher_tick,
         manifest=manifest if isinstance(manifest, list) else None,
+        warnings=_payload_string_list(payload.get("warnings")),
     )
 
 
@@ -208,6 +219,8 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
             return _result_from_payload(response.json())
         if response.status_code == 400:
             detail = response.json().get("detail", response.text)
+            if _is_profile_error(str(detail)):
+                raise BuildProfileClickException(str(detail))
             raise click.ClickException(str(detail))
         return None
     except click.ClickException:
@@ -222,6 +235,10 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
     except Exception:
         logger.debug("Daemon build request failed; falling back to local build", exc_info=True)
         return None
+
+
+def _is_profile_error(message: str) -> bool:
+    return "Build profile" in message or "build profile" in message
 
 
 def _echo_build_control_result(result: BuildControlResult) -> None:
@@ -296,6 +313,15 @@ def _open_database() -> LocalDatabase:
     help="Stage selector/cap override, e.g. development:max_review_rounds=4.",
 )
 @click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
+@click.option("--profile", help="Build profile to apply. Defaults to 'default'.")
+@click.option(
+    "--isolation",
+    type=click.Choice(["none", "worktree", "clone"]),
+    help="Workspace isolation mode.",
+)
+@click.option(
+    "--unattended/--no-unattended", default=None, help="Override profile unattended mode."
+)
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
 @click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
 @click.option("--target-branch", help="Target branch for the build.")
@@ -332,6 +358,9 @@ def build_command(
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
     use_clone: bool,
+    profile: str | None,
+    isolation: str | None,
+    unattended: bool | None,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -368,12 +397,20 @@ def build_command(
         return
     if target_ref is not None:
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
+    if use_clone and isolation == "worktree":
+        raise click.ClickException("--clone conflicts with --isolation worktree")
+    resolved_isolation = isolation or ("clone" if use_clone else "worktree")
 
     opts = BuildOptions(
+        profile=profile or "default",
+        profile_explicit=profile is not None,
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
-        isolation="clone" if use_clone else "worktree",
-        isolation_explicit=use_clone,
+        skip_stages_explicit=bool(skip_stage),
+        isolation=resolved_isolation,  # type: ignore[arg-type]
+        isolation_explicit=isolation is not None or use_clone,
+        unattended=bool(unattended) if unattended is not None else False,
+        unattended_explicit=unattended is not None,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),
@@ -389,6 +426,8 @@ def build_command(
         db = _open_database()
         try:
             result = asyncio.run(build(input_ref, opts, db=db, project_id=project_id))
+        except BuildProfileError as exc:
+            raise BuildProfileClickException(str(exc)) from exc
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
         finally:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.app_context import get_app_context
 from gobby.build.service import BuildOptions, build
-from gobby.config.build import StageCapOverride
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
 if TYPE_CHECKING:
@@ -31,10 +31,13 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     async def build_task(
         input_ref: str,
+        profile: str | None = None,
         quick: bool = False,
         skip_stages: list[str] | None = None,
         workspace_backend: WorkspaceBackend | None = None,
+        isolation: Isolation | None = None,
         clone: bool = False,
+        unattended: bool | None = None,
         no_merge: bool = False,
         pr: str | None = None,
         stage: list[str] | None = None,
@@ -50,15 +53,24 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
+        if clone and isolation == "worktree":
+            raise ValueError("clone=true conflicts with isolation=worktree")
         if clone and workspace_backend == "worktree":
             raise ValueError("clone=true conflicts with workspace_backend=worktree")
-        backend = workspace_backend or ("clone" if clone else "worktree")
+        if isolation and workspace_backend and isolation != workspace_backend:
+            raise ValueError("isolation conflicts with workspace_backend")
+        backend = isolation or workspace_backend or ("clone" if clone else "worktree")
 
         opts = BuildOptions(
+            profile=profile or "default",
+            profile_explicit=profile is not None,
             quick=quick,
             skip_stages=skip_stages or [],
+            skip_stages_explicit=skip_stages is not None,
             isolation=backend,
-            isolation_explicit=workspace_backend is not None or clone,
+            isolation_explicit=isolation is not None or workspace_backend is not None or clone,
+            unattended=bool(unattended) if unattended is not None else False,
+            unattended_explicit=unattended is not None,
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),
@@ -92,6 +104,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "type": "object",
             "properties": {
                 "input_ref": {"type": "string"},
+                "profile": {"type": "string"},
                 "quick": {"type": "boolean", "default": False},
                 "skip_stages": {
                     "type": "array",
@@ -102,7 +115,12 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "enum": ["worktree", "clone"],
                 },
+                "isolation": {
+                    "type": "string",
+                    "enum": ["none", "worktree", "clone"],
+                },
                 "clone": {"type": "boolean", "default": False},
+                "unattended": {"type": "boolean"},
                 "no_merge": {"type": "boolean", "default": False},
                 "pr": {"type": "string"},
                 "stage": {

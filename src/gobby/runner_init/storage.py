@@ -150,6 +150,12 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     if stage_sync.upserted > 0:
         logger.info(f"Synced {stage_sync.upserted} bundled stage registry rows")
 
+    from gobby.storage.build_profiles import BuildProfileLoader
+
+    profile_sync = BuildProfileLoader().sync(runner.database)
+    if profile_sync.upserted > 0:
+        logger.info(f"Synced {profile_sync.upserted} bundled build profile rows")
+
     from gobby.storage.prompts import LocalPromptManager
 
     runner.prompt_manager = LocalPromptManager(runner.database, dev_mode=runner._dev_mode)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,6 +12,12 @@ import yaml
 
 from gobby.paths import get_install_dir
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._stage_registry import (
+    StageRegistryEntry as StorageStageRegistryEntry,
+)
+from gobby.storage.tasks._stage_registry import (
+    StageRegistryManager,
+)
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     normalize_reviewer_agent_selector,
@@ -45,6 +51,30 @@ class StageRegistryEntry:
     position_hint: int
     requires_human: bool = False
     is_terminal: bool = False
+    default_max_work_attempts: int = 3
+    default_max_review_rounds: int = 5
+    bundled_hash: str = ""
+
+    def to_registry_entry(self) -> StorageStageRegistryEntry:
+        return StorageStageRegistryEntry(
+            name=self.name,
+            display_label=self.display_label,
+            description=self.description,
+            category=self.category,
+            default_agent=self.default_agent,
+            reviewer_agent=self.reviewer_agent,
+            reviewer_agent_selector_json=self.reviewer_agent_selector_json,
+            review_policy=self.review_policy,
+            dispatch_type=self.dispatch_type,
+            dispatch_target=self.dispatch_target,
+            dispatch_inputs_json=self.dispatch_inputs_json,
+            position_hint=self.position_hint,
+            requires_human=self.requires_human,
+            is_terminal=self.is_terminal,
+            default_max_work_attempts=self.default_max_work_attempts,
+            default_max_review_rounds=self.default_max_review_rounds,
+            bundled_hash=self.bundled_hash,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +82,7 @@ class StageRegistrySyncResult:
     upserted: int
     skipped: int
     bundled_hash: str
+    soft_deleted: int = 0
 
 
 class StageRegistryLoader:
@@ -73,19 +104,37 @@ class StageRegistryLoader:
         payload, _digest = self._read_payload()
         return self._parse_entries(payload), _digest
 
+    def load_with_hashes(self) -> list[StageRegistryEntry]:
+        entries, _digest = self.load_with_hash()
+        return entries
+
     def sync(self, db: DatabaseProtocol) -> StageRegistrySyncResult:
         payload, bundled_hash = self._read_payload()
         entries = self._parse_entries(payload)
         upserted = 0
         skipped = 0
+        soft_deleted = 0
+        bundled_names = {entry.name for entry in entries}
 
         with db.transaction():
             for entry in entries:
                 row = db.fetchone(
-                    "SELECT bundled_hash FROM task_stages_registry WHERE name = ?",
+                    "SELECT * FROM task_stages_registry WHERE name = ?",
                     (entry.name,),
                 )
-                if row is not None and row["bundled_hash"] == bundled_hash:
+                if row is not None:
+                    if row["deleted_at"] is not None:
+                        skipped += 1
+                        continue
+                    stored_hash = row["bundled_hash"]
+                    current_hash = StageRegistryManager.row_hash(row)
+                    if stored_hash and current_hash not in {stored_hash, entry.bundled_hash}:
+                        skipped += 1
+                        continue
+                    if current_hash == entry.bundled_hash and stored_hash == entry.bundled_hash:
+                        skipped += 1
+                        continue
+                if row is not None and row["bundled_hash"] == entry.bundled_hash:
                     skipped += 1
                     continue
                 db.execute(
@@ -94,8 +143,9 @@ class StageRegistryLoader:
                         name, display_label, description, category, default_agent,
                         reviewer_agent, reviewer_agent_selector_json, review_policy,
                         dispatch_type, dispatch_target, dispatch_inputs_json, position_hint,
-                        requires_human, is_terminal, bundled_hash, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        requires_human, is_terminal, default_max_work_attempts,
+                        default_max_review_rounds, bundled_hash, deleted_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
                     ON CONFLICT(name) DO UPDATE SET
                         display_label = excluded.display_label,
                         description = excluded.description,
@@ -110,7 +160,10 @@ class StageRegistryLoader:
                         position_hint = excluded.position_hint,
                         requires_human = excluded.requires_human,
                         is_terminal = excluded.is_terminal,
+                        default_max_work_attempts = excluded.default_max_work_attempts,
+                        default_max_review_rounds = excluded.default_max_review_rounds,
                         bundled_hash = excluded.bundled_hash,
+                        deleted_at = NULL,
                         updated_at = datetime('now')
                     """,
                     (
@@ -128,15 +181,40 @@ class StageRegistryLoader:
                         entry.position_hint,
                         1 if entry.requires_human else 0,
                         1 if entry.is_terminal else 0,
-                        bundled_hash,
+                        entry.default_max_work_attempts,
+                        entry.default_max_review_rounds,
+                        entry.bundled_hash,
                     ),
                 )
                 upserted += 1
+            if bundled_names:
+                placeholders = ",".join("?" for _ in bundled_names)
+                orphaned = db.fetchall(
+                    f"""
+                    SELECT name
+                      FROM task_stages_registry
+                     WHERE bundled_hash IS NOT NULL
+                       AND deleted_at IS NULL
+                       AND name NOT IN ({placeholders})
+                    """,  # nosec B608 - placeholders are generated, values are bound.
+                    tuple(sorted(bundled_names)),
+                )
+                if orphaned:
+                    db.executemany(
+                        """
+                        UPDATE task_stages_registry
+                           SET deleted_at = datetime('now'), updated_at = datetime('now')
+                         WHERE name = ?
+                        """,
+                        [(row["name"],) for row in orphaned],
+                    )
+                    soft_deleted = len(orphaned)
 
         return StageRegistrySyncResult(
             upserted=upserted,
             skipped=skipped,
             bundled_hash=bundled_hash,
+            soft_deleted=soft_deleted,
         )
 
     def detect_override(self, db_row: dict[str, Any], bundled_row: dict[str, Any]) -> bool:
@@ -167,7 +245,8 @@ class StageRegistryLoader:
         for index, raw_stage in enumerate(raw_stages):
             if not isinstance(raw_stage, dict):
                 raise StageRegistryLoadError(f"Stage entry {index} must be a mapping")
-            entries.append(self._parse_entry(index, raw_stage, seen))
+            entry = self._parse_entry(index, raw_stage, seen)
+            entries.append(self._with_bundled_hash(entry))
         return entries
 
     def _parse_entry(
@@ -266,6 +345,12 @@ class StageRegistryLoader:
             position_hint=position_hint,
             requires_human=self._optional_bool(raw_stage, "requires_human", name),
             is_terminal=self._optional_bool(raw_stage, "is_terminal", name),
+            default_max_work_attempts=self._optional_positive_int(
+                raw_stage, "default_max_work_attempts", name, default=3
+            ),
+            default_max_review_rounds=self._optional_positive_int(
+                raw_stage, "default_max_review_rounds", name, default=5
+            ),
         )
 
     @staticmethod
@@ -281,3 +366,38 @@ class StageRegistryLoader:
         if not isinstance(value, bool):
             raise StageRegistryLoadError(f"Stage {stage_name} {key} must be a boolean")
         return value
+
+    @staticmethod
+    def _optional_positive_int(
+        raw_stage: dict[str, Any],
+        key: str,
+        stage_name: str,
+        *,
+        default: int,
+    ) -> int:
+        value = raw_stage.get(key, default)
+        if not isinstance(value, int) or value < 1:
+            raise StageRegistryLoadError(f"Stage {stage_name} {key} must be a positive integer")
+        return value
+
+    @staticmethod
+    def _with_bundled_hash(entry: StageRegistryEntry) -> StageRegistryEntry:
+        payload = {
+            "name": entry.name,
+            "display_label": entry.display_label,
+            "description": entry.description,
+            "category": entry.category,
+            "default_agent": entry.default_agent,
+            "reviewer_agent": entry.reviewer_agent,
+            "reviewer_agent_selector_json": entry.reviewer_agent_selector_json,
+            "review_policy": entry.review_policy,
+            "dispatch_type": entry.dispatch_type,
+            "dispatch_target": entry.dispatch_target,
+            "dispatch_inputs_json": entry.dispatch_inputs_json,
+            "position_hint": entry.position_hint,
+            "requires_human": entry.requires_human,
+            "is_terminal": entry.is_terminal,
+            "default_max_work_attempts": entry.default_max_work_attempts,
+            "default_max_review_rounds": entry.default_max_review_rounds,
+        }
+        return replace(entry, bundled_hash=StageRegistryManager.row_hash(payload))
