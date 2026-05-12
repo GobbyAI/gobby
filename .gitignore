@@ -259,3 +259,6 @@ package-lock.json
 
 # MCP config (contains machine-specific absolute paths)
 .mcp.json
+
+# Built web UI assets staged into the wheel by build_backend (regenerated each build)
+src/gobby/ui/

@@ -234,7 +234,7 @@ class TestStatusCommand:
         return CliRunner()
 
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     @patch("gobby.cli.daemon.get_gobby_home")
     def test_status_no_pid_file(
         self,
@@ -268,7 +268,7 @@ class TestInitCommand:
         return CliRunner()
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_new_project(
         self,
         mock_load_config: MagicMock,
@@ -294,7 +294,7 @@ class TestInitCommand:
             assert "test-uuid-123" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_existing_project(
         self,
         mock_load_config: MagicMock,
@@ -331,7 +331,7 @@ class TestInstallCommand:
     @patch("gobby.cli.install._is_qwen_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
     @patch("gobby.cli.install._is_droid_cli_installed")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_install_no_clis_detected(
         self,
         mock_load_config: MagicMock,
@@ -367,7 +367,7 @@ class TestUninstallCommand:
         return CliRunner()
 
     @patch("gobby.cli.install.Path.home")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_uninstall_no_hooks_found(
         self,
         mock_load_config: MagicMock,

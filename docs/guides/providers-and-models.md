@@ -35,7 +35,7 @@ curl -sS http://localhost:60887/api/providers/models
 Open web chat and use the provider/model controls:
 
 ```text
-http://localhost:60889/#chat
+http://localhost:60887/#chat
 ```
 
 Inspect configured defaults in the Gobby configuration files and through the

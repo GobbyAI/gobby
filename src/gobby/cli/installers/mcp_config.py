@@ -14,6 +14,7 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any, cast
 
+from gobby.config.mcp import DEFAULT_MCP_CONFIG_PATH, migrate_legacy_mcp_config
 from gobby.mcp_proxy.bundled import DEFAULT_EXTERNAL_MCP_SERVERS
 
 logger = logging.getLogger(__name__)
@@ -648,7 +649,7 @@ DEFAULT_MCP_SERVERS = DEFAULT_EXTERNAL_MCP_SERVERS
 
 
 def install_default_mcp_servers() -> dict[str, Any]:
-    """Install default external MCP servers to ~/.gobby/.mcp.json.
+    """Install default external MCP servers to ~/.gobby/mcp-servers.json.
 
     Adds bundled external MCP servers if not already configured. Also syncs to
     the database so the daemon proxy can serve them. These servers pull API
@@ -664,7 +665,8 @@ def install_default_mcp_servers() -> dict[str, Any]:
         "error": None,
     }
 
-    mcp_config_path = Path("~/.gobby/.mcp.json").expanduser()
+    migrate_legacy_mcp_config()
+    mcp_config_path = Path(DEFAULT_MCP_CONFIG_PATH).expanduser()
 
     # Ensure parent directory exists
     mcp_config_path.parent.mkdir(parents=True, exist_ok=True)

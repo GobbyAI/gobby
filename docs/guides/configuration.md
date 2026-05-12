@@ -19,7 +19,7 @@ flowchart TB
 | --- | --- | --- |
 | `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before SQLite is open |
 | `config_store` table in `~/.gobby/gobby-hub.db` | Machine | Runtime daemon settings and user overrides |
-| `~/.gobby/.mcp.json` | Machine | Persistent downstream MCP server registry |
+| `~/.gobby/mcp-servers.json` | Machine | Persistent downstream MCP server registry |
 | `.gobby/project.json` | Project | Project identity, verification commands, and project hook settings |
 | `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
 | `<project>/.gobby/build.yaml` | Project | Build lifecycle defaults for one repository |
@@ -227,6 +227,24 @@ embeddings:
   api_base: null
   api_key: null
 
+`gobby install` accepts `--embedding-url`, `--embedding-model`, and
+`--embedding-dim` to override the bundled provider defaults. When
+`--embedding-dim` is omitted alongside a custom URL or model, the installer
+probes `/v1/embeddings` on the target endpoint to detect the dim. The setup
+wizard exposes the same three knobs interactively.
+
+The default is `nomic-embed-text-v1.5@f16` (768-dim, ~137M params) — a safe
+choice for any local hardware. For users with capable local hardware,
+`Qwen3-Embedding-4B` (2560-dim, 4B params) is recommended: it is significantly
+stronger on MTEB and instruction-aware. Tradeoffs: roughly 3.3× the vector
+storage and a slower embed step. Example install:
+
+```bash
+gobby install --embedding-url http://localhost:1234/v1 \
+              --embedding-model text-embedding-qwen3-embedding-4b
+# --embedding-dim is auto-detected from the endpoint; pass 2560 to skip the probe.
+```
+
 memory:
   enabled: true
   backend: local
@@ -374,7 +392,7 @@ entries with policy values `auto`, `approve_once`, or `always_ask`.
 
 ## MCP Server Registry
 
-Downstream MCP servers are stored in `~/.gobby/.mcp.json` and synchronized into
+Downstream MCP servers are stored in `~/.gobby/mcp-servers.json` and synchronized into
 daemon state by the MCP manager. The file has a top-level `servers` array:
 
 ```json
@@ -516,7 +534,7 @@ secret-like key.
 
 ### MCP Server Does Not Connect
 
-Check `~/.gobby/.mcp.json` for the server entry, transport-specific fields, and
+Check `~/.gobby/mcp-servers.json` for the server entry, transport-specific fields, and
 `enabled: true`. For generated or imported servers, refresh the MCP registry
 after changing server definitions.
 

@@ -95,7 +95,7 @@ class TestInitNewProject:
     """Tests for initializing a new project."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_new_project_success(
         self,
         mock_load_config: MagicMock,
@@ -120,7 +120,7 @@ class TestInitNewProject:
         mock_initialize.assert_called_once()
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_with_custom_name(
         self,
         mock_load_config: MagicMock,
@@ -146,7 +146,7 @@ class TestInitNewProject:
         )
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_with_github_url(
         self,
         mock_load_config: MagicMock,
@@ -174,7 +174,7 @@ class TestInitNewProject:
         )
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_with_both_options(
         self,
         mock_load_config: MagicMock,
@@ -210,7 +210,7 @@ class TestInitNewProject:
 
     @patch("gobby.cli.init._maybe_run_linear_setup")
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_skips_linear_setup_by_default(
         self,
         mock_load_config: MagicMock,
@@ -238,7 +238,7 @@ class TestInitNewProject:
 
     @patch("gobby.cli.init._maybe_run_linear_setup")
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_linear_setup_option(
         self,
         mock_load_config: MagicMock,
@@ -279,7 +279,7 @@ class TestInitExistingProject:
     """Tests for initializing when a project already exists."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_existing_project(
         self,
         mock_load_config: MagicMock,
@@ -308,7 +308,7 @@ class TestInitWithVerification:
     """Tests for initialization with verification commands."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_shows_verification_commands(
         self,
         mock_load_config: MagicMock,
@@ -335,7 +335,7 @@ class TestInitWithVerification:
         assert "uv run ruff check src/" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_shows_custom_verification_commands(
         self,
         mock_load_config: MagicMock,
@@ -358,7 +358,7 @@ class TestInitWithVerification:
         assert "uv run pytest tests/e2e/" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_verification_skips_none_values(
         self,
         mock_load_config: MagicMock,
@@ -399,7 +399,7 @@ class TestInitWithVerification:
         assert "integration: None" not in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_no_verification_commands(
         self,
         mock_load_config: MagicMock,
@@ -420,7 +420,7 @@ class TestInitWithVerification:
         assert "Detected verification commands:" not in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_verification_empty_dict(
         self,
         mock_load_config: MagicMock,
@@ -452,7 +452,7 @@ class TestInitWithVerification:
         assert "Detected verification commands:" not in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_verification_custom_non_dict(
         self,
         mock_load_config: MagicMock,
@@ -492,7 +492,7 @@ class TestInitErrorHandling:
     """Tests for error handling in the init command."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_generic_exception(
         self,
         mock_load_config: MagicMock,
@@ -513,7 +513,7 @@ class TestInitErrorHandling:
         assert "Database connection failed" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_permission_error(
         self,
         mock_load_config: MagicMock,
@@ -534,7 +534,7 @@ class TestInitErrorHandling:
         assert "Cannot write to directory" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_file_not_found_error(
         self,
         mock_load_config: MagicMock,
@@ -555,7 +555,7 @@ class TestInitErrorHandling:
         assert "Config file not found" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_os_error(
         self,
         mock_load_config: MagicMock,
@@ -576,7 +576,7 @@ class TestInitErrorHandling:
         assert "Disk full" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_value_error(
         self,
         mock_load_config: MagicMock,
@@ -601,7 +601,7 @@ class TestInitOutputFormat:
     """Tests for the output format of the init command."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_output_format_new_project(
         self,
         mock_load_config: MagicMock,
@@ -638,7 +638,7 @@ class TestInitOutputFormat:
         assert config_line is not None
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_output_format_existing_project(
         self,
         mock_load_config: MagicMock,
@@ -675,7 +675,7 @@ class TestInitCwdHandling:
     """Tests for current working directory handling."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_uses_cwd(
         self,
         mock_load_config: MagicMock,
@@ -700,7 +700,7 @@ class TestInitCwdHandling:
         assert isinstance(cwd_arg, Path)
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_with_path_option(
         self,
         mock_load_config: MagicMock,
@@ -725,7 +725,7 @@ class TestInitCwdHandling:
         assert cwd_arg == target_dir.resolve()
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_with_long_path_option(
         self,
         mock_load_config: MagicMock,
@@ -759,7 +759,7 @@ class TestVerificationCommandsDataclass:
     """Tests for VerificationCommands dataclass behavior in CLI context."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_verification_with_all_fields(
         self,
         mock_load_config: MagicMock,
@@ -799,7 +799,7 @@ class TestVerificationCommandsDataclass:
         assert "security:" in result.output
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_verification_with_multiple_custom_commands(
         self,
         mock_load_config: MagicMock,
@@ -865,7 +865,7 @@ class TestInitContext:
     """Tests for Click context handling."""
 
     @patch("gobby.cli.init.initialize_project")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_init_receives_context(
         self,
         mock_load_config: MagicMock,

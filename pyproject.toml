@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "0.4.1"
+version = "0.4.2"
 description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is a local daemon that turns a task into a PR across Claude Code, Codex, Gemini, Qwen, and Droid. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
 license = "Apache-2.0"
@@ -111,7 +111,8 @@ override-dependencies = [
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_backend"
+backend-path = ["."]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -125,6 +126,7 @@ gobby = [
     "install/shared/**/*",
     "storage/*.sql",
     "data/*",
+    "ui/web/dist/**/*",
 ]
 
 [tool.pytest.ini_options]

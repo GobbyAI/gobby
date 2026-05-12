@@ -111,6 +111,142 @@ class TestInstallEmbedding:
         assert call_kwargs["openai_api_key"] == "sk-abc"
 
 
+class TestInstallEmbeddingOverrides:
+    """Override behavior for --embedding-url / --embedding-model / --embedding-dim."""
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    def test_explicit_overrides_skip_setup_and_persist(
+        self, mock_setup: MagicMock, mock_health: MagicMock, mock_persist: MagicMock
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            model_override="text-embedding-qwen3-embedding-4b",
+            api_base_override="http://192.168.1.10:1234/v1",
+            dim_override=2560,
+        )
+        assert result["success"] is True
+        assert result["model"] == "text-embedding-qwen3-embedding-4b"
+        assert result["api_base"] == "http://192.168.1.10:1234/v1"
+        assert result["dim"] == 2560
+        # Custom model means we trust the user — skip the bundled LMS setup.
+        mock_setup.assert_not_called()
+        persisted = mock_persist.call_args.kwargs
+        assert persisted["model"] == "text-embedding-qwen3-embedding-4b"
+        assert persisted["api_base"] == "http://192.168.1.10:1234/v1"
+        assert persisted["dim"] == 2560
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=768)
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    def test_api_base_override_skips_setup_and_uses_default_model(
+        self,
+        mock_setup: MagicMock,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            api_base_override="http://192.168.1.10:1234/v1",
+        )
+
+        assert result["success"] is True
+        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert result["api_base"] == "http://192.168.1.10:1234/v1"
+        mock_setup.assert_not_called()
+        mock_probe.assert_called_once()
+        persisted = mock_persist.call_args.kwargs
+        assert persisted["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert persisted["api_base"] == "http://192.168.1.10:1234/v1"
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=2560)
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    def test_api_base_and_model_overrides_skip_setup_and_persist_values(
+        self,
+        mock_setup: MagicMock,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            model_override="text-embedding-qwen3-embedding-4b",
+            api_base_override="http://192.168.1.10:1234/v1",
+        )
+
+        assert result["success"] is True
+        assert result["model"] == "text-embedding-qwen3-embedding-4b"
+        assert result["dim"] == 2560
+        mock_setup.assert_not_called()
+        mock_probe.assert_called_once()
+        persisted = mock_persist.call_args.kwargs
+        assert persisted["model"] == "text-embedding-qwen3-embedding-4b"
+        assert persisted["api_base"] == "http://192.168.1.10:1234/v1"
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=2560)
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    def test_auto_detect_dim_via_probe(
+        self,
+        mock_setup: MagicMock,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            model_override="text-embedding-qwen3-embedding-4b",
+            api_base_override="http://192.168.1.10:1234/v1",
+        )
+        assert result["success"] is True
+        assert result["dim"] == 2560
+        mock_probe.assert_called_once()
+        probe_kwargs = mock_probe.call_args.kwargs
+        assert probe_kwargs["model"] == "text-embedding-qwen3-embedding-4b"
+        assert probe_kwargs["api_base"] == "http://192.168.1.10:1234/v1"
+
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
+    def test_probe_failure_returns_actionable_error(
+        self, mock_probe: MagicMock, mock_setup: MagicMock
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            model_override="text-embedding-qwen3-embedding-4b",
+            api_base_override="http://offline.local:9999/v1",
+        )
+        assert result["success"] is False
+        assert "Could not probe embedding dim" in result["error"]
+        assert "--embedding-dim" in result["error"]
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim")
+    @patch("gobby.cli.installers.embedding._setup_lmstudio", return_value={"success": True})
+    def test_defaults_preserved_when_no_overrides(
+        self,
+        mock_setup: MagicMock,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(provider="lmstudio")
+        assert result["success"] is True
+        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert result["api_base"] == "http://localhost:1234/v1"
+        assert result["dim"] == 768
+        # No probe call when defaults apply.
+        mock_probe.assert_not_called()
+        # Setup IS called when running on the bundled defaults.
+        mock_setup.assert_called_once()
+
+
 class TestSetupLMStudio:
     """Test LM Studio setup subprocess orchestration."""
 

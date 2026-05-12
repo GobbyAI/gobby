@@ -8,6 +8,42 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2]
+
+A patch release focused on packaging correctness for installed wheels, custom
+embedding endpoints, and cleanup of early 0.4.x install rough edges.
+
+### Added
+
+- Add `gobby install --embedding-url`, `--embedding-model`, and
+  `--embedding-dim` support for custom OpenAI-compatible embedding endpoints,
+  including interactive install prompts and automatic dimension probing (#9,
+  #14514).
+
+### Fixed
+
+- Ship the built web UI inside published wheels and serve installed-wheel UI
+  traffic from the daemon port at `http://localhost:60887/`, while keeping
+  `:60889` documented as the frontend development server port (#10, #14512,
+  #14515).
+- Verify built wheels contain `gobby/ui/web/dist/index.html` and include the
+  custom PEP 517 build backend in sdists so wheel-from-sdist builds cannot
+  silently lose the production UI (#10, #14515).
+- Honor explicit custom embedding URLs even when no local LM Studio or Ollama
+  service is detected, infer Ollama-compatible endpoints on `:11434`, and skip
+  bundled local setup when users provide their own endpoint or model (#9,
+  #14515).
+- Rename the global MCP server config from `~/.gobby/.mcp.json` to
+  `~/.gobby/mcp-servers.json` with idempotent migration, avoiding collisions
+  with Claude Code's project `.mcp.json` schema (#11, #14513).
+- Keep main pytest jobs from pulling the heavy voice extra path while preserving
+  dedicated voice validation coverage (#14511).
+
+### Release
+
+- Bump the package and `src/gobby/__init__.py` version to 0.4.2 and regenerate
+  the workspace lockfile entry (#14510).
+
 ## [0.4.1]
 
 A patch release on top of `0.4.0` focused on daemon stability, runner

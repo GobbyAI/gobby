@@ -52,12 +52,21 @@ _OLLAMA_MODEL_NAME = "nomic-embed-text"
 def install_embedding(
     provider: str,
     openai_api_key: str | None = None,
+    *,
+    model_override: str | None = None,
+    api_base_override: str | None = None,
+    dim_override: int | None = None,
 ) -> dict[str, Any]:
     """Set up an embedding provider and persist config to config_store.
 
     Args:
         provider: One of "lmstudio", "ollama", "openai", "none"
         openai_api_key: Required when provider="openai"
+        model_override: Override the provider's default model id
+        api_base_override: Override the provider's default ``api_base`` URL
+        dim_override: Override the embedding dimension. When omitted and the
+            user supplied ``model_override`` or ``api_base_override``, the
+            installer probes ``/v1/embeddings`` to detect the dim automatically.
 
     Returns:
         Dict with success status and details:
@@ -84,22 +93,38 @@ def install_embedding(
     if provider == "openai" and not openai_api_key:
         return {"success": False, "error": "OpenAI API key required for openai provider"}
 
-    # Provider-specific setup: ensure model is downloaded and loaded
+    # Provider-specific setup: ensure model is downloaded and loaded.
+    # Skip bundled local setup when the user points at their own model or endpoint.
     setup_result: dict[str, Any]
-    if provider == "lmstudio":
+    if provider == "lmstudio" and model_override is None and api_base_override is None:
         setup_result = _setup_lmstudio()
-    elif provider == "ollama":
+    elif provider == "ollama" and model_override is None and api_base_override is None:
         setup_result = _setup_ollama()
-    else:  # openai
+    else:
         setup_result = {"success": True}
 
     if not setup_result["success"]:
         return setup_result
 
     cfg = _PROVIDER_CONFIG[provider]
-    model = cfg["model"]
-    api_base = cfg["api_base"]
-    dim = cfg["dim"]
+    model = model_override if model_override is not None else cfg["model"]
+    api_base = api_base_override if api_base_override is not None else cfg["api_base"]
+
+    if dim_override is not None:
+        dim = dim_override
+    elif model_override is not None or api_base_override is not None:
+        probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=openai_api_key)
+        if probed is None:
+            return {
+                "success": False,
+                "error": (
+                    f"Could not probe embedding dim from {api_base or 'default endpoint'} "
+                    f"for model {model}. Pass --embedding-dim explicitly."
+                ),
+            }
+        dim = probed
+    else:
+        dim = cfg["dim"]
 
     # Health check before persisting
     health_ok = _health_check_embedding(
@@ -326,6 +351,41 @@ def _persist_embedding_config(
                 category="llm",
                 description="OpenAI API key for embeddings (set by gobby install)",
             )
+
+
+def _probe_embedding_dim(
+    model: str,
+    api_base: str | None,
+    api_key: str | None = None,
+) -> int | None:
+    """Send a 1-token probe and return ``len(embedding)``, or ``None`` on error.
+
+    Used to auto-detect the dim when the user supplied a custom model or
+    endpoint without passing ``--embedding-dim``.
+    """
+    from gobby.search.embeddings import generate_embedding
+
+    async def _probe() -> int | None:
+        try:
+            result = await generate_embedding(
+                "x",
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
+                max_retries=1,
+            )
+            return len(result) if result else None
+        except Exception as e:
+            logger.warning(f"Embedding dim probe failed: {e}")
+            return None
+
+    try:
+        return asyncio.run(_probe())
+    except RuntimeError as e:
+        if "cannot be called from a running event loop" in str(e):
+            logger.warning("Cannot run dim probe: already in event loop")
+            return None
+        raise
 
 
 def _health_check_embedding(

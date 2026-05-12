@@ -107,13 +107,20 @@ def test_find_web_dir_from_config(tmp_path: Path) -> None:
 
 
 def test_find_web_dir_config_missing(tmp_path: Path) -> None:
+    import gobby
     from gobby.cli.utils import find_web_dir
 
     config = MagicMock()
     config.ui.web_dir = str(tmp_path / "nonexistent")
 
-    # Also patch cwd to avoid matching real cwd
-    with patch("gobby.cli.utils.Path.cwd", return_value=tmp_path):
+    # Patch cwd AND the gobby package path so neither fallback matches.
+    fake_pkg = tmp_path / "fake-pkg" / "__init__.py"
+    fake_pkg.parent.mkdir(parents=True)
+    fake_pkg.write_text("")
+    with (
+        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path),
+        patch.object(gobby, "__file__", str(fake_pkg)),
+    ):
         result = find_web_dir(config)
     assert result is None
 
@@ -131,11 +138,65 @@ def test_find_web_dir_from_cwd(tmp_path: Path) -> None:
 
 
 def test_find_web_dir_none(tmp_path: Path) -> None:
+    import gobby
     from gobby.cli.utils import find_web_dir
 
-    with patch("gobby.cli.utils.Path.cwd", return_value=tmp_path):
+    # Patch the package-relative path away too, otherwise an installed wheel's
+    # staged ui/web/dist/ would qualify and break this "nothing found" case.
+    fake_pkg = tmp_path / "fake-pkg" / "__init__.py"
+    fake_pkg.parent.mkdir(parents=True)
+    fake_pkg.write_text("")
+    with (
+        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path),
+        patch.object(gobby, "__file__", str(fake_pkg)),
+    ):
         result = find_web_dir(None)
     assert result is None
+
+
+def test_find_web_dir_accepts_install_mode_dist_only(tmp_path: Path) -> None:
+    """Installed-from-wheel layout has only dist/index.html, no package.json."""
+    from gobby.cli.utils import find_web_dir
+
+    pkg_web = tmp_path / "web"
+    (pkg_web / "dist").mkdir(parents=True)
+    (pkg_web / "dist" / "index.html").write_text("<html></html>")
+
+    config = MagicMock()
+    config.ui.web_dir = str(pkg_web)
+
+    result = find_web_dir(config)
+    assert result == pkg_web
+
+
+def test_find_web_dir_require_source_rejects_dist_only(tmp_path: Path) -> None:
+    """require_source=True must reject install-mode layouts (no package.json)."""
+    from gobby.cli.utils import find_web_dir
+
+    pkg_web = tmp_path / "web"
+    (pkg_web / "dist").mkdir(parents=True)
+    (pkg_web / "dist" / "index.html").write_text("<html></html>")
+
+    config = MagicMock()
+    config.ui.web_dir = str(pkg_web)
+
+    with patch("gobby.cli.utils.Path.cwd", return_value=tmp_path.parent):
+        result = find_web_dir(config, require_source=True)
+    assert result is None
+
+
+def test_find_web_dir_require_source_accepts_package_json(tmp_path: Path) -> None:
+    from gobby.cli.utils import find_web_dir
+
+    pkg_web = tmp_path / "web"
+    pkg_web.mkdir()
+    (pkg_web / "package.json").write_text("{}")
+
+    config = MagicMock()
+    config.ui.web_dir = str(pkg_web)
+
+    result = find_web_dir(config, require_source=True)
+    assert result == pkg_web
 
 
 # --- is_port_available ---
@@ -346,6 +407,46 @@ def test_load_full_config_from_db_with_db(tmp_path: Path) -> None:
         result = load_full_config_from_db()
     assert result is final_config
     assert mock_load.call_count == 2
+
+
+@pytest.mark.no_config_protection
+def test_load_full_config_from_db_reads_ui_enabled_from_config_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for GH #10: CLI must see ui.enabled=true written to config_store."""
+    import yaml
+
+    from gobby.cli.utils import load_full_config_from_db
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.database import LocalDatabase
+    from gobby.storage.migrations import run_migrations
+
+    db_path = tmp_path / "gobby.db"
+    db = LocalDatabase(db_path)
+    try:
+        run_migrations(db)
+        ConfigStore(db).set("ui.enabled", True, source="manual")
+    finally:
+        db.close()
+
+    # Steer GOBBY_TEST_PROTECT's database override at our tmp db, not the global one.
+    monkeypatch.setenv("GOBBY_DATABASE_PATH", str(db_path))
+
+    bootstrap_yaml = tmp_path / "bootstrap.yaml"
+    bootstrap_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "database_path": str(db_path),
+                "daemon_port": 60887,
+                "websocket_port": 60888,
+                "ui_port": 60889,
+                "bind_host": "127.0.0.1",
+            }
+        )
+    )
+
+    result = load_full_config_from_db(config_file=str(bootstrap_yaml))
+    assert result.ui.enabled is True
 
 
 # ---------------------------------------------------------------------------

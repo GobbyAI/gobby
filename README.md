@@ -55,8 +55,8 @@ have are missing.
 ## What Gobby is
 
 A Python 3.13+ daemon you run locally. SQLite at `~/.gobby/gobby-hub.db`.
-HTTP on `:60887`, WebSocket on `:60888`, web UI on `:60889`, stdio MCP server
-that your coding CLIs talk to.
+HTTP and the installed web UI on `:60887`, WebSocket on `:60888`, dev web UI
+on `:60889`, stdio MCP server that your coding CLIs talk to.
 
 Three things make Gobby load-bearing:
 
@@ -225,7 +225,8 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 
 - Python 3.13+ daemon (`uv` for everything)
 - SQLite at `~/.gobby/gobby-hub.db`
-- HTTP API on `localhost:60887`, WebSocket on `:60888`, web UI on `:60889`
+- HTTP API and installed web UI on `localhost:60887`, WebSocket on `:60888`,
+  dev web UI on `:60889`
 - stdio MCP server for coding assistants
 - Hook adapters for Claude Code, Codex, Gemini CLI, Qwen CLI, Factory Droid
 - Optional Qdrant + FalkorDB for vector and graph-backed search
@@ -318,7 +319,8 @@ gobby init                   # initialize .gobby/ for this repo
 }
 ```
 
-Open the local web UI at `http://localhost:60889` once the daemon is running.
+Open the installed web UI at `http://localhost:60887/` once the daemon is running.
+The `:60889` UI port is for `gobby ui dev` during frontend development.
 
 Then either start interactive work in your CLI of choice — Gobby will track it
 quietly — or hand it a task and let the build loop run:

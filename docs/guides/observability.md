@@ -32,8 +32,8 @@ curl -sS http://localhost:60887/api/admin/status
 Open dashboard and traces:
 
 ```text
-http://localhost:60889/#dashboard
-http://localhost:60889/#traces
+http://localhost:60887/#dashboard
+http://localhost:60887/#traces
 ```
 
 Fetch Prometheus metrics:

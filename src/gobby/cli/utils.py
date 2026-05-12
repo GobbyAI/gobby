@@ -20,25 +20,28 @@ from gobby.utils.project_context import get_project_context
 logger = logging.getLogger(__name__)
 
 
-def load_full_config_from_db() -> DaemonConfig:
+def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
     """Load full DaemonConfig from DB config_store + Pydantic defaults.
 
     Opens the database directly (using bootstrap.yaml for db_path),
     creates a ConfigStore, and calls load_config with it. Use this
     when CLI commands need the full config without a running daemon.
 
+    Args:
+        config_file: Optional path to a YAML config file. When provided, its
+            contents layer between bootstrap defaults and DB overrides
+            (DB still wins), matching the daemon's resolution order.
+
     Returns:
-        Fully resolved DaemonConfig
+        Fully resolved DaemonConfig (DB > config file > bootstrap > defaults).
     """
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.secrets import SecretStore
 
-    # Phase 1: bootstrap gives us the database path
-    bootstrap_config = load_config()
+    bootstrap_config = load_config(config_file)
     db_path = Path(bootstrap_config.database_path).expanduser()
 
     if not db_path.exists():
-        # No DB yet — return bootstrap-only config
         return bootstrap_config
 
     db = LocalDatabase(db_path)
@@ -46,6 +49,7 @@ def load_full_config_from_db() -> DaemonConfig:
         config_store = ConfigStore(db)
         secret_store = SecretStore(db)
         return load_config(
+            config_file=config_file,
             config_store=config_store,
             secret_resolver=secret_store.get,
         )
@@ -475,37 +479,53 @@ def _is_process_alive(pid: int) -> bool:
         return False
 
 
-def find_web_dir(config: DaemonConfig | None = None) -> Path | None:
+def find_web_dir(
+    config: DaemonConfig | None = None, *, require_source: bool = False
+) -> Path | None:
     """Find the web UI directory.
 
+    A directory qualifies if it contains either:
+      - ``package.json`` (source/dev mode for ``gobby ui dev`` / ``ui build``), OR
+      - ``dist/index.html`` (installed-from-wheel mode for production serving).
+
     Search order:
-    1. config.ui.web_dir if set
-    2. cwd / web/ (has package.json)
-    3. Relative to gobby package (src/gobby/ui/web/)
+      1. ``config.ui.web_dir`` if set
+      2. ``cwd / web/``
+      3. Relative to gobby package (``<gobby>/ui/web/``)
 
     Args:
-        config: DaemonConfig instance (optional)
+        config: DaemonConfig instance (optional).
+        require_source: When True, only accept directories with ``package.json``
+            (i.e., npm-driven dev/build workflows). Production daemon callers
+            should leave this False so dist-only wheel installs are accepted.
 
     Returns:
-        Path to web/ directory, or None if not found
+        Path to the web/ directory, or None if not found.
     """
-    # 1. Explicit config path
+
+    def _qualifies(p: Path) -> bool:
+        if not p.exists():
+            return False
+        if (p / "package.json").exists():
+            return True
+        if not require_source and (p / "dist" / "index.html").exists():
+            return True
+        return False
+
     if config and hasattr(config, "ui") and config.ui.web_dir:
         p = Path(config.ui.web_dir).expanduser()
-        if p.exists() and (p / "package.json").exists():
+        if _qualifies(p):
             return p
 
-    # 2. cwd / web/
     cwd_web = Path.cwd() / "web"
-    if cwd_web.exists() and (cwd_web / "package.json").exists():
+    if _qualifies(cwd_web):
         return cwd_web
 
-    # 3. Relative to gobby package
     try:
         import gobby
 
         pkg_web = Path(gobby.__file__).parent / "ui" / "web"
-        if pkg_web.exists() and (pkg_web / "package.json").exists():
+        if _qualifies(pkg_web):
             return pkg_web
     except ImportError:
         logger.debug("gobby package not importable, skipping package web dir")

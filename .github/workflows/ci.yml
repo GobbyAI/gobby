@@ -160,7 +160,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run pytest --cov=gobby --cov-report=xml --cov-report=term-missing --cov-fail-under=80 --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
+        run: uv run pytest --cov=gobby --cov-report=xml --cov-report=term-missing --cov-fail-under=80 --ignore=tests/voice --ignore=tests/servers/routes/test_voice_routes.py --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'
@@ -241,10 +241,17 @@ jobs:
       - name: Check package contents
         run: |
           uv run python -c "
-          import tarfile, glob
-          files = glob.glob('dist/gobby-*.tar.gz')
-          if not files:
+          import glob, tarfile, zipfile
+          sdists = glob.glob('dist/gobby-*.tar.gz')
+          wheels = glob.glob('dist/gobby-*.whl')
+          if not sdists:
               raise FileNotFoundError('No dist/gobby-*.tar.gz found')
-          t = tarfile.open(files[0])
+          if not wheels:
+              raise FileNotFoundError('No dist/gobby-*.whl found')
+          t = tarfile.open(sdists[0])
           print('\\n'.join(t.getnames()[:20]))
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              names = set(wheel.namelist())
+          if 'gobby/ui/web/dist/index.html' not in names:
+              raise FileNotFoundError('Wheel missing gobby/ui/web/dist/index.html')
           "

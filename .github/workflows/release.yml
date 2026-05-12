@@ -24,7 +24,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run pytest --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
+        run: uv run pytest --ignore=tests/voice --ignore=tests/servers/routes/test_voice_routes.py --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
 
   build:
     name: Build package

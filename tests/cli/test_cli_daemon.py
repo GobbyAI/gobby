@@ -114,7 +114,7 @@ class TestStartCommand:
     @patch(
         "gobby.cli.daemon.get_service_status", return_value={"installed": True, "platform": "macos"}
     )
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_via_service_waits_for_health(
         self,
         mock_load_config: MagicMock,
@@ -147,7 +147,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_success(
         self,
         mock_load_config: MagicMock,
@@ -204,7 +204,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_warns_when_no_agent_auth_env_detected(
         self,
         mock_load_config: MagicMock,
@@ -259,7 +259,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_with_verbose_flag(
         self,
         mock_load_config: MagicMock,
@@ -307,7 +307,7 @@ class TestStartCommand:
             assert "--verbose" in cmd
 
     @patch("gobby.cli.daemon.init_local_storage")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_daemon_already_running(
         self,
         mock_load_config: MagicMock,
@@ -343,7 +343,7 @@ class TestStartCommand:
 
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_removes_stale_pid_file(
         self,
         mock_load_config: MagicMock,
@@ -396,7 +396,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_http_port_in_use_timeout(
         self,
         mock_load_config: MagicMock,
@@ -431,7 +431,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_websocket_port_in_use_timeout(
         self,
         mock_load_config: MagicMock,
@@ -473,7 +473,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_process_exits_immediately(
         self,
         mock_load_config: MagicMock,
@@ -517,7 +517,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_health_check_fails(
         self,
         mock_load_config: MagicMock,
@@ -561,7 +561,7 @@ class TestStartCommand:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_kills_existing_processes(
         self,
         mock_load_config: MagicMock,
@@ -621,7 +621,7 @@ class TestStopCommand:
 
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.daemon.stop_daemon_util")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_stop_success(
         self,
         mock_load_config: MagicMock,
@@ -646,7 +646,7 @@ class TestStopCommand:
 
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.daemon.stop_daemon_util")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_stop_failure(
         self,
         mock_load_config: MagicMock,
@@ -676,7 +676,7 @@ class TestStopCommand:
         return_value={"installed": True, "running": True, "platform": "macos", "pid": 4321},
     )
     @patch("gobby.cli.daemon.stop_daemon_util")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_stop_via_service_waits_for_shutdown(
         self,
         mock_load_config: MagicMock,
@@ -735,7 +735,7 @@ class TestRestartCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_restart_via_service_waits_for_health(
         self,
         mock_load_config: MagicMock,
@@ -791,7 +791,7 @@ class TestRestartCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_restart_via_service_fails_when_startup_readiness_does_not_complete(
         self,
         mock_load_config: MagicMock,
@@ -832,7 +832,7 @@ class TestRestartCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_restart_via_service_fails_when_health_does_not_return(
         self,
         mock_load_config: MagicMock,
@@ -881,7 +881,7 @@ class TestRestartCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_restart_via_service_fails_when_stop_does_not_complete(
         self,
         mock_load_config: MagicMock,
@@ -920,7 +920,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_restart_success(
         self,
         mock_load_config: MagicMock,
@@ -1000,7 +1000,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_restart_with_verbose(
         self,
         mock_load_config: MagicMock,
@@ -1066,7 +1066,7 @@ class TestStatusCommand:
 
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.daemon.get_gobby_home")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_status_no_pid_file(
         self,
         mock_load_config: MagicMock,
@@ -1092,7 +1092,7 @@ class TestStatusCommand:
 
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.daemon.get_gobby_home")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_status_invalid_pid_file(
         self,
         mock_load_config: MagicMock,
@@ -1120,7 +1120,7 @@ class TestStatusCommand:
             assert "Stopped" in result.output
 
     @patch("gobby.cli.daemon.get_gobby_home")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_status_stale_pid_file(
         self,
         mock_load_config: MagicMock,
@@ -1156,7 +1156,7 @@ class TestStatusCommand:
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_status_daemon_running(
         self,
         mock_load_config: MagicMock,
@@ -1201,7 +1201,7 @@ class TestStatusCommand:
     )
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_status_psutil_error(
         self,
         mock_load_config: MagicMock,
@@ -1260,7 +1260,7 @@ class TestDaemonCommandsIntegration:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_displays_startup_summary(
         self,
         mock_load_config: MagicMock,
@@ -1339,7 +1339,7 @@ class TestEdgeCases:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_health_check_timeout(
         self,
         mock_load_config: MagicMock,
@@ -1390,7 +1390,7 @@ class TestEdgeCases:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_health_check_non_200_response(
         self,
         mock_load_config: MagicMock,
@@ -1450,7 +1450,7 @@ class TestEdgeCases:
     @patch("gobby.cli.daemon.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_popen_exception(
         self,
         mock_load_config: MagicMock,
@@ -1489,7 +1489,7 @@ class TestEdgeCases:
     )
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_status_with_rich_data(
         self,
         mock_load_config: MagicMock,
@@ -1564,7 +1564,7 @@ class TestCommandBuilding:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_command_uses_correct_module(
         self,
         mock_load_config: MagicMock,
@@ -1620,7 +1620,7 @@ class TestCommandBuilding:
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
-    @patch("gobby.cli.load_config")
+    @patch("gobby.cli.load_full_config_from_db")
     def test_start_subprocess_options(
         self,
         mock_load_config: MagicMock,

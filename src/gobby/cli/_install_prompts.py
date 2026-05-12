@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _infer_embedding_provider_from_url(api_base: str) -> str:
+    """Infer the compatible local provider path for a custom OpenAI-style endpoint."""
+    return "ollama" if ":11434" in api_base else "lmstudio"
+
+
 @contextmanager
 def _ensure_db_and_secrets(
     db: LocalDatabase | None,
@@ -450,6 +455,10 @@ def _run_embedding_install(
     installer: Callable[..., dict[str, Any]],
     results: dict[str, dict[str, Any]],
     no_interactive: bool = False,
+    *,
+    api_base_override: str | None = None,
+    model_override: str | None = None,
+    dim_override: int | None = None,
 ) -> str:
     """Interactive embedding provider setup.
 
@@ -461,6 +470,10 @@ def _run_embedding_install(
         installer: The install_embedding function
         results: Results dict to accumulate install outcomes
         no_interactive: If True, auto-select best local provider without prompting
+        api_base_override: Override the provider's default API base URL.
+        model_override: Override the provider's default model id.
+        dim_override: Override the embedding dim. Triggers a probe when omitted
+            and either ``api_base_override`` or ``model_override`` is set.
 
     Returns:
         The provider name chosen: "lmstudio" | "ollama" | "openai" | "none"
@@ -489,7 +502,10 @@ def _run_embedding_install(
         # No local providers; default to "none" to avoid unexpected cloud calls
         default_idx = len(options)  # points at "none"
 
-    if no_interactive:
+    if api_base_override is not None:
+        provider = _infer_embedding_provider_from_url(api_base_override)
+        click.echo(f"Using custom embedding endpoint ({provider}-compatible): {api_base_override}")
+    elif no_interactive:
         # Auto-select best available local provider; skip if none
         if lmstudio_ok:
             provider = "lmstudio"
@@ -567,6 +583,49 @@ def _run_embedding_install(
                 return "none"
             openai_api_key = openai_api_key.strip()
 
+    # Allow the user to override URL/model/dim interactively when no CLI flag
+    # was passed. Skip in no_interactive mode and for the "none" provider.
+    cli_overrides_supplied = (
+        api_base_override is not None or model_override is not None or dim_override is not None
+    )
+    if not no_interactive and not cli_overrides_supplied and provider != "none":
+        try:
+            customize = click.confirm(
+                "Customize endpoint URL, model id, or embedding dim?", default=False
+            )
+        except (click.Abort, EOFError):
+            click.echo("")
+            customize = False
+        if customize:
+            try:
+                url_input = click.prompt(
+                    "  API base URL (blank = provider default)",
+                    default="",
+                    show_default=False,
+                ).strip()
+                if url_input:
+                    api_base_override = url_input
+                model_input = click.prompt(
+                    "  Model id (blank = provider default)",
+                    default="",
+                    show_default=False,
+                ).strip()
+                if model_input:
+                    model_override = model_input
+                dim_input = click.prompt(
+                    "  Embedding dim (blank = auto-detect)",
+                    default="",
+                    show_default=False,
+                ).strip()
+                if dim_input:
+                    try:
+                        dim_override = int(dim_input)
+                    except ValueError:
+                        click.echo(f"  Invalid dim '{dim_input}'; will auto-detect")
+            except (click.Abort, EOFError):
+                click.echo("")
+                click.echo("Skipping custom overrides — using provider defaults.")
+
     # Run the installer
     click.echo("")
     if provider == "lmstudio":
@@ -576,7 +635,13 @@ def _run_embedding_install(
     elif provider == "openai":
         click.echo("Configuring OpenAI embeddings...")
 
-    result = installer(provider=provider, openai_api_key=openai_api_key)
+    result = installer(
+        provider=provider,
+        openai_api_key=openai_api_key,
+        model_override=model_override,
+        api_base_override=api_base_override,
+        dim_override=dim_override,
+    )
     results["embedding"] = result
 
     if result["success"]:
