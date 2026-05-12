@@ -3,14 +3,14 @@
 Wraps setuptools.build_meta to stage the web UI into the wheel.
 
 Before every wheel/sdist build:
-  1. Honor ``GOBBY_SKIP_UI_BUILD=1`` as an escape hatch (CI/contributors without npm).
+  1. Honor ``GOBBY_SKIP_UI_BUILD=1`` to skip npm, while still requiring staged
+     UI assets for wheel builds.
   2. If ``web/`` has ``package.json`` and ``npm`` is on PATH, run
      ``npm ci && npm run build`` in ``web/`` to produce ``web/dist/``.
   3. Copy ``web/dist/`` into ``src/gobby/ui/web/dist/`` so the
      ``ui/web/dist/**/*`` package-data glob picks the assets up.
-  4. If neither a fresh build nor a pre-staged ``src/gobby/ui/web/dist/``
-     is available, emit a warning - the wheel will install but the UI
-     will 404 (same as before this wrapper existed).
+  4. Verify built wheels contain ``gobby/ui/web/dist/index.html`` so release
+     artifacts cannot silently ship without the production UI.
 
 Editable installs skip the UI build entirely; the dev workflow uses
 ``gobby ui dev`` against ``web/`` directly.
@@ -22,6 +22,7 @@ import logging
 import os
 import shutil
 import subprocess  # nosec B404
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _WEB_SRC = _REPO_ROOT / "web"
 _DIST_SRC = _WEB_SRC / "dist"
 _WHEEL_DEST = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
+_WHEEL_UI_INDEX = "gobby/ui/web/dist/index.html"
 
 
 def _stage_ui() -> None:
@@ -76,8 +78,7 @@ def _stage_ui() -> None:
             logger.info("web/dist not available; reusing pre-staged %s", _WHEEL_DEST)
             return
         logger.warning(
-            "web/dist not found and npm build not possible - wheel will not contain UI assets. "
-            "Set GOBBY_SKIP_UI_BUILD=1 to silence this warning."
+            "web/dist not found and npm build not possible - wheel UI asset verification will fail."
         )
         return
 
@@ -88,13 +89,26 @@ def _stage_ui() -> None:
     logger.info("Staged web UI assets at %s", _WHEEL_DEST)
 
 
+def _verify_wheel_contains_ui(wheel_path: Path) -> None:
+    with zipfile.ZipFile(wheel_path) as wheel:
+        if _WHEEL_UI_INDEX not in wheel.namelist():
+            raise RuntimeError(
+                f"Built wheel is missing {_WHEEL_UI_INDEX}; build web/dist before publishing."
+            )
+
+
 def build_wheel(
     wheel_directory: str,
     config_settings: dict[str, Any] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
     _stage_ui()
-    return str(_orig().build_wheel(wheel_directory, config_settings, metadata_directory))
+    wheel_name = str(_orig().build_wheel(wheel_directory, config_settings, metadata_directory))
+    wheel_path = Path(wheel_name)
+    if not wheel_path.is_absolute():
+        wheel_path = Path(wheel_directory) / wheel_path
+    _verify_wheel_contains_ui(wheel_path)
+    return wheel_name
 
 
 def build_sdist(

@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _infer_embedding_provider_from_url(api_base: str) -> str:
+    """Infer the compatible local provider path for a custom OpenAI-style endpoint."""
+    return "ollama" if ":11434" in api_base else "lmstudio"
+
+
 @contextmanager
 def _ensure_db_and_secrets(
     db: LocalDatabase | None,
@@ -497,7 +502,10 @@ def _run_embedding_install(
         # No local providers; default to "none" to avoid unexpected cloud calls
         default_idx = len(options)  # points at "none"
 
-    if no_interactive:
+    if api_base_override is not None:
+        provider = _infer_embedding_provider_from_url(api_base_override)
+        click.echo(f"Using custom embedding endpoint ({provider}-compatible): {api_base_override}")
+    elif no_interactive:
         # Auto-select best available local provider; skip if none
         if lmstudio_ok:
             provider = "lmstudio"

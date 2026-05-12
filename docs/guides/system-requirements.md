@@ -11,7 +11,7 @@ Use this guide to decide what has to be installed before running Gobby 0.4.0.
 | Setup | Required | Good default |
 |-------|----------|--------------|
 | Daemon only | Python 3.13+, `uv`, 1 GB free disk, localhost ports 60887 and 60888 | 4+ CPU cores, 8 GB RAM |
-| Daemon + web UI | Daemon requirements plus localhost port 60889 | 8 GB RAM |
+| Daemon + web UI | Daemon requirements; installed UI is served on port 60887 | 8 GB RAM |
 | Full local search stack | Docker with Compose v2, Qdrant, Neo4j, embedding endpoint | 16 GB RAM minimum, 32 GB RAM preferred, SSD/NVMe storage |
 | Local embedding model | LM Studio with `lms` or Ollama with `ollama` | 16 GB RAM, GPU or unified memory when also running a chat model |
 
@@ -53,7 +53,8 @@ server, and optional UI dev server.
 | Database | `~/.gobby/gobby-hub.db` by default |
 | HTTP API | `localhost:60887` by default |
 | WebSocket | `localhost:60888` by default |
-| Web UI | `localhost:60889` by default |
+| Installed Web UI | `localhost:60887` by default |
+| Dev Web UI | `localhost:60889` when `gobby ui dev` is running |
 | Bind host | `localhost` by default |
 | Disk | 1 GB for code/dependencies plus SQLite database and transcript growth |
 | RAM | Hundreds of MB idle; plan 1-2 GB when many sessions, hooks, or MCP calls are active |
@@ -134,9 +135,9 @@ Default ports are chosen to avoid common development-server conflicts.
 
 | Port | Owner |
 |------|-------|
-| 60887 | Gobby HTTP API |
+| 60887 | Gobby HTTP API and installed web UI |
 | 60888 | Gobby WebSocket server |
-| 60889 | Gobby web UI |
+| 60889 | Gobby dev web UI |
 | 6333 | Qdrant HTTP |
 | 6334 | Qdrant gRPC |
 | 8474 | Neo4j HTTP, mapped from container port 7474 |

@@ -94,12 +94,11 @@ def install_embedding(
         return {"success": False, "error": "OpenAI API key required for openai provider"}
 
     # Provider-specific setup: ensure model is downloaded and loaded.
-    # Skip the bundled setup when the user overrode the model — they're
-    # bringing their own (e.g. a Qwen3-Embedding GGUF served by LM Studio).
+    # Skip bundled local setup when the user points at their own model or endpoint.
     setup_result: dict[str, Any]
-    if provider == "lmstudio" and model_override is None:
+    if provider == "lmstudio" and model_override is None and api_base_override is None:
         setup_result = _setup_lmstudio()
-    elif provider == "ollama" and model_override is None:
+    elif provider == "ollama" and model_override is None and api_base_override is None:
         setup_result = _setup_ollama()
     else:
         setup_result = {"success": True}

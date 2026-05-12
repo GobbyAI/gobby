@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import importlib
 import sys
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +22,12 @@ def _load_backend(repo_root: Path) -> object:
         return importlib.import_module("build_backend")
     finally:
         sys.path.pop(0)
+
+
+def _write_wheel(path: Path, members: list[str]) -> None:
+    with zipfile.ZipFile(path, "w") as wheel:
+        for member in members:
+            wheel.writestr(member, "")
 
 
 def test_stage_ui_copies_dist_to_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -91,3 +99,58 @@ def test_stage_ui_reuses_pre_staged_when_no_web(
     backend._stage_ui()  # type: ignore[attr-defined]
 
     assert (staged_dir / "index.html").read_text() == "pre-staged"
+
+
+def test_build_wheel_accepts_wheel_with_ui_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    wheel_dir = repo_root / "dist"
+    wheel_dir.mkdir()
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend, "_stage_ui", lambda: None)
+
+    def fake_build_wheel(
+        wheel_directory: str,
+        config_settings: dict[str, object] | None,
+        metadata_directory: str | None,
+    ) -> str:
+        wheel_path = Path(wheel_directory) / "gobby-0-py3-none-any.whl"
+        _write_wheel(wheel_path, ["gobby/ui/web/dist/index.html"])
+        return wheel_path.name
+
+    monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
+
+    assert backend.build_wheel(str(wheel_dir)) == "gobby-0-py3-none-any.whl"  # type: ignore[attr-defined]
+
+
+def test_build_wheel_rejects_wheel_missing_ui_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    wheel_dir = repo_root / "dist"
+    wheel_dir.mkdir()
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend, "_stage_ui", lambda: None)
+
+    def fake_build_wheel(
+        wheel_directory: str,
+        config_settings: dict[str, object] | None,
+        metadata_directory: str | None,
+    ) -> str:
+        wheel_path = Path(wheel_directory) / "gobby-0-py3-none-any.whl"
+        _write_wheel(wheel_path, ["gobby/__init__.py"])
+        return wheel_path.name
+
+    monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
+
+    with pytest.raises(RuntimeError, match="gobby/ui/web/dist/index.html"):
+        backend.build_wheel(str(wheel_dir))  # type: ignore[attr-defined]

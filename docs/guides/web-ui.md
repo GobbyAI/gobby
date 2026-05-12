@@ -6,11 +6,11 @@ configuration pages, and the operational dashboard.
 
 ## Mental Model
 
-Gobby runs the React app from `web/` beside the daemon HTTP and WebSocket
-services. In the default local development layout:
+Production installs serve the built React app from the daemon HTTP port. The
+frontend development server uses a separate port when `gobby ui dev` is running.
 
-- Web UI: `http://localhost:60889`
-- HTTP API: `http://localhost:60887`
+- Installed Web UI and HTTP API: `http://localhost:60887`
+- Dev Web UI: `http://localhost:60889`
 - WebSocket API: `ws://localhost:60888`
 - Tailscale UI URL, when enabled: shown by `gobby status`
 
@@ -40,7 +40,7 @@ uv run gobby status
 Open the web app:
 
 ```text
-http://localhost:60889/#chat
+http://localhost:60887/#chat
 ```
 
 Check the backend directly when the UI appears disconnected:
@@ -145,9 +145,9 @@ service health.
 
 ## HTTP
 
-The browser normally calls the web origin on `:60889`; the web server proxies
-API routes to the daemon services. Direct API debugging can use the HTTP daemon
-port from `gobby status`.
+The installed browser app normally calls the daemon origin on `:60887`. During
+frontend development, the `:60889` dev server proxies API routes to the daemon
+services. Direct API debugging can use the HTTP daemon port from `gobby status`.
 
 Useful checks:
 

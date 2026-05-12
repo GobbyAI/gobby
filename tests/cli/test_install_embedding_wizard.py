@@ -119,6 +119,75 @@ class TestRunEmbeddingInstallNoInteractive:
         # Still calls installer with none to persist the disable-semantic-search config
         installer.assert_called_once_with(provider="none")
 
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_custom_url_infers_lmstudio_without_local_provider(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "lmstudio",
+                "model": "text-embedding-qwen3-embedding-4b",
+                "dim": 2560,
+                "api_base": "http://lan:1234/v1",
+                "health_check": True,
+            }
+        )
+        results: dict = {}
+
+        provider = _run_embedding_install(
+            installer,
+            results,
+            no_interactive=True,
+            api_base_override="http://lan:1234/v1",
+            model_override="text-embedding-qwen3-embedding-4b",
+            dim_override=2560,
+        )
+
+        assert provider == "lmstudio"
+        installer.assert_called_once_with(
+            provider="lmstudio",
+            openai_api_key=None,
+            model_override="text-embedding-qwen3-embedding-4b",
+            api_base_override="http://lan:1234/v1",
+            dim_override=2560,
+        )
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_custom_ollama_url_infers_ollama_without_local_provider(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "ollama",
+                "model": "nomic-embed-text",
+                "dim": 768,
+                "api_base": "http://custom-host:11434/v1",
+                "health_check": True,
+            }
+        )
+        results: dict = {}
+
+        provider = _run_embedding_install(
+            installer,
+            results,
+            no_interactive=True,
+            api_base_override="http://custom-host:11434/v1",
+            dim_override=768,
+        )
+
+        assert provider == "ollama"
+        installer.assert_called_once_with(
+            provider="ollama",
+            openai_api_key=None,
+            model_override=None,
+            api_base_override="http://custom-host:11434/v1",
+            dim_override=768,
+        )
+
 
 class TestRunEmbeddingInstallInteractive:
     """Test interactive menu flow."""
