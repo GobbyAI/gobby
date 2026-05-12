@@ -375,6 +375,41 @@ class TestStreamChatResponse:
         assert "sdk" not in mixin._chat_sessions
 
     @pytest.mark.asyncio
+    async def test_stream_live_frames_only_go_to_matching_conversation(
+        self, mixin: DummyMessagingMixin
+    ) -> None:
+        matching_ws = AsyncMock()
+        other_ws = AsyncMock()
+        unbound_ws = AsyncMock()
+        mixin.clients = {
+            matching_ws: {"conversation_id": "c1"},
+            other_ws: {"conversation_id": "c2"},
+            unbound_ws: {"connected": True},
+        }
+        session = AsyncMock()
+        mixin._chat_sessions["c1"] = session
+
+        async def mock_stream(content: str):
+            yield TextChunk(content="scoped")
+            yield DoneEvent(
+                sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
+            )
+
+        session.send_message = lambda content: mock_stream(content)
+
+        await mixin._stream_chat_response(matching_ws, "c1", "hi", None)
+
+        matching_messages = [
+            json.loads(call[0][0]) for call in matching_ws.send.call_args_list
+        ]
+        assert [m["type"] for m in matching_messages if m.get("type") == "chat_stream"] == [
+            "chat_stream",
+            "chat_stream",
+        ]
+        other_ws.send.assert_not_called()
+        unbound_ws.send.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_stream_wraps_injected_context_as_gobby_context(
         self, mixin: DummyMessagingMixin, ws: AsyncMock
     ) -> None:

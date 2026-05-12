@@ -42,6 +42,20 @@ describe("useChat connection lifecycle", () => {
     expect(result.current.isConnected).toBe(true);
   });
 
+  it("does not open a duplicate socket while the current socket is connecting", async () => {
+    await loadModule();
+    renderHook(() => useChat());
+
+    expect(mockWs.instances).toHaveLength(1);
+    expect(mockWs.instances[0].readyState).toBe(WebSocket.CONNECTING);
+
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(mockWs.instances).toHaveLength(1);
+  });
+
   it("sends subscribe message on connect", async () => {
     await loadModule();
     renderHook(() => useChat());

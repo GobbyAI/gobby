@@ -535,6 +535,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           className={cn(CTRL_BTN_CLS, animateIdle && CTRL_BTN_ACTIVE_CLS)}
           onClick={toggleAnimate}
           title={animateIdle ? 'Pause idle animation' : 'Animate when idle'}
+          aria-label={animateIdle ? 'Pause idle animation' : 'Animate when idle'}
         >
           {animateIdle ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">

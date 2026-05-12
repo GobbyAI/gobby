@@ -127,7 +127,7 @@ export function useChatTransport(params: UseChatTransportParams) {
 
 // Connect to WebSocket
 const connect = useCallback(() => {
-  if (wsRef.current?.readyState === WebSocket.OPEN) return;
+  if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) return;
 
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
@@ -138,6 +138,7 @@ const connect = useCallback(() => {
   wsRef.current = ws;
 
   ws.onopen = () => {
+    if (wsRef.current !== ws) return;
     console.log("WebSocket connected");
     setIsConnected(true);
     setIsReconnecting(false);
@@ -215,6 +216,8 @@ const connect = useCallback(() => {
   };
 
   ws.onclose = () => {
+    if (wsRef.current !== ws) return;
+    wsRef.current = null;
     console.log("WebSocket disconnected");
     setIsConnected(false);
     setIsReconnecting(true);
@@ -238,10 +241,12 @@ const connect = useCallback(() => {
   };
 
   ws.onerror = (error) => {
+    if (wsRef.current !== ws) return;
     console.error("WebSocket error:", error);
   };
 
   ws.onmessage = (event) => {
+    if (wsRef.current !== ws) return;
     // Binary frames are TTS audio data — route to voice handler
     if (event.data instanceof ArrayBuffer) {
       try {
