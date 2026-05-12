@@ -37,7 +37,7 @@ class EventHandlersBase:
     _resolve_project_id: Callable[[str | None, str | None], str]
     _code_index_trigger: Any | None
     _pending_subagent_depths: dict[str, int]
-    _dispatch_session_summaries_fn: Callable[[str, bool, threading.Event | None], None] | None
+    _dispatch_session_summaries_fn: Callable[[str, bool, threading.Event | None, bool], None] | None
     logger: logging.Logger
     _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
 

@@ -83,7 +83,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 self.logger.debug(f"Detected {prompt_lower} - generating session summaries")
                 try:
                     if self._dispatch_session_summaries_fn:
-                        self._dispatch_session_summaries_fn(session_id, False, None)
+                        self._dispatch_session_summaries_fn(session_id, False, None, True)
                 except Exception as e:
                     self.logger.warning(
                         f"Failed to generate session summaries on {prompt_lower}: {e}"
@@ -414,15 +414,22 @@ class AgentEventHandlerMixin(EventHandlersBase):
             )
             return HookResponse(decision="allow")
 
+        is_handoff_trigger = trigger in {"manual", "user", "clear", "compact"}
+
         if session_id:
             self.logger.debug(f"PRE_COMPACT ({trigger}): session {session_id}")
-            # Mark session as handoff_ready so it can be found as parent after compact
-            if self._session_manager:
+            # Auto compaction in Codex is an in-session event, not a handoff.
+            if is_handoff_trigger and self._session_manager:
                 self._session_manager.update_session_status(session_id, "handoff_ready")
             # Generate session summaries from digest before compaction
             try:
                 if self._dispatch_session_summaries_fn:
-                    self._dispatch_session_summaries_fn(session_id, False, None)
+                    self._dispatch_session_summaries_fn(
+                        session_id,
+                        False,
+                        None,
+                        is_handoff_trigger,
+                    )
             except Exception as e:
                 self.logger.warning(f"Failed to generate session summaries on compact: {e}")
         else:

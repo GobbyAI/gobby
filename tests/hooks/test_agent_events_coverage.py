@@ -107,7 +107,12 @@ class TestHandleBeforeAgent:
         )
 
         handler.handle_before_agent(event)
-        handler._dispatch_session_summaries_fn.assert_called_once_with("sess-1", False, None)
+        handler._dispatch_session_summaries_fn.assert_called_once_with(
+            "sess-1",
+            False,
+            None,
+            True,
+        )
         assert handler._dispatch_session_summaries_fn.call_count == 1
         assert handler._dispatch_session_summaries_fn.call_args is not None
 
@@ -120,7 +125,12 @@ class TestHandleBeforeAgent:
         )
 
         handler.handle_before_agent(event)
-        handler._dispatch_session_summaries_fn.assert_called_once()
+        handler._dispatch_session_summaries_fn.assert_called_once_with(
+            "sess-1",
+            False,
+            None,
+            True,
+        )
         assert handler._dispatch_session_summaries_fn.call_count == 1
         assert handler._dispatch_session_summaries_fn.call_args is not None
 
@@ -582,7 +592,27 @@ class TestHandlePreCompact:
         assert result.decision == "allow"
         handler._session_manager.update_session_status.assert_not_called()
 
-    def test_claude_updates_status(self) -> None:
+    def test_manual_claude_updates_status(self) -> None:
+        handler = _TestHandler()
+        handler._dispatch_session_summaries_fn = MagicMock()
+        event = _make_event(
+            event_type=HookEventType.PRE_COMPACT,
+            source=SessionSource.CLAUDE,
+            metadata={"_platform_session_id": "sess-1"},
+            data={"trigger": "manual"},
+        )
+
+        result = handler.handle_pre_compact(event)
+        assert result.decision == "allow"
+        handler._session_manager.update_session_status.assert_called_with("sess-1", "handoff_ready")
+        handler._dispatch_session_summaries_fn.assert_called_once_with(
+            "sess-1",
+            False,
+            None,
+            True,
+        )
+
+    def test_auto_claude_summarizes_without_handoff_status(self) -> None:
         handler = _TestHandler()
         handler._dispatch_session_summaries_fn = MagicMock()
         event = _make_event(
@@ -594,8 +624,13 @@ class TestHandlePreCompact:
 
         result = handler.handle_pre_compact(event)
         assert result.decision == "allow"
-        handler._session_manager.update_session_status.assert_called_with("sess-1", "handoff_ready")
-        handler._dispatch_session_summaries_fn.assert_called_once_with("sess-1", False, None)
+        handler._session_manager.update_session_status.assert_not_called()
+        handler._dispatch_session_summaries_fn.assert_called_once_with(
+            "sess-1",
+            False,
+            None,
+            False,
+        )
 
     def test_no_session_id(self) -> None:
         handler = _TestHandler()

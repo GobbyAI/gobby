@@ -824,7 +824,11 @@ class HookManager:
             return result
 
     def _dispatch_session_summaries(
-        self, session_id: str, background: bool = False, done_event: threading.Event | None = None
+        self,
+        session_id: str,
+        background: bool = False,
+        done_event: threading.Event | None = None,
+        set_handoff_ready: bool = False,
     ) -> None:
         """Fire session summary generation.
 
@@ -849,6 +853,7 @@ class HookManager:
                     session_manager=self._session_manager,
                     llm_service=self._llm_service,
                     db=self._database,
+                    set_handoff_ready=set_handoff_ready,
                 )
             except Exception as exc:
                 self.logger.error(
