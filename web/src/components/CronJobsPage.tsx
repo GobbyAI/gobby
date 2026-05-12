@@ -30,12 +30,12 @@ const TOOLBAR_SEARCH_CLS =
 const TOOLBAR_SELECT_CLS =
   'min-h-9 cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] pointer-coarse:min-h-11'
 const TOOLBAR_BTN_CLS =
-  'flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0 text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.05)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11'
+  'flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0 text-[var(--text-secondary)] hover:bg-surface-tint hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11'
 const TOOLBAR_CREATE_CLS = 'shrink-0'
 
 const JOB_LIST_CLS = 'flex flex-1 flex-col gap-1 overflow-y-auto p-2'
 const JOB_ITEM_CLS =
-  'flex w-full cursor-pointer flex-col gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-left font-[inherit] text-inherit transition-colors duration-100 hover:bg-[rgba(255,255,255,0.05)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]'
+  'flex w-full cursor-pointer flex-col gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-left font-[inherit] text-inherit transition-colors duration-100 hover:bg-surface-tint focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]'
 const JOB_ITEM_SELECTED_CLS = 'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]'
 const JOB_ITEM_DISABLED_CLS = 'opacity-60'
 const JOB_ITEM_HEADER_CLS = 'flex min-w-0 items-center gap-1.5'
@@ -70,7 +70,7 @@ const DETAIL_DESCRIPTION_CLS = 'm-0 text-[length:var(--text-md)] text-[var(--tex
 const DETAIL_ACTIONS_CLS = 'flex flex-wrap gap-2'
 
 const BTN_CLS =
-  'inline-flex min-h-8 cursor-pointer items-center gap-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--bg-secondary)] pointer-coarse:min-h-11'
+  'inline-flex min-h-8 cursor-pointer items-center gap-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-surface-tint disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--bg-secondary)] pointer-coarse:min-h-11'
 const BTN_PRIMARY_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:opacity-90 disabled:hover:bg-[var(--accent)]'
 const BTN_DANGER_CLS =

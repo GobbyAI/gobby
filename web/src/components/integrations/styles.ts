@@ -16,7 +16,7 @@ export const TAB_ACTIVE_CLS = 'border-[var(--accent)] text-[var(--accent)]'
 export const FILTER_BAR_CLS = 'pb-3'
 export const FILTER_CHIPS_CLS = 'flex flex-wrap gap-1.5'
 export const FILTER_CHIP_CLS =
-  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:bg-[rgba(255,255,255,0.05)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:bg-surface-tint pointer-coarse:min-h-11 pointer-coarse:px-3'
 export const FILTER_CHIP_ACTIVE_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)]'
 export const MESSAGE_FILTER_BAR_CLS = 'flex gap-2 pb-3'
@@ -49,7 +49,7 @@ export const FORM_ERROR_CLS =
   'mb-3 rounded-md bg-[var(--color-error-soft)] px-3 py-2 text-[length:var(--text-xs)] text-[var(--color-error)]'
 
 export const FORM_CANCEL_CLS =
-  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-surface-tint disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 export const FORM_SUBMIT_CLS =
   'cursor-pointer rounded-md border-0 bg-[var(--accent)] px-4 py-2 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 
@@ -57,4 +57,4 @@ export const FORM_CHANGE_BTN_CLS =
   'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-0.5 text-[length:var(--text-2xs)] text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--accent)] pointer-coarse:min-h-11 pointer-coarse:px-3'
 
 export const EMPTY_CARD_CLS =
-  'flex cursor-pointer items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 text-[length:var(--text-sm)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--accent)] hover:bg-[rgba(255,255,255,0.05)] pointer-coarse:min-h-11'
+  'flex cursor-pointer items-center gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3 text-[length:var(--text-sm)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--accent)] hover:bg-surface-tint pointer-coarse:min-h-11'

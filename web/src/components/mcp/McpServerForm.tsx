@@ -19,7 +19,7 @@ const FORM_LABEL_INLINE_CLS = 'flex items-center gap-2 text-[length:var(--text-s
 
 const MODAL_ACTIONS_CLS = 'mt-4 flex justify-end gap-2'
 const MODAL_BTN_CLS =
-  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-surface-tint disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 const MODAL_BTN_PRIMARY_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:opacity-90'
 

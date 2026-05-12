@@ -658,7 +658,7 @@ export function ChatInput({
             {queuedFiles.map((qf) => (
               <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted">
                 {qf.previewUrl ? (
-                  <img src={qf.previewUrl} alt={qf.file.name} className="w-16 h-16 object-cover" />
+                  <img src={qf.previewUrl} alt={qf.file.name} loading="lazy" decoding="async" className="w-16 h-16 object-cover" />
                 ) : (
                   <div className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
                     <PaperclipIcon />

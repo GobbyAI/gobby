@@ -22,6 +22,8 @@ export function ArtifactImageView({ content }: ArtifactImageViewProps) {
           <img
             src={content}
             alt="Artifact"
+            loading="lazy"
+            decoding="async"
             style={{ width: `${zoom}%`, maxWidth: 'none' }}
             className="object-contain"
           />

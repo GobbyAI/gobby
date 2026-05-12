@@ -72,6 +72,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
           onChange={handleStatusFilterChange}
           options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
           ariaLabel="Trace status filter"
+          controlHeight="sm"
           className="ml-auto"
         />
       </div>

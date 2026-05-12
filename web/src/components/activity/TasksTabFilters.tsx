@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { ActivityFilterFooter } from './ActivityFilterFooter'
 import type { StageRegistryEntry } from '../../lib/taskNormalization'
 import {
   DEFAULT_FILTERS,
@@ -71,7 +72,7 @@ export function TasksTabFilters({
     <>
       <div className="fixed inset-0 z-[99]" onClick={onClose} />
       <div
-        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl flex flex-col w-[min(30rem,calc(100vw-1.5rem))]"
+        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl flex flex-col w-[min(24rem,calc(100vw-1.5rem))]"
         style={{ background: 'var(--bg-secondary)' }}
         role="dialog"
         aria-label="Task filters"
@@ -132,17 +133,7 @@ export function TasksTabFilters({
           </div>
         </div>
 
-        <div
-          className="flex items-center justify-between border-t border-border px-2 py-1.5"
-          style={{ background: 'var(--bg-secondary)' }}
-        >
-          <button type="button" className="btn btn-ghost btn-sm" onClick={handleReset}>
-            Reset
-          </button>
-          <button type="button" className="btn btn-accent btn-sm" onClick={handleApply}>
-            Apply
-          </button>
-        </div>
+        <ActivityFilterFooter onReset={handleReset} onApply={handleApply} />
       </div>
     </>
   )

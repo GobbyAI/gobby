@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ActivityFilterFooter } from "./ActivityFilterFooter";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { getProviderDisplayName } from "../../lib/providerModels";
 import { useIsMobile } from "../../hooks/useIsMobile";
@@ -173,7 +174,7 @@ export function SessionsFilterDropdown({
         aria-label="Session filters"
         aria-modal={isMobile || undefined}
       >
-        <div className="grid grid-cols-2 divide-x divide-border">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] divide-x divide-border">
           {/* Left column: Mode + Provider */}
           <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
             <Section label="Mode">
@@ -248,7 +249,6 @@ export function SessionsFilterDropdown({
                   onChange={handleDatePresetChange}
                   options={DATE_PRESET_OPTIONS}
                   ariaLabel="Date preset"
-                  className="w-full"
                 />
               </div>
               <button
@@ -285,22 +285,11 @@ export function SessionsFilterDropdown({
           </div>
         </div>
 
-        <div
-          className="flex items-center justify-between border-t border-border px-2 py-1.5"
-          style={{ background: "var(--bg-secondary)" }}
-        >
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={handleReset}
-            disabled={activeCount === 0}
-          >
-            Reset
-          </button>
-          <button type="button" className="btn btn-accent btn-sm" onClick={onClose}>
-            Apply
-          </button>
-        </div>
+        <ActivityFilterFooter
+          onReset={handleReset}
+          onApply={onClose}
+          resetDisabled={activeCount === 0}
+        />
       </div>
     </>
   );
@@ -358,7 +347,7 @@ function RefRangeInputs({
   ariaLabelPrefix: string;
 }) {
   const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
-  const inputClassName = `min-w-0 flex-1 px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
+  const inputClassName = `w-20 px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
     isInvalid
       ? "border-[var(--color-error)] focus:border-[var(--color-error)]"
       : "border-border focus:border-accent"
@@ -368,7 +357,9 @@ function RefRangeInputs({
     <div className="px-2 py-1">
       <div className="flex items-center gap-1">
         <input
-          type="number"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
           className={inputClassName}
           placeholder="from"
           value={minValue !== null ? String(minValue) : ""}
@@ -378,7 +369,9 @@ function RefRangeInputs({
         />
         <span className="text-[length:var(--text-md)] text-muted-foreground">→</span>
         <input
-          type="number"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
           className={inputClassName}
           placeholder="to"
           value={maxValue !== null ? String(maxValue) : ""}

@@ -14,6 +14,7 @@ interface SegmentedControlProps<T extends string> {
   options: readonly SegmentedControlOption<T>[]
   ariaLabel: string
   size?: 'sm' | 'md'
+  controlHeight?: 'sm' | 'md'
   disabled?: boolean
   className?: string
 }
@@ -24,6 +25,7 @@ export function SegmentedControl<T extends string>({
   options,
   ariaLabel,
   size = 'sm',
+  controlHeight = 'md',
   disabled = false,
   className,
 }: SegmentedControlProps<T>) {
@@ -51,13 +53,14 @@ export function SegmentedControl<T extends string>({
 
   const sizeText = size === 'md' ? 'text-base' : 'text-xs'
   const sizePad = size === 'md' ? 'px-3' : 'px-2'
+  const heightVar = controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'
 
   return (
     <div
       role="radiogroup"
       aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
-      style={{ height: 'var(--control-row-height)' }}
+      style={{ height: heightVar }}
       className={cn(
         'inline-flex items-stretch rounded-md border border-border bg-[var(--bg-primary)]',
         sizeText,

@@ -71,6 +71,7 @@ export function CodeBlockInner({ children, className }: CodeProps) {
               className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               onClick={handleOpenArtifact}
               title="Open in panel"
+              aria-label="Open code in panel"
             >
               <PanelIcon size={14} />
             </button>
@@ -79,6 +80,7 @@ export function CodeBlockInner({ children, className }: CodeProps) {
             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             onClick={handleCopy}
             title="Copy code"
+            aria-label={copied ? 'Code copied to clipboard' : 'Copy code to clipboard'}
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
@@ -114,6 +116,7 @@ export function ImageBlock({
       alt={alt || 'Image'}
       className="max-w-full rounded-lg border border-border my-2"
       loading="lazy"
+      decoding="async"
       {...props}
     />
   )

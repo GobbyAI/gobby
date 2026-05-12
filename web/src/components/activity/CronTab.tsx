@@ -96,6 +96,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
           onChange={setStatusFilter}
           options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
           ariaLabel="Cron status filter"
+          controlHeight="sm"
           className="ml-auto"
         />
       </div>

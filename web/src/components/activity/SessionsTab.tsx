@@ -660,6 +660,7 @@ export const SessionsTab = memo(function SessionsTab({
           options={STATUS_MODE_OPTIONS}
           ariaLabel="Session status filter"
           size="md"
+          controlHeight="sm"
           className="activity-panel-toolbar-segmented"
         />
         <button

@@ -343,7 +343,7 @@
 
 .send-button {
   background: var(--accent);
-  color: white;
+  color: var(--accent-foreground);
 }
 
 .send-button:hover:not(:disabled) {

@@ -20,7 +20,7 @@ const TOOLBAR_RIGHT_CLS = 'flex min-w-0 flex-wrap items-center gap-2 gap-y-2'
 const SEARCH_CLS =
   'w-[140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] md:w-[200px] pointer-coarse:min-h-11'
 const TOOLBAR_BTN_CLS =
-  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-surface-tint pointer-coarse:min-h-11 pointer-coarse:px-3'
 const NEW_BTN_CLS =
   'cursor-pointer rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 pointer-coarse:min-h-11'
 
@@ -29,7 +29,7 @@ const FILTER_CHIPS_CLS = 'flex flex-wrap gap-1.5'
 const FILTER_CHIP_CLS =
   'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] font-medium uppercase text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-secondary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
 const FILTER_CHIP_ACTIVE_CLS =
-  'border-[var(--accent)] bg-[rgba(255,255,255,0.03)] text-[var(--accent)]'
+  'border-[var(--accent)] bg-surface-tint-subtle text-[var(--accent)]'
 
 const CONTENT_CLS = 'flex-1 overflow-y-auto'
 const LOADING_CLS = 'flex items-center justify-center p-10 text-[length:var(--text-base)] text-[var(--text-secondary)]'
@@ -38,7 +38,7 @@ const EMPTY_CLS = 'flex items-center justify-center p-10 text-[length:var(--text
 const SERVER_LIST_CLS = 'flex flex-col gap-2 pb-5'
 const SERVER_ROW_CLS = 'overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]'
 const SERVER_HEADER_CLS =
-  'group flex cursor-pointer flex-wrap items-center gap-2.5 gap-y-1.5 px-4 py-3 transition-colors duration-100 hover:bg-[rgba(255,255,255,0.02)]'
+  'group flex cursor-pointer flex-wrap items-center gap-2.5 gap-y-1.5 px-4 py-3 transition-colors duration-100 hover:bg-surface-tint-subtle'
 
 const HEALTH_DOT_BG: Record<string, string> = {
   healthy: 'bg-[var(--color-success-foreground)]',
@@ -77,7 +77,7 @@ const SERVER_CHEVRON_EXPANDED_CLS = 'rotate-90'
 
 const TOOLS_LIST_CLS = 'border-t border-[var(--border)]'
 const TOOL_ROW_CLS =
-  'flex cursor-pointer items-center gap-3 py-2 pl-10 pr-4 transition-colors duration-100 hover:bg-[rgba(255,255,255,0.02)] [&+&]:border-t [&+&]:border-[var(--border)] pointer-coarse:min-h-11'
+  'flex cursor-pointer items-center gap-3 py-2 pl-10 pr-4 transition-colors duration-100 hover:bg-surface-tint-subtle [&+&]:border-t [&+&]:border-[var(--border)] pointer-coarse:min-h-11'
 const TOOL_NAME_CLS = 'whitespace-nowrap text-[length:var(--text-md)] font-medium'
 const TOOL_BRIEF_CLS = 'flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-sm)] text-[var(--text-secondary)]'
 const TOOL_METRICS_CLS = 'flex gap-3 whitespace-nowrap text-[length:var(--text-xs)] text-[var(--text-secondary)]'
@@ -291,6 +291,7 @@ export function McpPage() {
                         className={REMOVE_BTN_CLS}
                         onClick={e => handleRemoveServer(server.name, e)}
                         title="Remove server"
+                        aria-label={`Remove ${server.name} server`}
                       >
                         &times;
                       </button>
