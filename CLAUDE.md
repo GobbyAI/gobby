@@ -329,9 +329,11 @@ Build state is resolved before dispatch:
 - `isolation` is explicit task state: `none`, `worktree`, or `clone`.
 - `stages` is the ordered manifest materialized in `task_stage_states` from the
   stage registry. The current stage is the first row whose state is not `done`.
-- Phase 3.2 profile bundles such as `quick`, `review`, `full`, and `full-yolo`
-  are CLI/MCP/HTTP sugar that resolve to the peer build fields above at build
-  time.
+- Build profiles are an in-flight registry feature (tracked in #14140);
+  canonical profile names are not yet decided. The only build option flag
+  surfaced today is `--quick` (CLI) / `"quick": true` (MCP/HTTP). Named
+  profile bundles that resolve to peer build fields will land with the
+  registry work.
 - `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
   falls back to `backend-developer` with an audit marker.
 
