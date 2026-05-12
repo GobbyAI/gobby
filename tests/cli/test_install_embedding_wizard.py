@@ -80,7 +80,13 @@ class TestRunEmbeddingInstallNoInteractive:
         results: dict = {}
         provider = _run_embedding_install(installer, results, no_interactive=True)
         assert provider == "lmstudio"
-        installer.assert_called_once_with(provider="lmstudio", openai_api_key=None)
+        installer.assert_called_once_with(
+            provider="lmstudio",
+            openai_api_key=None,
+            model_override=None,
+            api_base_override=None,
+            dim_override=None,
+        )
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=True)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
@@ -138,8 +144,8 @@ class TestRunEmbeddingInstallInteractive:
             provider = _run_embedding_install(installer, results, no_interactive=False)
             click.echo(f"CHOSE={provider}")
 
-        # "1\n" selects LM Studio (first option when detected)
-        result = runner.invoke(cmd, input="1\n")
+        # "1\n" selects LM Studio; "\n" accepts the default-no on customize.
+        result = runner.invoke(cmd, input="1\n\n")
         assert result.exit_code == 0
         assert "CHOSE=lmstudio" in result.output
 
@@ -181,3 +187,110 @@ class TestRunEmbeddingInstallInteractive:
         result = runner.invoke(cmd, input="")
         assert "CHOSE=none" in result.output
         installer.assert_not_called()
+
+
+class TestRunEmbeddingInstallOverrides:
+    """CLI flag and interactive customize behavior."""
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
+    def test_cli_overrides_skip_customize_prompt(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "lmstudio",
+                "model": "text-embedding-qwen3-embedding-4b",
+                "dim": 2560,
+                "api_base": "http://lan:1234/v1",
+                "health_check": True,
+            }
+        )
+        runner = CliRunner()
+
+        @click.command()
+        def cmd() -> None:
+            results: dict = {}
+            _run_embedding_install(
+                installer,
+                results,
+                no_interactive=False,
+                api_base_override="http://lan:1234/v1",
+                model_override="text-embedding-qwen3-embedding-4b",
+                dim_override=2560,
+            )
+
+        # "1\n" selects lmstudio. No customize prompt should fire because CLI
+        # overrides were passed, so a single confirm/abort character would
+        # itself end the test — proving the prompt did not appear.
+        result = runner.invoke(cmd, input="1\n")
+        assert result.exit_code == 0
+        installer.assert_called_once_with(
+            provider="lmstudio",
+            openai_api_key=None,
+            model_override="text-embedding-qwen3-embedding-4b",
+            api_base_override="http://lan:1234/v1",
+            dim_override=2560,
+        )
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
+    def test_interactive_customize_collects_overrides(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "lmstudio",
+                "model": "text-embedding-qwen3-embedding-4b",
+                "dim": 2560,
+                "api_base": "http://192.168.1.10:1234/v1",
+                "health_check": True,
+            }
+        )
+        runner = CliRunner()
+
+        @click.command()
+        def cmd() -> None:
+            results: dict = {}
+            _run_embedding_install(installer, results, no_interactive=False)
+
+        # 1 → lmstudio; y → customize; URL; model; dim
+        user_input = "1\ny\nhttp://192.168.1.10:1234/v1\ntext-embedding-qwen3-embedding-4b\n2560\n"
+        result = runner.invoke(cmd, input=user_input)
+        assert result.exit_code == 0
+        kwargs = installer.call_args.kwargs
+        assert kwargs["api_base_override"] == "http://192.168.1.10:1234/v1"
+        assert kwargs["model_override"] == "text-embedding-qwen3-embedding-4b"
+        assert kwargs["dim_override"] == 2560
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
+    def test_interactive_customize_blank_dim_means_auto_detect(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "lmstudio",
+                "model": "text-embedding-qwen3-embedding-4b",
+                "dim": 2560,
+                "api_base": "http://192.168.1.10:1234/v1",
+                "health_check": True,
+            }
+        )
+        runner = CliRunner()
+
+        @click.command()
+        def cmd() -> None:
+            results: dict = {}
+            _run_embedding_install(installer, results, no_interactive=False)
+
+        # Customize: URL + model, blank dim → installer is asked to probe.
+        user_input = "1\ny\nhttp://192.168.1.10:1234/v1\ntext-embedding-qwen3-embedding-4b\n\n"
+        result = runner.invoke(cmd, input=user_input)
+        assert result.exit_code == 0
+        kwargs = installer.call_args.kwargs
+        assert kwargs["dim_override"] is None
+        assert kwargs["model_override"] == "text-embedding-qwen3-embedding-4b"

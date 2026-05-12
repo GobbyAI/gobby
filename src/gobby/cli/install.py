@@ -150,6 +150,25 @@ __all__ = [
     help="Install voice chat dependencies (STT + TTS with voice cloning)",
 )
 @click.option(
+    "--embedding-url",
+    "embedding_url",
+    default=None,
+    help="Override the embedding provider's API base URL (e.g. for LM Studio on a LAN IP)",
+)
+@click.option(
+    "--embedding-model",
+    "embedding_model",
+    default=None,
+    help="Override the embedding model id (e.g. text-embedding-qwen3-embedding-4b)",
+)
+@click.option(
+    "--embedding-dim",
+    "embedding_dim",
+    type=int,
+    default=None,
+    help="Override the embedding dimension. Omit to auto-detect via /v1/embeddings probe.",
+)
+@click.option(
     "--no-interactive",
     "no_interactive_flag",
     is_flag=True,
@@ -175,6 +194,9 @@ def install(
     neo4j_password: str | None,
     voice_flag: bool,
     project_flag: bool,
+    embedding_url: str | None,
+    embedding_model: str | None,
+    embedding_dim: int | None,
     no_interactive_flag: bool,
     working_dir: Path | None,
 ) -> None:
@@ -316,7 +338,12 @@ def install(
         embedding_provider = "none"
         if is_full_install:
             embedding_provider = _run_embedding_install(
-                install_embedding, results, no_interactive=no_interactive_flag
+                install_embedding,
+                results,
+                no_interactive=no_interactive_flag,
+                api_base_override=embedding_url,
+                model_override=embedding_model,
+                dim_override=embedding_dim,
             )
 
         # Voice chat (optional — installs ~500MB of deps including PyTorch)

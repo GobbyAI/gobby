@@ -338,6 +338,9 @@ class TestInstallCommandSharedStores:
                 neo4j_password=None,
                 voice_flag=False,
                 project_flag=False,
+                embedding_url=None,
+                embedding_model=None,
+                embedding_dim=None,
                 no_interactive_flag=True,
                 working_dir=tmp_path,
             )

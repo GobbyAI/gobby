@@ -227,6 +227,24 @@ embeddings:
   api_base: null
   api_key: null
 
+`gobby install` accepts `--embedding-url`, `--embedding-model`, and
+`--embedding-dim` to override the bundled provider defaults. When
+`--embedding-dim` is omitted alongside a custom URL or model, the installer
+probes `/v1/embeddings` on the target endpoint to detect the dim. The setup
+wizard exposes the same three knobs interactively.
+
+The default is `nomic-embed-text-v1.5@f16` (768-dim, ~137M params) — a safe
+choice for any local hardware. For users with capable local hardware,
+`Qwen3-Embedding-4B` (2560-dim, 4B params) is recommended: it is significantly
+stronger on MTEB and instruction-aware. Tradeoffs: roughly 3.3× the vector
+storage and a slower embed step. Example install:
+
+```bash
+gobby install --embedding-url http://localhost:1234/v1 \
+              --embedding-model text-embedding-qwen3-embedding-4b
+# --embedding-dim is auto-detected from the endpoint; pass 2560 to skip the probe.
+```
+
 memory:
   enabled: true
   backend: local
