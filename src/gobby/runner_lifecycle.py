@@ -116,6 +116,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
         )
 
         from gobby.cli.utils import get_gobby_home
+        from gobby.config.mcp import migrate_legacy_mcp_config
 
         pid_file = get_gobby_home() / "gobby.pid"
         try:
@@ -123,6 +124,11 @@ async def run_daemon(runner: GobbyRunner) -> None:
             logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
         except OSError as e:
             logger.warning(f"Could not write PID file {pid_file}: {e}")
+
+        try:
+            migrate_legacy_mcp_config()
+        except OSError as e:
+            logger.warning(f"Failed to migrate legacy MCP config: {e}")
 
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(

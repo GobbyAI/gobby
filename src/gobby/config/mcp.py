@@ -1,8 +1,13 @@
 """
 MCP Configuration Manager for persistent server configuration.
 
-Manages MCP server configurations stored in ~/.gobby/.mcp.json,
+Manages MCP server configurations stored in ~/.gobby/mcp-servers.json,
 providing thread-safe read/write operations with validation.
+
+The file lived at ``~/.gobby/.mcp.json`` historically; that filename collides
+with Claude Code's project-level ``.mcp.json`` schema (Claude Code's
+``/doctor`` walks the tree and tries to parse it with a different schema).
+``migrate_legacy_mcp_config()`` moves the old file in place on first access.
 """
 
 import json
@@ -13,14 +18,57 @@ from typing import Any
 from gobby.mcp_proxy.manager import MCPServerConfig
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
-__all__ = ["MCPConfigManager", "MCPServerConfig"]
+__all__ = [
+    "DEFAULT_MCP_CONFIG_PATH",
+    "LEGACY_MCP_CONFIG_PATH",
+    "MCPConfigManager",
+    "MCPServerConfig",
+    "migrate_legacy_mcp_config",
+]
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MCP_CONFIG_PATH = "~/.gobby/mcp-servers.json"
+LEGACY_MCP_CONFIG_PATH = "~/.gobby/.mcp.json"
+
+
+def migrate_legacy_mcp_config(
+    new_path: str | Path = DEFAULT_MCP_CONFIG_PATH,
+    legacy_path: str | Path = LEGACY_MCP_CONFIG_PATH,
+) -> bool:
+    """Rename the legacy ``~/.gobby/.mcp.json`` to the new location.
+
+    Idempotent: returns ``True`` only when the legacy file existed and the new
+    file did not. If both exist we leave them alone (the new file wins) and
+    log a warning so the operator can clean up. If neither exists the call is
+    a no-op.
+    """
+    legacy = Path(legacy_path).expanduser()
+    new = Path(new_path).expanduser()
+
+    if not legacy.exists():
+        return False
+
+    if new.exists():
+        logger.warning(
+            "Both legacy MCP config %s and new %s exist; leaving legacy file in "
+            "place. Delete %s after confirming %s has the desired contents.",
+            legacy,
+            new,
+            legacy,
+            new,
+        )
+        return False
+
+    new.parent.mkdir(parents=True, exist_ok=True)
+    legacy.replace(new)
+    logger.info("Migrated MCP config %s -> %s", legacy, new)
+    return True
 
 
 class MCPConfigManager:
     """
-    Manages persistent MCP server configurations in ~/.gobby/.mcp.json.
+    Manages persistent MCP server configurations in ~/.gobby/mcp-servers.json.
 
     Provides thread-safe operations for reading, writing, adding, and removing
     MCP server configurations with automatic validation and file locking.
@@ -53,10 +101,11 @@ class MCPConfigManager:
         Initialize MCP configuration manager.
 
         Args:
-            config_path: Path to MCP config file (default: ~/.gobby/.mcp.json)
+            config_path: Path to MCP config file (default: ~/.gobby/mcp-servers.json)
         """
         if config_path is None:
-            config_path = "~/.gobby/.mcp.json"
+            migrate_legacy_mcp_config()
+            config_path = DEFAULT_MCP_CONFIG_PATH
 
         self.config_path = Path(config_path).expanduser()
 

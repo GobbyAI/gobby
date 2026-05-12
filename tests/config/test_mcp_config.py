@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.config.mcp import MCPConfigManager
+from gobby.config.mcp import MCPConfigManager, migrate_legacy_mcp_config
 from gobby.mcp_proxy.manager import MCPServerConfig
 
 pytestmark = pytest.mark.unit
@@ -51,11 +51,13 @@ class TestMCPConfigManagerInit:
 
     def test_init_with_default_path(self) -> None:
         """Test that init uses default path when not specified."""
-        with patch.object(Path, "expanduser", return_value=Path("/tmp/test/.gobby/.mcp.json")):
+        with patch.object(
+            Path, "expanduser", return_value=Path("/tmp/test/.gobby/mcp-servers.json")
+        ):
             with patch.object(Path, "mkdir"):
                 with patch.object(Path, "exists", return_value=True):
                     manager = MCPConfigManager()
-                    assert ".mcp.json" in str(manager.config_path)
+                    assert "mcp-servers.json" in str(manager.config_path)
 
 
 class TestMCPConfigManagerReadConfig:
@@ -511,3 +513,45 @@ class TestMCPConfigManagerListServers:
         names = manager.list_servers()
 
         assert names == ["server1", "server2", "server3"]
+
+
+class TestMigrateLegacyMcpConfig:
+    """Tests for migrate_legacy_mcp_config helper."""
+
+    def test_renames_legacy_when_new_missing(self, tmp_path) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text('{"servers": []}')
+
+        assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is True
+
+        assert not legacy.exists()
+        assert new.read_text() == '{"servers": []}'
+
+    def test_no_op_when_legacy_missing(self, tmp_path) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+
+        assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
+        assert not new.exists()
+
+    def test_no_op_when_both_exist(self, tmp_path) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text("legacy")
+        new.write_text("new")
+
+        assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
+
+        assert legacy.read_text() == "legacy"
+        assert new.read_text() == "new"
+
+    def test_creates_parent_directory(self, tmp_path) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "nested" / "mcp-servers.json"
+        legacy.write_text('{"servers": []}')
+
+        assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is True
+
+        assert new.parent.exists()
+        assert new.read_text() == '{"servers": []}'
