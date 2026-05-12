@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ActivityFilterFooter } from './ActivityFilterFooter'
+import { FilterCheckboxRow, FilterSection } from './FilterPrimitives'
 import type { StageRegistryEntry } from '../../lib/taskNormalization'
 import {
   DEFAULT_FILTERS,
@@ -80,79 +81,53 @@ export function TasksTabFilters({
         <div className="grid grid-cols-2 divide-x divide-border">
           {/* Left column: Stage list (single column, all stages) */}
           <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
-            <Section label="Stage">
+            <FilterSection label="Stage">
               {stages.length === 0 ? (
                 <EmptyHint>No stages available</EmptyHint>
               ) : (
                 <div className="flex flex-col gap-0.5 px-2 py-1">
-                  {stages.map((stage) => {
-                    const selected = draftStages.has(stage.name)
-                    return (
-                      <label
-                        key={stage.name}
-                        className={`flex min-w-0 items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-left cursor-pointer hover:bg-muted/50 ${
-                          selected ? 'text-foreground bg-muted/50' : 'text-muted-foreground'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="w-3 h-3"
-                          checked={selected}
-                          onChange={() => toggleDraftStage(stage.name)}
-                        />
+                  {stages.map((stage) => (
+                    <FilterCheckboxRow
+                      key={stage.name}
+                      label={stage.display_name}
+                      checked={draftStages.has(stage.name)}
+                      onToggle={() => toggleDraftStage(stage.name)}
+                      leading={
                         <span
                           className="w-1.5 h-1.5 rounded-full shrink-0"
                           style={{ backgroundColor: getStageStateColor(stage.state) }}
                           aria-hidden="true"
                         />
-                        <span className="truncate">{stage.display_name}</span>
-                      </label>
-                    )
-                  })}
+                      }
+                    />
+                  ))}
                 </div>
               )}
-            </Section>
+            </FilterSection>
           </div>
 
           {/* Right column: Stage state stacked above Status */}
           <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
-            <Section label="Stage state">
+            <FilterSection label="Stage state">
               <FilterCheckboxList
                 states={STAGE_STATE_FILTERS}
                 draftFilters={draftFilters}
                 onToggle={toggleDraftFilter}
               />
-            </Section>
-            <Section label="Status">
+            </FilterSection>
+            <FilterSection label="Status">
               <FilterCheckboxList
                 states={STATUS_FILTERS}
                 draftFilters={draftFilters}
                 onToggle={toggleDraftFilter}
               />
-            </Section>
+            </FilterSection>
           </div>
         </div>
 
         <ActivityFilterFooter onReset={handleReset} onApply={handleApply} />
       </div>
     </>
-  )
-}
-
-function Section({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-col gap-0.5 py-0.5">
-      <div className="px-2 py-1 text-[length:var(--text-sm)] font-medium uppercase tracking-wide text-muted-foreground/80">
-        {label}
-      </div>
-      {children}
-    </div>
   )
 }
 
@@ -174,23 +149,19 @@ function FilterCheckboxList({
   return (
     <div className="flex flex-col gap-0.5 px-2 py-1">
       {states.map((status) => (
-        <label
+        <FilterCheckboxRow
           key={status}
-          className="flex min-w-0 items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-muted-foreground cursor-pointer hover:bg-muted/50"
-        >
-          <input
-            type="checkbox"
-            className="w-3 h-3"
-            checked={draftFilters.has(status)}
-            onChange={() => onToggle(status)}
-          />
-          <span
-            className="w-1.5 h-1.5 rounded-full shrink-0"
-            style={{ backgroundColor: getTaskFilterColor(status) }}
-            aria-hidden="true"
-          />
-          <span className="truncate">{getTaskFilterLabel(status)}</span>
-        </label>
+          label={getTaskFilterLabel(status)}
+          checked={draftFilters.has(status)}
+          onToggle={() => onToggle(status)}
+          leading={
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: getTaskFilterColor(status) }}
+              aria-hidden="true"
+            />
+          }
+        />
       ))}
     </div>
   )
