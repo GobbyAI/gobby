@@ -1,0 +1,374 @@
+"""Transition engine for persisted task stage-state rows."""
+
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from collections.abc import Mapping, Sequence
+from typing import Literal
+
+from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
+from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
+from gobby.storage.tasks._stage_state_rows import StageStateRows
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError, StageState, StageState5
+from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
+
+logger = logging.getLogger(__name__)
+
+
+class StageStateTransitions:
+    def __init__(
+        self,
+        db: DatabaseProtocol,
+        events: TaskLifecycleEventManager,
+        rows: StageStateRows,
+        mutexes: StageStateMutexFactory,
+    ) -> None:
+        self.db = db
+        self.events = events
+        self.rows = rows
+        self.mutexes = mutexes
+
+    def transition(
+        self,
+        task_id: str,
+        stage_name: str,
+        verb: str,
+        *,
+        by_session_id: str | None,
+        notes: str | None = None,
+        reason: str | None = None,
+        needs_human: bool = False,
+        commit_sha: str | None = None,
+        artifact_updates: Mapping[str, str] | None = None,
+        validation_override_reason: str | None = None,
+        cited_subtasks: Sequence[str] | None = None,
+    ) -> StageState:
+        holder = by_session_id or "system"
+        snapshot = self.rows.current_stage(task_id)
+        with self.mutexes.mutex(
+            task_id,
+            holder,
+            f"{stage_name}:{verb}",
+            expected_stage=snapshot,
+        ):
+            current = self.rows.current_stage(task_id)
+            row = self.rows.get(task_id, stage_name)
+            if row is None:
+                raise ValueError(f"Stage '{stage_name}' is not in task manifest")
+            from_state = row.state
+            to_state, event_reason = self.transition_target(
+                row,
+                verb,
+                reason=reason,
+                validation_override_reason=validation_override_reason,
+            )
+            self.ensure_not_skipping(row, current, verb)
+
+            now = _now()
+            artifact_json = (
+                json.dumps(dict(artifact_updates), sort_keys=True)
+                if artifact_updates is not None
+                else row.artifact_refs and json.dumps(row.artifact_refs, sort_keys=True)
+            )
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET state = ?,
+                           entered_at = CASE WHEN ? = 'in_progress' THEN ? ELSE entered_at END,
+                           entered_by_session_id = CASE
+                               WHEN ? = 'in_progress' THEN ? ELSE entered_by_session_id
+                           END,
+                           completed_at = CASE WHEN ? = 'done' THEN ? ELSE completed_at END,
+                           completed_by_session_id = CASE
+                               WHEN ? = 'done' THEN ? ELSE completed_by_session_id
+                           END,
+                           completed_commit_sha = CASE
+                               WHEN ? = 'done' THEN ? ELSE completed_commit_sha
+                           END,
+                           work_attempt_count = work_attempt_count + ?,
+                           review_round_count = review_round_count + ?,
+                           artifact_refs = COALESCE(?, artifact_refs),
+                           notes = COALESCE(?, notes),
+                           updated_at = ?
+                     WHERE task_id = ? AND stage_name = ?
+                    """,
+                    (
+                        to_state,
+                        to_state,
+                        now,
+                        to_state,
+                        holder,
+                        to_state,
+                        now,
+                        to_state,
+                        holder,
+                        to_state,
+                        commit_sha,
+                        1 if verb == "start_stage" else 0,
+                        1 if verb == "reject_review" else 0,
+                        artifact_json,
+                        notes,
+                        now,
+                        task_id,
+                        stage_name,
+                    ),
+                )
+                self.events.record_lifecycle_event(
+                    task_id,
+                    f"{stage_name}:{from_state}",
+                    f"{stage_name}:{to_state}",
+                    event_reason,
+                    by_actor=holder,
+                )
+                if verb == "fail_stage" and stage_name == "holistic_qa" and cited_subtasks:
+                    self.reset_holistic_failure_targets(
+                        conn,
+                        task_id,
+                        tuple(cited_subtasks),
+                        now=now,
+                        holder=holder,
+                    )
+                if to_state == "done" and terminal_after_done(conn, task_id, stage_name):
+                    _close_task_in_txn(
+                        conn,
+                        task_id,
+                        db=self.db,
+                        reason="manifest_exhausted",
+                        commit_sha=commit_sha,
+                        closed_at=now,
+                        closed_in_session_id=by_session_id,
+                        cascade_descendants=stage_name == "merge",
+                        validation_override_reason=validation_override_reason,
+                    )
+            updated = self.rows.get(task_id, stage_name)
+            assert updated is not None
+            if verb == "reject_review" and updated.review_round_count >= self.effective_cap(
+                updated, "review"
+            ):
+                self.escalate_stage_failure(task_id, f"{stage_name}_review_failed:max")
+            if verb == "fail_stage" and updated.work_attempt_count >= self.effective_cap(
+                updated, "work"
+            ):
+                self.escalate_stage_failure(task_id, f"{stage_name}_work_failed:max")
+            if verb == "fail_stage" and needs_human:
+                self.escalate_stage_failure(
+                    task_id,
+                    f"{stage_name}_failed:{reason or 'needs_human'}",
+                )
+            return updated
+
+    def reset_holistic_failure_targets(
+        self,
+        conn: sqlite3.Connection,
+        task_id: str,
+        cited_subtasks: Sequence[str],
+        *,
+        now: str,
+        holder: str,
+    ) -> None:
+        cited_ids = tuple(dict.fromkeys(cited_subtasks))
+        if not cited_ids:
+            return
+        placeholders = ",".join("?" for _ in cited_ids)
+        rows = conn.execute(
+            f"""
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id FROM tasks WHERE parent_task_id = ?
+                UNION ALL
+                SELECT tasks.id
+                  FROM tasks
+                  JOIN subtree ON tasks.parent_task_id = subtree.id
+            )
+            SELECT id FROM subtree WHERE id IN ({placeholders})
+            """,  # nosec B608 # placeholder count is derived from cited_ids length.
+            (task_id, *cited_ids),
+        ).fetchall()
+        descendant_ids = {str(row["id"]) for row in rows}
+        missing = [cited_id for cited_id in cited_ids if cited_id not in descendant_ids]
+        if missing:
+            raise ValueError(
+                "holistic_qa cited_subtasks must be descendants of the reviewed epic: "
+                + ", ".join(missing)
+            )
+
+        self.reset_task_from_stage(conn, task_id, "development", now=now, holder=holder)
+        for cited_id in cited_ids:
+            self.reset_task_from_stage(conn, cited_id, "development", now=now, holder=holder)
+
+    def reset_task_from_stage(
+        self,
+        conn: sqlite3.Connection,
+        task_id: str,
+        stage_name: str,
+        *,
+        now: str,
+        holder: str,
+    ) -> None:
+        stages = conn.execute(
+            """
+            SELECT stage_name, position, state
+              FROM task_stage_states
+             WHERE task_id = ?
+             ORDER BY position, stage_name
+            """,
+            (task_id,),
+        ).fetchall()
+        if not stages:
+            return
+        reset_row = next((row for row in stages if row["stage_name"] == stage_name), None)
+        if reset_row is None:
+            reset_row = stages[0]
+        reset_position = int(reset_row["position"])
+
+        conn.execute(
+            """
+            UPDATE tasks
+               SET closed_at = NULL,
+                   closed_reason = NULL,
+                   closed_in_session_id = NULL,
+                   closed_commit_sha = NULL,
+                   escalated_at = NULL,
+                   escalation_reason = NULL,
+                   is_escalated = 0,
+                   assignee = NULL,
+                   claimed_by_session_id = NULL,
+                   validation_fail_count = 0,
+                   dispatch_failure_count = 0,
+                   updated_at = ?
+             WHERE id = ?
+            """,
+            (now, task_id),
+        )
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'ready',
+                   entered_at = NULL,
+                   entered_by_session_id = NULL,
+                   completed_at = NULL,
+                   completed_by_session_id = NULL,
+                   completed_commit_sha = NULL,
+                   artifact_refs = NULL,
+                   notes = NULL,
+                   updated_at = ?
+             WHERE task_id = ? AND position >= ?
+            """,
+            (now, task_id, reset_position),
+        )
+        for row in stages:
+            if int(row["position"]) < reset_position or row["state"] == "ready":
+                continue
+            self.events.record_lifecycle_event(
+                task_id,
+                f"{row['stage_name']}:{row['state']}",
+                f"{row['stage_name']}:ready",
+                "holistic_qa_failed:cited_subtask",
+                by_actor=holder,
+            )
+
+    def transition_target(
+        self,
+        row: StageState,
+        verb: str,
+        *,
+        reason: str | None,
+        validation_override_reason: str | None,
+    ) -> tuple[StageState5, str]:
+        if verb == "start_stage":
+            if row.state != "ready":
+                raise illegal(row, verb)
+            return "in_progress", "start_stage"
+        if verb == "submit_for_review":
+            if row.state != "in_progress" or row.review_policy == "none":
+                raise illegal(row, verb)
+            return "needs_review", "submit_for_review"
+        if verb == "approve_review":
+            if row.state != "needs_review" or row.review_policy == "none":
+                raise illegal(row, verb)
+            return "review_approved", "approve_review"
+        if verb == "reject_review":
+            if row.state != "needs_review" or row.review_policy == "none":
+                raise illegal(row, verb)
+            return "ready", "reject_review"
+        if verb == "complete_stage":
+            if row.state == "review_approved" and row.review_policy in {"required", "optional"}:
+                return "done", "complete_stage"
+            if row.state == "in_progress" and row.review_policy in {"none", "optional"}:
+                return "done", "complete_stage"
+            if (
+                row.state == "in_progress"
+                and row.review_policy == "required"
+                and validation_override_reason
+            ):
+                return "done", f"validation_override:{validation_override_reason}"
+            raise illegal(row, verb)
+        if verb == "fail_stage":
+            if row.state != "in_progress":
+                raise illegal(row, verb)
+            return "ready", "fail_stage"
+        raise ValueError(f"Unknown stage transition '{verb}'")
+
+    def ensure_not_skipping(
+        self,
+        row: StageState,
+        current: StageState | None,
+        verb: str,
+    ) -> None:
+        if verb == "start_stage" and (current is None or row.position != current.position):
+            raise illegal(row, verb)
+
+    def effective_cap(self, row: StageState, kind: Literal["work", "review"]) -> int:
+        registry = self.rows.registry_entry(row.stage_name)
+        if kind == "work":
+            return row.max_work_attempts or registry.default_max_work_attempts
+        return row.max_review_rounds or registry.default_max_review_rounds
+
+    def escalate_stage_failure(self, task_id: str, reason: str) -> None:
+        """Escalate a task for a stage failure, treating duplicate reasons as idempotent."""
+        from gobby.storage.tasks._transitions import escalate_task  # noqa: PLC0415
+
+        try:
+            escalate_task(self.db, task_id, reason=reason)
+        except ValueError:
+            row = self.db.fetchone(
+                "SELECT is_escalated, escalation_reason FROM tasks WHERE id = ?",
+                (task_id,),
+            )
+            if row is not None and bool(row["is_escalated"]) and row["escalation_reason"] == reason:
+                return
+            logger.exception("failed to escalate task %s after stage failure", task_id)
+            raise
+        except Exception:
+            logger.exception("failed to escalate task %s after stage failure", task_id)
+            raise
+
+
+def illegal(row: StageState, verb: str) -> IllegalStageTransitionError:
+    return IllegalStageTransitionError(
+        row.stage_name,
+        row.state,
+        verb,
+        row.review_policy,
+    )
+
+
+def terminal_after_done(
+    conn: sqlite3.Connection,
+    task_id: str,
+    stage_name: str,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+          FROM task_stage_states
+         WHERE task_id = ?
+           AND state != 'done'
+           AND stage_name != ?
+        """,
+        (task_id, stage_name),
+    ).fetchone()
+    return int(row["count"]) == 0
