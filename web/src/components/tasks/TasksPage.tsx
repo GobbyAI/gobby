@@ -637,7 +637,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
                   <table className={TABLE_CLS}>
                     <thead>
                       <tr>
-                        <th className={TH_CLS} style={{ width: 28 }}></th>
+                        <th className={TH_CLS} style={{ width: 28 }} aria-label="Select"></th>
                         <th className={cn(TH_CLS, TH_SORTABLE_CLS)} style={{ width: 64 }} onClick={() => handleSort('ref')}>Ref <SortArrow column="ref" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                         <th className={cn(TH_CLS, TH_SORTABLE_CLS)} onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                         <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_TYPE_HIDE_CLS)} style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
@@ -658,7 +658,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className={TH_CLS} style={{ width: 28 }}></th>
+                  <th className={TH_CLS} style={{ width: 28 }} aria-label="Select"></th>
                   <th className={cn(TH_CLS, TH_SORTABLE_CLS)} style={{ width: 64 }} onClick={() => handleSort('ref')}>Ref <SortArrow column="ref" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                   <th className={cn(TH_CLS, TH_SORTABLE_CLS)} onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                   <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_TYPE_HIDE_CLS)} style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>

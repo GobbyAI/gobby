@@ -282,6 +282,7 @@ export function SkillsPage() {
               className={cn(VIEW_BTN_CLS, activeTab === 'installed' && VIEW_BTN_ACTIVE_CLS)}
               onClick={() => setActiveTab('installed')}
               title="Library"
+              aria-label="Library view"
             >
               <LibraryIcon />
             </button>
@@ -289,16 +290,17 @@ export function SkillsPage() {
               className={cn(VIEW_BTN_CLS, activeTab === 'hub' && VIEW_BTN_ACTIVE_CLS)}
               onClick={() => setActiveTab('hub')}
               title="Hub Browser"
+              aria-label="Hub browser view"
             >
               <HubIcon />
             </button>
           </div>
           {activeTab === 'installed' && (
             <>
-              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={() => setShowImport(true)} title="Import">
+              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={() => setShowImport(true)} title="Import" aria-label="Import skill">
                 <ImportIcon />
               </button>
-              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={handleRestore} title="Restore Defaults">
+              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={handleRestore} title="Restore Defaults" aria-label="Restore default skills">
                 <RestoreIcon />
               </button>
               <button className={WORKFLOWS_NEW_BTN_CLS} onClick={handleCreate}>+ New</button>

@@ -218,6 +218,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
               className={`${WORKFLOWS_FILTER_ICON_BTN_CLS} ${activeFilterCount > 0 ? WORKFLOWS_FILTER_ICON_BTN_ACTIVE_CLS : ""}`}
               onClick={() => setShowFilterPopover((v) => !v)}
               title="Filter"
+              aria-label="Filter workflows"
             >
               <svg
                 width="16"

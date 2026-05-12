@@ -399,7 +399,7 @@ export function ReportsPage({
                 <table className={TABLE_CLS}>
                   <thead>
                     <tr>
-                      <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
+                      <th className={TH_BASE_CLS} style={{ width: 28 }} aria-label="Select"></th>
                       <PipelineHeaders
                         onSort={handlePipelineSort}
                         sortCol={pipelineSortCol}
@@ -424,7 +424,7 @@ export function ReportsPage({
             <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
+                  <th className={TH_BASE_CLS} style={{ width: 28 }} aria-label="Select"></th>
                   <PipelineHeaders
                     onSort={handlePipelineSort}
                     sortCol={pipelineSortCol}
@@ -457,7 +457,7 @@ export function ReportsPage({
                 <table className={TABLE_CLS}>
                   <thead>
                     <tr>
-                      <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
+                      <th className={TH_BASE_CLS} style={{ width: 28 }} aria-label="Select"></th>
                       <AgentHeaders
                         onSort={handleAgentSort}
                         sortCol={agentSortCol}
@@ -482,7 +482,7 @@ export function ReportsPage({
             <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
+                  <th className={TH_BASE_CLS} style={{ width: 28 }} aria-label="Select"></th>
                   <AgentHeaders
                     onSort={handleAgentSort}
                     sortCol={agentSortCol}

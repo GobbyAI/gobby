@@ -189,6 +189,7 @@ export function PermissionOverrides({ taskId }: PermissionOverridesProps) {
                         className={TOGGLE_CLS}
                         onClick={() => toggleRule(rule.id)}
                         title={enabled ? 'Disable' : 'Enable'}
+                        aria-label={`${enabled ? 'Disable' : 'Enable'} ${rule.label}`}
                         role="switch"
                         aria-checked={enabled}
                       >
