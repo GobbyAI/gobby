@@ -247,7 +247,7 @@ class ChatMessagingMixin:
             start_voice_warmup = getattr(self, "start_voice_warmup", None)
             if tts_enabled and callable(start_voice_warmup):
                 try:
-                    start_voice_warmup()
+                    start_voice_warmup(want_stt=False, want_tts=True)
                 except Exception:
                     logger.debug("TTS warmup start from chat intent failed", exc_info=True)
 

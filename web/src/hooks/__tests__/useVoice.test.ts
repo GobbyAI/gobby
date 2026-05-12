@@ -244,6 +244,43 @@ describe('useVoice', () => {
         expect.objectContaining({ type: 'voice_mode_toggle', conversation_id: 'conv-1', enabled: true }),
       ]))
     })
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status?want_stt=true&want_tts=true')
+  })
+
+  it('scopes mic-only warmup and status polling to STT', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    renderHook(() => useVoice(
+      wsRef as any,
+      'conv-stt-only',
+      0,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await waitFor(() => {
+      const payloads = wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))
+      expect(payloads).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'voice_prepare',
+          conversation_id: 'conv-stt-only',
+          stt_enabled: true,
+          tts_enabled: false,
+        }),
+      ]))
+    })
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status?want_stt=true&want_tts=false')
   })
 
   it('records PTT audio and sends WAV using the actual capture sample rate', async () => {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Query, UploadFile
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -25,11 +25,19 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/api/voice", tags=["voice"])
 
     @router.get("/status")
-    async def voice_status() -> dict[str, Any]:
+    async def voice_status(
+        want_stt: bool | None = Query(default=None),
+        want_tts: bool | None = Query(default=None),
+    ) -> dict[str, Any]:
         """Check voice feature availability."""
         ws_server = server.services.websocket_server or server.websocket_server
         if ws_server and hasattr(ws_server, "get_voice_status"):
-            return ws_server.get_voice_status()
+            if want_stt is None and want_tts is None:
+                return ws_server.get_voice_status()
+            return ws_server.get_voice_status(
+                want_stt=bool(want_stt),
+                want_tts=bool(want_tts),
+            )
 
         config = server.config
         if not config or not hasattr(config, "voice"):

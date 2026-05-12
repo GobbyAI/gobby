@@ -60,12 +60,17 @@ class TestVoiceWarmup:
         assert mixin._voice_warmup_task is None
 
     @pytest.mark.asyncio
-    async def test_voice_mode_enable_starts_warmup(self) -> None:
-        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+    async def test_voice_mode_enable_starts_tts_warmup_only(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 
+        mock_stt = MagicMock()
+        mock_stt.is_available = True
+        mock_stt.warmup = AsyncMock()
         mock_tts = MagicMock()
         mock_tts.warmup = AsyncMock()
+        mixin._get_stt = MagicMock(return_value=mock_stt)
         mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_stt_availability = MagicMock(return_value=(True, ""))
         mixin._get_tts_availability = MagicMock(return_value=(True, ""))
         websocket = SimpleNamespace(send=AsyncMock())
 
@@ -82,7 +87,9 @@ class TestVoiceWarmup:
         assert payload["voice_loading"] is True
 
         await mixin._voice_warmup_task
+        mock_stt.warmup.assert_not_awaited()
         mock_tts.warmup.assert_awaited_once()
+        assert mixin._stt_warmup_status == "idle"
         assert mixin._tts_warmup_status == "ready"
 
     @pytest.mark.asyncio
@@ -107,6 +114,113 @@ class TestVoiceWarmup:
 
         assert mixin._voice_warmup_task is not None
         await mixin._voice_warmup_task
+
+    @pytest.mark.asyncio
+    async def test_voice_prepare_stt_only_does_not_warm_tts(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+
+        mock_stt = MagicMock()
+        mock_stt.is_available = True
+        mock_stt.warmup = AsyncMock()
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock()
+        mixin._get_stt = MagicMock(return_value=mock_stt)
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_stt_availability = MagicMock(return_value=(True, ""))
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_prepare(
+            websocket,
+            {"conversation_id": "conv-1", "stt_enabled": True, "tts_enabled": False},
+        )
+
+        assert "conv-1" not in mixin._voice_enabled
+        payload = json.loads(websocket.send.await_args.args[0])
+        assert payload["status"] == "preparing"
+        assert payload["voice_loading"] is True
+        assert payload["tts_warmup_status"] == "idle"
+
+        assert mixin._voice_warmup_task is not None
+        await mixin._voice_warmup_task
+
+        mock_stt.warmup.assert_awaited_once()
+        mock_tts.warmup.assert_not_awaited()
+        assert mixin._stt_warmup_status == "ready"
+        assert mixin._tts_warmup_status == "idle"
+
+        status = mixin.get_voice_status(want_stt=True, want_tts=False)
+        assert status["voice_ready"] is True
+        assert status["voice_loading"] is False
+
+    @pytest.mark.asyncio
+    async def test_voice_prepare_tts_only_does_not_warm_stt(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+
+        mock_stt = MagicMock()
+        mock_stt.is_available = True
+        mock_stt.warmup = AsyncMock()
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock()
+        mixin._get_stt = MagicMock(return_value=mock_stt)
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_stt_availability = MagicMock(return_value=(True, ""))
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_prepare(
+            websocket,
+            {"conversation_id": "conv-1", "stt_enabled": False, "tts_enabled": True},
+        )
+
+        assert mixin._voice_enabled["conv-1"] is True
+        assert mixin._voice_warmup_task is not None
+        await mixin._voice_warmup_task
+
+        mock_stt.warmup.assert_not_awaited()
+        mock_tts.warmup.assert_awaited_once()
+        assert mixin._stt_warmup_status == "idle"
+        assert mixin._tts_warmup_status == "ready"
+
+    @pytest.mark.asyncio
+    async def test_voice_prepare_without_targets_preserves_config_warmup(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+
+        mock_stt = MagicMock()
+        mock_stt.is_available = True
+        mock_stt.warmup = AsyncMock()
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock()
+        mixin._get_stt = MagicMock(return_value=mock_stt)
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_stt_availability = MagicMock(return_value=(True, ""))
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_prepare(websocket, {"conversation_id": "conv-1"})
+
+        assert mixin._voice_warmup_task is not None
+        await mixin._voice_warmup_task
+
+        mock_stt.warmup.assert_awaited_once()
+        mock_tts.warmup.assert_awaited_once()
+
+    def test_scoped_status_ignores_unrequested_tts_state(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+        mixin._stt_warmup_status = "ready"
+        mixin._tts_warmup_status = "loading"
+        mixin._tts_warmup_error = "reference audio invalid"
+        mixin._get_stt_availability = MagicMock(return_value=(True, ""))
+
+        scoped = mixin.get_voice_status(want_stt=True, want_tts=False)
+        assert scoped["voice_ready"] is True
+        assert scoped["voice_loading"] is False
+        assert scoped["tts_warmup_error"] == ""
+
+        global_status = mixin.get_voice_status()
+        assert global_status["voice_ready"] is False
+        assert global_status["voice_loading"] is True
+        assert global_status["tts_warmup_error"] == "reference audio invalid"
 
     @pytest.mark.asyncio
     async def test_start_voice_warmup_records_failures(self) -> None:

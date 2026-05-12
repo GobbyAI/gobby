@@ -197,7 +197,7 @@ class TestHandleChatMessage:
         await mixin._active_chat_tasks["c1"]
 
         assert mixin._voice_enabled["c1"] is True
-        mixin.start_voice_warmup.assert_called_once()
+        mixin.start_voice_warmup.assert_called_once_with(want_stt=False, want_tts=True)
         assert mixin._created_tts_pipelines == 1
         assert mixin._last_tts_pipeline is not None
         mixin._last_tts_pipeline.feed_text.assert_called_once_with("spoken response.")

@@ -152,7 +152,9 @@ def _reconcile_session_activation(
         sv_mgr.merge_variables(session_id, updates)
         variables = {**variables, **updates}
 
-    unresolved = tuple(dict.fromkeys(_missing_agent_keys(variables) + _missing_marker_keys(variables)))
+    unresolved = tuple(
+        dict.fromkeys(_missing_agent_keys(variables) + _missing_marker_keys(variables))
+    )
     if unresolved:
         log.warning(
             "Session activation reconciliation left unresolved invariants for %s: %s",
@@ -205,7 +207,7 @@ def _marker_updates(variables: dict[str, Any]) -> dict[str, Any]:
 
 def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str, Any]:
     spawned = bool(getattr(session, "agent_run_id", None) or getattr(session, "agent_depth", 0))
-    defaults = {
+    defaults: dict[str, Any] = {
         "_agent_type": "default",
         "_active_rule_names": None,
         "_active_skill_names": None,
@@ -390,7 +392,11 @@ def _missing_step_workflow(
 
     step_name = variables.get("_step_workflow_name")
     if not isinstance(step_name, str) or not step_name:
-        if agent_run and agent_run.agent_name and _workflow_definition_exists(db, agent_run.agent_name):
+        if (
+            agent_run
+            and agent_run.agent_name
+            and _workflow_definition_exists(db, agent_run.agent_name)
+        ):
             return [f"{agent_run.agent_name}-steps"]
         return []
 
