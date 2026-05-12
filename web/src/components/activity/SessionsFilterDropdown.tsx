@@ -347,7 +347,7 @@ function RefRangeInputs({
   ariaLabelPrefix: string;
 }) {
   const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
-  const inputClassName = `w-20 px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
+  const inputClassName = `w-[4.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
     isInvalid
       ? "border-[var(--color-error)] focus:border-[var(--color-error)]"
       : "border-border focus:border-accent"
