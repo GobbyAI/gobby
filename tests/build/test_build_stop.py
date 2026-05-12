@@ -59,7 +59,7 @@ def test_in_flight_agents_unaffected(monkeypatch: pytest.MonkeyPatch, temp_db) -
 
 @pytest.mark.asyncio
 async def test_kick_no_op_when_dispatcher_disabled() -> None:
-    from gobby.build.service import _kick_dispatcher_tick
+    from gobby.build.lifecycle import _kick_dispatcher_tick
 
     summary = await _kick_dispatcher_tick(dispatcher_enabled=False)
 
@@ -69,7 +69,7 @@ async def test_kick_no_op_when_dispatcher_disabled() -> None:
 
 @pytest.mark.asyncio
 async def test_kick_fires_when_dispatcher_enabled() -> None:
-    from gobby.build.service import _kick_dispatcher_tick
+    from gobby.build.lifecycle import _kick_dispatcher_tick
 
     summary = await _kick_dispatcher_tick(dispatcher_enabled=True)
 

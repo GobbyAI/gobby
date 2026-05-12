@@ -60,7 +60,7 @@ async def test_target_branch_none_resolves_to_head_on_plan_or_epic_build(
 async def test_explicit_target_branch_validated(
     monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
 ) -> None:
-    from gobby.build.service import _validate_target_branch
+    from gobby.build.target_branch import _validate_target_branch
 
     project_id, repo_path = _project(temp_db, tmp_path)
     (repo_path / ".git").mkdir()
