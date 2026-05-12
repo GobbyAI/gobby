@@ -43,17 +43,36 @@ def _project(temp_db, tmp_path: Path) -> tuple[str, Path]:
 
 
 @pytest.mark.asyncio
-async def test_target_branch_none_resolves_to_head_on_plan_or_epic_build(
-    temp_db, tmp_path: Path
+async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(
+    monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
+    project_id, repo_path = _project(temp_db, tmp_path)
+    (repo_path / ".git").mkdir()
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n", encoding="utf-8")
+
+    async def fake_exec(*_args: str, **_kwargs: object) -> object:
+        return _Proc(stdout=b"feature-cleanup\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
     result = await _build(str(plan_file), _options(), db=temp_db, project_id=project_id)
 
     artifacts = LocalTaskManager(temp_db).artifacts.get_artifacts(result.task_id)
-    assert artifacts.target_branch
+    assert artifacts.target_branch == "feature-cleanup"
+
+
+@pytest.mark.asyncio
+async def test_current_target_branch_returns_none_without_project_repo_or_git(
+    temp_db, tmp_path: Path
+) -> None:
+    from gobby.build.target_branch import _current_target_branch
+
+    assert await _current_target_branch(temp_db, "missing-project") is None
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+
+    assert await _current_target_branch(temp_db, project_id) is None
 
 
 @pytest.mark.asyncio
@@ -141,6 +160,13 @@ def test_target_branch_flag_maps_to_build_options() -> None:
 
     params = {param.name for param in build_command.params}
     assert "target_branch" in params
+
+
+def test_clone_isolation_requires_existing_clones_dir(tmp_path: Path) -> None:
+    from gobby.build.validation import _validate_clones_dir
+
+    with pytest.raises(ValueError, match="clones_dir must exist and be a directory"):
+        _validate_clones_dir(_options(isolation="clone", clones_dir=tmp_path / "missing"))
 
 
 class _Proc:

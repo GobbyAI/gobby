@@ -4,9 +4,13 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
-from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.git_utils import DirtyFiles
-from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.hooks import (
+    _NO_REPO_SYSTEM_PROJECTS,
+    WorkflowHookHandler,
+    _is_known_no_repo_project,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -273,6 +277,22 @@ class TestProjectPathResolution:
 
         assert "no project_path resolved" not in caplog.text
         mock_run.assert_not_called()
+
+    def test_no_repo_project_ids_include_constants_and_legacy_literals(self) -> None:
+        expected = {
+            PERSONAL_PROJECT_ID,
+            GLOBAL_PROJECT_ID,
+            ORPHANED_PROJECT_ID,
+            "_personal",
+            "_global",
+            "_orphaned",
+            "_migrated",
+        }
+
+        assert expected <= _NO_REPO_SYSTEM_PROJECTS
+        assert len(_NO_REPO_SYSTEM_PROJECTS) == len(set(_NO_REPO_SYSTEM_PROJECTS))
+        for project_id in expected:
+            assert _is_known_no_repo_project(project_id)
 
     @pytest.mark.asyncio
     async def test_unexpected_missing_project_path_still_warns(

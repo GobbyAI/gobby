@@ -284,7 +284,22 @@ describe('useVoice', () => {
         }),
       ]))
     })
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status?want_stt=true&want_tts=false')
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status?want_stt=true')
+  })
+
+  it('omits disabled voice targets from status polling', async () => {
+    renderHook(() => useVoice(
+      wsRef as any,
+      'conv-no-voice',
+      0,
+      projectIdRef,
+      { sttEnabled: false, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status')
+    })
   })
 
   it('records PTT audio and sends WAV using the actual capture sample rate', async () => {

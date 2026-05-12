@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_utils import _now
+
+_SQLITE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class StageStateSchema:
@@ -146,4 +150,9 @@ class StageStateSchema:
             )
 
     def columns(self, table_name: str) -> set[str]:
-        return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
+        if not _SQLITE_IDENTIFIER_RE.fullmatch(table_name):
+            raise ValueError(f"Invalid table name: {table_name!r}")
+        return {
+            row["name"]
+            for row in self.db.fetchall(f"PRAGMA table_info({table_name})")  # nosec B608
+        }

@@ -69,9 +69,11 @@ async def _validate_target_branch(
 
 async def _current_target_branch(db: DatabaseProtocol, project_id: str) -> str | None:
     project = LocalProjectManager(db).get(project_id)
-    repo_path = Path(project.repo_path) if project is not None and project.repo_path else Path.cwd()
+    if project is None or project.repo_path is None:
+        return None
+    repo_path = Path(project.repo_path)
     if not (repo_path / ".git").exists():
-        repo_path = Path.cwd()
+        return None
 
     proc = await asyncio.create_subprocess_exec(
         "git",

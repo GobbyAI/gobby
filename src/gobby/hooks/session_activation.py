@@ -42,6 +42,7 @@ _AGENT_KEYS = (
     "_agent_blocked_mcp_tools",
     "is_spawned_agent",
 )
+_AGENT_RUN_ROW_KEYS = ("id", "workflow_name", "agent_name", "prompt")
 
 
 @dataclass(frozen=True)
@@ -289,11 +290,23 @@ def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunReco
 def _agent_run_from_row(row: Any) -> _AgentRunRecovery | None:
     if not row:
         return None
+    try:
+        values = dict(row)
+    except (TypeError, ValueError):
+        try:
+            values = {key: row[key] for key in _AGENT_RUN_ROW_KEYS}
+        except (KeyError, IndexError, TypeError):
+            return None
+    if any(key not in values for key in _AGENT_RUN_ROW_KEYS):
+        return None
+    run_id = values["id"]
+    if not isinstance(run_id, str) or not run_id:
+        return None
     return _AgentRunRecovery(
-        id=row["id"],
-        workflow_name=row["workflow_name"],
-        agent_name=row["agent_name"],
-        prompt=row["prompt"],
+        id=run_id,
+        workflow_name=values["workflow_name"],
+        agent_name=values["agent_name"],
+        prompt=values["prompt"],
     )
 
 

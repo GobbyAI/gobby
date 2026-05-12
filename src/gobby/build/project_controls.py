@@ -38,13 +38,15 @@ def _set_dispatcher_enabled(
     job = install_dispatcher_cron_row(db, project_id=project_id)
     next_run = compute_next_run(replace(job, enabled=True)) if enabled else None
     storage = CronJobStorage(db)
-    updated = storage.update_job(job.id, enabled=enabled)
-    if updated is None:
-        raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
-    updated = storage.update_system_job_bookkeeping(
-        job.id,
-        next_run_at=next_run.isoformat() if next_run else None,
-    )
+    updated = None
+    with db.transaction():
+        updated = storage.update_job(job.id, enabled=enabled)
+        if updated is None:
+            raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
+        updated = storage.update_system_job_bookkeeping(
+            job.id,
+            next_run_at=next_run.isoformat() if next_run else None,
+        )
     if updated is None:
         raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
 
@@ -73,33 +75,35 @@ def _record_project_build_event(
     reason: str,
     by_actor: str,
 ) -> BuildLifecycleEvent:
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS project_lifecycle_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            event TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            by_actor TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    db.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_project_lifecycle_events_project
-            ON project_lifecycle_events (project_id, created_at)
-        """
-    )
     created_at = datetime.now(UTC).isoformat()
-    cursor = db.execute(
-        """
-        INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (project_id, event, reason, by_actor, created_at),
-    )
-    event_id = cursor.lastrowid
+    event_id: int | None = None
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_lifecycle_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                event TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                by_actor TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_project_lifecycle_events_project
+                ON project_lifecycle_events (project_id, created_at)
+            """
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (project_id, event, reason, by_actor, created_at),
+        )
+        event_id = cursor.lastrowid
     if event_id is None:
         raise RuntimeError("SQLite did not return a project lifecycle event id")
     return BuildLifecycleEvent(

@@ -159,7 +159,7 @@ def _insert_before_merge(manifest: list[str], stage_name: str) -> None:
     manifest.append(stage_name)
 
 
-def _stage_state_specs(
+def stage_state_specs(
     task_manager: LocalTaskManager,
     task_id: str,
 ) -> list[StageManifestSpec]:
@@ -190,7 +190,7 @@ def _canonical_stage_name_or_none(stage_name: str) -> str | None:
     return _LEGACY_STAGE_ALIASES.get(normalized, normalized)
 
 
-def _specs_payload(specs: list[StageManifestSpec]) -> list[dict[str, str | int | None]]:
+def specs_payload(specs: list[StageManifestSpec]) -> list[dict[str, str | int | None]]:
     return [asdict(spec) for spec in specs]
 
 
@@ -198,4 +198,6 @@ __all__ = [
     "AUTOMATED_LEAF_CATEGORIES",
     "InputKind",
     "resolve_stage_manifest_specs",
+    "specs_payload",
+    "stage_state_specs",
 ]

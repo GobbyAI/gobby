@@ -71,6 +71,13 @@ def test_stage_states_manager_exposes_reads_writes_and_models(temp_db) -> None:
         assert callable(getattr(manager, method_name))
 
 
+def test_stage_state_schema_rejects_invalid_table_name(temp_db) -> None:
+    manager = LocalTaskManager(temp_db).stage_states
+
+    with pytest.raises(ValueError, match="Invalid table name"):
+        manager._schema.columns("task_stage_states); DROP TABLE tasks; --")
+
+
 def test_initialize_manifest_mirrors_registry_policy_and_current_stage(
     temp_db,
     sample_project,

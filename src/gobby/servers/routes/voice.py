@@ -35,8 +35,8 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             if want_stt is None and want_tts is None:
                 return ws_server.get_voice_status()
             return ws_server.get_voice_status(
-                want_stt=bool(want_stt),
-                want_tts=bool(want_tts),
+                want_stt=want_stt,
+                want_tts=want_tts,
             )
 
         config = server.config

@@ -15,10 +15,10 @@ from gobby.build.stage_manifest import (
     AUTOMATED_LEAF_CATEGORIES,
     InputKind,
     _canonical_stage_name,
-    _specs_payload,
-    _stage_state_specs,
     _validate_skip_stages,
     resolve_stage_manifest_specs,
+    specs_payload,
+    stage_state_specs,
 )
 from gobby.build.target_branch import (
     _cascade_target_branch_to_subtree,
@@ -43,6 +43,13 @@ from gobby.storage.tasks import (
     ManifestAlreadyInitializedError,
     StageManifestSpec,
     Task,
+)
+
+_STAGE_CAP_UPDATE_ASSIGNMENTS = frozenset(
+    {
+        "max_work_attempts = ?",
+        "max_review_rounds = ?",
+    }
 )
 
 
@@ -165,7 +172,7 @@ async def _build_plan_file(
         applied_stages_skipped=skip_stages,
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
-        manifest=_specs_payload(specs),
+        manifest=specs_payload(specs),
     )
 
 
@@ -217,7 +224,7 @@ async def _build_leaf(
         applied_stages_skipped=skip_stages,
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
-        manifest=_specs_payload(specs),
+        manifest=specs_payload(specs),
     )
 
 
@@ -291,7 +298,7 @@ async def _build_epic(
         applied_stages_skipped=skip_stages,
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
-        manifest=_specs_payload(specs),
+        manifest=specs_payload(specs),
     )
 
 
@@ -367,7 +374,7 @@ async def _resume_existing_lifecycle(
             services=services,
             base_branch_override=target_branch,
         )
-    specs = _stage_state_specs(task_manager, task.id)
+    specs = stage_state_specs(task_manager, task.id)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
     tick = await _kick_dispatcher_tick(
@@ -387,7 +394,7 @@ async def _resume_existing_lifecycle(
         applied_stages_skipped=[],
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
-        manifest=_specs_payload(specs),
+        manifest=specs_payload(specs),
     )
 
 
@@ -428,6 +435,10 @@ def _apply_stage_caps_to_existing_lifecycle(
             params.append(max_review_rounds)
         if not updates:
             continue
+        # The dynamic SET clause is limited to hardcoded assignments above.
+        invalid_updates = set(updates) - _STAGE_CAP_UPDATE_ASSIGNMENTS
+        if invalid_updates:
+            raise ValueError(f"invalid stage cap update: {sorted(invalid_updates)[0]}")
         params.extend([task_id, stage_name])
         task_manager.db.execute(
             f"""
@@ -488,6 +499,8 @@ def _current_stage_name(
     current = task_manager.stage_states.current_stage(task_id)
     if current is not None:
         return current.stage_name
+    if not specs:
+        raise ValueError(f"stage manifest is empty for task {task_id}")
     return min(specs, key=lambda spec: spec.position).stage_name
 
 

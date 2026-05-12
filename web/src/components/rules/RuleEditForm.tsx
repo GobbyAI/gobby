@@ -373,7 +373,7 @@ export function RuleEditForm({
                 {tagSuggestions.length > 0 && (
                   <datalist id={tagListId}>
                     {tagSuggestions.map((t) => (
-                      <option key={t} value={t} aria-label={t} />
+                      <option key={t} value={t}>{t}</option>
                     ))}
                   </datalist>
                 )}

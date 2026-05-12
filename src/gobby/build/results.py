@@ -19,6 +19,7 @@ class BuildResult:
 
     @property
     def stage_manifest(self) -> list[dict[str, str | int | None]] | None:
+        """Intentionally alias ``manifest`` for compatibility."""
         return self.manifest
 
 

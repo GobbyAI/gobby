@@ -18,6 +18,7 @@ from gobby.hooks.session_activation import (
     MARKER_VERSION,
     SESSION_ACTIVATION_CONTRACT_HASH,
     SESSION_ACTIVATION_CONTRACT_VERSION,
+    _agent_run_from_row,
     reconcile_session_activation,
 )
 from gobby.storage.agents import LocalAgentRunManager
@@ -322,6 +323,10 @@ def test_terminal_pickup_metadata_backfills_from_agent_runs(
     assert session.original_prompt == "do the work"
 
 
+def test_agent_run_from_row_returns_none_when_required_keys_are_missing() -> None:
+    assert _agent_run_from_row({"id": "run-worker"}) is None
+
+
 def test_hook_manager_reconciles_before_before_agent_rules() -> None:
     components = MagicMock()
     for name in (
@@ -361,9 +366,9 @@ def test_hook_manager_reconciles_before_before_agent_rules() -> None:
         side_effect=lambda event: call_order.append("handler") or HookResponse(decision="allow")
     )
     components.event_handlers.get_handler.return_value = handler
-    components.workflow_handler.handle.side_effect = (
-        lambda event: call_order.append("rules") or HookResponse(decision="allow")
-    )
+    components.workflow_handler.handle.side_effect = lambda event: call_order.append(
+        "rules"
+    ) or HookResponse(decision="allow")
 
     event = HookEvent(
         event_type=HookEventType.BEFORE_AGENT,

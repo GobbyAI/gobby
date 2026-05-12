@@ -17,6 +17,10 @@ def _validate_no_merge(opts: BuildOptions) -> None:
 def _validate_clones_dir(opts: BuildOptions) -> None:
     if opts.isolation != "clone" or opts.clones_dir is None:
         return
+    if not opts.clones_dir.exists() or not opts.clones_dir.is_dir():
+        raise ValueError(
+            f"clones_dir must exist and be a directory for clone isolation: {opts.clones_dir}"
+        )
     if not os.access(opts.clones_dir, os.W_OK):
         raise ValueError(f"clones_dir must be writable for clone isolation: {opts.clones_dir}")
 
