@@ -103,6 +103,11 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         templates = get_workflow_templates()
         return {"status": "success", "templates": templates, "count": len(templates)}
 
+    @router.post("/install-all-templates")
+    async def install_all_templates_removed() -> None:
+        """Legacy workflow template install route tombstone."""
+        raise HTTPException(status_code=404, detail="Workflow template install route removed")
+
     @router.get("")
     async def list_workflows(
         workflow_type: str | None = Query(None),

@@ -289,8 +289,7 @@ class TestProjectPathResolution:
             "_migrated",
         }
 
-        assert expected <= _NO_REPO_SYSTEM_PROJECTS
-        assert len(_NO_REPO_SYSTEM_PROJECTS) == len(set(_NO_REPO_SYSTEM_PROJECTS))
+        assert _NO_REPO_SYSTEM_PROJECTS == expected
         for project_id in expected:
             assert _is_known_no_repo_project(project_id)
 

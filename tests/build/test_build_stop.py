@@ -31,6 +31,30 @@ def test_resume_enables_dispatcher_cron(temp_db) -> None:
     assert CronJobStorage(temp_db).get_job_by_name(DISPATCHER_CRON_JOB_NAME).enabled is True
 
 
+def test_stop_rolls_back_when_dispatcher_bookkeeping_update_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+) -> None:
+    from gobby.build.service import build_stop
+    from gobby.runner import DISPATCHER_CRON_JOB_NAME, install_dispatcher_cron_row
+    from gobby.storage.cron import CronJobStorage
+
+    job = install_dispatcher_cron_row(temp_db, project_id="project-1")
+    assert job.enabled is True
+    monkeypatch.setattr(
+        CronJobStorage,
+        "update_system_job_bookkeeping",
+        lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(RuntimeError, match="Dispatcher cron row disappeared"):
+        build_stop(db=temp_db, project_id="project-1")
+
+    persisted = CronJobStorage(temp_db).get_job_by_name(DISPATCHER_CRON_JOB_NAME)
+    assert persisted is not None
+    assert persisted.enabled is True
+
+
 def test_lifecycle_event_appended(temp_db) -> None:
     from gobby.build.service import build_stop
 

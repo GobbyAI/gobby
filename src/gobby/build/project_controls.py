@@ -47,8 +47,8 @@ def _set_dispatcher_enabled(
             job.id,
             next_run_at=next_run.isoformat() if next_run else None,
         )
-    if updated is None:
-        raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
+        if updated is None:
+            raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
 
     event_name = "build_resume" if enabled else "build_stop"
     reason = "gobby build resume" if enabled else "gobby build stop"
@@ -78,24 +78,6 @@ def _record_project_build_event(
     created_at = datetime.now(UTC).isoformat()
     event_id: int | None = None
     with db.transaction() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS project_lifecycle_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                event TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                by_actor TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_project_lifecycle_events_project
-                ON project_lifecycle_events (project_id, created_at)
-            """
-        )
         cursor = conn.execute(
             """
             INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)

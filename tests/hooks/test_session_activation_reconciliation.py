@@ -327,6 +327,41 @@ def test_agent_run_from_row_returns_none_when_required_keys_are_missing() -> Non
     assert _agent_run_from_row({"id": "run-worker"}) is None
 
 
+def test_agent_run_from_row_rejects_malformed_required_fields() -> None:
+    valid_nullable_fields = {"workflow_name": None, "agent_name": None, "prompt": None}
+
+    assert _agent_run_from_row({"id": "", **valid_nullable_fields}) is None
+    assert _agent_run_from_row({"id": 123, **valid_nullable_fields}) is None
+    assert (
+        _agent_run_from_row(
+            {
+                "id": "run-worker",
+                "workflow_name": "worker-flow",
+                "agent_name": 123,
+                "prompt": "do the work",
+            }
+        )
+        is None
+    )
+
+
+def test_agent_run_from_row_returns_recovery_for_valid_row() -> None:
+    recovery = _agent_run_from_row(
+        {
+            "id": "run-worker",
+            "workflow_name": "worker-flow",
+            "agent_name": "worker",
+            "prompt": "do the work",
+        }
+    )
+
+    assert recovery is not None
+    assert recovery.id == "run-worker"
+    assert recovery.workflow_name == "worker-flow"
+    assert recovery.agent_name == "worker"
+    assert recovery.prompt == "do the work"
+
+
 def test_hook_manager_reconciles_before_before_agent_rules() -> None:
     components = MagicMock()
     for name in (

@@ -302,11 +302,18 @@ def _agent_run_from_row(row: Any) -> _AgentRunRecovery | None:
     run_id = values["id"]
     if not isinstance(run_id, str) or not run_id:
         return None
+    workflow_name = values["workflow_name"]
+    agent_name = values["agent_name"]
+    prompt = values["prompt"]
+    if not all(
+        isinstance(value, str) or value is None for value in (workflow_name, agent_name, prompt)
+    ):
+        return None
     return _AgentRunRecovery(
         id=run_id,
-        workflow_name=values["workflow_name"],
-        agent_name=values["agent_name"],
-        prompt=values["prompt"],
+        workflow_name=workflow_name,
+        agent_name=agent_name,
+        prompt=prompt,
     )
 
 

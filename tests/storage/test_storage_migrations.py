@@ -41,7 +41,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 254
+    assert latest_known_version() == 255
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -58,13 +58,14 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         252,
         253,
         254,
+        255,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 16
-    assert get_current_version(db) == 254
+    assert applied == 17
+    assert get_current_version(db) == 255
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -83,6 +84,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         252,
         253,
         254,
+        255,
     ]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
@@ -99,7 +101,7 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 254
+    assert get_current_version(db) == 255
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -118,6 +120,7 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
         252,
         253,
         254,
+        255,
     ]
 
 
@@ -677,6 +680,26 @@ def test_migration_254_adds_reviewer_selector_to_existing_registry(tmp_path) -> 
     assert selector["default"] == "custom-reviewer"
     assert selector["rules"] == [{"category": "docs", "reviewer_agent": "doc-reviewer"}]
     assert get_current_version(db) == 254
+
+
+def test_migration_255_adds_project_lifecycle_events_to_existing_database(tmp_path) -> None:
+    db = LocalDatabase(tmp_path / "project-lifecycle-events.db")
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute("INSERT INTO schema_version (version) VALUES (254)")
+    db.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
+    db.execute("CREATE TABLE task_stages_registry (name TEXT PRIMARY KEY)")
+    migration_255 = [item for item in MIGRATIONS if item[0] == 255]
+
+    assert _run_migration_list(db, 254, migration_255) == 1
+
+    assert _table_exists(db, "project_lifecycle_events")
+    assert "idx_project_lifecycle_events_project" in _index_names(
+        db,
+        "project_lifecycle_events",
+    )
+    assert _table_exists(db, "build_profiles")
+    assert "deleted_at" in _column_names(db, "task_stages_registry")
+    assert get_current_version(db) == 255
 
 
 def test_remove_test_arch_stage_migration_cleans_rows_and_renumbers(tmp_path) -> None:

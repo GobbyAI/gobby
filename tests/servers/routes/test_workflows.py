@@ -370,7 +370,7 @@ class TestTemplates:
 class TestRemovedInstallRoutes:
     def test_install_all_templates_route_removed(self, client: TestClient) -> None:
         resp = client.post("/api/workflows/install-all-templates")
-        assert resp.status_code == 405
+        assert resp.status_code == 404
 
     def test_install_from_template_route_removed(self, client: TestClient) -> None:
         resp = client.post("/api/workflows/workflow-id/install")

@@ -178,6 +178,20 @@ CREATE INDEX IF NOT EXISTS idx_gh_issues_triaged_task
     ON gh_issues_triaged(task_id);
 """
 
+_PROJECT_LIFECYCLE_EVENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS project_lifecycle_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    by_actor TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_lifecycle_events_project
+    ON project_lifecycle_events(project_id, created_at);
+"""
+
 _GITHUB_ISSUE_TASK_LINK_INDEX = """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_github_issue_link
     ON tasks(project_id, github_repo, github_issue_number)
@@ -359,6 +373,13 @@ def _apply_github_triage_schema(db: LocalDatabase) -> None:
             db.execute(statement)
 
 
+def _apply_project_lifecycle_events_schema(db: LocalDatabase) -> None:
+    for statement in _PROJECT_LIFECYCLE_EVENTS_SCHEMA.strip().split(";"):
+        statement = statement.strip()
+        if statement:
+            db.execute(statement)
+
+
 def _apply_github_issue_task_link_index(db: LocalDatabase) -> None:
     db.execute(_GITHUB_ISSUE_TASK_LINK_INDEX)
 
@@ -528,6 +549,57 @@ def _apply_stage_reviewer_selector_schema(db: LocalDatabase) -> None:
     )
 
 
+def _apply_registry_editing_schema(db: LocalDatabase) -> None:
+    _apply_project_lifecycle_events_schema(db)
+
+    stage_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_stages_registry)")}
+    if "deleted_at" not in stage_columns:
+        db.execute("ALTER TABLE task_stages_registry ADD COLUMN deleted_at TEXT")
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS build_profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            display_label TEXT NOT NULL,
+            description TEXT NOT NULL,
+            skip_stages_json TEXT NOT NULL DEFAULT '[]',
+            isolation TEXT NOT NULL DEFAULT 'worktree'
+                CHECK (isolation IN ('none','worktree','clone')),
+            unattended INTEGER NOT NULL DEFAULT 0 CHECK (unattended IN (0, 1)),
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            source TEXT NOT NULL CHECK (source IN ('installed','project')),
+            project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            bundled_hash TEXT,
+            deleted_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK (source != 'installed' OR project_id IS NULL)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_build_profiles_active_unique
+            ON build_profiles (name, COALESCE(project_id, '__global__'), source)
+            WHERE deleted_at IS NULL
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_build_profiles_project_source
+            ON build_profiles (project_id, source, name)
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_task_stages_registry_deleted
+            ON task_stages_registry (deleted_at)
+        """
+    )
+
+
 def _renumber_stage_state_positions(db: LocalDatabase) -> None:
     db.execute("DROP TABLE IF EXISTS gobby_stage_state_positions")
     db.execute(
@@ -628,6 +700,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (252, "Remove Claude OAuth env forwarding config", _apply_config_store_cleanup),
     (253, "Remove retired test architecture lifecycle stage", _apply_remove_test_arch_stage),
     (254, "Add category-aware stage reviewer selectors", _apply_stage_reviewer_selector_schema),
+    (
+        255,
+        "Add project lifecycle events, editable stage registry deletion, and build profiles",
+        _apply_registry_editing_schema,
+    ),
 ]
 
 
