@@ -21,6 +21,7 @@ class DummyVoiceMixin(VoiceMixin):
         self.clients: dict = {}
         self.daemon_config = SimpleNamespace(voice=voice_config)
         self._init_voice()
+        self._handle_chat_message = AsyncMock()
 
 
 class TestVoiceWarmup:
@@ -297,3 +298,54 @@ class TestVoiceWarmup:
         await mixin._check_voice_idle()
 
         assert mixin._voice_warmup_task is None
+
+    @pytest.mark.asyncio
+    async def test_voice_audio_forwards_project_id_to_chat_message(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+        stt = MagicMock()
+        stt.transcribe = AsyncMock(return_value="hello from voice")
+        mixin._get_stt = MagicMock(return_value=stt)
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_audio(
+            websocket,
+            {
+                "conversation_id": "conv-voice",
+                "audio_data": "YXVkaW8=",
+                "mime_type": "audio/wav",
+                "request_id": "req-1",
+                "project_id": "project-123",
+            },
+        )
+
+        mixin._handle_chat_message.assert_awaited_once()
+        chat_data = mixin._handle_chat_message.await_args.args[1]
+        assert chat_data == {
+            "type": "chat_message",
+            "content": "hello from voice",
+            "conversation_id": "conv-voice",
+            "request_id": "req-1",
+            "project_id": "project-123",
+        }
+
+    @pytest.mark.asyncio
+    async def test_voice_audio_without_project_id_preserves_chat_fallback(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+        stt = MagicMock()
+        stt.transcribe = AsyncMock(return_value="hello from voice")
+        mixin._get_stt = MagicMock(return_value=stt)
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_audio(
+            websocket,
+            {
+                "conversation_id": "conv-voice",
+                "audio_data": "YXVkaW8=",
+                "mime_type": "audio/wav",
+                "request_id": "req-1",
+            },
+        )
+
+        mixin._handle_chat_message.assert_awaited_once()
+        chat_data = mixin._handle_chat_message.await_args.args[1]
+        assert "project_id" not in chat_data

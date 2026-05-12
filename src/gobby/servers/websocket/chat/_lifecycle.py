@@ -121,6 +121,7 @@ class ChatLifecycleMixin:
         session = self._chat_sessions.get(conversation_id)
         db_session_id = getattr(session, "db_session_id", None) or conversation_id
         project_path = getattr(session, "project_path", None)
+        project_id = getattr(session, "project_id", None)
 
         # Normalize MCP fields using shared logic (same as CLI adapters)
         if data:
@@ -139,14 +140,19 @@ class ChatLifecycleMixin:
             )
             source = SessionSource("claude")
 
+        metadata: dict[str, Any] = {"_platform_session_id": db_session_id}
+        if project_path:
+            metadata["project_path"] = project_path
+
         event = HookEvent(
             event_type=event_type,
             session_id=db_session_id,
             source=source,
             timestamp=datetime.now(UTC),
             data=data,
-            metadata={"_platform_session_id": db_session_id},
+            metadata=metadata,
             cwd=project_path,
+            project_id=project_id,
         )
 
         try:

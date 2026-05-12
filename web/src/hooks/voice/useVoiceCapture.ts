@@ -20,6 +20,7 @@ interface RecordingContext {
 interface VoiceCaptureOptions {
   wsRef: RefObject<WebSocket | null>
   conversationIdRef: RefObject<string>
+  projectIdRef?: RefObject<string | null>
   sttEnabled: boolean
   voiceInputMode: VoiceInputMode
   voiceReady: boolean
@@ -54,6 +55,7 @@ function createVoiceRequestId(): string {
 export function useVoiceCapture({
   wsRef,
   conversationIdRef,
+  projectIdRef,
   sttEnabled,
   voiceInputMode,
   voiceReady,
@@ -122,13 +124,18 @@ export function useVoiceCapture({
       const wavBuffer = utils.encodeWAV(audio, 1, sampleRate, 1, 16)
       const base64 = utils.arrayBufferToBase64(wavBuffer)
 
-      ws.send(JSON.stringify({
+      const payload: Record<string, unknown> = {
         type: 'voice_audio',
         conversation_id: conversationIdRef.current,
         audio_data: base64,
         mime_type: 'audio/wav',
         request_id: createVoiceRequestId(),
-      }))
+      }
+      if (projectIdRef?.current) {
+        payload.project_id = projectIdRef.current
+      }
+
+      ws.send(JSON.stringify(payload))
       return true
     } catch (err) {
       console.error('Voice: Failed to encode/send audio:', err)
@@ -136,7 +143,7 @@ export function useVoiceCapture({
       setTransientError('Failed to process audio')
       return false
     }
-  }, [conversationIdRef, setTransientError, wsRef])
+  }, [conversationIdRef, projectIdRef, setTransientError, wsRef])
 
   const stopRecording = useCallback(async () => {
     const rec = recCtxRef.current

@@ -623,6 +623,7 @@ class VoiceMixin:
         audio_data_b64 = data.get("audio_data", "")
         mime_type = data.get("mime_type", "audio/webm")
         request_id = data.get("request_id", "")
+        project_id = data.get("project_id")
 
         logger.info(
             f"Voice audio received: {len(audio_data_b64)} chars b64, "
@@ -723,6 +724,8 @@ class VoiceMixin:
                 "conversation_id": conversation_id,
                 "request_id": request_id,
             }
+            if isinstance(project_id, str) and project_id.strip():
+                chat_data["project_id"] = project_id
             await self._handle_chat_message(websocket, chat_data)
 
         except Exception as e:

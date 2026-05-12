@@ -92,6 +92,7 @@ export default function App() {
     sendMode,
     sendAttachedSessionMode,
     sendProjectChange,
+    projectIdRef,
     setProjectIdRef,
     sendWorktreeChange,
     stopStreaming,
@@ -152,6 +153,7 @@ export default function App() {
     wsRef,
     conversationId,
     conversationSwitchKey,
+    projectIdRef,
     {
       sttEnabled: settings.sttEnabled,
       ttsEnabled: settings.ttsEnabled,

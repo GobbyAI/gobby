@@ -916,6 +916,7 @@ export function useChat() {
     sendMessage,
     sendMode,
     sendProjectChange,
+    projectIdRef,
     setProjectIdRef,
     sendWorktreeChange,
     sendAgentChange,

@@ -8,6 +8,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -16,6 +17,18 @@ if TYPE_CHECKING:
     from .engine import RuleEngine
 
 logger = logging.getLogger(__name__)
+
+_NO_REPO_SYSTEM_PROJECTS = frozenset(
+    {
+        PERSONAL_PROJECT_ID,
+        GLOBAL_PROJECT_ID,
+        ORPHANED_PROJECT_ID,
+        "_personal",
+        "_global",
+        "_orphaned",
+        "_migrated",
+    }
+)
 
 _TOOL_CONTEXT_REHYDRATION_SOURCES = frozenset(
     {
@@ -36,6 +49,10 @@ def _is_turn_start_event(event_type: HookEventType | str) -> bool:
 def _is_turn_end_event(event_type: HookEventType | str) -> bool:
     value = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
     return value in {HookEventType.AFTER_AGENT.value, HookEventType.STOP.value}
+
+
+def _is_known_no_repo_project(project_id: str | None) -> bool:
+    return isinstance(project_id, str) and project_id in _NO_REPO_SYSTEM_PROJECTS
 
 
 class _EvalLockState:
@@ -502,12 +519,16 @@ class WorkflowHookHandler:
 
                 project_path = self._resolve_project_path(event)
                 if not project_path:
-                    logger.warning(
+                    message = (
                         f"_evaluate_rules: no project_path resolved for session={session_id} "
                         f"event={event.event_type} source={event.source} "
                         f"cwd={event.cwd!r} project_id={event.project_id!r} "
                         f"metadata_path={event.metadata.get('project_path')!r}"
                     )
+                    if _is_known_no_repo_project(event.project_id):
+                        logger.debug(message)
+                    else:
+                        logger.warning(message)
 
                 # Lazy-init baseline on first evaluation (rule template may not have fired)
                 if "baseline_dirty_files" not in variables:

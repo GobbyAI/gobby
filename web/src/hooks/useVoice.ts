@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import type { VoiceInputMode } from './useSettings'
 import type { RawVoiceStatus } from './voiceStatus'
 import { useTTSPlayback } from './voice/useTTSPlayback'
@@ -34,9 +35,10 @@ export interface UseVoiceReturn extends VoiceState {
 }
 
 export function useVoice(
-  wsRef: React.RefObject<WebSocket | null>,
+  wsRef: RefObject<WebSocket | null>,
   conversationId: string,
   conversationSwitchKey: number,
+  projectIdRef: RefObject<string | null>,
   opts: VoiceOptions,
   socketConnected: boolean,
 ): UseVoiceReturn {
@@ -79,6 +81,7 @@ export function useVoice(
   const capture = useVoiceCapture({
     wsRef,
     conversationIdRef,
+    projectIdRef,
     sttEnabled,
     voiceInputMode,
     voiceReady: status.voiceReady,
