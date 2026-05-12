@@ -20,7 +20,7 @@ class TestHubProvider:
     def test_cannot_instantiate_directly(self) -> None:
         """Test that HubProvider cannot be instantiated directly."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            HubProvider(hub_name="test", base_url="https://example.com")  # type: ignore
+            HubProvider(hub_name="test", base_url="https://example.com")
 
     def test_is_abstract_base_class(self) -> None:
         """Test that HubProvider is an ABC."""

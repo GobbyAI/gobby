@@ -29,7 +29,7 @@ DROPPED_STAGE_NAMES = {"adversarial_review", "expansion_qa", "code_review_qa"}
 
 
 def _loader_types():
-    from gobby.storage.tasks._stage_registry_loader import (  # noqa: PLC0415
+    from gobby.storage.tasks._stage_registry_loader import (
         StageRegistryLoader,
         StageRegistryLoadError,
     )

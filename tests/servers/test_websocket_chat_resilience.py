@@ -58,7 +58,7 @@ class _FakeSession:
         self._accumulated_output_tokens = 0
         self._last_model = None
 
-    async def send_message(self, content: Any) -> Any:  # noqa: ANN401
+    async def send_message(self, content: Any) -> Any:
         """Yield nothing — tests inject events directly."""
         return
         yield  # make it an async generator
@@ -138,7 +138,7 @@ class TestSafeSend:
 
         session = _FakeSession()
 
-        async def _fake_send_message(content: Any) -> Any:  # noqa: ANN401
+        async def _fake_send_message(content: Any) -> Any:
             for e in events:
                 yield e
 
@@ -166,7 +166,7 @@ class TestSafeSend:
 
         session = _FakeSession()
 
-        async def _fake_send_message(content: Any) -> Any:  # noqa: ANN401
+        async def _fake_send_message(content: Any) -> Any:
             for e in events:
                 yield e
 
@@ -194,7 +194,7 @@ class TestSafeSend:
 
         session = _FakeSession()
 
-        async def _fake_send_message(content: Any) -> Any:  # noqa: ANN401
+        async def _fake_send_message(content: Any) -> Any:
             yield DoneEvent(tool_calls_count=0)
 
         session.send_message = _fake_send_message
@@ -293,7 +293,7 @@ class TestOrphanedToolResult:
 
         session = _FakeSession()
 
-        async def _fake_send_message(content: Any) -> Any:  # noqa: ANN401
+        async def _fake_send_message(content: Any) -> Any:
             # Emit ToolResultEvent WITHOUT a preceding ToolCallEvent
             yield ToolResultEvent(
                 tool_call_id="orphan-tc-1",

@@ -22,7 +22,7 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
 
     async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
         to_thread_calls.append((func, args, kwargs))
-        return func(*args, **kwargs)  # type: ignore[misc]
+        return func(*args, **kwargs)
 
     original_to_thread = run_completion.asyncio.to_thread
     run_completion.asyncio.to_thread = fake_to_thread

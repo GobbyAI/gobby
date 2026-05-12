@@ -23,7 +23,7 @@ from gobby.build import (
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.build.profiles import BuildProfileError
-from gobby.config.build import StageCapOverride
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
@@ -359,7 +359,7 @@ def build_command(
     stage_cap: tuple[str, ...],
     use_clone: bool,
     profile: str | None,
-    isolation: str | None,
+    isolation: Isolation | None,
     unattended: bool | None,
     no_merge: bool,
     pr: str | None,
@@ -399,7 +399,7 @@ def build_command(
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
     if use_clone and isolation == "worktree":
         raise click.ClickException("--clone conflicts with --isolation worktree")
-    resolved_isolation = isolation or ("clone" if use_clone else "worktree")
+    resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
 
     opts = BuildOptions(
         profile=profile or "default",
@@ -407,7 +407,7 @@ def build_command(
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
         skip_stages_explicit=bool(skip_stage),
-        isolation=resolved_isolation,  # type: ignore[arg-type]
+        isolation=resolved_isolation,
         isolation_explicit=isolation is not None or use_clone,
         unattended=bool(unattended) if unattended is not None else False,
         unattended_explicit=unattended is not None,

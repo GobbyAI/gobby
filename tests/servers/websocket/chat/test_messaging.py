@@ -40,7 +40,7 @@ class DummyMessagingMixin(ChatMessagingMixin):
     async def _send_error(
         self, ws: object, msg: str, request_id: str | None = None, code: str = "ERROR"
     ) -> None:
-        await ws.send(json.dumps({"error": msg}))  # type: ignore[union-attr]
+        await ws.send(json.dumps({"error": msg}))
 
     async def _cancel_active_chat(self, cid: str) -> None:
         pass
@@ -399,9 +399,7 @@ class TestStreamChatResponse:
 
         await mixin._stream_chat_response(matching_ws, "c1", "hi", None)
 
-        matching_messages = [
-            json.loads(call[0][0]) for call in matching_ws.send.call_args_list
-        ]
+        matching_messages = [json.loads(call[0][0]) for call in matching_ws.send.call_args_list]
         assert [m["type"] for m in matching_messages if m.get("type") == "chat_stream"] == [
             "chat_stream",
             "chat_stream",

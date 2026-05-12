@@ -219,7 +219,7 @@ async def test_execute_unknown_action_type(
     """Unknown action_type returns error."""
     job = _make_job(cron_storage, "shell", {"command": "echo"})
     # Hack action_type to something invalid
-    job.action_type = "unknown"  # type: ignore[assignment]
+    job.action_type = "unknown"
     run = cron_storage.create_run(job.id)
 
     result = await executor.execute(job, run)

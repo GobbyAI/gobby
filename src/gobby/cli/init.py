@@ -3,6 +3,7 @@ Project initialization commands.
 """
 
 import asyncio
+import importlib.util
 import logging
 import subprocess
 import sys
@@ -131,9 +132,7 @@ def init(
             click.echo("  Warning: clawhub CLI not found. Install: npm i -g clawhub")
 
         # Check ClawCare (skill safety scanning)
-        try:
-            import clawcare  # noqa: F401
-        except ImportError:
+        if importlib.util.find_spec("clawcare") is None:
             click.echo("  Warning: clawcare not found. Install: uv add clawcare")
 
         # Show detected verification commands

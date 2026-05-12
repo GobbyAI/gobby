@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import gc
+import importlib
 import json
 import logging
 import time
@@ -275,10 +276,9 @@ class VoiceMixin:
         if not voice_config.stt_enabled:
             return False, "STT disabled in config"
         try:
-            import faster_whisper  # noqa: F401
-
+            importlib.import_module("faster_whisper")
             return True, ""
-        except Exception:
+        except ImportError:
             return False, "faster-whisper not installed (uv sync --extra voice)"
 
     def _get_tts(self) -> TTSProvider | None:

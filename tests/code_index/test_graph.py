@@ -268,7 +268,7 @@ async def test_get_symbol_neighbors(mock_client):
 async def test_get_blast_radius_graph(mock_client):
     graph = CodeGraph(mock_client)
     graph.find_blast_radius = AsyncMock(
-        return_value=[  # type: ignore[method-assign]
+        return_value=[
             {
                 "node_id": "sym1",
                 "node_name": "nm",

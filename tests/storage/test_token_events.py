@@ -64,7 +64,7 @@ def test_row_to_event_dict_logs_metadata_context(caplog: pytest.LogCaptureFixtur
 
 
 def test_list_session_events_rejects_non_positive_limit() -> None:
-    store = TokenEventStore(db={})  # type: ignore[arg-type]
+    store = TokenEventStore(db={})
 
     with pytest.raises(ValueError, match="limit must be a positive integer"):
         store.list_session_events("sess-1", limit=0)

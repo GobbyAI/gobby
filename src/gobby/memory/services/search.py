@@ -67,6 +67,16 @@ class SearchService:
     def kg_service(self, value: KnowledgeGraphService | None) -> None:
         self._kg_service = value
 
+    def _require_vector_store(self) -> VectorStore:
+        if self._vector_store is None:
+            raise RuntimeError("Vector store is required for semantic memory search")
+        return self._vector_store
+
+    def _require_kg_service(self) -> KnowledgeGraphService:
+        if self._kg_service is None:
+            raise RuntimeError("Knowledge graph service is required for graph memory search")
+        return self._kg_service
+
     @staticmethod
     def rrf_scores(*ranked_lists: list[str], k: int = 60) -> dict[str, float]:
         """Compute Reciprocal Rank Fusion scores for one or more ranked lists."""
@@ -173,8 +183,8 @@ class SearchService:
         graph_min_score = self._neo4j_graph_min_score
         rrf_k = self._neo4j_rrf_k
 
-        assert self._vector_store is not None  # noqa: S101
-        qdrant_coro = self._vector_store.search(
+        vector_store = self._require_vector_store()
+        qdrant_coro = vector_store.search(
             query_embedding,
             limit=limit * 2,
             filters=filters or None,
@@ -276,8 +286,8 @@ class SearchService:
     ) -> list[Memory]:
         rrf_k = self._neo4j_rrf_k
 
-        assert self._vector_store is not None  # noqa: S101
-        qdrant_coro = self._vector_store.search(
+        vector_store = self._require_vector_store()
+        qdrant_coro = vector_store.search(
             query_embedding,
             limit=limit * 2,
             filters=filters or None,
@@ -448,9 +458,8 @@ class SearchService:
         project_id: str | None = None,
     ) -> list[str]:
         """Search Neo4j graph for memory IDs via entity vector similarity."""
-        assert self._kg_service is not None  # noqa: S101
-
-        entity_results = await self._kg_service.search_entities_by_vector(
+        kg_service = self._require_kg_service()
+        entity_results = await kg_service.search_entities_by_vector(
             query_embedding=query_embedding,
             limit=limit,
             min_score=min_score,
@@ -468,7 +477,7 @@ class SearchService:
                 if mid not in direct_memory_ids:
                     direct_memory_ids.append(mid)
 
-        traversed_memory_ids = await self._kg_service.find_related_memory_ids(
+        traversed_memory_ids = await kg_service.find_related_memory_ids(
             entity_keys=entity_keys,
             max_hops=2,
             limit=limit,

@@ -33,7 +33,7 @@ def test_handler_delegates_to_evaluate(workflow_handler) -> None:
         event_type=HookEventType.SESSION_START,
         session_id=MOCK_EXTERNAL_ID,
         source=SessionSource.CLAUDE,
-        timestamp=None,  # type: ignore
+        timestamp=None,
         data={},
     )
 
@@ -48,7 +48,7 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
         event_type=HookEventType.BEFORE_TOOL,
         session_id=MOCK_EXTERNAL_ID,
         source=SessionSource.CLAUDE,
-        timestamp=None,  # type: ignore
+        timestamp=None,
         data={},
     )
 
@@ -86,7 +86,7 @@ def test_hook_manager_integration():
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
             metadata={"_platform_session_id": MOCK_SESSION_ID},
         )
@@ -130,7 +130,7 @@ def test_hook_manager_blocks_on_workflow():
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
             metadata={"_platform_session_id": MOCK_SESSION_ID},
         )
@@ -152,7 +152,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
         )
 
@@ -167,7 +167,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.SESSION_START,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
         )
 
@@ -187,7 +187,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
         )
 
@@ -217,7 +217,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={"tool_name": "Edit"},
             cwd=worktree_path,
         )
@@ -263,7 +263,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={"tool_name": "Edit"},
             project_id=PERSONAL_PROJECT_ID,
             metadata={"_platform_session_id": MOCK_SESSION_ID},
@@ -308,7 +308,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={"tool_name": "Edit"},
             project_id="project-with-missing-path",
             metadata={"_platform_session_id": MOCK_SESSION_ID},

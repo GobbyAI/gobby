@@ -2285,7 +2285,7 @@ class TestUnmappedEventType:
         # Use a custom event type that's not mapped
         event = _make_event(HookEventType.BEFORE_TOOL)
         # Manually set to an unmapped type
-        event.event_type = "custom_unmapped_type"  # type: ignore
+        event.event_type = "custom_unmapped_type"
         response = await engine.evaluate(event, session_id="sess-1", variables={})
         assert response.decision == "allow"
 

@@ -54,8 +54,7 @@ def test_build_stop_hook_command_uses_shutdown_guard() -> None:
     )
 
     assert command == (
-        "/tmp/gobby-hooks/ghook_guard.py -- "
-        "/tmp/ghook --gobby-owned --cli=codex --type=Stop"
+        "/tmp/gobby-hooks/ghook_guard.py -- /tmp/ghook --gobby-owned --cli=codex --type=Stop"
     )
 
 

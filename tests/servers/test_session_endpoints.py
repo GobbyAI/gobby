@@ -203,7 +203,7 @@ class TestSessionEndpoints:
         services = ServiceContainer(
             config=None,
             database=session_storage.db,
-            session_manager=None,  # type: ignore
+            session_manager=None,
             task_manager=MagicMock(),
         )
         server = HTTPServer(
@@ -221,7 +221,7 @@ class TestSessionEndpoints:
         services = ServiceContainer(
             config=None,
             database=session_storage.db,
-            session_manager=None,  # type: ignore
+            session_manager=None,
             task_manager=MagicMock(),
         )
         server = HTTPServer(

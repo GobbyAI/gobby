@@ -141,7 +141,9 @@ class BaseChannelAdapter(ABC):
                         exc,
                     )
                     await asyncio.sleep(delay)
-        raise last_exc  # type: ignore[misc]
+        if last_exc is None:
+            raise RuntimeError("Retry loop completed without producing a result.")
+        raise last_exc
 
     async def _retry_request(
         self,

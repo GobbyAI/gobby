@@ -87,7 +87,7 @@ That's all!"""
     def test_returns_none_for_empty_text(self) -> None:
         """Test that empty text returns None."""
         assert extract_json_from_text("") is None
-        assert extract_json_from_text(None) is None  # type: ignore
+        assert extract_json_from_text(None) is None
 
     def test_returns_none_for_no_json(self) -> None:
         """Test that text without JSON returns None."""

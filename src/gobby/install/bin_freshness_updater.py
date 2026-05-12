@@ -30,7 +30,7 @@ from gobby.install.bin_freshness_models import (
     compare_versions,
     managed_bin_specs,
 )
-from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore
+from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
 from gobby.storage.database import DatabaseProtocol
 from gobby.utils.native_bin import native_bin_dir
 
@@ -119,13 +119,12 @@ def update_managed_bin(
             target = platform_target()
             asset = release_client.resolve_latest_asset(spec, target=target)
         except SourceUnavailableError as exc:
-            status = "floor_violated" if inspection.floor_drift else "source_unavailable"
             return _record_state(
                 store,
                 inspection=inspection,
                 latest_version=None,
                 target=target,
-                status=status,
+                status=_source_unavailable_status(inspection),
                 error=str(exc),
                 source_url=None,
             )
@@ -154,13 +153,12 @@ def update_managed_bin(
         try:
             _stage_and_promote(release_client, spec, asset, root)
         except SourceUnavailableError as exc:
-            status = "floor_violated" if inspection.floor_drift else "source_unavailable"
             return _record_state(
                 store,
                 inspection=inspection,
                 latest_version=asset.version,
                 target=target,
-                status=status,
+                status=_source_unavailable_status(inspection),
                 error=str(exc),
                 source_url=asset.asset_url,
             )
@@ -202,6 +200,10 @@ def _is_up_to_date(inspection: BinInspection, asset: ReleaseAsset) -> bool:
         return False
     comparison = compare_versions(inspection.installed_version, asset.version)
     return comparison is not None and comparison >= 0
+
+
+def _source_unavailable_status(inspection: BinInspection) -> BinUpdateStatus:
+    return "floor_violated" if inspection.floor_drift else "source_unavailable"
 
 
 def _stage_and_promote(
@@ -308,7 +310,7 @@ def _record_state(
     inspection: BinInspection,
     latest_version: str | None,
     target: str | None,
-    status: str,
+    status: BinUpdateStatus,
     error: str | None,
     source_url: str | None,
 ) -> BinUpdateRecord:
@@ -321,7 +323,7 @@ def _record_state(
         if inspection.binary_exists or inspection.is_dev
         else None,
         target=target,
-        last_status=status,  # type: ignore[arg-type]
+        last_status=status,
         last_error=error,
         installed_at=inspection.installed_at,
         source_url=source_url,

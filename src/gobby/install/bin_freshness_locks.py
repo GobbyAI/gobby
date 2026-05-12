@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import errno
+import importlib
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 try:
-    import fcntl
+    fcntl: Any = importlib.import_module("fcntl")
 except ImportError:  # pragma: no cover - Windows only
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 
 try:
-    import msvcrt
+    msvcrt: Any = importlib.import_module("msvcrt")
 except ImportError:  # pragma: no cover - Unix only
-    msvcrt = None  # type: ignore[assignment]
+    msvcrt = None
 
 
 class NativeBinFileLock:

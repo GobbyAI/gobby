@@ -31,7 +31,7 @@ class TestCanUseTool:
         """start() should pass can_use_tool callback, not permission_mode=bypassPermissions."""
         captured_options = {}
 
-        def capture_options(**kwargs):  # type: ignore[no-untyped-def]
+        def capture_options(**kwargs):
             captured_options.update(kwargs)
             return MagicMock()
 
@@ -227,7 +227,9 @@ class TestToolApproval:
         task = asyncio.create_task(
             session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
         )
-        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
         session.provide_approval("reject")
         result = await task
 
@@ -242,7 +244,9 @@ class TestToolApproval:
         task = asyncio.create_task(
             session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
         )
-        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
         session.provide_approval("approve")
         result = await task
 

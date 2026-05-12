@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 import click
 
 from gobby.config.build import Isolation
-from gobby.storage.build_profiles import BuildProfileError, BuildProfileLoader, BuildProfileManager
+from gobby.storage.build_profiles import (
+    BuildProfileError,
+    BuildProfileLoader,
+    BuildProfileManager,
+    BuildProfileSource,
+)
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
@@ -27,6 +32,12 @@ def _open_manager() -> tuple[LocalDatabase, BuildProfileManager]:
 
 def _scope(source: str, project_id: str | None) -> str | None:
     return None if source == "installed" else project_id
+
+
+def _profile_source(source: str) -> BuildProfileSource:
+    if source not in {"installed", "project"}:
+        raise click.ClickException(f"Invalid build profile source: {source}")
+    return cast(BuildProfileSource, source)
 
 
 def _parse_csv(raw: str | None) -> list[str]:
@@ -73,7 +84,7 @@ def show_profile(name: str, source: str, project_id: str | None, include_deleted
     try:
         profile = manager.get(
             name,
-            source=source,  # type: ignore[arg-type]
+            source=_profile_source(source),
             project_id=_scope(source, project_id),
             include_deleted=include_deleted,
         )
@@ -117,7 +128,7 @@ def create_profile(
             isolation=isolation,
             unattended=unattended,
             enabled=enabled,
-            source=source,  # type: ignore[arg-type]
+            source=_profile_source(source),
             project_id=_scope(source, project_id),
             tags=_parse_csv(tags),
         )
@@ -170,7 +181,7 @@ def update_profile(
     try:
         profile = manager.update(
             name,
-            source=source,  # type: ignore[arg-type]
+            source=_profile_source(source),
             project_id=_scope(source, project_id),
             updates=updates,
         )
@@ -186,7 +197,7 @@ def _profile_toggle(name: str, source: str, project_id: str | None, enabled: boo
     try:
         profile = manager.set_enabled(
             name,
-            source=source,  # type: ignore[arg-type]
+            source=_profile_source(source),
             project_id=_scope(source, project_id),
             enabled=enabled,
         )
@@ -224,7 +235,7 @@ def restore_profile(name: str, source: str, project_id: str | None) -> None:
             asdict(
                 manager.restore(
                     name,
-                    source=source,  # type: ignore[arg-type]
+                    source=_profile_source(source),
                     project_id=_scope(source, project_id),
                 )
             )
@@ -245,7 +256,7 @@ def delete_profile(name: str, source: str, project_id: str | None, purge: bool) 
     try:
         profile = manager.delete(
             name,
-            source=source,  # type: ignore[arg-type]
+            source=_profile_source(source),
             project_id=_scope(source, project_id),
             purge=purge,
         )

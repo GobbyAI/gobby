@@ -64,7 +64,7 @@ def test_load_session_messages_wraps_parse_errors(
     transcript.write_text("{}", encoding="utf-8")
     session = SimpleNamespace(transcript_path=str(transcript), source="claude")
 
-    def _raise_parse_error(self, lines, start_index=0):  # type: ignore[no-untyped-def]
+    def _raise_parse_error(self, lines, start_index=0):
         raise ValueError("boom")
 
     monkeypatch.setattr(tokens_module.ClaudeTranscriptParser, "parse_lines", _raise_parse_error)

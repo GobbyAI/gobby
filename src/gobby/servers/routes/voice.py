@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -64,11 +65,10 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             stt_reason = "STT disabled in config"
         else:
             try:
-                import faster_whisper  # noqa: F401
-
+                importlib.import_module("faster_whisper")
                 stt_available = True
-            except ImportError as e:
-                stt_reason = f"faster-whisper not installed (uv sync --extra voice): {e}"
+            except ImportError:
+                stt_reason = "faster-whisper not installed (uv sync --extra voice)"
 
         from gobby.voice.providers import get_tts_status_for_config
 

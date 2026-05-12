@@ -82,7 +82,7 @@ def _make_terminal_run(
         tmux_session_name=tmux_session_name,
         clone_id=clone_id,
     )
-    return agent_run_manager.get(run.id)  # type: ignore[return-value]
+    return agent_run_manager.get(run.id)
 
 
 def _make_autonomous_run(
@@ -90,7 +90,7 @@ def _make_autonomous_run(
     sample_session: dict,
     monitor: AgentLifecycleMonitor,
     run_id: str = "run-auto",
-    task: asyncio.Task | None = None,  # type: ignore[type-arg]
+    task: asyncio.Task | None = None,
     child_session_id: str | None = None,
     clone_id: str | None = None,
 ) -> AgentRun:
@@ -109,7 +109,7 @@ def _make_autonomous_run(
     )
     if task is not None:
         monitor.register_async_task(run.id, task)
-    return agent_run_manager.get(run.id)  # type: ignore[return-value]
+    return agent_run_manager.get(run.id)
 
 
 class TestCheckDeadAgents:

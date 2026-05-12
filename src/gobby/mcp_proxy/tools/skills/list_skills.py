@@ -72,9 +72,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             needs_overfetch = active_names is not None or not include_internal
             active_set = set(active_names) if active_names is not None else None
 
-            def _apply_post_filters(
-                batch: list[Any],  # noqa: ANN401 — Skill domain model, imported lazily
-            ) -> list[Any]:
+            def _apply_post_filters(batch: list[Any]) -> list[Any]:
                 filtered = batch
                 if not include_internal:
                     filtered = [s for s in filtered if not s.is_internal()]

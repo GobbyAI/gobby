@@ -626,7 +626,7 @@ def spawn_ui_server(
     try:
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-        log_f = open(log_file, "a")  # noqa: SIM115
+        log_f = open(log_file, "a")
         try:
             env = os.environ.copy()
             env["GOBBY_DAEMON_PORT"] = str(daemon_port)

@@ -848,7 +848,7 @@ class TestChangeEvent:
         """Test all valid event types."""
         for event_type in ["create", "update", "delete"]:
             event = ChangeEvent(
-                event_type=event_type,  # type: ignore
+                event_type=event_type,
                 skill_id="skl-test",
                 skill_name="test-skill",
             )

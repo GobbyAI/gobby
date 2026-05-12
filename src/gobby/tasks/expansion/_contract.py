@@ -524,7 +524,7 @@ def _registry_plan_id_for_run(
     root_ref = f"#{task.seq_num}" if task.seq_num is not None else None
     try:
         records = manager.list_plans(state="active", project_id=task.project_id)
-    except Exception:  # noqa: BLE001 - plan registry is an optional identity source here
+    except Exception:
         return None
     relative_plan_path = _relative_plan_path(plan_path, repo_path)
     run_plan_path = Path(run.plan_file) if run.plan_file else None

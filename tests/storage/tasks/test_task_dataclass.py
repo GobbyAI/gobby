@@ -19,4 +19,3 @@ def test_is_escalated_field(temp_db, sample_project) -> None:
     assert fetched is not None
     assert hasattr(fetched, "is_escalated")
     assert fetched.is_escalated is True
-

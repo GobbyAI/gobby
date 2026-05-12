@@ -27,7 +27,7 @@ class TestHandlerRegistration:
 
     def test_get_handler_for_unknown_returns_none(self, event_handlers: EventHandlers) -> None:
         """Test get_handler returns None for unknown event type."""
-        result = event_handlers.get_handler("invalid_event")  # type: ignore
+        result = event_handlers.get_handler("invalid_event")
         assert result is None
 
     def test_handler_map_is_immutable(self, event_handlers: EventHandlers) -> None:

@@ -208,7 +208,7 @@ class VectorStore:
         if client is not None:
             try:
                 client.close()
-            except Exception as close_error:  # noqa: BLE001 - log and proceed
+            except Exception as close_error:
                 logger.warning(
                     "Failed to close Qdrant client during mark_unavailable: %s",
                     close_error,

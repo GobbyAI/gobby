@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,19 +25,15 @@ def list_adapter_types() -> list[str]:
     return sorted(_ADAPTER_REGISTRY.keys())
 
 
-# Import adapters to register them
-
-with contextlib.suppress(ImportError):
-    import gobby.communications.adapters.slack  # noqa: F401
-with contextlib.suppress(ImportError):
-    import gobby.communications.adapters.telegram  # noqa: F401
-with contextlib.suppress(ImportError):
-    import gobby.communications.adapters.discord  # noqa: F401
-with contextlib.suppress(ImportError):
-    import gobby.communications.adapters.teams  # noqa: F401
-with contextlib.suppress(ImportError):
-    import gobby.communications.adapters.email  # noqa: F401
-with contextlib.suppress(ImportError):
-    import gobby.communications.adapters.sms  # noqa: F401
-with contextlib.suppress(ImportError):
-    import gobby.communications.adapters.gobby_chat  # noqa: F401
+# Import adapters to register them.
+for _adapter_module in (
+    "gobby.communications.adapters.slack",
+    "gobby.communications.adapters.telegram",
+    "gobby.communications.adapters.discord",
+    "gobby.communications.adapters.teams",
+    "gobby.communications.adapters.email",
+    "gobby.communications.adapters.sms",
+    "gobby.communications.adapters.gobby_chat",
+):
+    with contextlib.suppress(ImportError):
+        importlib.import_module(_adapter_module)

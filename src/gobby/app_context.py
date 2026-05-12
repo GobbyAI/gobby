@@ -247,7 +247,7 @@ _current_container: ServiceContainer | None = None
 
 def set_app_context(container: ServiceContainer) -> None:
     """Store the global ServiceContainer singleton."""
-    global _current_container  # noqa: PLW0603
+    global _current_container
     _current_container = container
 
 

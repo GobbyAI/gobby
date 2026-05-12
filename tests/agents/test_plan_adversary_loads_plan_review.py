@@ -153,16 +153,14 @@ class TestAdversaryInstructionsPreserveContracts:
             matches = [
                 entry
                 for entry in mcp_error
-                if _field(entry, "server") == "gobby-tasks-ops"
-                and _field(entry, "tool") == tool
+                if _field(entry, "server") == "gobby-tasks-ops" and _field(entry, "tool") == tool
             ]
             assert matches
             assert _field(matches[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'
         matches = [
             entry
             for entry in mcp_error
-            if _field(entry, "server") == "gobby-tasks"
-            and _field(entry, "tool") == "escalate_task"
+            if _field(entry, "server") == "gobby-tasks" and _field(entry, "tool") == "escalate_task"
         ]
         assert matches
         assert _field(matches[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'

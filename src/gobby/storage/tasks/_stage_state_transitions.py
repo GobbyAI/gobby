@@ -329,7 +329,7 @@ class StageStateTransitions:
 
     def escalate_stage_failure(self, task_id: str, reason: str) -> None:
         """Escalate a task for a stage failure, treating duplicate reasons as idempotent."""
-        from gobby.storage.tasks._transitions import escalate_task  # noqa: PLC0415
+        from gobby.storage.tasks._transitions import escalate_task
 
         try:
             escalate_task(self.db, task_id, reason=reason)

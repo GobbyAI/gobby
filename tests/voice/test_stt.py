@@ -7,6 +7,7 @@ size validation, MIME type mapping, and availability checks.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,12 +20,7 @@ pytestmark = pytest.mark.unit
 
 
 def _has_faster_whisper() -> bool:
-    try:
-        import faster_whisper  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("faster_whisper") is not None
 
 
 # ---------------------------------------------------------------------------

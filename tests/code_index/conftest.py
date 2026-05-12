@@ -156,7 +156,7 @@ def code_db(tmp_path: Path) -> LocalDatabase:
         END;
     """)
     conn.commit()
-    yield db  # type: ignore[misc]
+    yield db
     db.close()
 
 

@@ -79,7 +79,7 @@ def test_skill_from_row_with_hub_fields() -> None:
     }
     row = MockRow(row_data)
 
-    skill = Skill.from_row(row)  # type: ignore
+    skill = Skill.from_row(row)
 
     assert skill.hub_name == "Gobby Hub"
     assert skill.hub_slug == "gobby-hub"

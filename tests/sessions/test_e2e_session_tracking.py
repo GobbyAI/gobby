@@ -50,7 +50,7 @@ async def env(tmp_path) -> AsyncGenerator[dict]:
 
         # Create Processor with SHARED db
         # Note: type ignore for MockWebSocketServer as it doesn't fully implement protocol but enough for test
-        processor = SessionMessageProcessor(db, poll_interval=0.1, websocket_server=ws)  # type: ignore
+        processor = SessionMessageProcessor(db, poll_interval=0.1, websocket_server=ws)
 
         # Configure mock config
         mock_config = MagicMock()
@@ -65,7 +65,7 @@ async def env(tmp_path) -> AsyncGenerator[dict]:
         hm = HookManager(daemon_host="test", message_processor=processor, config=mock_config)
 
         # Force daemon status to be ready for tests
-        hm._get_cached_daemon_status = MagicMock(return_value=(True, "OK", "running", None))  # type: ignore
+        hm._get_cached_daemon_status = MagicMock(return_value=(True, "OK", "running", None))
 
         # Insert a valid project for FK constraints
         db.execute(
@@ -125,7 +125,9 @@ async def test_full_lifecycle(env):
         f.write(msg1 + "\n")
 
     await wait_for_async_condition(
-        lambda: len(db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,)))
+        lambda: len(
+            db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,))
+        )
         >= 1,
         timeout=2.0,
         description="stored session message",

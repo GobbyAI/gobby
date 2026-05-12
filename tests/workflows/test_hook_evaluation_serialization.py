@@ -270,7 +270,7 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
             eval_context=eval_context,
         )
 
-    engine.evaluate = delayed_evaluate  # type: ignore[method-assign]
+    engine.evaluate = delayed_evaluate
     handler = WorkflowHookHandler(rule_engine=engine)
 
     skill_event = _event(

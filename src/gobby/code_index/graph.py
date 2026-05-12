@@ -62,7 +62,6 @@ class CodeGraph:
         return make_unresolved_callee_id(project_id, callee_name)
 
     async def _cleanup_orphans(self, project_id: str) -> None:
-        assert self._client is not None  # noqa: S101
         await self._client.execute_write(
             """
             MATCH (m:CodeModule {project: $project})
@@ -103,8 +102,6 @@ class CodeGraph:
         """Replace graph edges for one file while preserving cross-file callers."""
         if not self.available:
             return 0
-
-        assert self._client is not None  # noqa: S101
         contains = contains or []
         symbol_ids = [symbol["id"] for symbol in contains if symbol.get("id")]
 
@@ -281,8 +278,6 @@ class CodeGraph:
         """Find callers of any call-target node by stable ID."""
         if not self.available:
             return []
-
-        assert self._client is not None  # noqa: S101
         try:
             result = await self._client.execute_read(
                 f"""
@@ -308,8 +303,6 @@ class CodeGraph:
         """Find incoming CALLS usages for a canonical, unresolved, or external target."""
         if not self.available:
             return []
-
-        assert self._client is not None  # noqa: S101
         try:
             result = await self._client.execute_read(
                 f"""
@@ -330,8 +323,6 @@ class CodeGraph:
         """Get import graph for a file."""
         if not self.available:
             return []
-
-        assert self._client is not None  # noqa: S101
         try:
             result = await self._client.execute_read(
                 """
@@ -354,8 +345,6 @@ class CodeGraph:
         """Get transitive import chain for a module."""
         if not self.available:
             return []
-
-        assert self._client is not None  # noqa: S101
         try:
             depth = max(1, min(int(depth), 5))
             result = await self._client.execute_read(
@@ -385,8 +374,6 @@ class CodeGraph:
 
         if bool(symbol_id) == bool(file_path):
             raise ValueError("Exactly one of symbol_id or file_path must be provided")
-
-        assert self._client is not None  # noqa: S101
         depth = max(1, min(depth, 5))
         results: list[dict[str, Any]] = []
 
@@ -464,8 +451,6 @@ class CodeGraph:
         """Get a file-level overview graph for visualization."""
         if not self.available:
             return {"nodes": [], "links": []}
-
-        assert self._client is not None  # noqa: S101
         max_nodes = limit * 8
         link_limit = limit * 4
 
@@ -589,8 +574,6 @@ class CodeGraph:
         """Expand a file into its defined symbols and adjacent CALLS edges."""
         if not self.available:
             return {"nodes": [], "links": []}
-
-        assert self._client is not None  # noqa: S101
         try:
             sym_records = await self._client.execute_read(
                 """
@@ -692,8 +675,6 @@ class CodeGraph:
         """Expand a code-graph node into its direct callers and callees."""
         if not self.available:
             return {"nodes": [], "links": []}
-
-        assert self._client is not None  # noqa: S101
         try:
             records = await self._client.execute_read(
                 f"""
@@ -793,7 +774,6 @@ class CodeGraph:
         center_file_path = file_path
 
         if symbol_id and self.available:
-            assert self._client is not None  # noqa: S101
             try:
                 center_rows = await self._client.execute_read(
                     f"""
@@ -860,8 +840,6 @@ class CodeGraph:
         """Remove all graph data for a project."""
         if not self.available:
             return
-
-        assert self._client is not None  # noqa: S101
         await self._client.execute_write(
             f"""
             MATCH (n {{project: $project}})
@@ -875,8 +853,6 @@ class CodeGraph:
         """Remove all graph data for a specific file."""
         if not self.available:
             return
-
-        assert self._client is not None  # noqa: S101
         await self._client.execute_write(
             """
             MATCH (s:CodeSymbol {project: $project, file_path: $file_path})

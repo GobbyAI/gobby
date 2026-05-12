@@ -38,7 +38,7 @@ def _context(stage_name: str, *, enabled: bool | None):
 
 
 def test_disabled_default_agent_treated_as_missing() -> None:
-    from gobby.dispatch.rules import stage_agent_available  # noqa: PLC0415
+    from gobby.dispatch.rules import stage_agent_available
 
     assert stage_agent_available(_context("ideation", enabled=True), "ideation") is True
     assert stage_agent_available(_context("ideation", enabled=False), "ideation") is False

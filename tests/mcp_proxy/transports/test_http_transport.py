@@ -60,7 +60,7 @@ async def _fake_streamable_http(url: str, http_client: Any | None = None):
 async def _fake_streamable_http_error(url: str, http_client: Any | None = None):
     """streamable_http_client that raises on entry."""
     raise ConnectionError("refused")
-    yield  # noqa: E501 — unreachable but needed for generator syntax
+    yield
 
 
 def _mock_http_client() -> AsyncMock:
@@ -392,7 +392,7 @@ class TestHTTPRunConnection:
         @asynccontextmanager
         async def failing_client(url, http_client=None):
             raise OSError("network down")
-            yield  # noqa
+            yield
 
         mock_streamable_http.side_effect = failing_client
 
@@ -423,7 +423,7 @@ class TestHTTPRunConnection:
         @asynccontextmanager
         async def failing_client(url, http_client=None):
             raise original
-            yield  # noqa
+            yield
 
         mock_streamable_http.side_effect = failing_client
 
@@ -453,7 +453,7 @@ class TestHTTPRunConnection:
         @asynccontextmanager
         async def failing_client(url, http_client=None):
             raise SilentError()
-            yield  # noqa
+            yield
 
         mock_streamable_http.side_effect = failing_client
 

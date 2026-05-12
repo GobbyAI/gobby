@@ -401,7 +401,7 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
             if rc_status == 0:
                 files: dict[str, str] = {}
                 for line in stdout_status.splitlines():
-                    if not line or len(line) < 4:  # noqa: PLR2004
+                    if not line or len(line) < 4:
                         continue
                     # Format: "XY PATH" — XY is exactly 2 chars, then space, then path
                     xy = line[0:2]

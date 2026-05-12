@@ -251,7 +251,7 @@ class TestPipelineDefinition:
         """Test that numeric versions are coerced to strings."""
         pipeline = PipelineDefinition(
             name="test",
-            version=1.0,  # type: ignore - testing coercion
+            version=1.0,
             steps=[PipelineStep(id="s1", exec="true")],
         )
         assert pipeline.version == "1.0"
@@ -310,7 +310,7 @@ class TestStepOutputReferences:
             ],
         )
         assert len(pipeline.steps) == 2
-        assert "$step1.output" in pipeline.steps[1].prompt  # type: ignore
+        assert "$step1.output" in pipeline.steps[1].prompt
 
     def test_valid_nested_output_reference(self) -> None:
         """Test that nested $step.output.field references are valid."""
@@ -324,7 +324,7 @@ class TestStepOutputReferences:
                 ),
             ],
         )
-        assert "$analyze.output.summary" in pipeline.steps[1].prompt  # type: ignore
+        assert "$analyze.output.summary" in pipeline.steps[1].prompt
 
     def test_output_reference_in_condition(self) -> None:
         """Test that $step.output references work in conditions."""
@@ -339,7 +339,7 @@ class TestStepOutputReferences:
                 ),
             ],
         )
-        assert "$test.output.exit_code" in pipeline.steps[1].condition  # type: ignore
+        assert "$test.output.exit_code" in pipeline.steps[1].condition
 
     def test_output_reference_in_pipeline_outputs(self) -> None:
         """Test that $step.output references work in pipeline outputs."""
@@ -366,4 +366,4 @@ class TestStepOutputReferences:
                 PipelineStep(id="process", exec="./process.sh $inputs.target"),
             ],
         )
-        assert "$inputs.target" in pipeline.steps[0].exec  # type: ignore
+        assert "$inputs.target" in pipeline.steps[0].exec

@@ -37,7 +37,7 @@ def main() -> int:
         return 0
 
     stdin_bytes = sys.stdin.buffer.read()
-    result = subprocess.run(ghook_args, input=stdin_bytes, check=False)  # noqa: S603
+    result = subprocess.run(ghook_args, input=stdin_bytes, check=False)
     return int(result.returncode)
 
 

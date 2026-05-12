@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 
@@ -33,6 +33,18 @@ _DISPATCH_TYPES: set[str] = {"agent", "pipeline"}
 
 class StageRegistryLoadError(ValueError):
     """Raised when the bundled stage registry file is malformed."""
+
+
+def _stage_category(value: str) -> StageCategory:
+    return cast(StageCategory, value)
+
+
+def _review_policy(value: str) -> ReviewPolicy:
+    return cast(ReviewPolicy, value)
+
+
+def _dispatch_type(value: str | None) -> DispatchType | None:
+    return cast(DispatchType, value) if value is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,12 +344,12 @@ class StageRegistryLoader:
             name=name,
             display_label=self._required_string(raw_stage, "display_label", index),
             description=self._required_string(raw_stage, "description", index),
-            category=category,  # type: ignore[arg-type]
+            category=_stage_category(category),
             default_agent=default_agent,
             reviewer_agent=reviewer_agent,
             reviewer_agent_selector_json=reviewer_agent_selector_json,
-            review_policy=review_policy,  # type: ignore[arg-type]
-            dispatch_type=dispatch_type,  # type: ignore[arg-type]
+            review_policy=_review_policy(review_policy),
+            dispatch_type=_dispatch_type(dispatch_type),
             dispatch_target=dispatch_target,
             dispatch_inputs_json=(
                 json.dumps(dispatch_inputs, sort_keys=True) if dispatch_inputs is not None else None

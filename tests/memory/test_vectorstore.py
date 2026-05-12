@@ -30,7 +30,7 @@ MEM_B = str(uuid.uuid5(uuid.NAMESPACE_DNS, "mem-B"))
 
 def test_qdrant_client_importable() -> None:
     """qdrant-client package should be importable after dependency addition."""
-    import qdrant_client  # noqa: F401
+    import qdrant_client
 
     assert hasattr(qdrant_client, "QdrantClient")
 

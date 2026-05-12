@@ -122,7 +122,7 @@ async def test_linear_setup_stubbed_mcp_e2e(temp_db, tmp_path) -> None:
 
     setup_result = await _run_linear_setup(
         task_manager=task_manager,
-        mcp_manager=linear,  # type: ignore[arg-type]
+        mcp_manager=linear,
         project_manager=project_manager,
         project_id=project.id,
         bootstrap=True,
@@ -153,7 +153,7 @@ async def test_linear_setup_stubbed_mcp_e2e(temp_db, tmp_path) -> None:
 
     job_id = _enable_linear_auto_sync(task_manager, project.id, interval=60)
     handler = create_linear_sync_handler(
-        mcp_manager=linear,  # type: ignore[arg-type]
+        mcp_manager=linear,
         task_manager=task_manager,
         project_id=project.id,
         team_id="team-1",

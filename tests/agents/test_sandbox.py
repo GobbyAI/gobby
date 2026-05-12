@@ -95,7 +95,7 @@ class TestSandboxConfig:
 
         # Invalid mode should raise validation error
         with pytest.raises(ValueError):
-            SandboxConfig(mode="invalid_mode")  # type: ignore
+            SandboxConfig(mode="invalid_mode")
 
     def test_serialization_to_dict(self) -> None:
         """Test that SandboxConfig can be serialized to dict."""
@@ -323,7 +323,7 @@ class TestSandboxResolver:
     def test_cannot_instantiate_directly(self) -> None:
         """Test that SandboxResolver cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            SandboxResolver()  # type: ignore
+            SandboxResolver()
 
     def test_subclass_must_implement_cli_name(self) -> None:
         """Test that subclass must implement cli_name property."""
@@ -335,7 +335,7 @@ class TestSandboxResolver:
                 return ([], {})
 
         with pytest.raises(TypeError):
-            IncompleteResolver()  # type: ignore
+            IncompleteResolver()
 
     def test_subclass_must_implement_resolve(self) -> None:
         """Test that subclass must implement resolve method."""
@@ -346,7 +346,7 @@ class TestSandboxResolver:
                 return "test"
 
         with pytest.raises(TypeError):
-            IncompleteResolver()  # type: ignore
+            IncompleteResolver()
 
     def test_complete_subclass_can_be_instantiated(self) -> None:
         """Test that a complete subclass can be instantiated."""

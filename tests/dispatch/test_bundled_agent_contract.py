@@ -156,8 +156,7 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
                 offenders.append(f"{path.name}:terminate:missing end_agent_run")
 
             terminate_text = "\n".join(
-                str(step.get(field_name) or "")
-                for field_name in ("description", "status_message")
+                str(step.get(field_name) or "") for field_name in ("description", "status_message")
             )
             _collect_self_termination_phrase_offenders(
                 offenders,

@@ -117,7 +117,7 @@ def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler
         branch_name="branch",
     )
     handler = WorktreeIsolationHandler(git_manager=git_manager, worktree_storage=storage)
-    handler._generate_worktree_path = MagicMock(return_value=worktree_path)  # type: ignore[method-assign]
+    handler._generate_worktree_path = MagicMock(return_value=worktree_path)
     return handler, worktree_path
 
 
@@ -134,7 +134,7 @@ def _clone_handler(temp_db, tmp_path: Path) -> tuple[CloneIsolationHandler, str]
         branch_name="branch",
     )
     handler = CloneIsolationHandler(clone_manager=clone_manager, clone_storage=storage)
-    handler._generate_clone_path = MagicMock(return_value=clone_path)  # type: ignore[method-assign]
+    handler._generate_clone_path = MagicMock(return_value=clone_path)
     return handler, clone_path
 
 

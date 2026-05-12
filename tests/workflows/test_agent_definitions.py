@@ -88,10 +88,10 @@ def test_holistic_review_skill_allows_docs_epic_plan_substitute() -> None:
     assert "Discovery Brief" in skill_text
     assert "descendant task set" in skill_text
     assert "do not escalate solely" in skill_text
-    assert "complete_stage(stage_name=\"holistic_qa\")" in skill_text
-    assert "fail_stage(stage_name=\"holistic_qa\")" in skill_text
-    assert "approve_review(stage_name=\"holistic_qa\")" not in skill_text
-    assert "reject_review(stage_name=\"holistic_qa\")" not in skill_text
+    assert 'complete_stage(stage_name="holistic_qa")' in skill_text
+    assert 'fail_stage(stage_name="holistic_qa")' in skill_text
+    assert 'approve_review(stage_name="holistic_qa")' not in skill_text
+    assert 'reject_review(stage_name="holistic_qa")' not in skill_text
 
 
 def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:

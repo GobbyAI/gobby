@@ -12,7 +12,7 @@ from gobby.storage.tasks import LocalTaskManager
 
 def require_stage_registry_types() -> tuple[type, type]:
     try:
-        from gobby.storage.tasks._stage_registry import (  # noqa: PLC0415
+        from gobby.storage.tasks._stage_registry import (
             StageRegistryEntry,
             StageRegistryManager,
         )
@@ -23,7 +23,7 @@ def require_stage_registry_types() -> tuple[type, type]:
 
 def require_stage_state_types() -> dict[str, Any]:
     try:
-        import gobby.storage.tasks._stage_states as module  # noqa: PLC0415
+        import gobby.storage.tasks._stage_states as module
     except ImportError as exc:
         pytest.fail(f"Phase 2 stage states module is missing: {exc}")
 

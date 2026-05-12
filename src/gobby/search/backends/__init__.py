@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from gobby.search.backends.embedding import EmbeddingBackend
+
 __all__ = [
     "AsyncSearchBackend",
     "EmbeddingBackend",
@@ -85,7 +87,3 @@ class AsyncSearchBackend(Protocol):
     def clear(self) -> None:
         """Clear the search index."""
         ...
-
-
-# Import EmbeddingBackend - needs to be at end to avoid circular imports
-from gobby.search.backends.embedding import EmbeddingBackend  # noqa: E402

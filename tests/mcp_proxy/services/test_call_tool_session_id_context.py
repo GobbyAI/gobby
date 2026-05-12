@@ -83,7 +83,7 @@ def _use_schema(proxy: ToolProxyService, schema: dict[str, Any]) -> None:
     async def get_tool_schema(server_name: str, tool_name: str) -> dict[str, Any]:
         return {"success": True, "tool": {"inputSchema": schema}}
 
-    proxy.get_tool_schema = get_tool_schema  # type: ignore[method-assign]
+    proxy.get_tool_schema = get_tool_schema
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_top_level_only_session_id_returns_target_argument_error(
         assert requested_tool == tool_name
         return {"success": True, "tool": {"inputSchema": SESSION_ID_SCHEMA}}
 
-    proxy.get_tool_schema = get_tool_schema  # type: ignore[method-assign]
+    proxy.get_tool_schema = get_tool_schema
 
     result = await proxy.call_tool(
         "gobby-sessions",
@@ -133,7 +133,7 @@ async def test_arguments_session_id_stays_in_target_arguments(
     async def get_tool_schema(server_name: str, tool_name: str) -> dict[str, Any]:
         return {"success": True, "tool": {"inputSchema": SESSION_ID_SCHEMA}}
 
-    proxy.get_tool_schema = get_tool_schema  # type: ignore[method-assign]
+    proxy.get_tool_schema = get_tool_schema
 
     result = await proxy.call_tool(
         "gobby-sessions",

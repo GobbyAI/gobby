@@ -265,7 +265,7 @@ class TestMCPClientProxyConfigValidation:
         from gobby.config.servers import MCPClientProxyConfig
 
         with pytest.raises(ValidationError):
-            MCPClientProxyConfig(search_mode="invalid")  # type: ignore
+            MCPClientProxyConfig(search_mode="invalid")
 
 
 class TestWebSocketSettingsFromAppPy:

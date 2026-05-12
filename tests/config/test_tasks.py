@@ -216,7 +216,7 @@ class TestTaskExpansionConfigCustom:
         from gobby.config.tasks import TaskExpansionConfig
 
         for strategy in ["auto", "phased", "sequential", "parallel"]:
-            config = TaskExpansionConfig(default_strategy=strategy)  # type: ignore
+            config = TaskExpansionConfig(default_strategy=strategy)
             assert config.default_strategy == strategy
 
     def test_custom_timeouts(self) -> None:
@@ -236,7 +236,7 @@ class TestTaskExpansionConfigValidation:
         from gobby.config.tasks import TaskExpansionConfig
 
         with pytest.raises(ValidationError):
-            TaskExpansionConfig(default_strategy="invalid")  # type: ignore
+            TaskExpansionConfig(default_strategy="invalid")
 
 
 # =============================================================================
@@ -358,7 +358,7 @@ class TestTaskValidationConfigValidation:
         from gobby.config.tasks import TaskValidationConfig
 
         with pytest.raises(ValidationError):
-            TaskValidationConfig(escalation_notify="invalid")  # type: ignore
+            TaskValidationConfig(escalation_notify="invalid")
 
 
 # =============================================================================

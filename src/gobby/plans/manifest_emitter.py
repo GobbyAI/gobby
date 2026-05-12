@@ -86,7 +86,7 @@ def emit_stub_manifest(
     path = Path(plan_path)
     try:
         return _emit(path, by_actor=by_actor, plan_kind=plan_kind, plan_id=plan_id)
-    except Exception as exc:  # noqa: BLE001 — yolo invariant: absorb everything
+    except Exception as exc:
         _append_yolo_fallback(path, by_actor=by_actor, reason=f"emitter exception: {exc!r}")
         return "fallback_force_approve"
 

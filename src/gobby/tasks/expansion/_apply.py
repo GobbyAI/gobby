@@ -1,7 +1,5 @@
 """Apply path for compiled task expansion specs."""
 
-# mypy: disable-error-code="no-any-return"
-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -20,7 +18,8 @@ from gobby.tasks.expansion._common import (
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
     artifacts = self.task_manager.artifacts.get_artifacts(parent_task_id)
-    return artifacts.integration_branch or artifacts.target_branch
+    target_branch = artifacts.integration_branch or artifacts.target_branch
+    return str(target_branch) if target_branch else None
 
 
 def _copy_target_branch_to_leaf(
@@ -68,7 +67,7 @@ def _complete_dev_only_run(self: Any, run_id: str, task: Task) -> ExpansionRun:
     )
     if run is None:
         raise RuntimeError(f"Expansion run {run_id} disappeared after dev-only completion")
-    return run
+    return cast(ExpansionRun, run)
 
 
 def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun:
@@ -380,7 +379,7 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
     )
     if run is None:
         raise RuntimeError(f"Expansion run {run_id} disappeared after apply")
-    return run
+    return cast(ExpansionRun, run)
 
 
 def validate_applied_run(

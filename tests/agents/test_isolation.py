@@ -351,7 +351,7 @@ class TestNoneIsolationHandler:
     def test_isolation_handler_is_abstract(self) -> None:
         """Test IsolationHandler cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            IsolationHandler()  # type: ignore
+            IsolationHandler()
 
 
 class TestWorktreeIsolationHandler:

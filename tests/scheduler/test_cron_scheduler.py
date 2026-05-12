@@ -37,7 +37,7 @@ def mock_executor(cron_storage: CronJobStorage) -> CronExecutor:
         updated = cron_storage.update_run(run.id, status="completed", completed_at=now)
         return updated or run
 
-    executor.execute = AsyncMock(side_effect=_complete_run)  # type: ignore[method-assign]
+    executor.execute = AsyncMock(side_effect=_complete_run)
     return executor
 
 
@@ -156,11 +156,11 @@ async def test_check_due_jobs_dispatches(
 
     await scheduler._check_due_jobs()
     await wait_for_async_condition(
-        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        lambda: mock_executor.execute.await_count >= 1,
         description="cron execution dispatch",
     )
 
-    mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
+    mock_executor.execute.assert_called_once()
     assert mock_executor.execute.call_count == 1
     assert mock_executor.execute.call_args is not None
 
@@ -202,7 +202,7 @@ async def test_respects_max_concurrent(
     await drain_asyncio_tasks()
 
     # Should not have dispatched because max concurrent reached
-    mock_executor.execute.assert_not_called()  # type: ignore[attr-defined]
+    mock_executor.execute.assert_not_called()
     assert mock_executor.execute.call_count == 0
     assert not mock_executor.execute.called
 
@@ -239,12 +239,12 @@ async def test_skips_job_with_active_run_but_dispatches_other_due_job(
 
     await scheduler._check_due_jobs()
     await wait_for_async_condition(
-        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        lambda: mock_executor.execute.await_count >= 1,
         description="dispatch non-overlapping cron job",
     )
 
-    mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
-    assert mock_executor.execute.await_args.args[0].id == waiting_job.id  # type: ignore[attr-defined]
+    mock_executor.execute.assert_called_once()
+    assert mock_executor.execute.await_args.args[0].id == waiting_job.id
     assert len(cron_storage.list_runs(active_job.id)) == 1
 
 
@@ -271,11 +271,11 @@ async def test_due_jobs_run_heartbeat_then_dispatcher_then_others(
 
     await scheduler._check_due_jobs()
     await wait_for_async_condition(
-        lambda: mock_executor.execute.await_count >= 3,  # type: ignore[attr-defined]
+        lambda: mock_executor.execute.await_count >= 3,
         description="priority cron dispatch",
     )
 
-    dispatched = [call.args[0].name for call in mock_executor.execute.await_args_list]  # type: ignore[attr-defined]
+    dispatched = [call.args[0].name for call in mock_executor.execute.await_args_list]
     assert dispatched == ["gobby:pipeline-heartbeat", "gobby:dispatcher", "other-job"]
 
 
@@ -314,15 +314,15 @@ async def test_stale_running_runs_do_not_block_due_jobs(
 
     await scheduler._check_due_jobs()
     await wait_for_async_condition(
-        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        lambda: mock_executor.execute.await_count >= 1,
         description="dispatch after stale cron cleanup",
     )
 
     refreshed_stale_run = cron_storage.get_run(stale_run.id)
     assert refreshed_stale_run is not None
     assert refreshed_stale_run.status == "failed"
-    mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
-    assert mock_executor.execute.await_args.args[0].id == due_job.id  # type: ignore[attr-defined]
+    mock_executor.execute.assert_called_once()
+    assert mock_executor.execute.await_args.args[0].id == due_job.id
 
 
 @pytest.mark.asyncio
@@ -356,7 +356,7 @@ async def test_backoff_on_consecutive_failures(
     await drain_asyncio_tasks()
 
     # Should be skipped due to backoff
-    mock_executor.execute.assert_not_called()  # type: ignore[attr-defined]
+    mock_executor.execute.assert_not_called()
     assert mock_executor.execute.call_count == 0
     assert not mock_executor.execute.called
 
@@ -394,10 +394,10 @@ async def test_run_now(
     assert run.cron_job_id == job.id
 
     await wait_for_async_condition(
-        lambda: mock_executor.execute.await_count >= 1,  # type: ignore[attr-defined]
+        lambda: mock_executor.execute.await_count >= 1,
         description="manual cron execution",
     )
-    mock_executor.execute.assert_called_once()  # type: ignore[attr-defined]
+    mock_executor.execute.assert_called_once()
 
 
 @pytest.mark.asyncio

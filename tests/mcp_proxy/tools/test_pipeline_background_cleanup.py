@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 def _clear_background_tasks() -> None:
     """Ensure _background_tasks is empty before and after each test."""
     _background_tasks.clear()
-    yield  # type: ignore[misc]
+    yield
     _background_tasks.clear()
 
 

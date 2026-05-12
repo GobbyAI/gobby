@@ -69,8 +69,7 @@ def _assert_contract(result: SkillScenarioResult, assertions: dict[str, Any]) ->
         f"actual={result.baseline.loaded_skills!r}"
     )
     assert result.skill in result.loaded.loaded_skills, (
-        f"{result.skill}: loaded run did not include skill; "
-        f"actual={result.loaded.loaded_skills!r}"
+        f"{result.skill}: loaded run did not include skill; actual={result.loaded.loaded_skills!r}"
     )
     assert result.has_behavioral_delta, (
         f"{result.skill}: expected loaded behavior to differ from baseline; "
@@ -99,8 +98,7 @@ def _assert_contract(result: SkillScenarioResult, assertions: dict[str, Any]) ->
 
     for text in assertions.get("loaded_text_contains", ()):
         assert str(text) in result.loaded.combined_text, (
-            f"{result.skill}: loaded text missing {text!r}; "
-            f"actual={result.loaded.combined_text!r}"
+            f"{result.skill}: loaded text missing {text!r}; actual={result.loaded.combined_text!r}"
         )
 
     for text in assertions.get("loaded_text_forbids", ()):
