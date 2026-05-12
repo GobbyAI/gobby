@@ -148,29 +148,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     priorityFilter,
   ]);
 
-  // Bulk actions
-  const handleInstallAll = useCallback(async () => {
-    const typeMap: Record<ActiveTab, string> = {
-      pipelines: "pipeline",
-      agents: "agent",
-      rules: "rule",
-    };
-    try {
-      const res = await fetch(
-        `/api/workflows/install-all-templates?workflow_type=${typeMap[activeTab]}`,
-        {
-          method: "POST",
-        },
-      );
-      if (res.ok) {
-        setSourceFilter("installed");
-        setRefreshKey((k) => k + 1);
-      }
-    } catch (e) {
-      console.error("Failed to install all templates:", e);
-    }
-  }, [activeTab]);
-
   const handleBulkToggleRules = useCallback(async () => {
     try {
       const res = await fetch("/api/rules/bulk-toggle", {
@@ -267,15 +244,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           >
             &#x21bb;
           </button>
-          {sourceFilter === "templates" && (
-            <button
-              type="button"
-              className={WORKFLOWS_TOOLBAR_BTN_CLS}
-              onClick={handleInstallAll}
-            >
-              Install All
-            </button>
-          )}
           {activeTab === "rules" &&
             (sourceFilter === "installed" || sourceFilter === "project") && (
               <div

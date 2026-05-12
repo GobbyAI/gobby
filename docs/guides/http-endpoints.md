@@ -426,7 +426,6 @@ and still requires `end_agent_run`.
 | `POST` | `/api/workflows` | Create a workflow. |
 | `POST` | `/api/workflows/import` | Import a workflow. |
 | `GET` | `/api/workflows/templates` | List workflow templates. |
-| `POST` | `/api/workflows/install-all-templates` | Legacy template install endpoint. |
 | `POST` | `/api/workflows/variables/set` | Set a workflow variable. |
 | `POST` | `/api/workflows/variables/get` | Get a workflow variable. |
 | `GET` | `/api/workflows/{definition_id}` | Get a workflow. |
@@ -434,7 +433,6 @@ and still requires `end_agent_run`.
 | `DELETE` | `/api/workflows/{definition_id}` | Delete a workflow. |
 | `GET` | `/api/workflows/{definition_id}/export` | Export a workflow. |
 | `POST` | `/api/workflows/{definition_id}/duplicate` | Duplicate a workflow. |
-| `POST` | `/api/workflows/{definition_id}/install` | Install a bundled workflow template. |
 | `POST` | `/api/workflows/{definition_id}/restore` | Restore a deleted workflow. |
 | `POST` | `/api/workflows/{definition_id}/restore-from-template` | Restore a workflow from its template. |
 | `POST` | `/api/workflows/{definition_id}/move-to-project` | Move a workflow to project scope. |

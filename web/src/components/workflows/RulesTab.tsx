@@ -94,7 +94,6 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     createRule,
     updateRule,
     deleteRule,
-    installFromTemplate,
     fetchRules,
   } = useRules()
 
@@ -406,7 +405,6 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
                 onDuplicate={() => handleDuplicate(rule)}
                 onDownload={() => handleDownload(rule)}
                 isInstalled={installedNames.has(rule.name)}
-                onInstall={() => installFromTemplate(rule.id)}
                 onMoveToProject={() => handleMoveToProject(rule)}
                 onMoveToGlobal={() => handleMoveToGlobal(rule)}
                 onRestoreFromTemplate={() => handleRestoreFromTemplate(rule)}
@@ -449,7 +447,7 @@ function getEffectType(effect: Record<string, unknown> | null): string | null {
   return null
 }
 
-function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle, onDelete, onDuplicate, onDownload, onInstall, onMoveToProject, onMoveToGlobal, onRestoreFromTemplate }: {
+function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle, onDelete, onDuplicate, onDownload, onMoveToProject, onMoveToGlobal, onRestoreFromTemplate }: {
   rule: RuleSummary
   devMode: boolean
   projectId?: string
@@ -459,7 +457,6 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
   onDelete: () => void
   onDuplicate: () => void
   onDownload: () => void
-  onInstall: () => void
   onMoveToProject: () => void
   onMoveToGlobal: () => void
   onRestoreFromTemplate: () => void
@@ -504,10 +501,8 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
             <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
               {devMode ? (
                 <>
-                  {isTemplate && (
-                    isInstalled
-                      ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
-                      : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onInstall() }} title="Create an installed copy">Install</button>
+                  {isTemplate && isInstalled && (
+                    <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
                   )}
                   <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onDuplicate() }} title="Duplicate" aria-label="Duplicate rule">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
@@ -521,10 +516,8 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
                 </>
               ) : (
                 <>
-                  {isTemplate && (
-                    isInstalled
-                      ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
-                      : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onInstall() }} title="Create an installed copy">Install</button>
+                  {isTemplate && isInstalled && (
+                    <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
                   )}
                   <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onDownload() }} title="Download YAML" aria-label="Download rule as YAML">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
