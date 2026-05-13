@@ -467,7 +467,12 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
 
   return (
     <div className={`rules-card${isTemplate ? ' ' + WORKFLOWS_CARD_TEMPLATE_CLS : ''}${isDeleted ? ' rules-card--deleted' : ''}`}>
-      <div className="rules-card-main" onClick={onCardClick} style={{ cursor: 'pointer' }}>
+      <button
+        type="button"
+        className="rules-card-main"
+        onClick={onCardClick}
+        aria-label={`Open rule ${rule.name}`}
+      >
         <div className="rules-card-header">
           <span className="rules-card-name">{rule.name}</span>
           <span className={`${WORKFLOWS_CARD_TYPE_CLS} ${WORKFLOWS_CARD_TYPE_VARIANT_CLS.rule}`}>rule</span>
@@ -492,7 +497,7 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
             <span className={`${WORKFLOWS_CARD_BADGE_CLS} ${WORKFLOWS_CARD_BADGE_DRIFT_CLS}`}>Template updated</span>
           )}
         </div>
-      </div>
+      </button>
 
       <div className={WORKFLOWS_CARD_FOOTER_CLS}>
         {(isTemplate || isDeleted) ? (

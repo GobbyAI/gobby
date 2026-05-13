@@ -9,6 +9,23 @@
   overflow: hidden;
 }
 
+/* Rule card body — rendered as a real <button> for keyboard activation and
+   screen-reader semantics. The reset below strips browser button chrome so
+   the card layout matches the surrounding <div>-based cards. The base
+   :focus-visible outline from index.css carries focus affordance. */
+.rules-card-main {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 /* Rule cards (flat grid) */
 .rules-card {
   background: var(--bg-secondary);
