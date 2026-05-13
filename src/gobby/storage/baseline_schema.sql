@@ -1572,6 +1572,10 @@ CREATE TABLE integration_workspace_mutex (
 CREATE TABLE task_delivery_campaigns (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     state TEXT NOT NULL DEFAULT 'pending',
+    delivery_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK (delivery_mode IN ('auto','pull_request')),
+    source_repo TEXT,
+    target_repo TEXT,
     merge_strategy TEXT NOT NULL DEFAULT 'squash'
         CHECK (merge_strategy IN ('merge', 'squash', 'rebase')),
     structured_pr_verdict TEXT,
@@ -1661,6 +1665,9 @@ CREATE TABLE build_profiles (
                 isolation TEXT NOT NULL DEFAULT 'worktree'
                     CHECK (isolation IN ('none','worktree','clone')),
                 unattended INTEGER NOT NULL DEFAULT 0 CHECK (unattended IN (0, 1)),
+                delivery_mode TEXT NOT NULL DEFAULT 'auto'
+                    CHECK (delivery_mode IN ('auto','pull_request')),
+                delivery_target_repo TEXT,
                 enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
                 source TEXT NOT NULL CHECK (source IN ('installed','project')),
                 project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,

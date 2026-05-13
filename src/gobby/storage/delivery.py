@@ -24,6 +24,9 @@ class DeliveryStateError(RuntimeError):
 CAMPAIGN_COLUMNS = frozenset(
     {
         "state",
+        "delivery_mode",
+        "source_repo",
+        "target_repo",
         "merge_strategy",
         "structured_pr_verdict",
         "pr_report_ref",
@@ -112,8 +115,8 @@ class TaskDeliveryStateManager:
             result = conn.execute(
                 """
                 SELECT task_id, state, merge_strategy, structured_pr_verdict,
-                       pr_report_ref, merge_sha, merge_report_ref, last_error,
-                       created_at, updated_at
+                       delivery_mode, source_repo, target_repo, pr_report_ref, merge_sha,
+                       merge_report_ref, last_error, created_at, updated_at
                   FROM task_delivery_campaigns
                  WHERE task_id = ?
                 """,
@@ -181,8 +184,8 @@ class TaskDeliveryStateManager:
             campaign_row = conn.execute(
                 """
                 SELECT task_id, state, merge_strategy, structured_pr_verdict,
-                       pr_report_ref, merge_sha, merge_report_ref, last_error,
-                       created_at, updated_at
+                       delivery_mode, source_repo, target_repo, pr_report_ref, merge_sha,
+                       merge_report_ref, last_error, created_at, updated_at
                   FROM task_delivery_campaigns
                  WHERE task_id = ?
                 """,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from gobby.build.service import BuildOptions, build
+from gobby.storage.build_profiles import BuildProfileLoader, BuildProfileManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -95,3 +96,76 @@ async def test_research_leaf_defaults_to_research_stage(temp_db, sample_project)
     )
 
     assert [row["stage_name"] for row in result.manifest or []] == ["research"]
+
+
+async def test_submit_profile_records_same_repo_delivery_campaign(temp_db, sample_project) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Submit leaf",
+        category="code",
+        task_type="feature",
+        validation_criteria="opens a PR",
+    )
+
+    await build(
+        f"#{task.seq_num}",
+        _options(profile="submit", profile_explicit=True),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    row = temp_db.fetchone(
+        """
+        SELECT delivery_mode, source_repo, target_repo
+        FROM task_delivery_campaigns
+        WHERE task_id = ?
+        """,
+        (task.id,),
+    )
+    assert row["delivery_mode"] == "pull_request"
+    assert row["source_repo"] == "test/test-project"
+    assert row["target_repo"] == "test/test-project"
+
+
+async def test_submit_profile_records_cross_repo_delivery_campaign(temp_db, sample_project) -> None:
+    BuildProfileLoader().sync(temp_db)
+    BuildProfileManager(temp_db).create(
+        name="submit",
+        display_label="Submit Override",
+        description="Submit to upstream repo.",
+        skip_stages=["merge"],
+        isolation="worktree",
+        unattended=False,
+        delivery_mode="pull_request",
+        delivery_target_repo="upstream/test-project",
+        source="project",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Cross repo submit leaf",
+        category="code",
+        task_type="feature",
+        validation_criteria="opens an upstream PR",
+    )
+
+    await build(
+        f"#{task.seq_num}",
+        _options(profile="submit", profile_explicit=True),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    row = temp_db.fetchone(
+        """
+        SELECT delivery_mode, source_repo, target_repo
+        FROM task_delivery_campaigns
+        WHERE task_id = ?
+        """,
+        (task.id,),
+    )
+    assert row["delivery_mode"] == "pull_request"
+    assert row["source_repo"] == "test/test-project"
+    assert row["target_repo"] == "upstream/test-project"

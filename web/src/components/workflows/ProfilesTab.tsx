@@ -30,6 +30,7 @@ import {
 type SourceFilter = "installed" | "project" | "templates" | "deleted";
 type ProfileSource = "installed" | "project";
 type Isolation = "none" | "worktree" | "clone";
+type DeliveryMode = "auto" | "pull_request";
 
 interface BuildProfile {
   id: string;
@@ -39,6 +40,8 @@ interface BuildProfile {
   skip_stages: string[];
   isolation: Isolation;
   unattended: boolean;
+  delivery_mode: DeliveryMode;
+  delivery_target_repo: string | null;
   enabled: boolean;
   source: ProfileSource;
   project_id: string | null;
@@ -168,6 +171,7 @@ export function ProfilesTab({
                 <span className={WORKFLOWS_CARD_BADGE_CLS}>
                   {profile.unattended ? "unattended" : "attended"}
                 </span>
+                <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.delivery_mode}</span>
                 <span
                   className={
                     profile.state === "edited"
@@ -236,6 +240,8 @@ function ProfileEditor({
     skip_stages: [],
     isolation: "worktree",
     unattended: false,
+    delivery_mode: "auto",
+    delivery_target_repo: null,
     enabled: true,
     source: "project",
     project_id: projectId ?? null,
@@ -263,6 +269,8 @@ function ProfileEditor({
       skip_stages: draft.skip_stages,
       isolation: draft.isolation,
       unattended: draft.unattended,
+      delivery_mode: draft.delivery_mode,
+      delivery_target_repo: draft.delivery_target_repo || null,
       enabled: draft.enabled,
       source: draft.source,
       project_id: draft.project_id,
@@ -349,6 +357,21 @@ function ProfileEditor({
         <option>worktree</option>
         <option>clone</option>
       </select>
+      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Delivery Mode</label>
+      <select
+        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+        value={draft.delivery_mode}
+        onChange={(e) => setField("delivery_mode", e.target.value as DeliveryMode)}
+      >
+        <option value="auto">auto</option>
+        <option value="pull_request">pull_request</option>
+      </select>
+      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Delivery Target Repo</label>
+      <input
+        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+        value={draft.delivery_target_repo ?? ""}
+        onChange={(e) => setField("delivery_target_repo", e.target.value || null)}
+      />
       <div className="mt-3 flex gap-3">
         <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
           <input

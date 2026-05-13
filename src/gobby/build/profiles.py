@@ -35,6 +35,8 @@ def resolve_build_profile_options(
         isolation_explicit=opts.isolation_explicit,
         unattended=profile.unattended if not opts.unattended_explicit else opts.unattended,
         unattended_explicit=opts.unattended_explicit,
+        delivery_mode=profile.delivery_mode,
+        delivery_target_repo=profile.delivery_target_repo,
         no_merge=opts.no_merge,
         pr=opts.pr,
         stage_caps=list(opts.stage_caps),

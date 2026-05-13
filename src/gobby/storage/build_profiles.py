@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
-from gobby.config.build import Isolation
+from gobby.config.build import DeliveryMode, Isolation
 from gobby.paths import get_install_dir
 from gobby.storage.database import DatabaseProtocol
 
@@ -35,6 +35,8 @@ class BuildProfile:
     skip_stages: list[str]
     isolation: Isolation
     unattended: bool
+    delivery_mode: DeliveryMode
+    delivery_target_repo: str | None
     enabled: bool
     source: BuildProfileSource
     project_id: str | None = None
@@ -95,7 +97,8 @@ class BuildProfileLoader:
                         continue
                     stored_hash = row["bundled_hash"]
                     current_hash = manager.row_hash(row)
-                    if stored_hash and current_hash != stored_hash:
+                    legacy_hash = manager.legacy_row_hash(row)
+                    if stored_hash and current_hash != stored_hash and legacy_hash != stored_hash:
                         skipped += 1
                         continue
                     if stored_hash == profile.bundled_hash and current_hash == profile.bundled_hash:
@@ -187,6 +190,15 @@ class BuildProfileLoader:
         enabled = raw.get("enabled", True)
         if not isinstance(enabled, bool):
             raise BuildProfileError(f"Build profile {name} enabled must be boolean")
+        delivery_mode = raw.get("delivery_mode", "auto")
+        if delivery_mode not in {"auto", "pull_request"}:
+            raise BuildProfileError(f"Build profile {name} delivery_mode is invalid")
+        delivery_target_repo = raw.get("delivery_target_repo")
+        if delivery_target_repo is not None and not isinstance(delivery_target_repo, str):
+            raise BuildProfileError(
+                f"Build profile {name} delivery_target_repo must be a string or null"
+            )
+        _validate_delivery_target_repo(delivery_target_repo)
         tags = raw.get("tags", ["gobby"])
         if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
             raise BuildProfileError(f"Build profile {name} tags must be a string list")
@@ -198,6 +210,8 @@ class BuildProfileLoader:
             skip_stages=list(skip_stages),
             isolation=isolation,
             unattended=unattended,
+            delivery_mode=delivery_mode,
+            delivery_target_repo=delivery_target_repo,
             enabled=enabled,
             source="installed",
             project_id=None,
@@ -289,6 +303,8 @@ class BuildProfileManager:
         isolation: Isolation,
         unattended: bool,
         enabled: bool = True,
+        delivery_mode: DeliveryMode = "auto",
+        delivery_target_repo: str | None = None,
         source: BuildProfileSource = "project",
         project_id: str | None = None,
         tags: Iterable[str] | None = None,
@@ -306,6 +322,8 @@ class BuildProfileManager:
             skip_stages=list(skip_stages),
             isolation=isolation,
             unattended=unattended,
+            delivery_mode=delivery_mode,
+            delivery_target_repo=delivery_target_repo,
             enabled=enabled,
             source=source,
             project_id=project_id,
@@ -440,6 +458,10 @@ class BuildProfileManager:
         return cls._hash_payload(cls._row_payload(row))
 
     @classmethod
+    def legacy_row_hash(cls, row: Any) -> str:
+        return cls._hash_payload(cls._legacy_row_payload(row))
+
+    @classmethod
     def _profile_hash(cls, profile: BuildProfile) -> str:
         return cls._hash_payload(cls._profile_payload(profile))
 
@@ -453,9 +475,9 @@ class BuildProfileManager:
             """
             INSERT INTO build_profiles (
                 id, name, display_label, description, skip_stages_json, isolation,
-                unattended, enabled, source, project_id, tags_json, bundled_hash,
-                deleted_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), datetime('now'))
+                unattended, delivery_mode, delivery_target_repo, enabled, source, project_id,
+                tags_json, bundled_hash, deleted_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), datetime('now'))
             """,
             self._insert_params(profile),
         )
@@ -470,6 +492,8 @@ class BuildProfileManager:
                    skip_stages_json = ?,
                    isolation = ?,
                    unattended = ?,
+                   delivery_mode = ?,
+                   delivery_target_repo = ?,
                    enabled = ?,
                    tags_json = ?,
                    bundled_hash = ?,
@@ -483,6 +507,8 @@ class BuildProfileManager:
                 json.dumps(profile.skip_stages),
                 profile.isolation,
                 1 if profile.unattended else 0,
+                profile.delivery_mode,
+                profile.delivery_target_repo,
                 1 if profile.enabled else 0,
                 json.dumps(profile.tags or []),
                 profile.bundled_hash,
@@ -500,6 +526,8 @@ class BuildProfileManager:
             json.dumps(profile.skip_stages),
             profile.isolation,
             1 if profile.unattended else 0,
+            profile.delivery_mode,
+            profile.delivery_target_repo,
             1 if profile.enabled else 0,
             profile.source,
             profile.project_id,
@@ -516,6 +544,8 @@ class BuildProfileManager:
             skip_stages=_json_list(row["skip_stages_json"]),
             isolation=row["isolation"],
             unattended=bool(row["unattended"]),
+            delivery_mode=row["delivery_mode"],
+            delivery_target_repo=row["delivery_target_repo"],
             enabled=bool(row["enabled"]),
             source=row["source"],
             project_id=row["project_id"],
@@ -543,6 +573,8 @@ class BuildProfileManager:
             "skip_stages": list(profile.skip_stages),
             "isolation": profile.isolation,
             "unattended": profile.unattended,
+            "delivery_mode": profile.delivery_mode,
+            "delivery_target_repo": profile.delivery_target_repo,
             "enabled": profile.enabled,
             "tags": list(profile.tags or []),
         }
@@ -557,6 +589,8 @@ class BuildProfileManager:
             "skip_stages": list(profile.skip_stages),
             "isolation": profile.isolation,
             "unattended": profile.unattended,
+            "delivery_mode": profile.delivery_mode,
+            "delivery_target_repo": profile.delivery_target_repo,
             "enabled": profile.enabled,
             "source": profile.source,
             "project_id": profile.project_id,
@@ -577,6 +611,21 @@ class BuildProfileManager:
             "skip_stages": _json_list(row["skip_stages_json"]),
             "isolation": row["isolation"],
             "unattended": bool(row["unattended"]),
+            "delivery_mode": row["delivery_mode"],
+            "delivery_target_repo": row["delivery_target_repo"],
+            "enabled": bool(row["enabled"]),
+            "tags": _json_list(row["tags_json"]),
+        }
+
+    @staticmethod
+    def _legacy_row_payload(row: Any) -> dict[str, Any]:
+        return {
+            "name": row["name"],
+            "display_label": row["display_label"],
+            "description": row["description"],
+            "skip_stages": _json_list(row["skip_stages_json"]),
+            "isolation": row["isolation"],
+            "unattended": bool(row["unattended"]),
             "enabled": bool(row["enabled"]),
             "tags": _json_list(row["tags_json"]),
         }
@@ -586,6 +635,9 @@ class BuildProfileManager:
         _validate_profile_name(profile.name)
         if profile.isolation not in {"none", "worktree", "clone"}:
             raise BuildProfileError("isolation must be one of: none, worktree, clone")
+        if profile.delivery_mode not in {"auto", "pull_request"}:
+            raise BuildProfileError("delivery_mode must be one of: auto, pull_request")
+        _validate_delivery_target_repo(profile.delivery_target_repo)
         if profile.source not in _SOURCES:
             raise BuildProfileError("source must be installed or project")
         if profile.source == "installed" and profile.project_id is not None:
@@ -606,6 +658,21 @@ def _validate_profile_name(name: str) -> None:
         raise BuildProfileError("build profile name is required")
     if name.lower() in _RESERVED_PROFILE_NAMES:
         raise BuildProfileError(f"build profile name '{name}' is reserved")
+
+
+def _validate_delivery_target_repo(repo: str | None) -> None:
+    if repo is None:
+        return
+    owner, separator, name = repo.partition("/")
+    if (
+        not separator
+        or not owner
+        or not name
+        or "/" in name
+        or owner.strip() != owner
+        or name.strip() != name
+    ):
+        raise BuildProfileError(f"delivery_target_repo {repo!r} is invalid; expected 'owner/repo'")
 
 
 def _json_list(raw: str | None) -> list[str]:

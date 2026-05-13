@@ -70,6 +70,10 @@ _DELIVERY_STATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS task_delivery_campaigns (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     state TEXT NOT NULL DEFAULT 'pending',
+    delivery_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK (delivery_mode IN ('auto','pull_request')),
+    source_repo TEXT,
+    target_repo TEXT,
     merge_strategy TEXT NOT NULL DEFAULT 'squash'
         CHECK (merge_strategy IN ('merge', 'squash', 'rebase')),
     structured_pr_verdict TEXT,
@@ -567,6 +571,9 @@ def _apply_registry_editing_schema(db: LocalDatabase) -> None:
             isolation TEXT NOT NULL DEFAULT 'worktree'
                 CHECK (isolation IN ('none','worktree','clone')),
             unattended INTEGER NOT NULL DEFAULT 0 CHECK (unattended IN (0, 1)),
+            delivery_mode TEXT NOT NULL DEFAULT 'auto'
+                CHECK (delivery_mode IN ('auto','pull_request')),
+            delivery_target_repo TEXT,
             enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
             source TEXT NOT NULL CHECK (source IN ('installed','project')),
             project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
@@ -598,6 +605,33 @@ def _apply_registry_editing_schema(db: LocalDatabase) -> None:
             ON task_stages_registry (deleted_at)
         """
     )
+
+
+def _apply_cross_repo_delivery_profile_schema(db: LocalDatabase) -> None:
+    campaign_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_delivery_campaigns)")}
+    campaign_additions = {
+        "delivery_mode": (
+            "ALTER TABLE task_delivery_campaigns ADD COLUMN delivery_mode TEXT "
+            "NOT NULL DEFAULT 'auto' CHECK (delivery_mode IN ('auto','pull_request'))"
+        ),
+        "source_repo": "ALTER TABLE task_delivery_campaigns ADD COLUMN source_repo TEXT",
+        "target_repo": "ALTER TABLE task_delivery_campaigns ADD COLUMN target_repo TEXT",
+    }
+    for column, sql in campaign_additions.items():
+        if column not in campaign_columns:
+            db.execute(sql)
+
+    profile_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(build_profiles)")}
+    profile_additions = {
+        "delivery_mode": (
+            "ALTER TABLE build_profiles ADD COLUMN delivery_mode TEXT "
+            "NOT NULL DEFAULT 'auto' CHECK (delivery_mode IN ('auto','pull_request'))"
+        ),
+        "delivery_target_repo": "ALTER TABLE build_profiles ADD COLUMN delivery_target_repo TEXT",
+    }
+    for column, sql in profile_additions.items():
+        if column not in profile_columns:
+            db.execute(sql)
 
 
 def _renumber_stage_state_positions(db: LocalDatabase) -> None:
@@ -704,6 +738,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         255,
         "Add project lifecycle events, editable stage registry deletion, and build profiles",
         _apply_registry_editing_schema,
+    ),
+    (
+        256,
+        "Add cross-repo delivery profile and campaign metadata",
+        _apply_cross_repo_delivery_profile_schema,
     ),
 ]
 

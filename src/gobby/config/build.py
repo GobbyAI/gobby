@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 import yaml
 
+DeliveryMode = Literal["auto", "pull_request"]
 Isolation = Literal["none", "worktree", "clone"]
 SkippableStage = Literal[
     "ideation",

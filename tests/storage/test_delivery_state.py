@@ -22,6 +22,9 @@ def test_delivery_state_records_campaign_and_units(
     manager.record_campaign(
         task.id,
         state="ready_to_merge",
+        delivery_mode="pull_request",
+        source_repo="source/repo",
+        target_repo="target/repo",
         merge_strategy="squash",
         structured_pr_verdict={
             "verdict": "approve",
@@ -47,6 +50,9 @@ def test_delivery_state_records_campaign_and_units(
     state = manager.get_state(task.id)
 
     assert state["campaign"]["state"] == "ready_to_merge"
+    assert state["campaign"]["delivery_mode"] == "pull_request"
+    assert state["campaign"]["source_repo"] == "source/repo"
+    assert state["campaign"]["target_repo"] == "target/repo"
     assert state["campaign"]["structured_pr_verdict"] == {
         "verdict": "approve",
         "findings": {"summary": "ready"},

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from gobby.config.build import Isolation
+from gobby.config.build import DeliveryMode, Isolation
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.build_profiles import BuildProfileManager, BuildProfileSource
 from gobby.storage.database import DatabaseProtocol
@@ -94,6 +94,8 @@ def create_profiles_registry(
         skip_stages: list[str] | None = None,
         isolation: Isolation = "worktree",
         unattended: bool = False,
+        delivery_mode: DeliveryMode = "auto",
+        delivery_target_repo: str | None = None,
         enabled: bool = True,
         source: BuildProfileSource = "project",
         project_id: str | None = None,
@@ -106,6 +108,8 @@ def create_profiles_registry(
             skip_stages=skip_stages or [],
             isolation=isolation,
             unattended=unattended,
+            delivery_mode=delivery_mode,
+            delivery_target_repo=delivery_target_repo,
             enabled=enabled,
             source=source,
             project_id=_scope_project_id(source, project_id),
@@ -125,6 +129,8 @@ def create_profiles_registry(
                 "skip_stages": {"type": "array", "items": {"type": "string"}},
                 "isolation": {"type": "string", "enum": ["none", "worktree", "clone"]},
                 "unattended": {"type": "boolean"},
+                "delivery_mode": {"type": "string", "enum": ["auto", "pull_request"]},
+                "delivery_target_repo": {"type": ["string", "null"]},
                 "enabled": {"type": "boolean"},
                 "source": {"type": "string", "enum": ["installed", "project"]},
                 "project_id": {"type": ["string", "null"]},

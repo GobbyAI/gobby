@@ -41,7 +41,7 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 239
-    assert latest_known_version() == 255
+    assert latest_known_version() == 256
     assert [version for version, _description, _action in MIGRATIONS] == [
         240,
         241,
@@ -59,13 +59,14 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         253,
         254,
         255,
+        256,
     ]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 17
-    assert get_current_version(db) == 255
+    assert applied == 18
+    assert get_current_version(db) == 256
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -85,9 +86,14 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
         253,
         254,
         255,
+        256,
     ]
     assert "idx_tasks_github_issue_link" in _index_names(db, "tasks")
     assert "linear_project_id" in _column_names(db, "projects")
+    assert {"delivery_mode", "source_repo", "target_repo"}.issubset(
+        _column_names(db, "task_delivery_campaigns")
+    )
+    assert {"delivery_mode", "delivery_target_repo"}.issubset(_column_names(db, "build_profiles"))
     assert "workspace_role" in _column_names(db, "worktrees")
     assert "integration_branch" in _column_names(db, "task_artifacts")
     assert _table_exists(db, "integration_workspace_mutex")
@@ -101,7 +107,7 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 255
+    assert get_current_version(db) == 256
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
     assert versions == [
         239,
@@ -121,6 +127,7 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
         253,
         254,
         255,
+        256,
     ]
 
 
@@ -700,6 +707,58 @@ def test_migration_255_adds_project_lifecycle_events_to_existing_database(tmp_pa
     assert _table_exists(db, "build_profiles")
     assert "deleted_at" in _column_names(db, "task_stages_registry")
     assert get_current_version(db) == 255
+
+
+def test_migration_256_adds_cross_repo_delivery_columns(tmp_path) -> None:
+    db = LocalDatabase(tmp_path / "cross-repo-delivery.db")
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    db.execute("INSERT INTO schema_version (version) VALUES (255)")
+    db.execute(
+        """
+        CREATE TABLE task_delivery_campaigns (
+            task_id TEXT PRIMARY KEY,
+            state TEXT NOT NULL DEFAULT 'pending',
+            merge_strategy TEXT NOT NULL DEFAULT 'squash',
+            structured_pr_verdict TEXT,
+            pr_report_ref TEXT,
+            merge_sha TEXT,
+            merge_report_ref TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE build_profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            display_label TEXT NOT NULL,
+            description TEXT NOT NULL,
+            skip_stages_json TEXT NOT NULL DEFAULT '[]',
+            isolation TEXT NOT NULL DEFAULT 'worktree',
+            unattended INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL,
+            project_id TEXT,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            bundled_hash TEXT,
+            deleted_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    migration_256 = [item for item in MIGRATIONS if item[0] == 256]
+
+    assert _run_migration_list(db, 255, migration_256) == 1
+
+    assert {"delivery_mode", "source_repo", "target_repo"}.issubset(
+        _column_names(db, "task_delivery_campaigns")
+    )
+    assert {"delivery_mode", "delivery_target_repo"}.issubset(_column_names(db, "build_profiles"))
+    assert get_current_version(db) == 256
 
 
 def test_remove_test_arch_stage_migration_cleans_rows_and_renumbers(tmp_path) -> None:

@@ -6,6 +6,8 @@ profiles:
     skip_stages: []
     isolation: worktree
     unattended: false
+    delivery_mode: auto
+    delivery_target_repo: null
     enabled: true
     tags: [gobby]
   - name: autopilot
@@ -14,6 +16,8 @@ profiles:
     skip_stages: []
     isolation: worktree
     unattended: true
+    delivery_mode: auto
+    delivery_target_repo: null
     enabled: true
     tags: [gobby]
   - name: fix
@@ -22,6 +26,8 @@ profiles:
     skip_stages: [pr, merge]
     isolation: none
     unattended: false
+    delivery_mode: auto
+    delivery_target_repo: null
     enabled: true
     tags: [gobby]
   - name: fix-merge
@@ -30,6 +36,8 @@ profiles:
     skip_stages: [pr]
     isolation: worktree
     unattended: false
+    delivery_mode: auto
+    delivery_target_repo: null
     enabled: true
     tags: [gobby]
   - name: submit
@@ -38,5 +46,7 @@ profiles:
     skip_stages: [merge]
     isolation: worktree
     unattended: false
+    delivery_mode: pull_request
+    delivery_target_repo: null
     enabled: true
     tags: [gobby]

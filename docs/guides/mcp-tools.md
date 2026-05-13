@@ -344,6 +344,7 @@ point.
 
 | Tool | Description |
 | :--- | :--- |
+| `open_delivery_pr` | Push/reuse/open a delivery PR and persist PR metadata. |
 | `record_pr_opened` | Persist PR metadata in delivery state. |
 | `record_pr_state` | Record PR delivery state without mutating stage state. |
 | `record_pr_verdict` | Persist PR verdict and advance the PR review state. |

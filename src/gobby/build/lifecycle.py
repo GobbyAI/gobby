@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
@@ -87,6 +88,7 @@ async def build(
             warnings,
             project_id,
             target_branch,
+            db,
             services,
         )
 
@@ -140,6 +142,7 @@ async def _build_plan_file(
     warnings: list[str],
     project_id: str,
     target_branch: str | None,
+    db: DatabaseProtocol,
     services: object | None,
 ) -> BuildResult:
     task = task_manager.create_task(
@@ -161,6 +164,7 @@ async def _build_plan_file(
         plan_file_path=str(plan_file),
         target_branch=target_branch,
     )
+    record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "plan_file")
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
@@ -215,6 +219,7 @@ async def _build_leaf(
     )
     if opts.isolation in {"worktree", "clone"} and target_branch:
         task_manager.artifacts.set_artifact(task.id, "target_branch", target_branch)
+    record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "leaf")
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
@@ -257,6 +262,7 @@ async def _build_epic(
         task.id,
         target_branch=target_branch,
     )
+    record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     if opts.isolation in {"worktree", "clone"}:
         if target_branch is None:
             raise ValueError("target_branch is required for epic integration workspaces")
@@ -351,6 +357,12 @@ async def _resume_existing_lifecycle(
     task_isolation = cast(Isolation, str(task.isolation))
     resume_opts = replace(opts, isolation=task_isolation) if not opts.isolation_explicit else opts
     _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
+    record_build_delivery_campaign(
+        db,
+        project_id=project_id,
+        task_id=task.id,
+        opts=resume_opts,
+    )
     _validate_task_ref_isolation_artifacts(task_manager, task, resume_opts.isolation)
     task_manager.update_task(
         task.id,

@@ -67,14 +67,16 @@ Content-Type: application/json
 `POST /api/build/restart`. The task-scoped forms accept an `input_ref`; the
 project-wide stop and resume forms omit it.
 
-Build profiles are DB-backed presets over `skip_stages`, `isolation`, and
-`unattended`. Omitted profile input resolves to `default`; explicit request
-fields override profile values. Disabled profiles fail immediately instead of
-falling through to a lower-priority row. Existing manifests keep their current
-stage rows and task isolation on resume; profile `skip_stages` and profile
-isolation only shape new or rebuilt manifests. Profile rows are editable through
-`gobby profiles`, `gobby-profiles`, `/api/profiles`, and the Workflows Profiles
-tab.
+Build profiles are DB-backed presets over `skip_stages`, `isolation`,
+`unattended`, and delivery intent. `delivery_mode` is `auto` or
+`pull_request`; `delivery_target_repo` is an optional PR base repository in
+`owner/repo` form. Bundled `submit` uses `pull_request`; other bundled profiles
+use `auto`. Omitted profile input resolves to `default`; explicit request fields
+override profile values. Disabled profiles fail immediately instead of falling
+through to a lower-priority row. Existing manifests keep their current stage rows
+and task isolation on resume; profile `skip_stages` and profile isolation only
+shape new or rebuilt manifests. Profile rows are editable through `gobby
+profiles`, `gobby-profiles`, `/api/profiles`, and the Workflows Profiles tab.
 
 ## Stage Registry
 
@@ -178,6 +180,8 @@ Build state is resolved before dispatch:
 - `target_branch` and workspace IDs live in task artifacts.
 - Stage caps come from `--stage`, the MCP `stage` array, or HTTP `stage` array.
 - `max_active_agents` limits the immediate heartbeat burst.
+- Pull-request delivery profile state lives in `task_delivery_campaigns` as
+  `delivery_mode`, `source_repo`, and `target_repo`.
 
 The dispatcher scans tasks with `allow_automation=true`, no claim, no closure, no
 escalation, no open blocking dependency, and a current stage in `ready`,
@@ -200,6 +204,11 @@ Leaf docs work can therefore run inside the parent epic's isolation context. A
 docs leaf may have its own worktree branch while its `target_branch` points at
 the nearest parent integration branch. Merge-stage dispatch uses the recorded
 workspace or clone IDs plus `target_branch` to produce a workspace merge action.
+
+For PR-stage dispatch, the merge orchestrator reads delivery campaign state and
+calls `gobby-tasks-ops:open_delivery_pr`. That tool pushes the source branch,
+reuses or opens the GitHub PR, and persists `task_delivery_units.pr_url`, `repo`,
+`source_branch`, `target_branch`, `github_pr_number`, and `pr_state`.
 
 For `development.ready` leaves, the current rule starts the stage when isolation
 is `none`, `worktree`, or `clone`; invalid isolation values escalate. Missing or

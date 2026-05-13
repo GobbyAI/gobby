@@ -84,6 +84,9 @@ rows:
 | `assigned_agent` | Leaf-stage agent chosen by expansion or build input |
 | `additional_skills` | Extra skills loaded into the dispatched worker |
 | `target_branch` | Artifact used as the base for isolated work and workspace merges |
+| `task_delivery_campaigns.delivery_mode` | Delivery intent resolved from the build profile |
+| `task_delivery_campaigns.source_repo` | GitHub source repo for PR delivery |
+| `task_delivery_campaigns.target_repo` | GitHub base repo for PR delivery |
 
 The current stage is the first manifest row whose state is not `done`. Blocked
 and escalated are projections around that row: they change queue visibility and
@@ -92,6 +95,10 @@ human handoff behavior, but they do not replace the manifest state.
 On resume, existing manifest rows stay authoritative. Profile `skip_stages` is
 ignored with a warning and profile isolation does not replace the task's current
 isolation; explicit isolation flags still apply.
+
+The bundled `submit` profile sets `delivery_mode=pull_request`. If a project
+override sets `delivery_target_repo`, submit builds open PRs against that
+repository while using the current project repository as the source.
 
 ## Dispatch Actions
 

@@ -61,6 +61,7 @@ def test_schema_lookup_rule_mentions_lifecycle_completion_tools(db, manager) -> 
         "submit_for_review",
         "approve_review",
         "record_pr_opened",
+        "open_delivery_pr",
         "record_pr_verdict",
         "record_merge_result",
         "close_linked_github_issue",
