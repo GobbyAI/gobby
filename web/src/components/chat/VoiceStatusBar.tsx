@@ -13,8 +13,18 @@ export function VoiceStatusBar({
   isTranscribing,
   voiceError,
 }: VoiceStatusBarProps) {
+  const hasVisibleStatus = Boolean(
+    voiceLoading || isListening || isTranscribing || voiceError,
+  )
+
   return (
-    <div className="voice-status-bar" data-testid="voice-status-bar">
+    <div
+      className={`voice-status-bar${hasVisibleStatus ? "" : " voice-status-bar--idle"}`}
+      data-testid="voice-status-bar"
+      role={hasVisibleStatus ? "status" : undefined}
+      aria-live={hasVisibleStatus ? "polite" : undefined}
+      aria-hidden={hasVisibleStatus ? undefined : true}
+    >
       {voiceLoading ? (
         <>
           <SpinnerIcon />

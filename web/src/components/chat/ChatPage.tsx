@@ -732,11 +732,22 @@ export function ChatPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePanel]);
 
+  const wantsVoiceStatusSlot = Boolean(
+    voice.ttsEnabled || (voice.sttEnabled && voice.voiceInputMode === "vad"),
+  );
   const showVoiceStatusBar = Boolean(
-    (voice.ttsEnabled && voice.voiceLoading) ||
-    (voice.sttEnabled &&
-      voice.voiceInputMode === "vad" &&
-      (voice.isListening || voice.isTranscribing || voice.voiceError)),
+    wantsVoiceStatusSlot ||
+      voice.voiceLoading ||
+      voice.isListening ||
+      voice.isTranscribing ||
+      voice.voiceError,
+  );
+  const voiceStatusWarming = Boolean(
+    voice.voiceLoading ||
+      (wantsVoiceStatusSlot &&
+        voice.voiceAvailable &&
+        !voice.voiceReady &&
+        !voice.voiceError),
   );
 
   return (
@@ -765,16 +776,6 @@ export function ChatPage({
           agentHasGlobal={agentHasGlobal}
           agentHasProject={agentHasProject}
         />
-        {showVoiceStatusBar && (
-          <VoiceStatusBar
-            voiceLoading={voice.voiceLoading ?? false}
-            isListening={voice.isListening ?? false}
-            isSpeechDetected={voice.isSpeechDetected ?? false}
-            isTranscribing={voice.isTranscribing ?? false}
-            voiceError={voice.voiceError}
-          />
-        )}
-
         <ArtifactContext.Provider
           value={{ openCodeAsArtifact, openFileAsArtifact }}
         >
@@ -799,6 +800,16 @@ export function ChatPage({
               onCanvasInteraction={chat.onCanvasInteraction}
             />
           </div>
+
+          {showVoiceStatusBar && (
+            <VoiceStatusBar
+              voiceLoading={voiceStatusWarming}
+              isListening={voice.isListening ?? false}
+              isSpeechDetected={voice.isSpeechDetected ?? false}
+              isTranscribing={voice.isTranscribing ?? false}
+              voiceError={voice.voiceError}
+            />
+          )}
 
           <AgentStatusBar
             viewingMeta={viewingMeta}

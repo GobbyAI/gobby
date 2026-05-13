@@ -226,7 +226,32 @@ export const activityPanelMockFactory = () => ({
 });
 
 export const voiceStatusBarMockFactory = () => ({
-  VoiceStatusBar: () => null,
+  VoiceStatusBar: ({
+    voiceLoading,
+    isListening,
+    isTranscribing,
+    voiceError,
+  }: {
+    voiceLoading?: boolean;
+    isListening?: boolean;
+    isTranscribing?: boolean;
+    voiceError?: string | null;
+  }) => (
+    <div
+      data-testid="voice-status-bar"
+      data-loading={String(Boolean(voiceLoading))}
+      data-listening={String(Boolean(isListening))}
+      data-transcribing={String(Boolean(isTranscribing))}
+    >
+      {voiceLoading
+        ? "Warming voice..."
+        : isTranscribing
+          ? "Transcribing..."
+          : isListening
+            ? "Listening..."
+            : voiceError || ""}
+    </div>
+  ),
 });
 
 export const agentStatusBarMockFactory = () => ({
@@ -390,14 +415,22 @@ export function createConversations(): ConversationState {
   };
 }
 
-export function createVoice(): VoiceProps {
+export function createVoice(overrides: Partial<VoiceProps> = {}): VoiceProps {
   return {
     sttEnabled: false,
+    ttsEnabled: false,
     voiceInputMode: "ptt",
+    voiceAvailable: false,
+    voiceReady: false,
+    voiceLoading: false,
+    isListening: false,
     isRecording: false,
+    isTranscribing: false,
+    voiceError: null,
     startRecording: vi.fn(async () => {}),
     stopRecording: vi.fn(async () => {}),
     cancelRecording: vi.fn(),
+    ...overrides,
   };
 }
 

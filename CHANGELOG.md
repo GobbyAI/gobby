@@ -60,6 +60,8 @@ voice/chat reliability, workflow UI polish, and release hardening since
   (#14540, #14542, #14546, #14571, #14572, #14574).
 - Fix an unbound-WS broadcast bug, drop stale isolation messages, and restore
   `caplog` propagation in CI test runs (#14581).
+- Stabilize the voice status bar layout in `ChatPage` and `VoiceStatusBar`
+  (#14583).
 
 ### Security
 
