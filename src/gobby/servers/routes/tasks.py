@@ -21,6 +21,7 @@ from gobby.storage.tasks._models import (
 )
 from gobby.storage.tasks._stage_types import StageState
 from gobby.storage.tasks._stage_views import stage_state_view
+from gobby.tasks.isolation import validate_task_isolation_artifacts
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -89,6 +90,10 @@ class TaskUpdateRequest(BaseModel):
     allow_automation: bool | None = Field(
         default=None,
         description="Enable or disable dispatcher automation for this task.",
+    )
+    isolation: Literal["none", "worktree", "clone"] | None = Field(
+        default=None,
+        description="Automation isolation mode for future dispatch.",
     )
 
     @field_validator("task_type")
@@ -372,7 +377,10 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Update a task's fields. Only provided fields are changed."""
         try:
             # Resolve the task ID first
-            task = _resolve_task(task_id)
+            try:
+                task = _resolve_task(task_id)
+            except (ValueError, TaskNotFoundError) as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
             resolved_id = task.id
 
             legacy_stage_key = "lifecycle_" + "stage"
@@ -409,6 +417,14 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             kwargs: dict[str, Any] = {}
             for field_name in request_data.model_fields_set:
                 kwargs[field_name] = getattr(request_data, field_name)
+            if "isolation" in kwargs:
+                if kwargs["isolation"] is None:
+                    raise ValueError("isolation cannot be None")
+                kwargs["isolation"] = validate_task_isolation_artifacts(
+                    server.task_manager,
+                    resolved_id,
+                    cast(str, kwargs["isolation"]),
+                )
 
             if not kwargs:
                 return task.to_dict()
@@ -417,10 +433,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             result = updated.to_dict()
             await _broadcast_task("task_updated", result)
             return result
-        except (ValueError, TaskNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
         except HTTPException:
             raise
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Failed to update task {task_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e

@@ -140,10 +140,7 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "max_retries": opts.max_retries,
     }
     if opts.isolation_explicit:
-        if opts.isolation in {"worktree", "clone"}:
-            payload["workspace_backend"] = opts.isolation
-        else:
-            payload["isolation"] = opts.isolation
+        payload["isolation"] = opts.isolation
     return payload
 
 
@@ -312,6 +309,11 @@ def _open_database() -> LocalDatabase:
     multiple=True,
     help="Stage selector/cap override, e.g. development:max_review_rounds=4.",
 )
+@click.option(
+    "--isolation",
+    type=click.Choice(["none", "worktree", "clone"]),
+    help="Build workspace isolation mode.",
+)
 @click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
 @click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
@@ -348,6 +350,7 @@ def build_command(
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
+    isolation: Isolation | None,
     use_clone: bool,
     no_merge: bool,
     pr: str | None,
@@ -385,14 +388,16 @@ def build_command(
         return
     if target_ref is not None:
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
-    resolved_isolation: Isolation = "clone" if use_clone else "worktree"
+    if use_clone and isolation in {"none", "worktree"}:
+        raise click.ClickException(f"--clone conflicts with --isolation {isolation}")
+    resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
 
     opts = BuildOptions(
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
         skip_stages_explicit=bool(skip_stage),
         isolation=resolved_isolation,
-        isolation_explicit=use_clone,
+        isolation_explicit=isolation is not None or use_clone,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),

@@ -21,7 +21,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--quick" in result.output
     assert "--skip-stage" in result.output
     assert "--clone" in result.output
-    assert "--isolation" not in result.output
+    assert "--isolation" in result.output
     assert "--no-merge" in result.output
     assert "--pr" in result.output
     assert "--stage" in result.output
@@ -162,6 +162,61 @@ def test_build_cli_omitted_backend_defaults_to_worktree(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize("isolation", ["none", "worktree", "clone"])
+def test_build_cli_accepts_explicit_isolation(tmp_path: Path, isolation: str) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.run_migrations"),
+        patch("gobby.cli.build._try_daemon_build", return_value=None),
+        patch("gobby.cli.build.asyncio.run", return_value=build_result),
+        patch("gobby.cli.build.build", new=AsyncMock()) as build,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["build", str(plan_file), "--isolation", isolation],
+        )
+
+    assert result.exit_code == 0
+    opts = build.call_args.args[1]
+    assert opts.isolation == isolation
+    assert opts.isolation_explicit is True
+    assert build.call_args.kwargs == {
+        "db": db_cls.return_value,
+        "project_id": "project-1",
+    }
+
+
+@pytest.mark.parametrize("isolation", ["none", "worktree"])
+def test_build_cli_rejects_clone_conflicts(tmp_path: Path, isolation: str) -> None:
+    from gobby.cli import cli
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    result = CliRunner().invoke(
+        cli,
+        ["build", str(plan_file), "--clone", "--isolation", isolation],
+    )
+
+    assert result.exit_code != 0
+    assert f"--clone conflicts with --isolation {isolation}" in result.output
+
+
 def test_build_payload_omits_workspace_backend_when_not_explicit() -> None:
     from gobby.build.service import BuildOptions
     from gobby.cli.build import _build_payload
@@ -173,6 +228,19 @@ def test_build_payload_omits_workspace_backend_when_not_explicit() -> None:
 
     assert "workspace_backend" not in payload
     assert "isolation" not in payload
+
+
+def test_build_payload_sends_explicit_isolation() -> None:
+    from gobby.build.service import BuildOptions
+    from gobby.cli.build import _build_payload
+
+    payload = _build_payload(
+        BuildOptions(quick=True, isolation="worktree", isolation_explicit=True),
+        "#42",
+    )
+
+    assert payload["isolation"] == "worktree"
+    assert "workspace_backend" not in payload
 
 
 def test_build_payload_includes_max_retries_zero() -> None:

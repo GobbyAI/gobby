@@ -31,10 +31,10 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["required"] == ["input_ref"]
     assert schema["properties"]["input_ref"]["type"] == "string"
     assert schema["properties"]["quick"]["type"] == "boolean"
+    assert set(schema["properties"]["isolation"]["enum"]) == {"none", "worktree", "clone"}
     assert set(schema["properties"]["workspace_backend"]["enum"]) == {"worktree", "clone"}
     assert "default" not in schema["properties"]["workspace_backend"]
     assert schema["properties"]["clone"]["type"] == "boolean"
-    assert "isolation" not in schema["properties"]
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
     assert schema["properties"]["no_merge"]["type"] == "boolean"
     assert schema["properties"]["pr"]["type"] == "string"
@@ -161,6 +161,56 @@ async def test_build_task_tool_omitted_backend_defaults_to_worktree(temp_db) -> 
     opts = build.call_args.args[1]
     assert opts.isolation == "worktree"
     assert opts.isolation_explicit is False
+
+
+@pytest.mark.parametrize("isolation", ["none", "worktree", "clone"])
+@pytest.mark.asyncio
+async def test_build_task_tool_accepts_explicit_isolation(temp_db, isolation: str) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+
+    registry = _registry(temp_db)
+    build_task = registry.get_tool("build_task")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with patch(
+        "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)
+    ) as build:
+        await build_task(input_ref="#42", isolation=isolation, project_id="project-1")
+
+    opts = build.call_args.args[1]
+    assert opts.isolation == isolation
+    assert opts.isolation_explicit is True
+
+
+@pytest.mark.parametrize("isolation", ["none", "worktree"])
+@pytest.mark.asyncio
+async def test_build_task_tool_rejects_clone_isolation_conflicts(temp_db, isolation: str) -> None:
+    registry = _registry(temp_db)
+    build_task = registry.get_tool("build_task")
+
+    with pytest.raises(ValueError, match=f"clone=true conflicts with isolation={isolation}"):
+        await build_task(input_ref="#42", clone=True, isolation=isolation, project_id="project-1")
+
+
+@pytest.mark.asyncio
+async def test_build_task_tool_rejects_workspace_backend_isolation_conflict(temp_db) -> None:
+    registry = _registry(temp_db)
+    build_task = registry.get_tool("build_task")
+
+    with pytest.raises(ValueError, match="isolation conflicts with workspace_backend"):
+        await build_task(
+            input_ref="#42",
+            isolation="worktree",
+            workspace_backend="clone",
+            project_id="project-1",
+        )
 
 
 @pytest.mark.asyncio

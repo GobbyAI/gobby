@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.app_context import get_app_context
 from gobby.build.service import BuildOptions, build
-from gobby.config.build import StageCapOverride
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
 if TYPE_CHECKING:
@@ -33,6 +33,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         input_ref: str,
         quick: bool = False,
         skip_stages: list[str] | None = None,
+        isolation: Isolation | None = None,
         workspace_backend: WorkspaceBackend | None = None,
         clone: bool = False,
         no_merge: bool = False,
@@ -50,16 +51,21 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
+        if clone and isolation in {"none", "worktree"}:
+            raise ValueError(f"clone=true conflicts with isolation={isolation}")
         if clone and workspace_backend == "worktree":
             raise ValueError("clone=true conflicts with workspace_backend=worktree")
-        backend = workspace_backend or ("clone" if clone else "worktree")
+        if isolation is not None and workspace_backend is not None:
+            if isolation != workspace_backend:
+                raise ValueError("isolation conflicts with workspace_backend")
+        backend = isolation or workspace_backend or ("clone" if clone else "worktree")
 
         opts = BuildOptions(
             quick=quick,
             skip_stages=skip_stages or [],
             skip_stages_explicit=skip_stages is not None,
             isolation=backend,
-            isolation_explicit=workspace_backend is not None or clone,
+            isolation_explicit=isolation is not None or workspace_backend is not None or clone,
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),
@@ -100,6 +106,10 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "array",
                     "items": {"type": "string"},
                     "default": [],
+                },
+                "isolation": {
+                    "type": "string",
+                    "enum": ["none", "worktree", "clone"],
                 },
                 "workspace_backend": {
                     "type": "string",

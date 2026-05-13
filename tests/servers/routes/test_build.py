@@ -145,6 +145,17 @@ def test_post_api_build_returns_400_for_validation_errors() -> None:
     assert response.json()["detail"] == "--no-merge requires isolated work"
 
 
+@pytest.mark.parametrize("isolation", ["none", "worktree"])
+def test_post_api_build_rejects_clone_isolation_conflicts(isolation: str) -> None:
+    response = _client().post(
+        "/api/build",
+        json={"input_ref": "#42", "clone": True, "isolation": isolation},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"clone=true conflicts with isolation={isolation}"
+
+
 def test_post_api_build_stop_preserves_project_wide_control() -> None:
     from gobby.build.service import BuildControlResult, BuildLifecycleEvent
 

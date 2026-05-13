@@ -305,6 +305,49 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
+    async def test_update_task_isolation(self, mock_task_manager, mock_sync_manager):
+        """update_task forwards validated isolation to the storage layer."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "isolation": "none",
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000", isolation="none"
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_rejects_isolation_artifact_conflict(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """update_task rejects retargeting to a conflicting isolation artifact family."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.artifacts.get_artifacts.return_value = MagicMock(
+            worktree_path="/tmp/gobby-worktree",
+            clone_path=None,
+        )
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "isolation": "clone",
+            },
+        )
+
+        assert result == {"error": "task already has worktree artifact: /tmp/gobby-worktree"}
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_update_task_assigned_agent(self, mock_task_manager, mock_sync_manager):
         """update_task forwards assigned_agent to the storage layer."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)

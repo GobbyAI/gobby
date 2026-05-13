@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
+from gobby.tasks.isolation import validate_task_isolation_artifacts
 
 logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
@@ -406,6 +407,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         start_date: str | None = None,
         due_date: str | None = None,
         allow_automation: bool | None = None,
+        isolation: str | None = None,
         assigned_agent: str | None = None,
         additional_skills: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -479,12 +481,22 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["due_date"] = due_date
         if allow_automation is not None:
             kwargs["allow_automation"] = allow_automation
+        if isolation is not None:
+            try:
+                kwargs["isolation"] = validate_task_isolation_artifacts(
+                    ctx.task_manager, resolved_id, isolation
+                )
+            except ValueError as e:
+                return {"error": str(e)}
         if assigned_agent is not None:
             kwargs["assigned_agent"] = assigned_agent
         if additional_skills is not None:
             kwargs["additional_skills"] = additional_skills
 
-        task = ctx.task_manager.update_task(resolved_id, **kwargs)
+        try:
+            task = ctx.task_manager.update_task(resolved_id, **kwargs)
+        except ValueError as e:
+            return {"error": str(e)}
         if not task:
             return {"error": f"Task {task_id} not found"}
         return {}
@@ -568,6 +580,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "allow_automation": {
                     "type": "boolean",
                     "description": "Enable or disable dispatcher automation for this task.",
+                    "default": None,
+                },
+                "isolation": {
+                    "type": "string",
+                    "enum": ["none", "worktree", "clone"],
+                    "description": "Automation isolation mode for future dispatch.",
                     "default": None,
                 },
                 "assigned_agent": {

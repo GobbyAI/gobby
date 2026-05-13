@@ -66,8 +66,8 @@ class BuildControlRequest(BaseModel):
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
-    if request_data.clone and request_data.isolation == "worktree":
-        raise ValueError("clone=true conflicts with isolation=worktree")
+    if request_data.clone and request_data.isolation in {"none", "worktree"}:
+        raise ValueError(f"clone=true conflicts with isolation={request_data.isolation}")
     if request_data.clone and request_data.workspace_backend == "worktree":
         raise ValueError("clone=true conflicts with workspace_backend=worktree")
     if request_data.isolation and request_data.workspace_backend:
