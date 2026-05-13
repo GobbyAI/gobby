@@ -172,7 +172,8 @@ gobby build restart REF [--dry-run] [--force] [--yes] [--no-resume]
 | `--quick` | Use quick build defaults. |
 | `--skip-stage STAGE` | Skip one lifecycle stage; repeat for multiple stages. |
 | `--stage STAGE:KEY=VALUE` | Override stage settings such as review caps. |
-| `--clone` | Use clone isolation instead of worktree isolation. |
+| `--isolation MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation defaults to `worktree`. |
+| `--clone` | Shorthand for `--isolation clone`; conflicts with `--isolation none` and `--isolation worktree`. |
 | `--no-merge` | Skip merge stage setup. |
 | `--pr VALUE` | Configure PR delivery behavior. |
 | `--target-branch BRANCH` | Override the target branch. |
@@ -224,7 +225,7 @@ gobby tasks delete TASKS... [OPTIONS]
 | Command | Key options |
 | --- | --- |
 | `tasks create` | `--description`, `--priority`, `--type`, `--depends-on`, `--project` |
-| `tasks update` | `--title`, `--priority`, `--parent` |
+| `tasks update` | `--title`, `--priority`, `--parent`, `--task-type`, `--isolation` |
 | `tasks close` | `--reason`, `--skip-validation`, `--force` |
 | `tasks de-escalate` | `--reason`, `--reset-validation` |
 | `tasks delete` | `--cascade`, `--yes` |

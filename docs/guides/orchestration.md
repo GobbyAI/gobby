@@ -94,7 +94,9 @@ human handoff behavior, but they do not replace the manifest state.
 
 On resume, existing manifest rows stay authoritative. Profile `skip_stages` is
 ignored with a warning and profile isolation does not replace the task's current
-isolation; explicit isolation flags still apply.
+isolation; explicit build isolation still applies. CLI uses
+`--isolation none|worktree|clone`, MCP `build_task` uses `isolation`, and HTTP
+`POST /api/build` accepts the same values.
 
 The bundled `submit` profile sets `delivery_mode=pull_request`. If a project
 override sets `delivery_target_repo`, submit builds open PRs against that

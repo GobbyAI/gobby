@@ -27,7 +27,8 @@ sets `allow_automation=true`, and kicks a bounded dispatcher heartbeat.
 
 ```bash
 uv run gobby build '#14354' --quick --max-active-agents 1
-uv run gobby build '#14354' --profile submit --isolation worktree --no-unattended
+uv run gobby build '#14354' --isolation worktree --stage development:max_review_rounds=4
+uv run gobby build plan.md --isolation none
 ```
 
 The same build service is exposed through MCP and HTTP:
@@ -38,7 +39,6 @@ The same build service is exposed through MCP and HTTP:
   "tool": "build_task",
   "arguments": {
     "input_ref": "#14354",
-    "profile": "submit",
     "quick": true,
     "isolation": "worktree",
     "stage": ["development:max_review_rounds=4"],
@@ -77,6 +77,14 @@ through to a lower-priority row. Existing manifests keep their current stage row
 and task isolation on resume; profile `skip_stages` and profile isolation only
 shape new or rebuilt manifests. Profile rows are editable through `gobby
 profiles`, `gobby-profiles`, `/api/profiles`, and the Workflows Profiles tab.
+
+Explicit build isolation is available at every dispatch boundary. CLI uses
+`--isolation none|worktree|clone`; `--clone` remains shorthand for
+`--isolation clone`. MCP `build_task` accepts `isolation` and keeps
+`workspace_backend` plus `clone` for compatibility. HTTP `POST /api/build`
+accepts `isolation`, `workspace_backend`, and `clone`. Conflicting combinations
+such as `clone=true` with `isolation=none` or `isolation=worktree` are rejected
+instead of silently choosing one value.
 
 ## Stage Registry
 

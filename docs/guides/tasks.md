@@ -338,7 +338,7 @@ gobby tasks stats
 
 # CRUD
 gobby tasks create "Title" [-d DESCRIPTION] [-p PRIORITY] [-t TYPE] [-D BLOCKER]
-gobby tasks update TASK [--title TITLE] [--priority N] [--parent TASK] [--task-type TYPE]
+gobby tasks update TASK [--title TITLE] [--priority N] [--parent TASK] [--task-type TYPE] [--isolation MODE]
 gobby tasks close TASK [--reason REASON] [--skip-validation]
 gobby tasks reopen TASK [--reason REASON]
 gobby tasks delete TASK [--cascade | --unlink] [--yes]
@@ -371,6 +371,11 @@ gobby tasks sync [--import] [--export]
 gobby tasks doctor
 gobby tasks repair-lifecycle
 ```
+
+`MODE` for task updates is `none`, `worktree`, or `clone`. Updating isolation
+changes future dispatch state only. Gobby rejects `worktree` when clone
+artifacts are present and rejects `clone` when worktree artifacts are present;
+use the artifact cleanup tools before retargeting when cleanup is intentional.
 
 ## Storage and Sync
 

@@ -351,6 +351,13 @@ and still requires `end_agent_run`.
 | `GET` | `/api/stages/registry` | List stage registry entries. |
 | `GET` | `/api/task-types/{task_type}/default-stages` | Read default stages for a task type. |
 
+`PATCH /api/tasks/{task_id}` accepts metadata fields such as `title`,
+`description`, `priority`, `task_type`, `labels`, `parent_task_id`, `category`,
+`validation_criteria`, `allow_automation`, and `isolation`. `isolation` must be
+`none`, `worktree`, or `clone`. Retargeting to `worktree` is rejected when clone
+artifacts exist, and retargeting to `clone` is rejected when worktree artifacts
+exist.
+
 ## Agents And Build Automation
 
 | Method | Route | Purpose |
@@ -381,6 +388,13 @@ and still requires `end_agent_run`.
 | `POST` | `/api/build/resume` | Resume lifecycle automation. |
 | `POST` | `/api/build/clean` | Clean lifecycle automation artifacts. |
 | `POST` | `/api/build/restart` | Restart lifecycle automation. |
+
+`POST /api/build` accepts `input_ref`, `quick`, `skip_stages`, `stage`,
+`target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
+`max_retries`, and build isolation fields. `isolation` accepts `none`,
+`worktree`, or `clone`; `workspace_backend` (`worktree` or `clone`) and `clone`
+remain backward-compatible aliases. Contradictory isolation inputs return `400`
+instead of silently choosing one value.
 
 ## Memory, Skills, Workflows, And Rules
 

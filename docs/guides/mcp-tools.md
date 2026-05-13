@@ -191,7 +191,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | :--- | :--- |
 | `create_task` | Create a new task. `claim=true` to auto-assign. `validation_criteria` required when `category="code"`. |
 | `get_task` | Get task details, including dependencies. Accepts `#N`, path, or UUID. |
-| `update_task` | Update task fields, including `assigned_agent` and `additional_skills`. |
+| `update_task` | Update task fields, including `isolation`, `assigned_agent`, and `additional_skills`. |
 | `close_task` | Close a task. Pass `commit_sha` to link the closing commit; leaf closes require `changes_summary`. |
 | `reopen_task` | Reopen a closed or escalated task. |
 | `delete_task` | Delete a task. `cascade=true` removes subtasks and dependent tasks; `unlink=true` preserves dependents by removing links. |
@@ -199,6 +199,11 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `claim_task` | Claim a task for the current session. `force=true` overrides another session's claim. |
 | `escalate_task` | Escalate a task for human intervention. Preserves the current stage state. |
 | `de_escalate_task` | Return an escalated task to its preserved stage. |
+
+`update_task` accepts `isolation` as `none`, `worktree`, or `clone` for future
+dispatch. Retargeting to `worktree` fails when the task already has clone
+artifacts, and retargeting to `clone` fails when the task already has worktree
+artifacts. Use `clear_isolation_pair` when artifact cleanup is intended.
 
 ### Labels
 
@@ -371,12 +376,13 @@ point.
 | :--- | :--- |
 | `build_task` | Start lifecycle automation for a plan, epic, or leaf. The MCP entry to the same shared service used by CLI `gobby build` and HTTP `POST /api/build`. |
 
-`build_task` requires `input_ref` and accepts the MCP-native automation
-options exposed by its schema: `quick`, `skip_stages`, `workspace_backend`
-(`worktree` or `clone`), `clone`, `no_merge`, `pr`, `stage`,
-`target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
-`max_retries`, and `project_id`. See [orchestration.md](./orchestration.md)
-for the dispatch model.
+`build_task` requires `input_ref` and accepts the MCP-native automation options
+exposed by its schema: `quick`, `skip_stages`, `isolation` (`none`, `worktree`,
+or `clone`), `workspace_backend` (`worktree` or `clone`), `clone`, `no_merge`,
+`pr`, `stage`, `target_branch`, `agent`, `reset_expansion_output`,
+`max_active_agents`, `max_retries`, and `project_id`. `workspace_backend` and
+`clone` remain compatibility shims; contradictory inputs are rejected. See
+[orchestration.md](./orchestration.md) for the dispatch model.
 
 ---
 
