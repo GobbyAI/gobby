@@ -550,7 +550,7 @@ Pick (A) for 0.4.0 — the rollback in (B) introduces another failure surface (t
 `_update_config` writes the persisted state:
 
 ```python
-def _update_config(*, host: str, port: int, password: str) -> None:
+def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> None:
     # R19-F5: host, port, and the requirepass secret MUST persist atomically.
     # Without `db.transaction()`, each `store.set(...)` autocommits — a failure
     # in `store.set_secret(...)` after host/port have been written leaves
@@ -559,7 +559,17 @@ def _update_config(*, host: str, port: int, password: str) -> None:
     # cannot authenticate. The transaction wraps all three writes so a failure
     # rolls back the whole _update_config step (matches the per-step failure
     # semantics above: step 5 failure means NO credentials are persisted).
-    db = LocalDatabase(...)
+    #
+    # gobby_home threading (R28-F1): the DB path comes from
+    # `bootstrap.database_path` resolved relative to the caller's gobby_home, NOT
+    # from a default `~/.gobby/` lookup. Without this, `install_falkordb(gobby_home=<tmp>)`
+    # would write to the operator's real DB instead of the test tmpdir. There is no
+    # `_default_db_path()` helper in `src/gobby/cli/services.py` today; do not
+    # introduce one — flow the path explicitly through the installer call chain.
+    from gobby.config.bootstrap import load_bootstrap
+    bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
+    db_path = Path(bootstrap.database_path).expanduser()
+    db = LocalDatabase(db_path)
     store = ConfigStore(db)
     secret_store = SecretStore(db)
     with db.transaction():
@@ -567,6 +577,8 @@ def _update_config(*, host: str, port: int, password: str) -> None:
         store.set("databases.falkordb.port", port, source="install")
         store.set_secret("databases.falkordb.requirepass", password, secret_store, source="install")
 ```
+
+`install_falkordb` calls `_update_config(host=..., port=..., password=resolved.value, gobby_home=gobby_home)` (step 5 in the install sequence) — the same `gobby_home` that was already used to construct the `SecretStore` for the existing-secret read in step 2 of password resolution. `uninstall_falkordb(gobby_home=...)` mirrors the threading: its `ConfigStore.clear_secret(...)` and `DELETE FROM config_store WHERE key IN (...)` operate against the same gobby-home-derived DB.
 
 The `databases.falkordb.mode` key is **dropped** — there is only one mode (Docker), so no routing needed. `is_falkordb_installed` (3.3) keys off the presence of the host/port keys instead.
 
@@ -583,6 +595,7 @@ The `databases.falkordb.mode` key is **dropped** — there is only one mode (Doc
 
 - 3.1.1 — Installer wires the FalkorDB Docker setup end-to-end (image pull, compose profile, healthcheck). file: `src/gobby/cli/installers/falkor.py`.
 - 3.1.2 — Installer writes `falkordb_password` to `bootstrap.yaml` and `databases.falkordb.requirepass` to config_store atomically. behavior: "installer writes password to both bootstrap and config_store" in `src/gobby/cli/installers/falkor.py`.
+- 3.1.3 — `install_falkordb(gobby_home=<tmp>)` writes host/port/secret to the tmp DB (resolved via `load_bootstrap(gobby_home / "bootstrap.yaml")` then `Path(bootstrap.database_path).expanduser()`) rather than the operator's default `~/.gobby/` DB. behavior: "gobby_home parameter is threaded through `_resolve_falkordb_password`, `_update_config`, and uninstall cleanup" in `src/gobby/cli/installers/falkor.py`.
 
 ### 3.2 Replace neo4j service block in docker-compose.services.yml [category: config] (depends: 1.1)
 `kind: deliverable`
@@ -646,7 +659,11 @@ Targets: `src/gobby/cli/services.py`, `_health.py` (admin-health module touched 
 Replace `is_neo4j_installed`, `is_neo4j_healthy`, and `get_neo4j_status` (lines 100-153) with FalkorDB equivalents:
 
 ```python
-def is_falkordb_installed(*, db: LocalDatabase | None = None) -> bool:
+def is_falkordb_installed(
+    *,
+    db: LocalDatabase | None = None,
+    gobby_home: Path | None = None,
+) -> bool:
     """True if the installer has recorded FalkorDB host/port in config_store.
 
     Source of truth: presence of `databases.falkordb.host` AND `databases.falkordb.port`
@@ -659,8 +676,17 @@ def is_falkordb_installed(*, db: LocalDatabase | None = None) -> bool:
     No filesystem marker — config_store is the single source of truth, which lets the
     daemon admin payload (4.1) and `gobby status` agree on installation state without
     filesystem coordination.
+
+    Path threading (R28-F1): `gobby_home` is the canonical entry point when `db`
+    is not pre-resolved. There is no `_default_db_path()` helper in this file —
+    derive the DB path from `bootstrap.database_path` under the caller's gobby_home
+    so test fixtures and non-default-home installs route to the right DB.
     """
-    db = db or LocalDatabase(_default_db_path())
+    if db is None:
+        from gobby.config.bootstrap import load_bootstrap
+        home = gobby_home or Path("~/.gobby").expanduser()
+        bootstrap = load_bootstrap(str(home / "bootstrap.yaml"))
+        db = LocalDatabase(Path(bootstrap.database_path).expanduser())
     store = ConfigStore(db)
     return store.get("databases.falkordb.host") is not None and \
            store.get("databases.falkordb.port") is not None
@@ -703,7 +729,7 @@ This task replaces those helpers in source; the test must move with them.
 
 **Acceptance:**
 
-- 3.3.1 — `is_falkordb_enabled` and related status helpers replace the `neo4j` equivalents. file: `src/gobby/cli/services.py`.
+- 3.3.1 — `is_falkordb_installed`, `is_falkordb_healthy`, and `get_falkordb_status` replace the `neo4j` equivalents. `is_falkordb_installed` accepts an optional `gobby_home: Path | None` and resolves the DB via `load_bootstrap(gobby_home / "bootstrap.yaml")` when the `db` argument is not supplied — no `_default_db_path()` helper is introduced. file: `src/gobby/cli/services.py`.
 
 ### 3.4 Rename Neo4j CLI flags to FalkorDB and add service-targeting flag [category: code] (depends: 3.1, 3.3)
 `kind: deliverable`
@@ -852,10 +878,16 @@ db = LocalDatabase(db_path)
 config_store = ConfigStore(db)
 secret_store = SecretStore(db)
 config = load_config(
-    config_file=...,                       # whatever path _services_start already resolves (or omit if load_config supports it)
     config_store=config_store,
     secret_resolver=secret_store.get,      # MUST be `.get`, NOT `.resolve` — see resolver-contract note below
 )
+# R28-F1: `load_config` accepts `config_file: str | None = None` (verified in
+# `src/gobby/config/app.py:797`). The live `_services_start` does not resolve a
+# config-file path before this call, so pass nothing — `load_config` falls back
+# to its standard `~/.gobby/config.yaml` resolution from the environment, and
+# the explicit `config_store` + `secret_resolver` wiring above is what gives
+# this call visibility into the installer-written `databases.falkordb.requirepass`
+# secret regardless of any on-disk config.yaml.
 # Source of truth for compose-env injection (R13-F2): use the resolved
 # `config.databases.falkordb.requirepass` so a `/api/config` or MCP-driven update
 # to the secret on a running daemon takes effect on the next `gobby restart`.
@@ -1115,7 +1147,7 @@ This task gates Phase 5 (frontend) and Phase 9 (docs) — neither of those shoul
 
 **Acceptance:**
 
-- 4.3.1 — Daemon-wide sweep removes residual `Neo4j`/`neo4j` references. behavior: "ripgrep `Neo4j|neo4j` over `src/gobby/` returns zero hits outside historical comments" in `src/gobby/`.
+- 4.3.1 — Daemon-wide sweep removes residual `Neo4j`/`neo4j` references from the runtime code path (config wiring, lifecycle, MCP/CLI surfaces, status helpers, memory routes, pack/unpack flow). The remaining intentional refs after this sweep are the § 8.1 hidden deprecation handlers in `src/gobby/cli/install.py` and the § 3.5 / § 3.6 / § 8.2 stale-config migration helpers; both are explicitly preserved here and re-checked under the § 8.3 row 20 final repository-wide allowlist sweep. behavior: "ripgrep `Neo4j|neo4j` over `src/gobby/` returns only the § 8.1 deprecation-handler block and § 3.5 / § 3.6 / § 8.2 migration helpers" in `src/gobby/`.
 
 ### 4.4 Teach config secret-detection that requirepass is a secret [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1371,7 +1403,7 @@ The persisted state file is `~/.gobby/setup_state.json` (underscore, not hyphen 
 ### 6.2 Update Services.tsx CLI flags (Docker-only) [category: code] (depends: 6.1)
 `kind: deliverable`
 
-Targets: `web/src/setup/steps/Services.tsx` (password guard lives here — see executable instructions below), `web/src/setup/steps/Launch.tsx` (summary edit co-located in this task — see "Launch.tsx summary edit" subsection)
+Targets: `web/src/setup/steps/Services.tsx` (password guard lives here — see executable instructions below), `web/src/setup/steps/Launch.tsx` (summary edit co-located in this task — see "Launch.tsx summary edit" subsection), `web/src/setup/steps/__tests__/Services.test.tsx` (new test file owned by this task — see "Wizard test" subsection below)
 
 The Services step's existing Docker-only gate in `web/src/setup/App.tsx` (`skipIf: (s) => !s.detected_tools?.docker`) is unchanged — FalkorDB is Docker-only in 0.4.0, so the existing gate is correct. No `detect.ts` changes needed.
 
@@ -1401,7 +1433,15 @@ When the user picks `[p]` and types a custom password, the wizard MUST mirror th
 
 When the rule does pass, the wizard proceeds to `installing` and runs `runGobby(args)`. If the underlying CLI (§ 3.1) ALSO rejects the value (defense in depth — for instance the operator's environment somehow lets a non-ASCII paste through the TS layer), parse the `validate_falkordb_password` ValueError text from the CLI stderr, transition back to `password` with the same `passwordError` surface, and DO NOT call `finish(...)` or set `falkordb_password_set=true`. The wizard is the operator's primary install path, so a silent "done" on a rejected password is the worst possible UX — keep the user in the loop until either a valid password lands AND the install succeeds, or they explicitly back out via `[n]`.
 
-Add a wizard-level test (in whatever harness `web/src/setup/__tests__/` uses) covering: (a) `[p]` + a whitespace password keeps the user in `password` phase with the message visible, (b) `[p]` + a valid punctuation password proceeds to `installing` and reaches `done` with `falkordb_password_set=true`, (c) the CLI-side rejection path (mocked) bounces back to `password`. The end-to-end manual verification in § 6.4 covers the live wizard run; this test pins the per-component logic so a future refactor cannot regress the silent-success path.
+**Wizard test (R28-F2) — owned by this task, concrete target/acceptance:**
+
+Add a new test file at `web/src/setup/steps/__tests__/Services.test.tsx`. The Ink/React wizard codebase has no existing tests directory under the setup tree, so this is genuinely net-new — use the same test harness the rest of the web codebase already uses (the build script defined under `web/` runs it; do not introduce a parallel harness). Cover three cases:
+
+- (a) `[p]` + a whitespace password keeps the user in the `password` phase, surfaces the rejection message inline, and does NOT call `runGobby(...)` or `finish(...)`.
+- (b) `[p]` + a valid punctuation password proceeds to `installing` and then `done` with `falkordb_password_set=true` persisted.
+- (c) The CLI-side rejection path (mock `runGobby` to return a `ValueError`-shaped stderr) bounces back to `password` without calling `finish(...)`.
+
+The end-to-end manual verification in § 6.4 covers the live wizard run; this test pins the per-component logic so a future refactor cannot regress the silent-success path.
 
 `finish()` writes:
 
@@ -1440,6 +1480,7 @@ Target: `web/src/setup/steps/Launch.tsx:211-212`
 
 - 6.2.1 — `Services.tsx` emits `--falkordb-*` flags on the Docker-only path; the inline `validateFalkorPassword` guard rejects whitespace/control/non-ASCII input and keeps the user in the `password` phase until a valid value is supplied. file: `web/src/setup/steps/Services.tsx`.
 - 6.2.2 — `Launch.tsx` summary uses the renamed `falkordb_installed` / `falkordb_password_set` state fields. file: `web/src/setup/steps/Launch.tsx`.
+- 6.2.3 — `Services.test.tsx` covers the three password-validation branches (whitespace rejected stays in `password` phase; valid password reaches `done` with `falkordb_password_set=true`; mocked CLI rejection bounces back to `password` without `finish(...)`). file: `web/src/setup/steps/__tests__/Services.test.tsx`.
 
 ### 6.3 Regenerate the bundled setup.mjs artifact [category: code] (depends: 6.2)
 `kind: deliverable`
@@ -1604,7 +1645,7 @@ The Rust crate reads the **code** graph (`gobby_code`), not the memory KG (`gobb
 
 **Acceptance:**
 
-- 7.1.1 — `FalkorConfig` Rust struct replaces `Neo4jConfig` in `gobby-cli` config. symbol: `gobby_cli::config::FalkorConfig`.
+- 7.1.1 — `FalkorConfig` Rust struct replaces `Neo4jConfig` in the `gobby-code` binary crate's config module. file: `crates/gcode/src/config.rs`. (The crate is bin-only — `crates/gcode/Cargo.toml` declares `name = "gobby-code"` with a single `[[bin]] name = "gcode"` and `path = "src/main.rs"`; no `lib.rs` exists, so there is no `gobby_cli::*` library symbol path to bind acceptance to.)
 
 ### 7.2 Pin FalkorClient API shape and result-conversion contract [category: code] (depends: 7.1)
 `kind: deliverable`
@@ -1803,7 +1844,7 @@ Verify the `parse_falkor_result` skeleton compiles against `falkordb 0.2.x` (bui
 
 **Acceptance:**
 
-- 7.2.1 — Rust `FalkorClient` API surface and result-conversion contract pinned (read-only client). symbol: `gobby_cli::falkor::FalkorClient`.
+- 7.2.1 — Rust `FalkorClient` API surface and result-conversion contract pinned (read-only client) in the `gobby-code` bin crate's falkor module. file: `crates/gcode/src/falkor.rs`. (Same bin-only crate caveat as 7.1.1 — `crates/gcode/` has no `lib.rs`; acceptance evidence is the file diff, not a library symbol path.)
 
 ### 7.3 Port 8 read queries to FalkorClient [category: code] (depends: 7.2)
 `kind: deliverable`
