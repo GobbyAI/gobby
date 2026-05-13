@@ -491,7 +491,10 @@ class TestUpdateTask:
         )
 
         assert response.status_code == 400
-        assert response.json()["detail"] == "task already has clone artifact: /tmp/gobby-clone"
+        assert response.json()["detail"] == (
+            "task already has a clone artifact; clear existing build artifacts "
+            "before switching to worktree isolation"
+        )
 
 
 # ---------------------------------------------------------------------------

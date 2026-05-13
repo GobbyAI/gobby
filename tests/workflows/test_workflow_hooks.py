@@ -253,6 +253,7 @@ class TestProjectPathResolution:
     async def test_personal_no_repo_project_does_not_warn_or_shell_out(
         self,
         caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         handler = WorkflowHookHandler(loop=None)
         mock_engine = MagicMock()
@@ -298,7 +299,12 @@ class TestProjectPathResolution:
     async def test_unexpected_missing_project_path_still_warns(
         self,
         caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
+        # The `gobby` package logger has propagate=False in production
+        # (see src/gobby/telemetry/logging.py); without enable_log_propagation,
+        # caplog can't capture the warning and the assertion silently fails
+        # depending on test ordering.
         handler = WorkflowHookHandler(loop=None)
         mock_engine = MagicMock()
         mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))

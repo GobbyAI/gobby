@@ -178,7 +178,10 @@ async def test_build_rejects_isolation_change_on_epic_with_existing_artifact(
         base_commit_sha="abc123",
     )
 
-    with pytest.raises(ValueError, match="already has worktree artifact.*/tmp/gobby-worktree"):
+    with pytest.raises(
+        ValueError,
+        match=r"already has a worktree artifact; clear existing build artifacts",
+    ):
         await _build(
             f"#{epic.seq_num}",
             _options(isolation="clone"),
