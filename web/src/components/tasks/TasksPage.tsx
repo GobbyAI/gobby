@@ -480,7 +480,13 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             value={filters.search}
             onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
           />
-          <button className={REFRESH_BTN_CLS} onClick={refreshTasks} title="Refresh">
+          <button
+            type="button"
+            className={REFRESH_BTN_CLS}
+            onClick={refreshTasks}
+            title="Refresh"
+            aria-label="Refresh tasks"
+          >
             ↻
           </button>
           <button className={NEW_BTN_CLS} title="New Task" onClick={() => setShowCreateForm(true)}>

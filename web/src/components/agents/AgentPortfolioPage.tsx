@@ -524,7 +524,13 @@ export function AgentPortfolioPage() {
             <option value="lastActive">Sort: Last Active</option>
             <option value="name">Sort: Name</option>
           </select>
-          <button className="agent-refresh-btn" onClick={fetchData} title="Refresh">
+          <button
+            type="button"
+            className="agent-refresh-btn"
+            onClick={fetchData}
+            title="Refresh"
+            aria-label="Refresh agents"
+          >
             \u21BB
           </button>
         </div>

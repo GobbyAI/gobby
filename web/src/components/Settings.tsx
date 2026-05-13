@@ -31,7 +31,12 @@ export function Settings({
       <div className="settings-panel">
         <div className="settings-header">
           <h2>Settings</h2>
-          <button className="close-button" onClick={onClose}>
+          <button
+            type="button"
+            className="close-button"
+            onClick={onClose}
+            aria-label="Close settings"
+          >
             &times;
           </button>
         </div>
