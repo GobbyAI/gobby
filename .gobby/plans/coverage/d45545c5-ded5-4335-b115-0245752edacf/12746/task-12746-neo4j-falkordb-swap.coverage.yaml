@@ -1,11 +1,11 @@
 header:
   plan_id: task-12746-neo4j-falkordb-swap
-  plan_hash: e2c265608ebea979b68202ccce333a0207ded919a08e28303538a08e0d98f668
+  plan_hash: b48c57abb7baa3752c597b2254b82f2cca2af0aabb0ba95c2fb83b1f84d1ddc7
   root_task_ref: '12746'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-05-13T04:22:37Z'
+  generated_at: '2026-05-13T04:32:12Z'
   task_tree_source: db
-  task_tree_source_hash: c72f073d8416ed0b83b68416f6679b1287fb0092a2491559844972816693fe33
+  task_tree_source_hash: b57bdb37cac3e4d614456d708900b50143e86e44f03ca8f5eb72ac6d32bbd893
   evidence_summary: []
 rows:
 - section_id: '1.1'
@@ -16,6 +16,12 @@ rows:
   evidence: []
 - section_id: '1.1'
   item_id: 1.1.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.1'
+  item_id: 1.1.3
   status: missing
   leaves: []
   deferral_target: null
@@ -220,6 +226,18 @@ rows:
   evidence: []
 - section_id: '7.2'
   item_id: 7.2.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '7.2'
+  item_id: 7.2.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '7.2'
+  item_id: 7.2.3
   status: missing
   leaves: []
   deferral_target: null

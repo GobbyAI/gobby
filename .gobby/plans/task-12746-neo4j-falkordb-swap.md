@@ -25,7 +25,7 @@ The architectural fact that shapes this plan: **the Rust crate is read-only** an
 ### 1.1 Replace Neo4jConfig with FalkorConfig and add falkordb dep [category: config]
 `kind: deliverable`
 
-Target: `src/gobby/config/persistence.py`, `pyproject.toml`
+Targets: `src/gobby/config/persistence.py`, `pyproject.toml`, `uv.lock` (R30-F1 — `uv add falkordb` (or `uv sync` after editing `pyproject.toml`) rewrites this file; it MUST be staged and committed in the same task so the reproducible-install lockfile stays in lockstep with `pyproject.toml`. Without this, expansion can close the §1.1 task with a stale `uv.lock`, and downstream tasks running `uv sync` in fresh checkouts would either fail to install `falkordb` or pin different versions than the author tested. The §1.1 acceptance below names the file explicitly so a closing diff that touches `pyproject.toml` without touching `uv.lock` cannot satisfy the task.)
 
 Replace the `Neo4jConfig` class (lines 64-108 of `src/gobby/config/persistence.py`) with `FalkorConfig`:
 
@@ -173,6 +173,7 @@ These updates land with the config-class rename — leaving them stale would blo
 
 - 1.1.1 — `FalkorConfig` Pydantic class replaces `Neo4jConfig` in persistence config. symbol: `gobby.config.persistence.FalkorConfig`.
 - 1.1.2 — `falkordb` Python package added to `pyproject.toml` dependencies; `neo4j` dropped. file: `pyproject.toml`.
+- 1.1.3 — `uv.lock` regenerated and committed alongside the `pyproject.toml` change so reproducible installs resolve the new dep set. file: `uv.lock`.
 
 ### 1.2 Implement FalkorClient mirroring Neo4jClient surface [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1724,7 +1725,7 @@ The Rust crate reads the **code** graph (`gobby_code`), not the memory KG (`gobb
 ### 7.2 Pin FalkorClient API shape and result-conversion contract [category: code] (depends: 7.1)
 `kind: deliverable`
 
-Targets: `/Users/josh/Projects/gobby-cli/crates/gcode/src/falkor.rs` (new — skeleton with real parser body), `crates/gcode/src/falkor.rs` (bare path cited in body), `/Users/josh/Projects/gobby-cli/crates/gcode/src/main.rs` (add `mod falkor;` ALONGSIDE existing `mod neo4j;` so the new file enters the module tree at this stage — R16-F3; do not remove `mod neo4j;` yet, that lives in § 7.4), `/Users/josh/Projects/gobby-cli/crates/gcode/Cargo.toml`, `/Users/josh/Projects/gobby-cli/crates/gcode/src/search/graph_boost.rs` (mutability change to `with_neo4j`), `secrets.rs` (bare path cited in body)
+Targets: `/Users/josh/Projects/gobby-cli/crates/gcode/src/falkor.rs` (new — skeleton with real parser body), `crates/gcode/src/falkor.rs` (bare path cited in body), `/Users/josh/Projects/gobby-cli/crates/gcode/src/main.rs` (add `mod falkor;` ALONGSIDE existing `mod neo4j;` so the new file enters the module tree at this stage — R16-F3; do not remove `mod neo4j;` yet, that lives in § 7.4), `/Users/josh/Projects/gobby-cli/crates/gcode/Cargo.toml`, `crates/gcode/Cargo.toml` (bare path cited in acceptance), `/Users/josh/Projects/gobby-cli/Cargo.lock`, `Cargo.lock` (bare path cited in acceptance) (R30-F1 — `cargo add falkordb urlencoding` (or `cargo build` after editing `Cargo.toml`) rewrites this workspace lockfile; it MUST be staged and committed in the same task so the reproducible-build lockfile stays in lockstep with `Cargo.toml`. Without this, expansion can close §7.2 with a stale `Cargo.lock`, and `cargo build --release -p gobby-code` in fresh checkouts could either fail to resolve the new deps or pin different versions than the author tested. The §7.2 acceptance below names the file explicitly.), `/Users/josh/Projects/gobby-cli/crates/gcode/src/search/graph_boost.rs` (mutability change to `with_neo4j`), `secrets.rs` (bare path cited in body)
 
 Pin the wrapper contract before porting any queries. The `falkordb` Rust crate (v0.2.x) does not match the loose `params: Option<serde_json::Value>` shape from the prior draft. Real constraints (verified against docs.rs for `falkordb` 0.2 — R12-F3):
 
@@ -1919,6 +1920,8 @@ Verify the `parse_falkor_result` skeleton compiles against `falkordb 0.2.x` (bui
 **Acceptance:**
 
 - 7.2.1 — Rust `FalkorClient` API surface and result-conversion contract pinned (read-only client) in the `gobby-code` bin crate's falkor module. file: `crates/gcode/src/falkor.rs`. (Same bin-only crate caveat as 7.1.1 — `crates/gcode/` has no `lib.rs`; acceptance evidence is the file diff, not a library symbol path.)
+- 7.2.2 — `falkordb` and `urlencoding` crates added to `crates/gcode/Cargo.toml`; `neo4j`-related Rust deps removed where they're no longer used. file: `crates/gcode/Cargo.toml`.
+- 7.2.3 — `Cargo.lock` regenerated and committed alongside the `Cargo.toml` change so reproducible builds resolve the new dep set. file: `Cargo.lock`.
 
 ### 7.3 Port 8 read queries to FalkorClient [category: code] (depends: 7.2)
 `kind: deliverable`
