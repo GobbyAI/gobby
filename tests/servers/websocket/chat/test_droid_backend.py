@@ -11,7 +11,13 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.llm.claude_models import DoneEvent, TextChunk, ThinkingEvent
+from gobby.llm.claude_models import (
+    DoneEvent,
+    TextChunk,
+    ThinkingEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from gobby.servers.websocket.chat.droid_backend import (
     DroidManagedChatSession,
     DroidWebChatBackend,
@@ -221,6 +227,31 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
     assert [event.content for event in events if isinstance(event, TextChunk)] == ["Done"]
     assert isinstance(events[-1], DoneEvent)
     assert events[-1].context_window == 200_000
+
+
+@pytest.mark.asyncio
+async def test_managed_session_translates_structured_tool_events() -> None:
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session._connected = True
+
+    async def fake_send_message(_session: Any, _prompt: str):
+        for line in _fixture_lines("tool_call.jsonl"):
+            for event in _parse_droid_stream_line(line):
+                yield event
+
+    backend.send_message = fake_send_message
+
+    events = [event async for event in session.send_message("list servers")]
+
+    assert isinstance(events[0], ToolCallEvent)
+    assert events[0].tool_call_id == "tool-1"
+    assert events[0].tool_name == "mcp__gobby__list_mcp_servers"
+    assert events[0].server_name == "gobby"
+    assert isinstance(events[1], ToolResultEvent)
+    assert events[1].tool_call_id == "tool-1"
+    assert events[1].success is True
+    assert events[1].result == {"success": True}
 
 
 @pytest.mark.asyncio

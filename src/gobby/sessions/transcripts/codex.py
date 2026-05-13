@@ -304,19 +304,30 @@ class CodexTranscriptParser(BaseTranscriptParser):
         if payload_type != "token_count":
             return None
 
-        input_tokens = _parse_int_token(payload.get("input_tokens") or payload.get("inputTokens"))
+        info = payload.get("info")
+        usage_data: dict[str, Any] = payload
+        if isinstance(info, dict):
+            nested_usage = info.get("last_token_usage") or info.get("total_token_usage")
+            if isinstance(nested_usage, dict):
+                usage_data = nested_usage
+
+        input_tokens = _parse_int_token(
+            usage_data.get("input_tokens") or usage_data.get("inputTokens")
+        )
         cached_input_tokens = _parse_int_token(
-            payload.get("cached_input_tokens") or payload.get("cachedInputTokens") or 0
+            usage_data.get("cached_input_tokens") or usage_data.get("cachedInputTokens") or 0
         )
         output_tokens = _parse_int_token(
-            payload.get("output_tokens") or payload.get("outputTokens")
+            usage_data.get("output_tokens") or usage_data.get("outputTokens")
         )
         reasoning_output_tokens = _parse_int_token(
-            payload.get("reasoning_output_tokens") or payload.get("reasoningOutputTokens") or 0
+            usage_data.get("reasoning_output_tokens")
+            or usage_data.get("reasoningOutputTokens")
+            or 0
         )
         cache_creation_tokens = _parse_int_token(
-            payload.get("cache_creation_input_tokens")
-            or payload.get("cacheCreationInputTokens")
+            usage_data.get("cache_creation_input_tokens")
+            or usage_data.get("cacheCreationInputTokens")
             or 0
         )
 
@@ -326,7 +337,12 @@ class CodexTranscriptParser(BaseTranscriptParser):
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cached_input_tokens,
         )
-        model = payload.get("model") or payload.get("model_id") or payload.get("modelId")
+        model = (
+            usage_data.get("model")
+            or payload.get("model")
+            or payload.get("model_id")
+            or payload.get("modelId")
+        )
 
         return ParsedMessage(
             index=index,

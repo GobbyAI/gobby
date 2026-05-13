@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPage } from "../ChatPage";
@@ -83,7 +89,9 @@ describe("ChatPage – terminal attachment", () => {
       expect(screen.getByTestId("agent-status-attached")).toHaveTextContent(
         "true",
       );
-      expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("command-bar-panel-toggle"),
+      ).toBeInTheDocument();
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
@@ -98,7 +106,6 @@ describe("ChatPage – terminal attachment", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
-
 
   it("locks CLI-owned footer controls while proxy-attached and shows attached session settings", async () => {
     render(
@@ -130,21 +137,34 @@ describe("ChatPage – terminal attachment", () => {
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
     });
 
-    expect(screen.getByTestId("chat-input-disabled")).toHaveTextContent("false");
-    expect(screen.getByTestId("chat-input-mode-disabled")).toHaveTextContent("true");
-    expect(screen.getByTestId("chat-input-attachments-disabled")).toHaveTextContent("true");
-    expect(screen.getByTestId("chat-input-agent-disabled")).toHaveTextContent("true");
-    expect(screen.getByTestId("chat-input-worktree-disabled")).toHaveTextContent("true");
-    expect(screen.getByTestId("chat-input-provider")).toHaveTextContent("codex");
-    expect(screen.getByTestId("chat-input-model")).toHaveTextContent("gpt-5.4");
-    expect(screen.getByTestId("chat-input-reasoning")).toHaveTextContent("high");
-    expect(screen.getByTestId("chat-input-provider-disabled-reason")).toHaveTextContent(
-      "Attached session owns provider, model, and reasoning",
+    expect(screen.getByTestId("chat-input-disabled")).toHaveTextContent(
+      "false",
     );
+    expect(screen.getByTestId("chat-input-mode-disabled")).toHaveTextContent(
+      "true",
+    );
+    expect(
+      screen.getByTestId("chat-input-attachments-disabled"),
+    ).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-agent-disabled")).toHaveTextContent(
+      "true",
+    );
+    expect(
+      screen.getByTestId("chat-input-worktree-disabled"),
+    ).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-provider")).toHaveTextContent(
+      "codex",
+    );
+    expect(screen.getByTestId("chat-input-model")).toHaveTextContent("gpt-5.4");
+    expect(screen.getByTestId("chat-input-reasoning")).toHaveTextContent(
+      "high",
+    );
+    expect(
+      screen.getByTestId("chat-input-provider-disabled-reason"),
+    ).toHaveTextContent("Attached session owns provider, model, and reasoning");
   });
 
-
-  it("keeps the main web chat as the activity panel chat session while watching a terminal", async () => {
+  it("uses the watched terminal as the hidden activity panel chat session", async () => {
     await act(async () => {
       render(
         <ChatPage
@@ -170,9 +190,8 @@ describe("ChatPage – terminal attachment", () => {
 
     expect(
       screen.getByTestId("activity-panel-chat-session-id"),
-    ).toHaveTextContent("web-main-1");
+    ).toHaveTextContent("terminal-2");
   });
-
 
   it("threads the shared session catalog into the activity panel and resumes with auto fallback", async () => {
     const continueSessionInChat = vi.fn(async () => "continued-session");
@@ -245,17 +264,22 @@ describe("ChatPage – terminal attachment", () => {
       );
     });
 
-    expect(screen.getByTestId("activity-panel-session-count")).toHaveTextContent("2");
+    expect(
+      screen.getByTestId("activity-panel-session-count"),
+    ).toHaveTextContent("2");
 
     fireEvent.click(screen.getByTestId("resume-activity-session"));
 
     await waitFor(() => {
-      expect(continueSessionInChat).toHaveBeenCalledWith("resume-target", "proj-1", {
-        fallbackContext: "auto",
-      });
+      expect(continueSessionInChat).toHaveBeenCalledWith(
+        "resume-target",
+        "proj-1",
+        {
+          fallbackContext: "auto",
+        },
+      );
     });
   });
-
 
   it("hides the entire chat input pane while watching a swapped terminal", async () => {
     await act(async () => {
@@ -289,7 +313,6 @@ describe("ChatPage – terminal attachment", () => {
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
-
   it("keeps Attach available for live handoff tmux sessions across providers", async () => {
     await act(async () => {
       render(
@@ -318,7 +341,6 @@ describe("ChatPage – terminal attachment", () => {
     expect(screen.getByTestId("agent-status-attach")).toBeInTheDocument();
     expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
   });
-
 
   it("routes Attach to the viewed terminal attach handler", async () => {
     const onAttachToViewed = vi.fn();
@@ -354,6 +376,4 @@ describe("ChatPage – terminal attachment", () => {
     expect(onAttachToViewed).toHaveBeenCalledTimes(1);
     expect(continueSessionInChat).not.toHaveBeenCalled();
   });
-
-
 });

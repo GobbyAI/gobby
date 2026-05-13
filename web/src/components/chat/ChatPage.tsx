@@ -36,7 +36,12 @@ import {
 } from "../../lib/providerModels";
 import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
 
-const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
+const VALID_ARTIFACT_TYPES = new Set<string>([
+  "code",
+  "text",
+  "image",
+  "sheet",
+]);
 
 interface ChatPageProps {
   chat: ChatState;
@@ -108,7 +113,8 @@ export function ChatPage({
     chat.mainSessionMeta ??
     (activeSession
       ? {
-          ref: activeSession.seq_num != null ? `#${activeSession.seq_num}` : null,
+          ref:
+            activeSession.seq_num != null ? `#${activeSession.seq_num}` : null,
           source: activeSession.source,
           title: activeSession.title ?? null,
           status: activeSession.status,
@@ -145,11 +151,7 @@ export function ChatPage({
   const activity = useActivityPanel();
   const fileChanges = useFileChanges(chat.messages, projectId ?? null);
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
-  const {
-    openCanvas,
-    closeCanvas,
-    activeCanvas,
-  } = canvas;
+  const { openCanvas, closeCanvas, activeCanvas } = canvas;
   const {
     activeTab: activityTab,
     closeIfAutoOpened,
@@ -198,17 +200,13 @@ export function ChatPage({
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
       const currentSessionId = chat.dbSessionId;
-      if (
-        !currentSessionId ||
-        chat.messages.length === 0 ||
-        currentSessionId === nextSessionId
-      ) {
+      if (!currentSessionId || currentSessionId === nextSessionId) {
         return;
       }
       setFocusSessionId(currentSessionId);
       showTab("sessions");
     },
-    [chat.dbSessionId, chat.messages.length, showTab],
+    [chat.dbSessionId, showTab],
   );
 
   const handleSwapSession = useCallback(
@@ -255,7 +253,8 @@ export function ChatPage({
   const [providerModelCatalog, setProviderModelCatalog] = useState<
     ProviderModelEntry[]
   >([]);
-  const viewingMeta = chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
+  const viewingMeta =
+    chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
   const isSwappedTerminal = viewingMeta?.sessionType === "terminal";
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
@@ -299,10 +298,10 @@ export function ChatPage({
     ? viewedInputSelection.provider
     : mainInputSelection.provider;
   const effectiveInputModel = isSwappedTerminal
-    ? viewedInputSelection.model ?? ""
-    : mainInputSelection.model ?? "";
+    ? (viewedInputSelection.model ?? "")
+    : (mainInputSelection.model ?? "");
   const effectiveAgentName = isSwappedTerminal
-    ? viewingMeta?.agentName ?? chat.activeAgent
+    ? (viewingMeta?.agentName ?? chat.activeAgent)
     : chat.activeAgent;
   const effectiveBranch = viewingMeta?.gitBranch ?? chat.currentBranch;
   const effectiveReasoningPreferenceKey = buildReasoningPreferenceKey(
@@ -341,17 +340,10 @@ export function ChatPage({
       ? "Message input — resuming session"
       : undefined;
   // Anchor the activity-panel session list to whichever session is currently
-  // showing in the main area. Observe-terminal mode is the exception: it
-  // keeps the anchor on the user's primary web chat so the terminal stays
-  // visible in the panel while they read along. For every other swap mode,
-  // the swapped session IS the main view and must be filtered out of the
-  // panel to avoid the "S appears in main and in the panel" duplication.
+  // showing in the main area so a swapped/attached session cannot also appear
+  // in the panel list.
   const activityPanelChatSessionId =
-    chat.viewingSessionId || chat.attachedSessionId
-      ? isSwappedTerminal && chat.sessionInteractionMode === "observe"
-        ? chat.dbSessionId
-        : chat.viewingSessionId ?? chat.attachedSessionId ?? chat.dbSessionId
-      : chat.dbSessionId;
+    chat.viewingSessionId ?? chat.attachedSessionId ?? chat.dbSessionId;
 
   const handleResumeViewedSession = useCallback(() => {
     if (
@@ -365,7 +357,11 @@ export function ChatPage({
     if (effectiveInputModel) {
       onModelChange?.(effectiveInputModel);
     }
-    if (effectiveInputProvider && effectiveInputModel && effectiveInputReasoning) {
+    if (
+      effectiveInputProvider &&
+      effectiveInputModel &&
+      effectiveInputReasoning
+    ) {
       onReasoningPreferenceChange?.(
         effectiveInputProvider,
         effectiveInputModel,
@@ -407,16 +403,14 @@ export function ChatPage({
         return;
       }
 
-      const confirmChange =
-        canAttachViewedSession
-          ? await confirm({
-              title: "Change provider?",
-              description:
-                `This will end the terminal session and resume the conversation with ${provider} ${model}.`,
-              confirmLabel: "Change Provider",
-              destructive: true,
-            })
-          : true;
+      const confirmChange = canAttachViewedSession
+        ? await confirm({
+            title: "Change provider?",
+            description: `This will end the terminal session and resume the conversation with ${provider} ${model}.`,
+            confirmLabel: "Change Provider",
+            destructive: true,
+          })
+        : true;
       if (!confirmChange) return;
 
       chat.onProviderChange?.(provider);
@@ -424,13 +418,17 @@ export function ChatPage({
       if (reasoningEffort) {
         onReasoningPreferenceChange?.(provider, model, reasoningEffort);
       }
-      await chat.continueSessionInChat(chat.viewingSessionId, projectId ?? undefined, {
-        provider,
-        model,
-        reasoningEffort,
-        chatMode: viewingMeta?.chatMode ?? null,
-        fallbackContext: "auto",
-      });
+      await chat.continueSessionInChat(
+        chat.viewingSessionId,
+        projectId ?? undefined,
+        {
+          provider,
+          model,
+          reasoningEffort,
+          chatMode: viewingMeta?.chatMode ?? null,
+          fallbackContext: "auto",
+        },
+      );
     },
     [
       chat,
@@ -469,12 +467,7 @@ export function ChatPage({
 
       chat.onProviderChange?.(provider);
     },
-    [
-      chat,
-      effectiveInputProvider,
-      onModelChange,
-      onReasoningPreferenceChange,
-    ],
+    [chat, effectiveInputProvider, onModelChange, onReasoningPreferenceChange],
   );
 
   // Wrap onNewChat to park the current session as Watching
@@ -546,7 +539,9 @@ export function ChatPage({
 
   // Reset plan state on session switch / new chat. Render-time comparison
   // avoids cascading setState-in-effect renders.
-  const [prevSwitchKey, setPrevSwitchKey] = useState(chat.conversationSwitchKey);
+  const [prevSwitchKey, setPrevSwitchKey] = useState(
+    chat.conversationSwitchKey,
+  );
   if (prevSwitchKey !== chat.conversationSwitchKey) {
     setPrevSwitchKey(chat.conversationSwitchKey);
     setPlanArtifactId(null);
@@ -607,7 +602,10 @@ export function ChatPage({
     (content: string | null) => {
       if (!content) return;
       const existingArtifactId = planArtifactIdRef.current;
-      if (existingArtifactId && content === lastPlanArtifactContentRef.current) {
+      if (
+        existingArtifactId &&
+        content === lastPlanArtifactContentRef.current
+      ) {
         setPendingPlanArtifactId(existingArtifactId);
         openArtifact(existingArtifactId);
         showTab("plans");
@@ -667,12 +665,9 @@ export function ChatPage({
   );
 
   // Add file to chat from Files tab (right-click "Add to chat")
-  const handleAddFileToChat = useCallback(
-    (filePath: string) => {
-      onSendRef.current?.(`Read and reference this file: ${filePath}`);
-    },
-    [],
-  );
+  const handleAddFileToChat = useCallback((filePath: string) => {
+    onSendRef.current?.(`Read and reference this file: ${filePath}`);
+  }, []);
 
   const handleApprovePlan = useCallback(() => {
     setPendingPlanArtifactId(null);
@@ -739,9 +734,9 @@ export function ChatPage({
 
   const showVoiceStatusBar = Boolean(
     (voice.ttsEnabled && voice.voiceLoading) ||
-      (voice.sttEnabled &&
-        voice.voiceInputMode === "vad" &&
-        (voice.isListening || voice.isTranscribing || voice.voiceError)),
+    (voice.sttEnabled &&
+      voice.voiceInputMode === "vad" &&
+      (voice.isListening || voice.isTranscribing || voice.voiceError)),
   );
 
   return (
@@ -753,11 +748,13 @@ export function ChatPage({
         {/* Command Bar */}
         <CommandBar
           sessionRef={effectiveSessionRef}
-          title={
-            viewingMeta?.title ??
-            activeTitle
+          title={viewingMeta?.title ?? activeTitle}
+          sessionSource={
+            viewingMeta?.source ??
+            mainSessionMeta?.source ??
+            chat.provider ??
+            null
           }
-          sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
           onOpenPalette={() => setShowCommandPalette(true)}
           onTogglePanel={togglePanel}
           isPanelPinned={isPinned}
@@ -816,7 +813,9 @@ export function ChatPage({
             onResume={
               canControlViewedSession ? handleResumeViewedSession : undefined
             }
-            onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+            onDetach={
+              chat.attachedSessionId ? chat.onDetachFromSession : undefined
+            }
             onNewChat={() => handleNewChat()}
           />
 
@@ -835,7 +834,9 @@ export function ChatPage({
               mode={chat.mode}
               onModeChange={chat.onModeChange}
               modeDisabled={isProxyAttached}
-              modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
+              modeOptions={
+                isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined
+              }
               currentBranch={effectiveBranch}
               worktreePath={chat.worktreePath}
               projectId={projectId ?? null}
@@ -889,7 +890,9 @@ export function ChatPage({
               }
               providerPickerDisabledReason={providerPickerDisabledReason}
               hasMessages={chat.messages.length > 0}
-              proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
+              proxySlashMode={
+                isSwappedTerminal && chat.sessionInteractionMode === "proxy"
+              }
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
               attachmentsDisabled={isProxyAttached}
               isAttached={isProxyAttached}
@@ -913,7 +916,8 @@ export function ChatPage({
         onUpdateArtifactContent={updateArtifact}
         onSetArtifactVersion={setVersion}
         planPendingApproval={
-          (pendingPlanArtifactId === activeArtifact?.id || planPendingApproval) &&
+          (pendingPlanArtifactId === activeArtifact?.id ||
+            planPendingApproval) &&
           activeArtifact?.id === planArtifactId &&
           activeArtifact?.type === "text"
         }

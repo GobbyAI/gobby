@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 
 import type { SessionMessage } from "../../hooks/useSessionDetail";
 import type { ChatMessage, ContentBlock, ToolCall } from "../../types/chat";
@@ -132,19 +132,71 @@ export function WatchingTranscript({
   isLoading,
   emptyStateMessage,
 }: WatchingTranscriptProps) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const pendingScrollFrameRef = useRef<number | null>(null);
   const chatMessages = useMemo(() => messages.map(toChatMessage), [messages]);
   const scrollKey = lastMessageScrollKey(chatMessages[chatMessages.length - 1]);
 
-  useEffect(() => {
+  const setScrollerToBottom = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    scroller.style.scrollBehavior = "auto";
+    scroller.scrollTop = scroller.scrollHeight;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    setScrollerToBottom();
     const messagesEnd = messagesEndRef.current;
     if (messagesEnd && typeof messagesEnd.scrollIntoView === "function") {
-      messagesEnd.scrollIntoView({ behavior: "auto" });
+      messagesEnd.scrollIntoView({ behavior: "auto", block: "end" });
     }
-  }, [scrollKey, sessionId]);
+  }, [setScrollerToBottom]);
+
+  const scheduleSetScrollerToBottom = useCallback(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      setScrollerToBottom();
+      return;
+    }
+    if (pendingScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingScrollFrameRef.current);
+    }
+    pendingScrollFrameRef.current = window.requestAnimationFrame(() => {
+      setScrollerToBottom();
+      pendingScrollFrameRef.current = window.requestAnimationFrame(() => {
+        pendingScrollFrameRef.current = null;
+        setScrollerToBottom();
+      });
+    });
+  }, [setScrollerToBottom]);
+
+  useLayoutEffect(
+    () => () => {
+      if (pendingScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(pendingScrollFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    scrollToBottom();
+    scheduleSetScrollerToBottom();
+  }, [scheduleSetScrollerToBottom, scrollKey, scrollToBottom, sessionId]);
 
   return (
-    <div className="flex-1 overflow-y-auto chat-scaled">
+    <div
+      ref={scrollerRef}
+      className="flex-1 overflow-y-auto chat-scaled overscroll-contain [overflow-anchor:none]"
+      style={{
+        scrollBehavior: "auto",
+        overflowAnchor: "none",
+        overscrollBehavior: "contain",
+      }}
+    >
       {isLoading ? (
         <ActivityPanelEmpty body="Loading messages…" />
       ) : chatMessages.length === 0 ? (

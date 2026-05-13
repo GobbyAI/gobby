@@ -1,7 +1,11 @@
 import * as React from "react";
 import { vi } from "vitest";
 
-import type { ChatState, ConversationState, VoiceProps } from "../../../types/chat";
+import type {
+  ChatState,
+  ConversationState,
+  VoiceProps,
+} from "../../../types/chat";
 
 export const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
 
@@ -60,19 +64,35 @@ export const chatInputMockFactory = () => ({
   }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
-      <span data-testid="chat-input-placeholder">{disabledPlaceholder ?? ""}</span>
+      <span data-testid="chat-input-placeholder">
+        {disabledPlaceholder ?? ""}
+      </span>
       <span data-testid="chat-input-aria-label">{disabledAriaLabel ?? ""}</span>
       <span data-testid="chat-input-notice">{proxyDeliveryNotice ?? ""}</span>
-      <span data-testid="chat-input-mode-disabled">{String(Boolean(modeDisabled))}</span>
-      <span data-testid="chat-input-attachments-disabled">{String(Boolean(attachmentsDisabled))}</span>
-      <span data-testid="chat-input-agent-disabled">{String(Boolean(agentPickerDisabled))}</span>
-      <span data-testid="chat-input-worktree-disabled">{String(Boolean(worktreePickerDisabled))}</span>
+      <span data-testid="chat-input-mode-disabled">
+        {String(Boolean(modeDisabled))}
+      </span>
+      <span data-testid="chat-input-attachments-disabled">
+        {String(Boolean(attachmentsDisabled))}
+      </span>
+      <span data-testid="chat-input-agent-disabled">
+        {String(Boolean(agentPickerDisabled))}
+      </span>
+      <span data-testid="chat-input-worktree-disabled">
+        {String(Boolean(worktreePickerDisabled))}
+      </span>
       <span data-testid="chat-input-provider">{provider ?? ""}</span>
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
       <span data-testid="chat-input-reasoning">{currentReasoning ?? ""}</span>
-      <span data-testid="chat-input-provider-disabled-reason">{providerPickerDisabledReason ?? ""}</span>
+      <span data-testid="chat-input-provider-disabled-reason">
+        {providerPickerDisabledReason ?? ""}
+      </span>
       {onNewChat && (
-        <button type="button" data-testid="new-chat-button" onClick={onNewChat}>
+        <button
+          type="button"
+          data-testid="new-chat-button"
+          onClick={() => onNewChat()}
+        >
           New Chat
         </button>
       )}
@@ -125,7 +145,9 @@ export const activityPanelMockFactory = () => ({
     onAddFileToChat?: (filePath: string) => void;
   }) => (
     <div data-testid="activity-panel">
-      <span data-testid="activity-panel-session-count">{sessions?.length ?? 0}</span>
+      <span data-testid="activity-panel-session-count">
+        {sessions?.length ?? 0}
+      </span>
       <span data-testid="activity-panel-chat-session-id">
         {chatSessionId ?? ""}
       </span>
@@ -157,6 +179,19 @@ export const activityPanelMockFactory = () => ({
         }
       >
         Swap Autonomous
+      </button>
+      <button
+        type="button"
+        data-testid="swap-web-chat-session"
+        onClick={() =>
+          onSwapSession?.({
+            sessionId: "web-chat-2",
+            sessionType: "web_chat",
+            agentRunId: null,
+          })
+        }
+      >
+        Swap Web Chat
       </button>
       <button
         type="button"
@@ -200,27 +235,52 @@ export const agentStatusBarMockFactory = () => ({
     onAttach,
     onResume,
     onDetach,
+    onNewChat,
   }: {
     isAttached?: boolean;
     onAttach?: () => void;
     onResume?: () => void;
     onDetach?: () => void;
+    onNewChat?: () => void;
   }) => (
     <div data-testid="agent-status-bar">
-      <span data-testid="agent-status-attached">{String(Boolean(isAttached))}</span>
+      <span data-testid="agent-status-attached">
+        {String(Boolean(isAttached))}
+      </span>
       {onAttach && (
-        <button type="button" data-testid="agent-status-attach" onClick={onAttach}>
+        <button
+          type="button"
+          data-testid="agent-status-attach"
+          onClick={onAttach}
+        >
           Attach
         </button>
       )}
       {onResume && (
-        <button type="button" data-testid="agent-status-resume" onClick={onResume}>
+        <button
+          type="button"
+          data-testid="agent-status-resume"
+          onClick={onResume}
+        >
           Resume
         </button>
       )}
       {isAttached && onDetach && (
-        <button type="button" data-testid="agent-status-detach" onClick={onDetach}>
+        <button
+          type="button"
+          data-testid="agent-status-detach"
+          onClick={onDetach}
+        >
           Detach
+        </button>
+      )}
+      {onNewChat && (
+        <button
+          type="button"
+          data-testid="new-chat-button"
+          onClick={onNewChat}
+        >
+          New Chat
         </button>
       )}
     </div>
@@ -356,13 +416,17 @@ export function setupChatPageEnvironment(): void {
               {
                 provider: "claude",
                 available: true,
-                models: [{ value: "sonnet", label: "Sonnet", is_default: true }],
+                models: [
+                  { value: "sonnet", label: "Sonnet", is_default: true },
+                ],
                 source: "static",
               },
               {
                 provider: "codex",
                 available: true,
-                models: [{ value: "gpt-5.4", label: "gpt-5.4", is_default: true }],
+                models: [
+                  { value: "gpt-5.4", label: "gpt-5.4", is_default: true },
+                ],
                 source: "static",
               },
             ],
