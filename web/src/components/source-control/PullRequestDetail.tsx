@@ -54,7 +54,7 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
         </div>
       ) : error ? (
         <div className="sc-detail-panel__body">
-          <p className="sc-text-muted" style={{ color: 'var(--color-danger, #ef4444)' }}>
+          <p className="sc-text-muted" style={{ color: 'var(--color-error)' }}>
             Failed to load PR details: {error}
           </p>
         </div>
