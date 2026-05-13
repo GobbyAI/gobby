@@ -187,17 +187,12 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
 
 function TraceStatusDot({ status }: { status: SpanRecord['status'] | TraceRecord['status'] }) {
   if (status === 'OK') {
-    return (
-      <ActivityRowStatusDot
-        color="var(--color-success-foreground)"
-        label="OK"
-      />
-    )
+    return <ActivityRowStatusDot kind="success" label="OK" />
   }
   if (status === 'ERROR') {
-    return <ActivityRowStatusDot color="var(--color-error)" label="Error" />
+    return <ActivityRowStatusDot kind="error" label="Error" />
   }
-  return <ActivityRowStatusDot color="var(--text-muted)" label="Unset" />
+  return <ActivityRowStatusDot kind="disabled" label="Unset" />
 }
 
 function formatDurationMs(ms: number): string {

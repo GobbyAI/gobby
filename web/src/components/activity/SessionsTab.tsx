@@ -692,12 +692,12 @@ export const SessionsTab = memo(function SessionsTab({
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <ActivityRowStatusDot
-                    color={
+                    kind={
                       entry.status === "active"
-                        ? "var(--color-success-foreground)"
+                        ? "success"
                         : entry.status === "expired"
-                          ? "var(--text-muted)"
-                          : "var(--color-warning-foreground)"
+                          ? "disabled"
+                          : "warning"
                     }
                     pulse={entry.status === "active"}
                     label={`Session ${entry.status}`}

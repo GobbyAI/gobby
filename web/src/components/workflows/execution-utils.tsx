@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ActivityRowStatusDot } from "../activity/ActivityRowStatusDot";
 import { formatDuration, formatJson } from "./executionFormatters";
-import { getExecStatusColorVar } from "../../lib/pipelineColors";
+import { getExecStatusKind } from "../../lib/pipelineColors";
 export { TraceIcon } from "./ReportsPage.icons";
 
 // ── Shared pipeline class constants ──
@@ -249,7 +249,7 @@ export function PipelineIcon({ className }: { className?: string } = {}) {
 export function PipelineStatusDot({ status }: { status: string }) {
   return (
     <ActivityRowStatusDot
-      color={getExecStatusColorVar(status)}
+      kind={getExecStatusKind(status)}
       pulse={status === "running"}
       label={status}
       title={status}

@@ -1,3 +1,5 @@
+import type { StatusKind } from '../components/activity/ActivityRowStatusDot';
+
 /**
  * Pipeline editor and execution color palette.
  *
@@ -61,9 +63,22 @@ export function getStepTypeColorVar(stepType: string): string {
     : "var(--text-muted)";
 }
 
-/** Resolve an execution status to its theme-aware dot colour. */
-export function getExecStatusColorVar(status: string): string {
-  return EXEC_STATUS_COLORS[status]
-    ? `var(--exec-status-${status})`
-    : "var(--text-muted)";
+/** Collapse the typed pipeline status palette onto the 5-kind taxonomy
+ *  consumed by ActivityRowStatusDot. The dot pairs this with `pulse` for
+ *  live states; "running" stays distinguishable via the pulse animation. */
+const EXEC_STATUS_KINDS: Record<string, StatusKind> = {
+  running: "info",
+  pending: "disabled",
+  completed: "success",
+  success: "success",
+  failed: "error",
+  error: "error",
+  timeout: "warning",
+  waiting_approval: "warning",
+  cancelled: "disabled",
+  interrupted: "warning",
+};
+
+export function getExecStatusKind(status: string): StatusKind {
+  return EXEC_STATUS_KINDS[status] ?? "disabled";
 }

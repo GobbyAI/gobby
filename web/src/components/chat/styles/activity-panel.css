@@ -329,13 +329,16 @@
    Activity Panel — shared leading status dot
    Single authoring site for the 8px status indicator that appears at the
    left of list rows in Tasks, Sessions, Pipelines, Cron, and Traces.
+   The element is an SVG that paints one of five geometric glyphs
+   (success/info/warning/error/disabled); shape carries state alongside
+   colour so the dot reads in grayscale for deutan viewers.
    ============================================ */
 .activity-row-status-dot {
   display: inline-block;
   width: 0.5rem;
   height: 0.5rem;
-  border-radius: 50%;
   flex-shrink: 0;
+  overflow: visible;
 }
 
 .activity-row-status-dot--pulse {
