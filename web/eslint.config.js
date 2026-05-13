@@ -1,4 +1,5 @@
 import js from "@eslint/js";
+import jsxA11y from "eslint-plugin-jsx-a11y";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import { defineConfig, globalIgnores } from "eslint/config";
@@ -93,6 +94,9 @@ export default defineConfig([
       reactHooks.configs.flat.recommended,
       reactRefresh.configs.vite,
     ],
+    plugins: {
+      "jsx-a11y": jsxA11y,
+    },
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
@@ -104,6 +108,28 @@ export default defineConfig([
       "react-hooks/immutability": "error",
       "react-hooks/purity": "error",
       "react-hooks/preserve-manual-memoization": "error",
+
+      "jsx-a11y/control-has-associated-label": [
+        "error",
+        {
+          labelAttributes: [],
+          controlComponents: [],
+          ignoreElements: ["input", "select", "textarea"],
+          ignoreRoles: [
+            "grid",
+            "listbox",
+            "menu",
+            "menubar",
+            "radiogroup",
+            "row",
+            "tablist",
+            "toolbar",
+            "tree",
+            "treegrid",
+          ],
+          depth: 5,
+        },
+      ],
 
       // TypeScript already handles unused vars via noUnusedLocals
       "@typescript-eslint/no-unused-vars": [

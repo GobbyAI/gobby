@@ -224,7 +224,7 @@ async def test_send_event_routes_to_channels():
         await manager.start()
 
     # Mock router to return our channel id
-    manager._router.match_channels = AsyncMock(return_value=["chan-1"])  # type: ignore[method-assign]
+    manager._router.match_channels = AsyncMock(return_value=["chan-1"])
 
     msgs = await manager.send_event("task.created", "A task was created!")
 
@@ -238,7 +238,7 @@ async def test_send_event_skips_inactive_channels():
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
 
-    manager._router.match_channels = AsyncMock(return_value=["chan-inactive"])  # type: ignore[method-assign]
+    manager._router.match_channels = AsyncMock(return_value=["chan-inactive"])
 
     msgs = await manager.send_event("task.created", "Hello!")
     assert msgs == []

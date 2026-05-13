@@ -352,7 +352,9 @@ def detect_bash_commit(event: "HookEvent", variables: dict[str, Any], session_id
         )
 
 
-def detect_plan_mode_from_context(prompt: str, variables: dict[str, Any], session_id: str) -> None:
+def detect_plan_mode_from_context(
+    prompt: str | None, variables: dict[str, Any], session_id: str
+) -> None:
     """Detect plan mode from system reminders or CLI-specific markers.
 
     Detection runs three passes on the prompt (after stripping conversation

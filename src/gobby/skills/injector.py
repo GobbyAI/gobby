@@ -218,12 +218,15 @@ class SkillInjector:
 
         return True
 
-    def _matches_depth(self, depth_spec: int | list[int] | str, actual_depth: int) -> bool:
+    def _matches_depth(self, depth_spec: object, actual_depth: int) -> bool:
         """Check if actual depth matches a depth specification."""
         if isinstance(depth_spec, int):
             return actual_depth == depth_spec
         if isinstance(depth_spec, list):
-            return actual_depth in depth_spec
+            if all(isinstance(depth, int) for depth in depth_spec):
+                return actual_depth in depth_spec
+            logger.warning(f"Invalid depth_spec list items: {depth_spec!r}")
+            return False
         if isinstance(depth_spec, str):
             # Range format: "0-2" means 0, 1, 2
             try:

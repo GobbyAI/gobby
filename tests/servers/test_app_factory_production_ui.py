@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Protocol, cast
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +18,14 @@ from fastapi.testclient import TestClient
 from gobby.servers.app_factory import _mount_production_ui
 
 pytestmark = pytest.mark.unit
+
+
+class _ServicesShape(Protocol):
+    config: object
+
+
+class _ServerShape(Protocol):
+    services: _ServicesShape
 
 
 def _make_dist_only_web_dir(root: Path) -> Path:
@@ -30,15 +39,15 @@ def _make_dist_only_web_dir(root: Path) -> Path:
     return web
 
 
-def _server_stub(web_dir: Path) -> SimpleNamespace:
+def _server_stub(web_dir: Path) -> _ServerShape:
     config = SimpleNamespace(ui=SimpleNamespace(web_dir=str(web_dir)))
-    return SimpleNamespace(services=SimpleNamespace(config=config))
+    return cast(_ServerShape, SimpleNamespace(services=SimpleNamespace(config=config)))
 
 
 def test_mount_production_ui_serves_index_on_root(tmp_path: Path) -> None:
     web_dir = _make_dist_only_web_dir(tmp_path)
     app = FastAPI()
-    _mount_production_ui(app, _server_stub(web_dir))  # type: ignore[arg-type]
+    _mount_production_ui(app, _server_stub(web_dir))
 
     client = TestClient(app)
     resp = client.get("/")
@@ -49,7 +58,7 @@ def test_mount_production_ui_serves_index_on_root(tmp_path: Path) -> None:
 def test_mount_production_ui_serves_assets(tmp_path: Path) -> None:
     web_dir = _make_dist_only_web_dir(tmp_path)
     app = FastAPI()
-    _mount_production_ui(app, _server_stub(web_dir))  # type: ignore[arg-type]
+    _mount_production_ui(app, _server_stub(web_dir))
 
     client = TestClient(app)
     resp = client.get("/assets/app.js")
@@ -60,7 +69,7 @@ def test_mount_production_ui_serves_assets(tmp_path: Path) -> None:
 def test_mount_production_ui_falls_back_to_index_for_spa_routes(tmp_path: Path) -> None:
     web_dir = _make_dist_only_web_dir(tmp_path)
     app = FastAPI()
-    _mount_production_ui(app, _server_stub(web_dir))  # type: ignore[arg-type]
+    _mount_production_ui(app, _server_stub(web_dir))
 
     client = TestClient(app)
     resp = client.get("/some/spa/route")
@@ -74,7 +83,7 @@ def test_mount_production_ui_no_op_when_dist_missing(tmp_path: Path) -> None:
     (web_dir / "package.json").write_text("{}")
 
     app = FastAPI()
-    _mount_production_ui(app, _server_stub(web_dir))  # type: ignore[arg-type]
+    _mount_production_ui(app, _server_stub(web_dir))
 
     client = TestClient(app)
     resp = client.get("/")

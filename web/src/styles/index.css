@@ -30,7 +30,9 @@
   --border: oklch(28% 0.008 125);
 
   --surface-scrim: oklch(0% 0 0 / 0.7);
-  --surface-tint-subtle: oklch(0% 0 0 / 0.04);
+  --surface-tint-subtle: oklch(100% 0 0 / 0.03);
+  --surface-tint: oklch(100% 0 0 / 0.05);
+  --surface-tint-strong: oklch(100% 0 0 / 0.10);
   --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.15);
   --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.3);
   --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.35);
@@ -187,14 +189,25 @@
      pointer:coarse so adjacent controls keep matching baselines on touch. */
   --control-row-height: 2.25rem;
 
-  /* Pane status-bar height — promoted from .activity-panel scope so chat-pane
-     surfaces (.agent-status-bar) outside the activity panel can match. */
-  --activity-panel-bar-height: 2.5rem;
+  /* Compact control row height — used by activity-panel toolbars (Sessions,
+     Tasks, Traces, Cron) so their search/segmented/filter cluster reads at
+     btn-sm scale and fits inside --activity-panel-bar-height. Promotes to
+     2.75rem on pointer:coarse for parity with .btn-sm (44px touch floor). */
+  --control-row-height-sm: 1.75rem;
+
+  /* Pane status-bar height — single source of truth for every status-bar
+     surface in the chat UI: .command-bar, .agent-status-bar, .voice-status-bar,
+     .activity-panel-tabs / -toolbar / -status-bar, .mobile-chat-drawer-header.
+     Held at 2.75rem so the touch-coarse and ≤768px branches never push some
+     bars above their desktop siblings. Do not redeclare on inner scopes
+     (.activity-panel etc.); the inheritance from :root is load-bearing. */
+  --activity-panel-bar-height: 2.75rem;
 }
 
 @media (pointer: coarse) {
   :root {
     --control-row-height: 2.75rem;
+    --control-row-height-sm: 2.75rem;
   }
 }
 
@@ -213,6 +226,8 @@
 
   --surface-scrim: oklch(0% 0 0 / 0.45);
   --surface-tint-subtle: oklch(0% 0 0 / 0.03);
+  --surface-tint: oklch(0% 0 0 / 0.05);
+  --surface-tint-strong: oklch(0% 0 0 / 0.08);
   --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.08);
   --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.12);
   --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.15);
@@ -876,4 +891,21 @@ body {
 .workflow-trace-icon {
   margin-right: 6px;
   vertical-align: middle;
+}
+
+/* Base focus ring — element-level :focus-visible rules elsewhere in the
+   cascade override this; this only fills the gap for elements that have
+   no explicit focus treatment. Flat selectors keep behavior identical
+   whether or not a CSS nesting plugin is present. */
+@layer base {
+  button:focus-visible,
+  [role="button"]:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }

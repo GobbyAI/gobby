@@ -143,25 +143,6 @@ export function useRules() {
     return false
   }, [fetchRules])
 
-  const installFromTemplate = useCallback(async (id: string): Promise<boolean> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/workflows/${encodeURIComponent(id)}/install`, {
-        method: 'POST',
-      })
-      const data = await response.json().catch(() => ({}))
-      if (response.ok && data.status === 'success') {
-        await fetchRules()
-        return true
-      }
-      window.alert(data.detail || 'Failed to install rule from template')
-    } catch (e) {
-      console.error('Failed to install rule from template:', e)
-      window.alert(`Failed to install from template: ${e instanceof Error ? e.message : String(e)}`)
-    }
-    return false
-  }, [fetchRules])
-
   const bulkToggleRules = useCallback(async (source: string, enabled: boolean): Promise<boolean> => {
     try {
       const baseUrl = getBaseUrl()
@@ -272,7 +253,6 @@ export function useRules() {
     createRule,
     updateRule,
     deleteRule,
-    installFromTemplate,
     setEnforcement,
     bulkToggleRules,
   }

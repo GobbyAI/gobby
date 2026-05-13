@@ -10,6 +10,7 @@ from gobby.build.controls import (
     build_resume_target,
     build_stop_target,
 )
+from gobby.build.options import BuildIsolationResolution, resolve_build_isolation
 from gobby.build.service import (
     BuildControlResult,
     BuildLifecycleEvent,
@@ -26,6 +27,7 @@ __all__ = [
     "BuildAgentSummary",
     "BuildArtifactSummary",
     "BuildControlResult",
+    "BuildIsolationResolution",
     "BuildLifecycleEvent",
     "BuildOptions",
     "BuildResult",
@@ -40,4 +42,5 @@ __all__ = [
     "build_stop",
     "build_stop_target",
     "resolve_stage_manifest_specs",
+    "resolve_build_isolation",
 ]

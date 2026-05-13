@@ -1390,6 +1390,7 @@ class TestHookManagerWebhookDispatch:
                 manager._dispatch_webhooks_async(event)
                 assert dispatched.wait(timeout=1), "Async webhook dispatch never ran"
                 assert mock_dispatch_single.await_count == 1
+
                 async def no_op() -> None:
                     return None
 

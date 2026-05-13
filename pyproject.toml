@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "0.4.2"
+version = "0.4.3"
 description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is a local daemon that turns a task into a PR across Claude Code, Codex, Gemini, Qwen, and Droid. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
 license = "Apache-2.0"
@@ -33,7 +33,7 @@ dependencies = [
     "websockets>=15.0",
     "pyyaml>=6.0.3",
     "jinja2>=3.1.0",
-    "claude-agent-sdk>=0.1.39",
+    "claude-agent-sdk>=0.1.81",
     "wcwidth>=0.2.14",
     "tomlkit>=0.13.3",
     "tomli-w>=1.0.0",
@@ -95,8 +95,8 @@ constraint-dependencies = [
 # vulnerable or incompatible versions, so constraints are unsatisfiable on their own;
 # overrides force fixed versions and unify the voice-extra resolution. Voice extra is
 # opt-in; revisit if chatterbox-tts surfaces ABI/API drift at runtime.
-# TODO(voice-extra): monitor safetensors stable release. PyPI checked 2026-05-08:
-# stable 0.8.0 was not published, so the RC floor remains intentional.
+# Voice-extra watch note (gobby-#14569). PyPI checked 2026-05-13:
+# stable latest is 0.7.0 and 0.8.0rc0 remains a pre-release, so the RC floor is intentional.
 # Removal checklist:
 # - confirm safetensors>=0.8.0 stable exists and resolves with chatterbox-tts==0.1.7
 # - run the CI "Voice Extra (safetensors rc0)" job with uv sync --extra voice

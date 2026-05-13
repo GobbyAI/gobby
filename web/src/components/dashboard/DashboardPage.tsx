@@ -47,6 +47,7 @@ export function DashboardPage() {
               <button
                 role="switch"
                 aria-checked={showAllProjects}
+                aria-label="Show all projects"
                 onClick={() => setShowAllProjects(!showAllProjects)}
                 className={cn(
                   'relative inline-flex h-4 w-7 shrink-0 rounded-full border border-border transition-colors',

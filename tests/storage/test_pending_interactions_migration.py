@@ -7,6 +7,7 @@ columns, indexes, and constraints after running migrations on a fresh DB.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def fresh_db(tmp_path) -> LocalDatabase:  # type: ignore[type-arg]
+def fresh_db(tmp_path: Path) -> LocalDatabase:
     """Create a fresh database with all migrations applied."""
     db_path = tmp_path / "pending_interactions_test.db"
     db = LocalDatabase(db_path)

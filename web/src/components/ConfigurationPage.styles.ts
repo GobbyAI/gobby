@@ -8,7 +8,7 @@ export const TOOLBAR_RIGHT_CLS = 'flex shrink-0 items-center gap-2'
 export const TABS_CLS =
   'flex min-w-0 gap-0.5 overflow-x-auto rounded-md bg-[var(--bg-tertiary)] p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
 export const TAB_CLS =
-  'cursor-pointer whitespace-nowrap rounded border-0 bg-transparent px-3.5 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--text-secondary)] transition-[background-color,color] duration-150 hover:bg-[rgba(255,255,255,0.05)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+  'cursor-pointer whitespace-nowrap rounded border-0 bg-transparent px-3.5 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--text-secondary)] transition-[background-color,color] duration-150 hover:bg-surface-tint hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 export const TAB_ACTIVE_CLS = 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
 
 export const TOOLBAR_BTN_CLS =

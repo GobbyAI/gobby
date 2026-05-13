@@ -137,21 +137,13 @@ class SessionEndMixin(EventHandlersBase):
                     f"SESSION_END: orphan-lock sweep failed for session {session_id}: {e}"
                 )
 
-        # Mark as handoff_ready if session is ending due to /clear or /compact,
-        # so the new session can find this parent and generate handoff summaries.
-        # Claude Code session-end uses 'reason' field (not 'source').
+        # Mark as handoff_ready only for explicit handoff exits. Ordinary
+        # session ends should expire; live turn completion is handled by
+        # AFTER_AGENT/STOP as paused.
         if session_id and self._session_manager:
             try:
-                end_status = "expired"
                 end_reason = event.data.get("reason")
-                if end_reason in ("clear", "compact"):
-                    end_status = "handoff_ready"
-                # Don't downgrade handoff_ready -> expired (PRE_COMPACT may have
-                # already set handoff_ready before SESSION_END fires)
-                if end_status == "expired":
-                    current = self._session_manager.get(session_id)
-                    if current and current.status == "handoff_ready":
-                        end_status = "handoff_ready"
+                end_status = "handoff_ready" if end_reason in ("clear", "compact") else "expired"
                 self._session_manager.update_status(session_id, end_status)
             except Exception as e:
                 self.logger.warning(f"Failed to update session status on end: {e}")

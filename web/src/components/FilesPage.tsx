@@ -40,7 +40,7 @@ const TAB_CLS =
 const TAB_ACTIVE_CLS = '-mb-px border-b-2 border-b-[var(--accent)] bg-[var(--bg-primary)] text-[var(--text-primary)]'
 const TAB_NAME_CLS = 'overflow-hidden text-ellipsis'
 const TAB_CLOSE_CLS =
-  'flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-[length:var(--text-base)] leading-none text-[var(--text-muted)] opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+  'flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-[length:var(--text-base)] leading-none text-[var(--text-muted)] opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:bg-surface-tint-strong hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 
 const TOOLBAR_CLS =
   'flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)]'
@@ -542,6 +542,8 @@ function FileContent({ file, getImageUrl, onContentChange, onSave, editorViewRef
         <img
           src={getImageUrl(file.projectId, file.path)}
           alt={file.name}
+          loading="lazy"
+          decoding="async"
           className={IMAGE_PREVIEW_CLS}
         />
         <div className={IMAGE_INFO_CLS}>

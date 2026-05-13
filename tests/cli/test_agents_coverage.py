@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import click
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -54,7 +55,72 @@ def _mock_run(**overrides: Any) -> MagicMock:
 # =============================================================================
 # spawn_agent
 # =============================================================================
-# TODO: add tests for spawn_agent_cmd error paths
+
+
+class TestSpawnAgentCmd:
+    def test_spawn_requires_reasoning_effort_when_reasoning_required(
+        self, runner: CliRunner
+    ) -> None:
+        result = runner.invoke(
+            agents, ["spawn", "Do work", "--session", "sess", "--reasoning-required"]
+        )
+
+        assert result.exit_code != 0
+        assert "--reasoning-required requires --reasoning-effort" in result.output
+
+    @patch("gobby.cli.agents.httpx.post", side_effect=httpx.ConnectError("daemon down"))
+    @patch("gobby.cli.agents.resolve_session_id", return_value="sess-resolved")
+    @patch("gobby.cli.agents.get_daemon_url", return_value="http://localhost:60887")
+    def test_spawn_handles_daemon_connect_error(
+        self,
+        mock_daemon_url: MagicMock,
+        mock_resolve_session: MagicMock,
+        mock_post: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(agents, ["spawn", "Do work", "--session", "sess"])
+
+        assert result.exit_code == 1
+        assert "Cannot connect to Gobby daemon" in result.output
+        mock_resolve_session.assert_called_once_with("sess")
+        mock_post.assert_called_once()
+
+    @patch("gobby.cli.agents.resolve_session_id", return_value="sess-resolved")
+    @patch("gobby.cli.agents.get_daemon_url", return_value="http://localhost:60887")
+    def test_spawn_handles_daemon_http_error(
+        self,
+        mock_daemon_url: MagicMock,
+        mock_resolve_session: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        request = httpx.Request("POST", "http://localhost:60887/mcp/gobby-agents/tools/spawn_agent")
+        response = httpx.Response(500, text="boom", request=request)
+
+        with patch("gobby.cli.agents.httpx.post", return_value=response):
+            result = runner.invoke(agents, ["spawn", "Do work", "--session", "sess"])
+
+        assert result.exit_code == 1
+        assert "Daemon returned 500" in result.output
+        assert "boom" in result.output
+
+    @patch("gobby.cli.agents.resolve_session_id", return_value="sess-resolved")
+    @patch("gobby.cli.agents.get_daemon_url", return_value="http://localhost:60887")
+    def test_spawn_prints_unsuccessful_result_error(
+        self,
+        mock_daemon_url: MagicMock,
+        mock_resolve_session: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"success": False, "error": "agent rejected"}
+
+        with patch("gobby.cli.agents.httpx.post", return_value=response):
+            result = runner.invoke(agents, ["spawn", "Do work", "--session", "sess"])
+
+        assert result.exit_code == 1
+        assert "Failed to start agent: agent rejected" in result.output
+
 
 # =============================================================================
 # resolve_agent_run_id
@@ -103,7 +169,96 @@ class TestResolveAgentRunId:
 # =============================================================================
 # check_agent
 # =============================================================================
-# TODO: add tests for check_agent
+
+
+class TestCheckAgent:
+    @patch("gobby.utils.daemon_client.DaemonClient")
+    def test_check_agent_json_output(self, mock_client_cls: MagicMock, runner: CliRunner) -> None:
+        client = mock_client_cls.return_value
+        client.call_mcp_tool.return_value = {"can_spawn": True, "agent_found": True}
+
+        result = runner.invoke(agents, ["check", "default", "--json"])
+
+        assert result.exit_code == 0
+        assert '"can_spawn": true' in result.output
+        client.call_mcp_tool.assert_called_once_with(
+            server_name="gobby-agents",
+            tool_name="evaluate_spawn",
+            arguments={"agent": "default"},
+            timeout=15.0,
+        )
+
+    @patch("gobby.utils.daemon_client.DaemonClient")
+    def test_check_agent_formatted_output_with_errors(
+        self, mock_client_cls: MagicMock, runner: CliRunner
+    ) -> None:
+        client = mock_client_cls.return_value
+        client.call_mcp_tool.return_value = {
+            "can_spawn": False,
+            "agent_found": True,
+            "agent_name": "worker",
+            "effective_provider": "claude",
+            "effective_isolation": "worktree",
+            "effective_workflow": "worker",
+            "branch_name": "gobby/test",
+            "items": [
+                {
+                    "layer": "environment",
+                    "level": "error",
+                    "code": "NO_CLI",
+                    "message": "Claude CLI missing",
+                }
+            ],
+        }
+
+        result = runner.invoke(
+            agents,
+            [
+                "check",
+                "worker",
+                "--workflow",
+                "worker",
+                "--task",
+                "#14567",
+                "--session",
+                "#4981",
+                "--isolation",
+                "worktree",
+                "--provider",
+                "claude",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "CANNOT SPAWN" in result.output
+        assert "ERROR NO_CLI: Claude CLI missing" in result.output
+        client.call_mcp_tool.assert_called_once_with(
+            server_name="gobby-agents",
+            tool_name="evaluate_spawn",
+            arguments={
+                "agent": "worker",
+                "workflow": "worker",
+                "task_id": "#14567",
+                "parent_session_id": "#4981",
+                "isolation": "worktree",
+                "provider": "claude",
+            },
+            timeout=15.0,
+        )
+
+    @patch("gobby.utils.daemon_client.DaemonClient")
+    def test_check_agent_handles_daemon_error(
+        self, mock_client_cls: MagicMock, runner: CliRunner
+    ) -> None:
+        client = mock_client_cls.return_value
+        client.call_mcp_tool.side_effect = RuntimeError("connection refused")
+
+        result = runner.invoke(agents, ["check", "default"])
+
+        assert result.exit_code == 0
+        assert "Error: connection refused" in result.output
+        assert "Start with: gobby start" in result.output
+
 
 # =============================================================================
 # agent_stats - global

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { ChatInput } from '../ChatInput'
@@ -81,51 +81,37 @@ function PTTHarness({
   )
 }
 
-function SttToggleHarness({
+function VoiceModeHarness({
+  initialMode = 'ptt',
+  initialSttEnabled = false,
   callOrder,
+  startRecording = vi.fn(async () => {}),
 }: {
+  initialMode?: 'ptt' | 'vad'
+  initialSttEnabled?: boolean
   callOrder: string[]
+  startRecording?: () => Promise<void>
 }) {
-  const [sttEnabled, setSttEnabled] = useState(false)
+  const [sttEnabled, setSttEnabled] = useState(initialSttEnabled)
+  const [voiceInputMode, setVoiceInputMode] = useState<'ptt' | 'vad'>(initialMode)
 
   return (
     <ChatInput
       onSend={vi.fn()}
       sttEnabled={sttEnabled}
+      voiceInputMode={voiceInputMode}
       onSttEnabledChange={(enabled) => {
-        callOrder.push(`toggle:${String(enabled)}`)
+        callOrder.push(`stt:${String(enabled)}`)
         setSttEnabled(enabled)
       }}
-      startRecording={async () => {
-        callOrder.push(`start:${String(sttEnabled)}`)
+      onVoiceInputModeChange={(mode) => {
+        callOrder.push(`mode:${mode}`)
+        setVoiceInputMode(mode)
       }}
+      startRecording={startRecording}
       stopRecording={vi.fn(async () => {})}
       cancelRecording={vi.fn()}
     />
-  )
-}
-
-function DeferredSttEnableHarness({
-  startRecording,
-}: {
-  startRecording: () => Promise<void>
-}) {
-  const [sttEnabled, setSttEnabled] = useState(false)
-
-  return (
-    <>
-      <button type="button" onClick={() => setSttEnabled(true)}>
-        Enable externally
-      </button>
-      <ChatInput
-        onSend={vi.fn()}
-        sttEnabled={sttEnabled}
-        onSttEnabledChange={vi.fn()}
-        startRecording={startRecording}
-        stopRecording={vi.fn(async () => {})}
-        cancelRecording={vi.fn()}
-      />
-    </>
   )
 }
 
@@ -474,79 +460,145 @@ describe('ChatInput', () => {
     expect(onCancelRecording).toHaveBeenCalledTimes(1)
   })
 
-  it('waits for sttEnabled state to flip before starting recording from the toolbar toggle', async () => {
+  it('enables PTT from the toolbar mic without starting recording', async () => {
     const callOrder: string[] = []
-    render(<SttToggleHarness callOrder={callOrder} />)
+    const startRecording = vi.fn(async () => {})
+    render(
+      <VoiceModeHarness
+        callOrder={callOrder}
+        initialMode="vad"
+        initialSttEnabled={false}
+        startRecording={startRecording}
+      />,
+    )
 
-    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+    await userEvent.click(screen.getByLabelText('Microphone off; enable push to talk'))
 
-    await waitFor(() => {
-      expect(callOrder).toEqual(['toggle:true', 'start:true'])
-    })
+    expect(callOrder).toEqual(['mode:ptt', 'stt:true'])
+    expect(startRecording).not.toHaveBeenCalled()
+    expect(screen.getByText('PTT')).toBeTruthy()
   })
 
-  it('disables STT when the mic toggle is clicked while STT is on but idle', async () => {
+  it('cycles the toolbar mic from PTT to VAD while keeping STT enabled', async () => {
+    const callOrder: string[] = []
     const onSttEnabledChange = vi.fn()
+    const onVoiceInputModeChange = vi.fn()
     render(
       <ChatInput
         {...defaultProps}
         sttEnabled={true}
-        isRecording={false}
+        voiceInputMode="ptt"
         startRecording={vi.fn(async () => {})}
         stopRecording={vi.fn(async () => {})}
         cancelRecording={vi.fn()}
         onSttEnabledChange={onSttEnabledChange}
+        onVoiceInputModeChange={(mode) => {
+          callOrder.push(`mode:${mode}`)
+          onVoiceInputModeChange(mode)
+        }}
       />,
     )
 
-    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+    await userEvent.click(screen.getByLabelText('Microphone in push to talk; switch to VAD'))
 
-    expect(onSttEnabledChange).toHaveBeenCalledWith(false)
+    expect(callOrder).toEqual(['mode:vad'])
+    expect(onVoiceInputModeChange).toHaveBeenCalledWith('vad')
+    expect(onSttEnabledChange).not.toHaveBeenCalled()
   })
 
-  it('clears the pending STT start when STT remains disabled', async () => {
-    const startRecording = vi.fn(async () => {})
-    render(<DeferredSttEnableHarness startRecording={startRecording} />)
-
-    await userEvent.click(screen.getByLabelText('Toggle microphone'))
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    expect(startRecording).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Enable externally' }))
-
-    await waitFor(() => {
-      expect(startRecording).not.toHaveBeenCalled()
-    })
-  })
-
-  it('stops recording before disabling STT when the mic is clicked mid-recording', async () => {
-    const callOrder: string[] = []
-    const stopRecording = vi.fn(async () => {
-      callOrder.push('stop')
-    })
-    const onSttEnabledChange = vi.fn((enabled: boolean) => {
-      callOrder.push(`toggle:${String(enabled)}`)
-    })
+  it('cycles the toolbar mic from VAD to off by disabling STT', async () => {
+    const onSttEnabledChange = vi.fn()
+    const onVoiceInputModeChange = vi.fn()
     render(
       <ChatInput
         {...defaultProps}
         sttEnabled={true}
-        isRecording={true}
+        voiceInputMode="vad"
         startRecording={vi.fn(async () => {})}
-        stopRecording={stopRecording}
+        stopRecording={vi.fn(async () => {})}
         cancelRecording={vi.fn()}
         onSttEnabledChange={onSttEnabledChange}
+        onVoiceInputModeChange={onVoiceInputModeChange}
       />,
     )
 
-    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+    await userEvent.click(screen.getByLabelText('Microphone in VAD; turn microphone off'))
 
-    await waitFor(() => {
-      expect(callOrder).toEqual(['stop', 'toggle:false'])
+    expect(onSttEnabledChange).toHaveBeenCalledWith(false)
+    expect(onVoiceInputModeChange).not.toHaveBeenCalled()
+  })
+
+  it('renders the voice mode badge only while STT is enabled', () => {
+    const { rerender } = render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={false}
+        voiceInputMode="ptt"
+        onSttEnabledChange={vi.fn()}
+        onVoiceInputModeChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('PTT')).toBeNull()
+    expect(screen.queryByText('VAD')).toBeNull()
+
+    rerender(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        voiceInputMode="vad"
+        onSttEnabledChange={vi.fn()}
+        onVoiceInputModeChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('VAD')).toBeTruthy()
+    expect(screen.queryByText('PTT')).toBeNull()
+  })
+
+  it('disables toolbar mic cycling while recording', async () => {
+    const onSttEnabledChange = vi.fn()
+    const onVoiceInputModeChange = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        voiceInputMode="ptt"
+        isRecording={true}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+        onSttEnabledChange={onSttEnabledChange}
+        onVoiceInputModeChange={onVoiceInputModeChange}
+      />,
+    )
+
+    const button = screen.getByRole('button', {
+      name: 'Microphone in push to talk; switch to VAD',
     })
+    expect(button).toBeDisabled()
+    expect(screen.getByText('PTT')).toHaveAttribute('aria-disabled', 'true')
+
+    await userEvent.click(button)
+
+    expect(onSttEnabledChange).not.toHaveBeenCalled()
+    expect(onVoiceInputModeChange).not.toHaveBeenCalled()
+  })
+
+  it('supports keyboard activation for the toolbar mic cycle', async () => {
+    const callOrder: string[] = []
+    render(
+      <VoiceModeHarness
+        callOrder={callOrder}
+        initialMode="ptt"
+        initialSttEnabled={false}
+      />,
+    )
+
+    screen.getByLabelText('Microphone off; enable push to talk').focus()
+    await userEvent.keyboard('{Enter}')
+
+    expect(callOrder).toEqual(['mode:ptt', 'stt:true'])
   })
 
   it('clears input after sending', async () => {

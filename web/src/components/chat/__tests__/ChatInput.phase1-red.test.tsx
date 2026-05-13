@@ -35,6 +35,7 @@ describe('ChatInput Phase 1 sizing contract', () => {
         onSend={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
+        onVoiceInputModeChange={vi.fn()}
         prepareTTSPlayback={vi.fn(async () => {})}
         startRecording={vi.fn(async () => {})}
         stopRecording={vi.fn(async () => {})}
@@ -42,6 +43,6 @@ describe('ChatInput Phase 1 sizing contract', () => {
     )
 
     expect(screen.getByRole('button', { name: 'Toggle text-to-speech' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Toggle microphone' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Microphone off; enable push to talk' })).toBeInTheDocument()
   })
 })

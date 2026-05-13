@@ -32,4 +32,3 @@ def test_escalate_round_trip(temp_db, sample_project) -> None:
     assert row["escalated_at"] is None
     assert row["escalation_reason"] is None
     assert de_escalated.is_escalated is False
-

@@ -1,0 +1,52 @@
+version: 1
+profiles:
+  - name: default
+    display_label: Default
+    description: Full lifecycle automation using the task type's default stage manifest.
+    skip_stages: []
+    isolation: worktree
+    unattended: false
+    delivery_mode: auto
+    delivery_target_repo: null
+    enabled: true
+    tags: [gobby]
+  - name: autopilot
+    display_label: Autopilot
+    description: Full lifecycle automation with unattended dispatch enabled.
+    skip_stages: []
+    isolation: worktree
+    unattended: true
+    delivery_mode: auto
+    delivery_target_repo: null
+    enabled: true
+    tags: [gobby]
+  - name: fix
+    display_label: Fix
+    description: Same-workspace fix loop without PR or merge delivery stages.
+    skip_stages: [pr, merge]
+    isolation: none
+    unattended: false
+    delivery_mode: auto
+    delivery_target_repo: null
+    enabled: true
+    tags: [gobby]
+  - name: fix-merge
+    display_label: Fix + Merge
+    description: Isolated fix loop that keeps merge automation enabled.
+    skip_stages: [pr]
+    isolation: worktree
+    unattended: false
+    delivery_mode: auto
+    delivery_target_repo: null
+    enabled: true
+    tags: [gobby]
+  - name: submit
+    display_label: Submit
+    description: Run through pull request creation and stop before merge.
+    skip_stages: [merge]
+    isolation: worktree
+    unattended: false
+    delivery_mode: pull_request
+    delivery_target_repo: null
+    enabled: true
+    tags: [gobby]

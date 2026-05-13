@@ -505,7 +505,7 @@ def compute_sandbox_paths(
 def _git_metadata_write_paths(workspace: Path) -> list[str]:
     """Return Git metadata dirs that must be writable for commits from a worktree."""
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [
                 "git",
                 "-C",

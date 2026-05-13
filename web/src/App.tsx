@@ -92,6 +92,7 @@ export default function App() {
     sendMode,
     sendAttachedSessionMode,
     sendProjectChange,
+    projectIdRef,
     setProjectIdRef,
     sendWorktreeChange,
     stopStreaming,
@@ -152,6 +153,7 @@ export default function App() {
     wsRef,
     conversationId,
     conversationSwitchKey,
+    projectIdRef,
     {
       sttEnabled: settings.sttEnabled,
       ttsEnabled: settings.ttsEnabled,
@@ -822,6 +824,7 @@ export default function App() {
                 paletteActions={commandPaletteActions}
                 onSttEnabledChange={updateSttEnabled}
                 onTtsEnabledChange={updateTtsEnabled}
+                onVoiceInputModeChange={updateVoiceInputMode}
                 voice={{
                   sttEnabled: settings.sttEnabled,
                   ttsEnabled: settings.ttsEnabled,
@@ -898,9 +901,6 @@ export default function App() {
         onThemeChange={updateTheme}
         onDefaultChatModeChange={updateDefaultChatMode}
         onPostPlanChatModeChange={updatePostPlanChatMode}
-        onSttEnabledChange={updateSttEnabled}
-        onTtsEnabledChange={updateTtsEnabled}
-        onVoiceInputModeChange={updateVoiceInputMode}
         onReset={resetSettings}
       />
 

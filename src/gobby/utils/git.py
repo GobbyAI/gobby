@@ -180,7 +180,7 @@ def get_git_metadata(cwd: str | Path | None = None) -> GitMetadata:
     return metadata
 
 
-def normalize_commit_sha(sha: str, cwd: str | Path | None = None) -> str | None:
+def normalize_commit_sha(sha: str | None, cwd: str | Path | None = None) -> str | None:
     """
     Normalize a commit SHA to dynamic short format.
 

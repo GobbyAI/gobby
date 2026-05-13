@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 _UNINITIALIZED_MESSAGE = "VectorStore not initialized. Call initialize() first."
 _INITIAL_RETRY_BACKOFF_SECONDS = 5.0
 _MAX_RETRY_BACKOFF_SECONDS = 300.0
+_QDRANT_CLIENT_CLOSE_ERRORS = (
+    OSError,
+    RuntimeError,
+    ResponseHandlingException,
+    UnexpectedResponse,
+    httpx.TransportError,
+)
 
 
 def _vector_size(vectors_cfg: Any) -> int | None:
@@ -139,7 +146,8 @@ class VectorStore:
 
         # Check if collection exists; create if not
         client = self._client
-        assert client is not None
+        if client is None:
+            raise RuntimeError(_UNINITIALIZED_MESSAGE)
         exists = await asyncio.to_thread(client.collection_exists, self._collection_name)
         if not exists:
             await asyncio.to_thread(
@@ -208,7 +216,7 @@ class VectorStore:
         if client is not None:
             try:
                 client.close()
-            except Exception as close_error:  # noqa: BLE001 - log and proceed
+            except _QDRANT_CLIENT_CLOSE_ERRORS as close_error:
                 logger.warning(
                     "Failed to close Qdrant client during mark_unavailable: %s",
                     close_error,

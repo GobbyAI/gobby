@@ -113,7 +113,7 @@ class EventHandlers(
         self._code_index_trigger = code_index_trigger
         self._pending_subagent_depths: dict[str, int] = {}
         self._dispatch_session_summaries_fn: (
-            Callable[[str, bool, threading.Event | None], None] | None
+            Callable[[str, bool, threading.Event | None, bool], None] | None
         ) = None
         self.logger = logger or logging.getLogger(__name__)
 

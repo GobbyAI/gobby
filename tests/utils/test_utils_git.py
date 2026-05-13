@@ -775,7 +775,7 @@ class TestNormalizeCommitSha:
 
     def test_returns_none_for_none_sha(self) -> None:
         """Test returns None when SHA is None."""
-        result = normalize_commit_sha(None)  # type: ignore[arg-type]
+        result = normalize_commit_sha(None)
         assert result is None
 
     def test_uses_cwd_when_none(self) -> None:

@@ -496,6 +496,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
           className={cn(BTN_CLS, showPhysics && BTN_ACTIVE_CLS)}
           onClick={() => setShowPhysics(p => !p)}
           title="Physics controls"
+          aria-label="Physics controls"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3" />
@@ -655,7 +656,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
             <span className={DETAIL_TYPE_CLS} style={{ color: getNodeColorCss(selectedNode.type) }}>
               {selectedNode.type}
             </span>
-            <button className={DETAIL_CLOSE_CLS} onClick={() => setSelectedNode(null)}>&times;</button>
+            <button className={DETAIL_CLOSE_CLS} onClick={() => setSelectedNode(null)} aria-label="Close details">&times;</button>
           </div>
           <div className={DETAIL_NAME_CLS}>{selectedNode.name}</div>
           {selectedNode.signature && (

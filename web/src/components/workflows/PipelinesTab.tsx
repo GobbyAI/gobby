@@ -73,7 +73,6 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     toggleEnabled,
     exportYaml,
     restoreWorkflow,
-    installFromTemplate,
   } = useWorkflows()
 
   const [editingWorkflow, setEditingWorkflow] = useState<WorkflowDetail | null>(null)
@@ -384,9 +383,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
                         <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
                           {devMode ? (
                             <>
-                              {installedNames.has(wf.name)
-                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
-                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => installFromTemplate(wf.id)} title="Create an installed copy">Install</button>}
+                              {installedNames.has(wf.name) && <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>}
                               <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleDuplicate(wf)} title="Duplicate" aria-label="Duplicate workflow">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
                               </button>
@@ -399,9 +396,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
                             </>
                           ) : (
                             <>
-                              {installedNames.has(wf.name)
-                                ? <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>
-                                : <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={() => installFromTemplate(wf.id)} title="Create an installed copy">Install</button>}
+                              {installedNames.has(wf.name) && <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} disabled title="Already installed">Installed</button>}
                               <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={() => handleExport(wf)} title="Download YAML" aria-label="Download workflow as YAML">
                                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9m0 0L5 8m3 3 3-3M2.5 12.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" /></svg>
                               </button>

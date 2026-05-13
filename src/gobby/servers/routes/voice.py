@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Query, UploadFile
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -25,11 +26,19 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/api/voice", tags=["voice"])
 
     @router.get("/status")
-    async def voice_status() -> dict[str, Any]:
+    async def voice_status(
+        want_stt: bool | None = Query(default=None),
+        want_tts: bool | None = Query(default=None),
+    ) -> dict[str, Any]:
         """Check voice feature availability."""
         ws_server = server.services.websocket_server or server.websocket_server
         if ws_server and hasattr(ws_server, "get_voice_status"):
-            return ws_server.get_voice_status()
+            if want_stt is None and want_tts is None:
+                return ws_server.get_voice_status()
+            return ws_server.get_voice_status(
+                want_stt=want_stt,
+                want_tts=want_tts,
+            )
 
         config = server.config
         if not config or not hasattr(config, "voice"):
@@ -56,11 +65,10 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             stt_reason = "STT disabled in config"
         else:
             try:
-                import faster_whisper  # noqa: F401
-
+                importlib.import_module("faster_whisper")
                 stt_available = True
-            except ImportError as e:
-                stt_reason = f"faster-whisper not installed (uv sync --extra voice): {e}"
+            except ImportError:
+                stt_reason = "faster-whisper not installed (uv sync --extra voice)"
 
         from gobby.voice.providers import get_tts_status_for_config
 

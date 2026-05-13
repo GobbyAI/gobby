@@ -76,6 +76,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
             "reason": None,
         },
         "manifest": None,
+        "warnings": [],
     }
     call = build.call_args
     assert call.args[0] == "plan.md"
@@ -98,13 +99,13 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert call.kwargs["services"] is not None
 
 
-def test_buildrequest_rejects_removed_fields() -> None:
+def test_buildrequest_accepts_profile_and_isolation_fields() -> None:
     from gobby.servers.routes.build import BuildRequest
 
-    with pytest.raises(ValueError):
-        BuildRequest(input_ref="#42", profile="quick")
-    with pytest.raises(ValueError):
-        BuildRequest(input_ref="#42", isolation="worktree")
+    request = BuildRequest(input_ref="#42", profile="default", isolation="worktree")
+
+    assert request.profile == "default"
+    assert request.isolation == "worktree"
 
 
 def test_post_api_build_omitted_backend_defaults_to_worktree() -> None:
@@ -142,6 +143,37 @@ def test_post_api_build_returns_400_for_validation_errors() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "--no-merge requires isolated work"
+
+
+def test_post_api_build_returns_structured_profile_errors() -> None:
+    from gobby.build.profiles import BuildProfileError
+
+    with patch(
+        "gobby.servers.routes.build.build",
+        new=AsyncMock(side_effect=BuildProfileError("Unknown build profile 'missing'")),
+    ):
+        response = _client().post(
+            "/api/build",
+            json={"input_ref": "plan.md", "quick": True},
+        )
+
+    assert response.status_code == 400
+    assert response.headers["X-Error-Type"] == "build_profile"
+    assert response.json()["detail"] == {
+        "message": "Unknown build profile 'missing'",
+        "error_code": "BUILD_PROFILE_ERROR",
+    }
+
+
+@pytest.mark.parametrize("isolation", ["none", "worktree"])
+def test_post_api_build_rejects_clone_isolation_conflicts(isolation: str) -> None:
+    response = _client().post(
+        "/api/build",
+        json={"input_ref": "#42", "clone": True, "isolation": isolation},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"clone=true conflicts with isolation={isolation}"
 
 
 def test_post_api_build_stop_preserves_project_wide_control() -> None:

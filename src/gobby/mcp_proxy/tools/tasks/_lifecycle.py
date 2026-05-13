@@ -10,7 +10,7 @@ Thin orchestration shim that delegates to focused submodules:
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._helpers import _is_uuid  # noqa: F401 (re-export)
+from gobby.mcp_proxy.tools.tasks._helpers import _is_uuid as _helpers_is_uuid
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import register_claim_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import register_close_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_delete import register_delete_task
@@ -23,6 +23,12 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
     register_escalate_task,
     register_reopen_task,
 )
+
+
+def _is_uuid(value: object) -> bool:
+    """Return True only for string UUID values accepted by task lifecycle helpers."""
+
+    return isinstance(value, str) and _helpers_is_uuid(value)
 
 
 def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:

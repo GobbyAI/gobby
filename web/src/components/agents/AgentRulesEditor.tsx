@@ -320,7 +320,7 @@ export function AgentRulesEditor({
                   />
                   {filteredSuggestions.length > 0 && (
                     <datalist id="selector-suggestions-include">
-                      {filteredSuggestions.map(s => <option key={s} value={s} />)}
+                      {filteredSuggestions.map(s => <option key={s} value={s}>{s}</option>)}
                     </datalist>
                   )}
                 </div>
@@ -373,7 +373,7 @@ export function AgentRulesEditor({
                   />
                   {filteredSuggestions.length > 0 && (
                     <datalist id="selector-suggestions-exclude">
-                      {filteredSuggestions.map(s => <option key={s} value={s} />)}
+                      {filteredSuggestions.map(s => <option key={s} value={s}>{s}</option>)}
                     </datalist>
                   )}
                 </div>

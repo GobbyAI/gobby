@@ -45,10 +45,11 @@ instructions: |
     "direct_merge"; then submit the pr stage for review and call
     record_pr_verdict(verdict="approve"). The merge stage will run the
     direct-merge path.
-  - If a unit requires a PR, push the source branch with
-    gobby-worktrees:push_branch, create or reuse a GitHub PR, record it via
-    record_pr_opened, and post a COMMENT review summarizing the holistic QA
-    notes. Do not APPROVE the PR as the bot.
+  - If a unit requires a PR, read the delivery campaign state and call
+    gobby-tasks-ops:open_delivery_pr. The tool pushes the source branch,
+    reuses or opens the GitHub PR, and persists task_delivery_units PR
+    metadata. Then post a COMMENT review summarizing the holistic QA notes.
+    Do not APPROVE the PR as the bot.
   - Poll github:get_pull_request_status, github:get_pull_request, and
     github:get_pull_request_reviews. Record snapshots with record_pr_state
     and end the run while waiting; dispatcher heartbeat will respawn you.
@@ -219,7 +220,7 @@ steps:
   - name: execute
     description: "Execute PR gating or direct merge steps"
     status_message: |
-      If stage_name is pr, push branches, create/reuse PRs, post COMMENT
+      If stage_name is pr, call open_delivery_pr, post COMMENT
       review summaries, poll CI/review/mergeability, update stale PRs once,
       record delivery state, and submit/approve the pr stage only when gates
       are ready. If stage_name is merge, land ready PRs via GitHub or run the
@@ -229,6 +230,7 @@ steps:
       - "gobby-tasks-ops:get_delivery_state"
       - "gobby-tasks-ops:record_pr_state"
       - "gobby-tasks-ops:record_pr_opened"
+      - "gobby-tasks-ops:open_delivery_pr"
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks-ops:record_pr_verdict"
       - "gobby-tasks-ops:close_linked_github_issue"
@@ -255,7 +257,6 @@ steps:
       - "gobby-agents:list_running_agents"
       - "gobby-agents:get_running_agent"
       - "gobby-agents:running_agent_stats"
-      - "github:create_pull_request"
       - "github:create_pull_request_review"
       - "github:get_pull_request"
       - "github:get_pull_request_status"

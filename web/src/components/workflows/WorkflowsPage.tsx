@@ -3,6 +3,8 @@ import { TabBar } from "../shared/TabBar";
 import { RulesTab } from "./RulesTab";
 import { AgentsTab } from "./AgentsTab";
 import { PipelinesTab } from "./PipelinesTab";
+import { ProfilesTab } from "./ProfilesTab";
+import { StagesTab } from "./StagesTab";
 import { CodeMirrorEditor } from "../shared/CodeMirrorEditor";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
@@ -44,13 +46,15 @@ import {
   WORKFLOWS_MODAL_SUBMIT_CLS,
 } from "./workflows-styles";
 
-type ActiveTab = "pipelines" | "agents" | "rules";
+type ActiveTab = "pipelines" | "agents" | "rules" | "stages" | "profiles";
 type SourceFilter = "installed" | "project" | "templates" | "deleted";
 
 const TABS = [
   { id: "pipelines", label: "Pipelines" },
   { id: "agents", label: "Agents" },
   { id: "rules", label: "Rules" },
+  { id: "stages", label: "Stages" },
+  { id: "profiles", label: "Profiles" },
 ];
 
 const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
@@ -59,6 +63,22 @@ const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
   { value: "templates", label: "Templates" },
   { value: "deleted", label: "Deleted" },
 ];
+
+function sourceOptionsForTab(
+  activeTab: ActiveTab,
+): { value: SourceFilter; label: string }[] {
+  if (activeTab === "stages") {
+    return SOURCE_OPTIONS.filter((opt) =>
+      ["installed", "deleted"].includes(opt.value),
+    );
+  }
+  if (activeTab === "profiles") {
+    return SOURCE_OPTIONS.filter((opt) =>
+      ["installed", "project", "deleted"].includes(opt.value),
+    );
+  }
+  return SOURCE_OPTIONS;
+}
 
 export function WorkflowsPage({ projectId }: { projectId?: string }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("pipelines");
@@ -124,12 +144,27 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     return () => document.removeEventListener("mousedown", handleMouseDown);
   }, [showFilterPopover]);
 
+  useEffect(() => {
+    const allowed = new Set(
+      sourceOptionsForTab(activeTab).map((opt) => opt.value),
+    );
+    if (!allowed.has(sourceFilter)) {
+      setSourceFilter("installed");
+    }
+  }, [activeTab, sourceFilter]);
+
   // Badge count
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (sourceFilter !== "installed") count++;
-    if (hideGobby) count++;
-    if (sourceFilter === "templates" && hideInstalled) count++;
+    if (activeTab !== "stages" && activeTab !== "profiles" && hideGobby) count++;
+    if (
+      activeTab !== "stages" &&
+      activeTab !== "profiles" &&
+      sourceFilter === "templates" &&
+      hideInstalled
+    )
+      count++;
     if (activeTab === "pipelines" && pipelineEnabledFilter !== null) count++;
     if (activeTab === "agents" && agentProviderFilter !== "all") count++;
     if (activeTab === "rules" && ruleEventFilter !== null) count++;
@@ -147,29 +182,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     tagFilter,
     priorityFilter,
   ]);
-
-  // Bulk actions
-  const handleInstallAll = useCallback(async () => {
-    const typeMap: Record<ActiveTab, string> = {
-      pipelines: "pipeline",
-      agents: "agent",
-      rules: "rule",
-    };
-    try {
-      const res = await fetch(
-        `/api/workflows/install-all-templates?workflow_type=${typeMap[activeTab]}`,
-        {
-          method: "POST",
-        },
-      );
-      if (res.ok) {
-        setSourceFilter("installed");
-        setRefreshKey((k) => k + 1);
-      }
-    } catch (e) {
-      console.error("Failed to install all templates:", e);
-    }
-  }, [activeTab]);
 
   const handleBulkToggleRules = useCallback(async () => {
     try {
@@ -218,6 +230,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
               className={`${WORKFLOWS_FILTER_ICON_BTN_CLS} ${activeFilterCount > 0 ? WORKFLOWS_FILTER_ICON_BTN_ACTIVE_CLS : ""}`}
               onClick={() => setShowFilterPopover((v) => !v)}
               title="Filter"
+              aria-label="Filter workflows"
             >
               <svg
                 width="16"
@@ -266,15 +279,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           >
             &#x21bb;
           </button>
-          {sourceFilter === "templates" && (
-            <button
-              type="button"
-              className={WORKFLOWS_TOOLBAR_BTN_CLS}
-              onClick={handleInstallAll}
-            >
-              Install All
-            </button>
-          )}
           {activeTab === "rules" &&
             (sourceFilter === "installed" || sourceFilter === "project") && (
               <div
@@ -377,6 +381,23 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           onTagsChange={setAvailableTags}
         />
       )}
+
+      {activeTab === "stages" && (
+        <StagesTab
+          searchText={searchText}
+          sourceFilter={sourceFilter}
+          refreshKey={refreshKey}
+        />
+      )}
+
+      {activeTab === "profiles" && (
+        <ProfilesTab
+          searchText={searchText}
+          sourceFilter={sourceFilter}
+          refreshKey={refreshKey}
+          projectId={projectId}
+        />
+      )}
     </main>
   );
 }
@@ -430,7 +451,7 @@ function FilterPopover({
       <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
         <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Source</div>
         <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
-          {SOURCE_OPTIONS.map((opt) => (
+          {sourceOptionsForTab(activeTab).map((opt) => (
             <button
               key={opt.value}
               type="button"
@@ -516,27 +537,30 @@ function FilterPopover({
         </div>
       )}
 
-      {/* Priority */}
-      <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
-        <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Priority</div>
-        <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
-          {[1, 2, 3].map((p) => (
-            <button
-              key={p}
-              type="button"
-              className={`${WORKFLOWS_FILTER_CHIP_CLS} ${priorityFilter === p ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
-              onClick={() =>
-                onPriorityFilterChange(priorityFilter === p ? null : p)
-              }
-            >
-              P{p}
-            </button>
-          ))}
+      {activeTab !== "stages" && activeTab !== "profiles" && (
+        <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
+          <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Priority</div>
+          <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
+            {[1, 2, 3].map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={`${WORKFLOWS_FILTER_CHIP_CLS} ${priorityFilter === p ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
+                onClick={() =>
+                  onPriorityFilterChange(priorityFilter === p ? null : p)
+                }
+              >
+                P{p}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Tags */}
-      {availableTags.length > 0 && (
+      {activeTab !== "stages" &&
+        activeTab !== "profiles" &&
+        availableTags.length > 0 && (
         <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
           <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Tag</div>
           <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
@@ -557,38 +581,40 @@ function FilterPopover({
       )}
 
       {/* Hide Built-in */}
-      <div
-        className={`${WORKFLOWS_FILTER_POPOVER_SECTION_CLS} ${WORKFLOWS_FILTER_POPOVER_SECTION_BOTTOM_CLS}`}
-      >
-        <label
-          className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
-          onClick={() => onHideGobbyChange(!hideGobby)}
+      {activeTab !== "stages" && activeTab !== "profiles" && (
+        <div
+          className={`${WORKFLOWS_FILTER_POPOVER_SECTION_CLS} ${WORKFLOWS_FILTER_POPOVER_SECTION_BOTTOM_CLS}`}
         >
-          <div
-            className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${hideGobby ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
-          >
-            <div
-              className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${hideGobby ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
-            />
-          </div>
-          <span>Hide Built-in</span>
-        </label>
-        {sourceFilter === "templates" && (
           <label
             className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
-            onClick={() => onHideInstalledChange(!hideInstalled)}
+            onClick={() => onHideGobbyChange(!hideGobby)}
           >
             <div
-              className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${hideInstalled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
+              className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${hideGobby ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
             >
               <div
-                className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${hideInstalled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
+                className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${hideGobby ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
               />
             </div>
-            <span>Hide Installed</span>
+            <span>Hide Built-in</span>
           </label>
-        )}
-      </div>
+          {sourceFilter === "templates" && (
+            <label
+              className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
+              onClick={() => onHideInstalledChange(!hideInstalled)}
+            >
+              <div
+                className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${hideInstalled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
+              >
+                <div
+                  className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${hideInstalled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
+                />
+              </div>
+              <span>Hide Installed</span>
+            </label>
+          )}
+        </div>
+      )}
     </div>
   );
 }

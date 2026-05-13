@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import gc
+import importlib
 import json
 import logging
 import time
@@ -275,10 +276,9 @@ class VoiceMixin:
         if not voice_config.stt_enabled:
             return False, "STT disabled in config"
         try:
-            import faster_whisper  # noqa: F401
-
+            importlib.import_module("faster_whisper")
             return True, ""
-        except Exception:
+        except ImportError:
             return False, "faster-whisper not installed (uv sync --extra voice)"
 
     def _get_tts(self) -> TTSProvider | None:
@@ -320,26 +320,56 @@ class VoiceMixin:
         status = get_tts_status_for_config(voice_config)
         return status.available, status.reason
 
-    def start_voice_warmup(self) -> None:
-        """Begin best-effort background warmup for enabled voice models."""
-        if self._voice_warmup_task is not None and not self._voice_warmup_task.done():
-            return
+    def _resolve_voice_warmup_targets(
+        self,
+        voice_config: VoiceConfig,
+        *,
+        want_stt: bool | None = None,
+        want_tts: bool | None = None,
+    ) -> tuple[bool, bool]:
+        """Resolve requested voice targets against daemon config.
 
+        ``None`` preserves historical config-enabled behavior for compatibility.
+        """
+        return (
+            voice_config.stt_enabled
+            if want_stt is None
+            else bool(want_stt and voice_config.stt_enabled),
+            voice_config.tts_enabled
+            if want_tts is None
+            else bool(want_tts and voice_config.tts_enabled),
+        )
+
+    def start_voice_warmup(
+        self,
+        *,
+        want_stt: bool | None = None,
+        want_tts: bool | None = None,
+    ) -> None:
+        """Begin best-effort background warmup for requested voice models."""
         voice_config = self._get_voice_config()
         if not voice_config or not voice_config.enabled:
             return
 
+        warm_stt, warm_tts = self._resolve_voice_warmup_targets(
+            voice_config,
+            want_stt=want_stt,
+            want_tts=want_tts,
+        )
         should_warm = False
-        if voice_config.stt_enabled and self._stt_warmup_status != _WARMUP_READY:
+        if warm_stt and self._stt_warmup_status != _WARMUP_READY:
             self._stt_warmup_status = _WARMUP_LOADING
             self._stt_warmup_error = ""
             should_warm = True
-        if voice_config.tts_enabled and self._tts_warmup_status != _WARMUP_READY:
+        if warm_tts and self._tts_warmup_status != _WARMUP_READY:
             self._tts_warmup_status = _WARMUP_LOADING
             self._tts_warmup_error = ""
             should_warm = True
 
         if not should_warm:
+            return
+
+        if self._voice_warmup_task is not None and not self._voice_warmup_task.done():
             return
 
         self._voice_warmup_task = asyncio.create_task(
@@ -366,7 +396,12 @@ class VoiceMixin:
         self._stt_warmup_error = ""
         self._tts_warmup_error = ""
 
-    def get_voice_status(self) -> dict[str, Any]:
+    def get_voice_status(
+        self,
+        *,
+        want_stt: bool | None = None,
+        want_tts: bool | None = None,
+    ) -> dict[str, Any]:
         """Return voice feature availability and warmup state."""
         voice_config = self._get_voice_config()
         if voice_config is None:
@@ -385,16 +420,22 @@ class VoiceMixin:
         stt_available, stt_reason = self._get_stt_availability()
         from gobby.voice.providers import get_tts_status_for_config
 
+        scope_stt, scope_tts = self._resolve_voice_warmup_targets(
+            voice_config,
+            want_stt=want_stt,
+            want_tts=want_tts,
+        )
         stt_warmup_status = self._stt_warmup_status if voice_config.stt_enabled else _WARMUP_IDLE
         tts_warmup_status = self._tts_warmup_status if voice_config.tts_enabled else _WARMUP_IDLE
 
         voice_ready = (
             voice_config.enabled
-            and (not voice_config.stt_enabled or stt_warmup_status == _WARMUP_READY)
-            and (not voice_config.tts_enabled or tts_warmup_status == _WARMUP_READY)
+            and (scope_stt or scope_tts)
+            and (not scope_stt or stt_warmup_status == _WARMUP_READY)
+            and (not scope_tts or tts_warmup_status == _WARMUP_READY)
         )
-        voice_loading = (voice_config.stt_enabled and stt_warmup_status == _WARMUP_LOADING) or (
-            voice_config.tts_enabled and tts_warmup_status == _WARMUP_LOADING
+        voice_loading = (scope_stt and stt_warmup_status == _WARMUP_LOADING) or (
+            scope_tts and tts_warmup_status == _WARMUP_LOADING
         )
 
         result: dict[str, Any] = {
@@ -404,10 +445,10 @@ class VoiceMixin:
             "stt_reason": stt_reason,
             "whisper_model": voice_config.whisper_model_size,
             "stt_warmup_status": stt_warmup_status,
-            "stt_warmup_error": self._stt_warmup_error,
+            "stt_warmup_error": self._stt_warmup_error if scope_stt else "",
             "tts_enabled": voice_config.tts_enabled,
             "tts_warmup_status": tts_warmup_status,
-            "tts_warmup_error": self._tts_warmup_error,
+            "tts_warmup_error": self._tts_warmup_error if scope_tts else "",
             "voice_ready": voice_ready,
             "voice_loading": voice_loading,
         }
@@ -418,17 +459,19 @@ class VoiceMixin:
         return result
 
     async def _warm_voice_models(self) -> None:
-        """Warm enabled voice models without blocking daemon startup."""
+        """Warm requested voice models without blocking daemon startup."""
         voice_config = self._get_voice_config()
         if not voice_config or not voice_config.enabled:
             return
 
-        warmups: list[asyncio.Task[None]] = []
-        if voice_config.stt_enabled:
-            warmups.append(asyncio.create_task(self._warm_stt_model(), name="warm-stt"))
-        if voice_config.tts_enabled:
-            warmups.append(asyncio.create_task(self._warm_tts_model(), name="warm-tts"))
-        if warmups:
+        while True:
+            warmups: list[asyncio.Task[None]] = []
+            if voice_config.stt_enabled and self._stt_warmup_status == _WARMUP_LOADING:
+                warmups.append(asyncio.create_task(self._warm_stt_model(), name="warm-stt"))
+            if voice_config.tts_enabled and self._tts_warmup_status == _WARMUP_LOADING:
+                warmups.append(asyncio.create_task(self._warm_tts_model(), name="warm-tts"))
+            if not warmups:
+                return
             await asyncio.gather(*warmups)
 
     def _on_voice_warmup_done(self, task: asyncio.Task[None]) -> None:
@@ -440,6 +483,14 @@ class VoiceMixin:
         exc = task.exception()
         if exc is not None:
             logger.error("Voice warmup task failed", exc_info=exc)
+        if self._voice_warmup_task is None and (
+            self._stt_warmup_status == _WARMUP_LOADING or self._tts_warmup_status == _WARMUP_LOADING
+        ):
+            self._voice_warmup_task = asyncio.create_task(
+                self._warm_voice_models(),
+                name="voice-model-warmup",
+            )
+            self._voice_warmup_task.add_done_callback(self._on_voice_warmup_done)
 
     async def _warm_stt_model(self) -> None:
         """Warm the Whisper STT model."""
@@ -572,6 +623,7 @@ class VoiceMixin:
         audio_data_b64 = data.get("audio_data", "")
         mime_type = data.get("mime_type", "audio/webm")
         request_id = data.get("request_id", "")
+        project_id = data.get("project_id")
 
         logger.info(
             f"Voice audio received: {len(audio_data_b64)} chars b64, "
@@ -672,6 +724,8 @@ class VoiceMixin:
                 "conversation_id": conversation_id,
                 "request_id": request_id,
             }
+            if isinstance(project_id, str) and project_id.strip():
+                chat_data["project_id"] = project_id
             await self._handle_chat_message(websocket, chat_data)
 
         except Exception as e:
@@ -707,7 +761,7 @@ class VoiceMixin:
         self._voice_enabled[conversation_id] = enabled
 
         if enabled:
-            self.start_voice_warmup()
+            self.start_voice_warmup(want_stt=False, want_tts=True)
         else:
             await self._cancel_tts(conversation_id)
 
@@ -717,7 +771,7 @@ class VoiceMixin:
                     "type": "voice_status",
                     "conversation_id": conversation_id,
                     "status": "voice_mode_on" if enabled else "voice_mode_off",
-                    **self.get_voice_status(),
+                    **self.get_voice_status(want_stt=False, want_tts=enabled),
                 }
             )
         )
@@ -734,9 +788,13 @@ class VoiceMixin:
         }
         """
         conversation_id = data.get("conversation_id", "")
-        if data.get("tts_enabled") is True:
+        stt_enabled = data.get("stt_enabled")
+        tts_enabled = data.get("tts_enabled")
+        want_stt = stt_enabled if isinstance(stt_enabled, bool) else None
+        want_tts = tts_enabled if isinstance(tts_enabled, bool) else None
+        if want_tts is True:
             self._voice_enabled[conversation_id] = True
-        self.start_voice_warmup()
+        self.start_voice_warmup(want_stt=want_stt, want_tts=want_tts)
 
         await websocket.send(
             json.dumps(
@@ -744,7 +802,7 @@ class VoiceMixin:
                     "type": "voice_status",
                     "conversation_id": conversation_id,
                     "status": "preparing",
-                    **self.get_voice_status(),
+                    **self.get_voice_status(want_stt=want_stt, want_tts=want_tts),
                 }
             )
         )

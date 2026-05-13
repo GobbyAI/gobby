@@ -927,6 +927,51 @@ class TestUpdateTaskCommand:
         call_kwargs = mock_manager.update_task.call_args.kwargs
         assert call_kwargs["task_type"] == "epic"
 
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_update_task_with_isolation(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """--isolation forwards the new automation isolation mode."""
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.update_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--isolation", "none"])
+
+        assert result.exit_code == 0
+        mock_manager.update_task.assert_called_once()
+        call_kwargs = mock_manager.update_task.call_args.kwargs
+        assert call_kwargs["isolation"] == "none"
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_update_task_rejects_isolation_artifact_conflict(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.artifacts.get_artifacts.return_value = SimpleNamespace(
+            worktree_path=None,
+            clone_path="/tmp/gobby-clone",
+        )
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--isolation", "worktree"])
+
+        assert result.exit_code != 0
+        assert "task already has clone artifact: /tmp/gobby-clone" in result.output
+        mock_manager.update_task.assert_not_called()
+
 
 class TestCloseTaskCommand:
     """Tests for gobby tasks close command."""

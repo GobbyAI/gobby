@@ -23,6 +23,8 @@ from gobby.build import (
     build_stop_target,
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
+from gobby.build.options import resolve_build_isolation
+from gobby.build.profiles import BuildProfileError
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
 if TYPE_CHECKING:
@@ -35,10 +37,13 @@ class BuildRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input_ref: str
+    profile: str | None = None
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
     workspace_backend: Literal["worktree", "clone"] | None = None
+    isolation: Literal["none", "worktree", "clone"] | None = None
     clone: bool = False
+    unattended: bool | None = None
     no_merge: bool = False
     pr: str | None = None
     stage: list[str] = Field(default_factory=list)
@@ -62,14 +67,21 @@ class BuildControlRequest(BaseModel):
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
-    if request_data.clone and request_data.workspace_backend == "worktree":
-        raise ValueError("clone=true conflicts with workspace_backend=worktree")
-    backend = request_data.workspace_backend or ("clone" if request_data.clone else "worktree")
+    isolation = resolve_build_isolation(
+        isolation=request_data.isolation,
+        workspace_backend=request_data.workspace_backend,
+        clone=request_data.clone,
+    )
     return BuildOptions(
+        profile=request_data.profile or "default",
+        profile_explicit="profile" in request_data.model_fields_set,
         quick=request_data.quick,
         skip_stages=request_data.skip_stages,
-        isolation=backend,
-        isolation_explicit=request_data.workspace_backend is not None or request_data.clone,
+        skip_stages_explicit="skip_stages" in request_data.model_fields_set,
+        isolation=isolation.isolation,
+        isolation_explicit=isolation.explicit,
+        unattended=request_data.unattended if request_data.unattended is not None else False,
+        unattended_explicit="unattended" in request_data.model_fields_set,
         no_merge=request_data.no_merge,
         pr=request_data.pr,
         stage_caps=_parse_stage_options(request_data.stage),
@@ -151,6 +163,12 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 services=server.services,
             )
             return _build_result_json(result)
+        except BuildProfileError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": str(e), "error_code": "BUILD_PROFILE_ERROR"},
+                headers={"X-Error-Type": "build_profile"},
+            ) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

@@ -1,12 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { Settings } from '../Settings'
-import { useVoiceCapabilities } from '../../hooks/useVoiceCapabilities'
-
-vi.mock('../../hooks/useVoiceCapabilities', () => ({
-  useVoiceCapabilities: vi.fn(),
-}))
 
 const baseSettings = {
   fontSize: 16,
@@ -26,14 +20,6 @@ describe('Settings voice section', () => {
   })
 
   it('does not render the legacy model selector', () => {
-    vi.mocked(useVoiceCapabilities).mockReturnValue({
-      sttConfigEnabled: false,
-      ttsConfigEnabled: false,
-      sttAvailable: false,
-      ttsAvailable: false,
-      loading: false,
-    })
-
     render(
       <Settings
         isOpen={true}
@@ -43,9 +29,6 @@ describe('Settings voice section', () => {
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
         onPostPlanChatModeChange={vi.fn()}
-        onSttEnabledChange={vi.fn()}
-        onTtsEnabledChange={vi.fn()}
-        onVoiceInputModeChange={vi.fn()}
         onReset={vi.fn()}
       />,
     )
@@ -54,15 +37,7 @@ describe('Settings voice section', () => {
     expect(screen.queryByText('Claude Opus')).toBeNull()
   })
 
-  it('hides the voice section when voice is disabled in config', () => {
-    vi.mocked(useVoiceCapabilities).mockReturnValue({
-      sttConfigEnabled: false,
-      ttsConfigEnabled: false,
-      sttAvailable: false,
-      ttsAvailable: false,
-      loading: false,
-    })
-
+  it('does not render voice controls from Settings', () => {
     render(
       <Settings
         isOpen={true}
@@ -72,121 +47,34 @@ describe('Settings voice section', () => {
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
         onPostPlanChatModeChange={vi.fn()}
-        onSttEnabledChange={vi.fn()}
-        onTtsEnabledChange={vi.fn()}
-        onVoiceInputModeChange={vi.fn()}
         onReset={vi.fn()}
       />,
     )
 
     expect(screen.queryByText('Voice')).toBeNull()
-  })
-
-  it('renders STT and TTS toggles independently based on config', () => {
-    vi.mocked(useVoiceCapabilities).mockReturnValue({
-      sttConfigEnabled: true,
-      ttsConfigEnabled: true,
-      sttAvailable: true,
-      ttsAvailable: true,
-      loading: false,
-    })
-
-    render(
-      <Settings
-        isOpen={true}
-        onClose={vi.fn()}
-        settings={baseSettings}
-        onFontSizeChange={vi.fn()}
-        onThemeChange={vi.fn()}
-        onDefaultChatModeChange={vi.fn()}
-        onPostPlanChatModeChange={vi.fn()}
-        onSttEnabledChange={vi.fn()}
-        onTtsEnabledChange={vi.fn()}
-        onVoiceInputModeChange={vi.fn()}
-        onReset={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByLabelText('Enable speech to text')).toBeTruthy()
-    expect(screen.getByLabelText('Enable text to speech')).toBeTruthy()
-  })
-
-  it('shows the input mode selector only after STT is enabled', async () => {
-    vi.mocked(useVoiceCapabilities).mockReturnValue({
-      sttConfigEnabled: true,
-      ttsConfigEnabled: false,
-      sttAvailable: true,
-      ttsAvailable: false,
-      loading: false,
-    })
-
-    const onVoiceInputModeChange = vi.fn()
-    const { rerender } = render(
-      <Settings
-        isOpen={true}
-        onClose={vi.fn()}
-        settings={baseSettings}
-        onFontSizeChange={vi.fn()}
-        onThemeChange={vi.fn()}
-        onDefaultChatModeChange={vi.fn()}
-        onPostPlanChatModeChange={vi.fn()}
-        onSttEnabledChange={vi.fn()}
-        onTtsEnabledChange={vi.fn()}
-        onVoiceInputModeChange={onVoiceInputModeChange}
-        onReset={vi.fn()}
-      />,
-    )
-
+    expect(screen.queryByLabelText('Enable speech to text')).toBeNull()
+    expect(screen.queryByLabelText('Enable text to speech')).toBeNull()
     expect(screen.queryByText('Push to Talk')).toBeNull()
-
-    rerender(
-      <Settings
-        isOpen={true}
-        onClose={vi.fn()}
-        settings={{ ...baseSettings, sttEnabled: true, voiceInputMode: 'vad' }}
-        onFontSizeChange={vi.fn()}
-        onThemeChange={vi.fn()}
-        onDefaultChatModeChange={vi.fn()}
-        onPostPlanChatModeChange={vi.fn()}
-        onSttEnabledChange={vi.fn()}
-        onTtsEnabledChange={vi.fn()}
-        onVoiceInputModeChange={onVoiceInputModeChange}
-        onReset={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByText('Push to Talk')).toBeTruthy()
-    await userEvent.click(screen.getByText('Push to Talk'))
-    expect(onVoiceInputModeChange).toHaveBeenCalledWith('ptt')
+    expect(screen.queryByText('VAD')).toBeNull()
   })
 
-  it('disables controls when the server config allows voice but runtime support is unavailable', () => {
-    vi.mocked(useVoiceCapabilities).mockReturnValue({
-      sttConfigEnabled: true,
-      ttsConfigEnabled: true,
-      sttAvailable: false,
-      ttsAvailable: false,
-      loading: false,
-    })
-
+  it('keeps voice controls absent even when persisted voice settings are enabled', () => {
     render(
       <Settings
         isOpen={true}
         onClose={vi.fn()}
-        settings={baseSettings}
+        settings={{ ...baseSettings, sttEnabled: true, ttsEnabled: true, voiceInputMode: 'vad' }}
         onFontSizeChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
         onPostPlanChatModeChange={vi.fn()}
-        onSttEnabledChange={vi.fn()}
-        onTtsEnabledChange={vi.fn()}
-        onVoiceInputModeChange={vi.fn()}
         onReset={vi.fn()}
       />,
     )
 
-    expect(screen.getByLabelText('Enable speech to text')).toBeDisabled()
-    expect(screen.getByLabelText('Enable text to speech')).toBeDisabled()
-    expect(screen.getByText('Requires secure context and server-ready STT')).toBeTruthy()
+    expect(screen.queryByText('Voice')).toBeNull()
+    expect(screen.queryByLabelText('Enable speech to text')).toBeNull()
+    expect(screen.queryByLabelText('Enable text to speech')).toBeNull()
+    expect(screen.queryByText('VAD')).toBeNull()
   })
 })

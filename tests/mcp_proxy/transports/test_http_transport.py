@@ -8,6 +8,7 @@ streamable_http_client, create_mcp_http_client, and ClientSession are mocked
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 def _make_config(**overrides: Any) -> MCPServerConfig:
     """Create a real MCPServerConfig for HTTP transport."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "name": "test-http",
         "project_id": "proj-001",
         "transport": "http",
@@ -49,7 +50,9 @@ def _mock_session() -> AsyncMock:
 
 
 @asynccontextmanager
-async def _fake_streamable_http(url: str, http_client: Any | None = None):
+async def _fake_streamable_http(
+    url: str, http_client: Any | None = None
+) -> AsyncIterator[tuple[MagicMock, MagicMock, None]]:
     """Async context manager mimicking streamable_http_client."""
     read = MagicMock()
     write = MagicMock()
@@ -57,10 +60,12 @@ async def _fake_streamable_http(url: str, http_client: Any | None = None):
 
 
 @asynccontextmanager
-async def _fake_streamable_http_error(url: str, http_client: Any | None = None):
+async def _fake_streamable_http_error(
+    url: str, http_client: Any | None = None
+) -> AsyncIterator[tuple[MagicMock, MagicMock, None]]:
     """streamable_http_client that raises on entry."""
     raise ConnectionError("refused")
-    yield  # noqa: E501 — unreachable but needed for generator syntax
+    yield MagicMock(), MagicMock(), None
 
 
 def _mock_http_client() -> AsyncMock:
@@ -158,7 +163,9 @@ class TestHTTPConnectSuccess:
         mock_write = MagicMock()
 
         @asynccontextmanager
-        async def fake_client(url, http_client=None):
+        async def fake_client(
+            url: str, http_client: Any | None = None
+        ) -> AsyncIterator[tuple[MagicMock, MagicMock, None]]:
             assert http_client is mock_http_client
             yield mock_read, mock_write, None
 
@@ -197,7 +204,9 @@ class TestHTTPConnectSuccess:
         mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def capture_client(url, http_client=None):
+        async def capture_client(
+            url: str, http_client: Any | None = None
+        ) -> AsyncIterator[tuple[MagicMock, MagicMock, None]]:
             captured_args["url"] = url
             captured_args["http_client"] = http_client
             yield MagicMock(), MagicMock(), None
@@ -241,7 +250,9 @@ class TestHTTPConnectReconnect:
         mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def fake_client(url, http_client=None):
+        async def fake_client(
+            url: str, http_client: Any | None = None
+        ) -> AsyncIterator[tuple[MagicMock, MagicMock, None]]:
             assert http_client is mock_http_client
             yield MagicMock(), MagicMock(), None
 
@@ -390,9 +401,11 @@ class TestHTTPRunConnection:
         mock_http_client_factory.return_value = _mock_http_client()
 
         @asynccontextmanager
-        async def failing_client(url, http_client=None):
+        async def failing_client(
+            url: str, http_client: object | None = None
+        ) -> AsyncIterator[None]:
             raise OSError("network down")
-            yield  # noqa
+            yield
 
         mock_streamable_http.side_effect = failing_client
 
@@ -421,9 +434,11 @@ class TestHTTPRunConnection:
         mock_http_client_factory.return_value = _mock_http_client()
 
         @asynccontextmanager
-        async def failing_client(url, http_client=None):
+        async def failing_client(
+            url: str, http_client: object | None = None
+        ) -> AsyncIterator[None]:
             raise original
-            yield  # noqa
+            yield
 
         mock_streamable_http.side_effect = failing_client
 
@@ -451,9 +466,11 @@ class TestHTTPRunConnection:
                 return ""
 
         @asynccontextmanager
-        async def failing_client(url, http_client=None):
+        async def failing_client(
+            url: str, http_client: object | None = None
+        ) -> AsyncIterator[None]:
             raise SilentError()
-            yield  # noqa
+            yield
 
         mock_streamable_http.side_effect = failing_client
 
@@ -483,7 +500,9 @@ class TestHTTPRunConnection:
         mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def fake_client(url, http_client=None):
+        async def fake_client(
+            url: str, http_client: Any | None = None
+        ) -> AsyncIterator[tuple[MagicMock, MagicMock, None]]:
             assert http_client is mock_http_client
             yield MagicMock(), MagicMock(), None
 
@@ -555,7 +574,7 @@ class TestHTTPCleanupOwnerTask:
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
 
-        async def mock_wait(tasks, timeout=None):
+        async def mock_wait(tasks: Any, timeout: float | None = None) -> tuple[set[Any], set[Any]]:
             return set(), set(tasks)
 
         with patch.object(asyncio, "wait", side_effect=mock_wait):
@@ -581,12 +600,12 @@ class TestHTTPCleanupOwnerTask:
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
 
-        async def mock_wait(tasks, timeout=None):
+        async def mock_wait(tasks: Any, timeout: float | None = None) -> tuple[set[Any], set[Any]]:
             return set(), set(tasks)
 
         call_count = 0
 
-        async def mock_wait_for(fut, timeout=None):
+        async def mock_wait_for(fut: Any, timeout: float | None = None) -> None:
             nonlocal call_count
             call_count += 1
             raise TimeoutError()
@@ -688,7 +707,9 @@ class TestHTTPDisconnect:
         mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def fake_client(url, http_client=None):
+        async def fake_client(
+            url: str, http_client: Any | None = None
+        ) -> AsyncIterator[tuple[MagicMock, MagicMock, None]]:
             assert http_client is mock_http_client
             yield MagicMock(), MagicMock(), None
 
@@ -707,7 +728,8 @@ class TestHTTPDisconnect:
 
         # Disconnect
         await conn.disconnect()
-        assert conn.state == ConnectionState.DISCONNECTED
+        state_after_disconnect: ConnectionState = conn.state
+        assert state_after_disconnect == ConnectionState.DISCONNECTED
         assert conn.is_connected is False
         assert conn._owner_task is None
 

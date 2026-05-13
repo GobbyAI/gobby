@@ -245,7 +245,7 @@
   border-bottom: 1px solid var(--border);
 }
 .message-content tbody tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-tint-subtle);
 }
 
 /* Horizontal rules */

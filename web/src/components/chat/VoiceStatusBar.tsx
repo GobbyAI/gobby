@@ -14,7 +14,7 @@ export function VoiceStatusBar({
   voiceError,
 }: VoiceStatusBarProps) {
   return (
-    <div className="flex items-center gap-2 px-4 py-1.5 bg-muted border-b border-border text-xs">
+    <div className="voice-status-bar" data-testid="voice-status-bar">
       {voiceLoading ? (
         <>
           <SpinnerIcon />

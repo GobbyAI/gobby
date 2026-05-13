@@ -107,8 +107,11 @@ def write_manifest(
                 raise IdentityCollisionError(existing_hash, new_hash)
             _append_regenerate_audit(coverage_root, identity, existing_hash, new_hash)
 
+    payload = _manifest_payload(report)
+    if regenerate and existing is not None:
+        payload = _preserve_stable_rows(payload, existing)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(_manifest_payload(report), sort_keys=False), encoding="utf-8")
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return path
 
 
@@ -250,6 +253,61 @@ def _manifest_payload(report: object) -> dict[str, object]:
     }
 
 
+_PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target", "evidence")
+
+
+def _preserve_stable_rows(
+    payload: dict[str, object],
+    existing: Mapping[str, object],
+) -> dict[str, object]:
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return payload
+
+    prior_rows = _prior_rows_by_item(existing)
+    preserved_rows: list[object] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            preserved_rows.append(row)
+            continue
+        prior = prior_rows.get(_row_identity(row))
+        if prior is None or not _same_plan_node(row, prior):
+            preserved_rows.append(row)
+            continue
+        preserved = dict(row)
+        for field in _PRESERVED_ROW_FIELDS:
+            if field in prior:
+                preserved[field] = prior[field]
+        preserved_rows.append(preserved)
+
+    return {**payload, "rows": preserved_rows}
+
+
+def _prior_rows_by_item(raw: Mapping[str, object]) -> dict[tuple[str, str], Mapping[str, object]]:
+    rows = raw.get("rows")
+    if not isinstance(rows, Iterable) or isinstance(rows, str | bytes):
+        return {}
+    indexed: dict[tuple[str, str], Mapping[str, object]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        indexed[_row_identity(row)] = row
+    return indexed
+
+
+def _row_identity(row: Mapping[str, object]) -> tuple[str, str]:
+    return (_string(row.get("section_id")), _string(row.get("item_id")))
+
+
+def _same_plan_node(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
+    left_hash = _string(left.get("plan_node_hash"))
+    return bool(left_hash) and left_hash == _string(right.get("plan_node_hash"))
+
+
+def _string(raw: object) -> str:
+    return raw if isinstance(raw, str) else ""
+
+
 def _header_payload(header: object) -> dict[str, object]:
     return {
         "plan_id": _attr(header, "plan_id"),
@@ -267,6 +325,7 @@ def _row_payload(row: object) -> dict[str, object]:
     return {
         "section_id": _attr(row, "section_id"),
         "item_id": _attr(row, "item_id"),
+        "plan_node_hash": _attr(row, "plan_node_hash"),
         "status": _value(_attr(row, "status")),
         "leaves": [_leaf_payload(leaf) for leaf in _iter_attr(row, "leaves")],
         "deferral_target": _attr(row, "deferral_target"),

@@ -25,6 +25,7 @@ from .pack import pack, unpack
 from .pipelines import pipelines
 from .plan import plan
 from .plans import plans
+from .profiles import profiles
 from .projects import projects
 from .qdrant import qdrant
 from .rules import rules
@@ -33,6 +34,7 @@ from .service import service
 from .sessions import sessions
 from .setup import setup
 from .skills import skills
+from .stages import stages
 from .sync import sync
 from .tasks import tasks
 from .test_quality import test_quality
@@ -73,10 +75,12 @@ cli.add_command(tokens)
 cli.add_command(memory)
 cli.add_command(sessions)
 cli.add_command(skills)
+cli.add_command(stages)
 cli.add_command(agents)
 cli.add_command(worktrees)
 cli.add_command(mcp_proxy)
 cli.add_command(projects)
+cli.add_command(profiles)
 cli.add_command(rules)
 cli.add_command(workflows)
 cli.add_command(merge)

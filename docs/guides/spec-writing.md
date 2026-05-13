@@ -7,8 +7,9 @@ has implementation work.
 
 Use the `/gobby plan` skill for interactive drafting. It gathers requirements,
 loads the `plan-draft` methodology, writes the plan artifact, and runs the
-planner-side validation flow before expansion. Use `gobby build <plan-file>` to
-start lifecycle automation from an approved plan file.
+planner-side validation flow before expansion. Use
+`gobby build <plan-file> --isolation none` to start lifecycle automation from an
+approved plan file.
 
 For the full contract, read [Plan-Coverage Contract](../contracts/plan-coverage.md).
 

@@ -93,10 +93,12 @@ class TestToolSchemas:
             "sequence_order",
             "start_date",
             "due_date",
+            "isolation",
         ]
 
         for prop in expected_props:
             assert prop in props, f"Missing property: {prop}"
+        assert set(props["isolation"]["enum"]) == {"none", "worktree", "clone"}
 
     def test_close_task_schema_has_all_fields(self, task_registry) -> None:
         """Test close_task schema includes all options."""

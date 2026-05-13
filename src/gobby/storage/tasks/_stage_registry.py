@@ -6,6 +6,7 @@ import json
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.database import DatabaseProtocol
@@ -37,6 +38,9 @@ class StageRegistryEntry:
     is_terminal: bool
     default_max_work_attempts: int
     default_max_review_rounds: int
+    bundled_hash: str | None = None
+    deleted_at: str | None = None
+    is_edited: bool = False
 
 
 class StageRegistryManager:
@@ -44,19 +48,27 @@ class StageRegistryManager:
         self.db = db
         self._ensure_phase2_columns()
 
-    def list_all(self) -> list[StageRegistryEntry]:
+    def list_all(self, *, include_deleted: bool = False) -> list[StageRegistryEntry]:
+        deleted_filter = "" if include_deleted else "WHERE deleted_at IS NULL"
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT *
               FROM task_stages_registry
+             {deleted_filter}
              ORDER BY position_hint, name
-            """
+            """  # nosec B608 - deleted_filter is controlled by a boolean.
         )
         return [self._entry_from_row(row) for row in rows]
 
-    def get(self, name: str) -> StageRegistryEntry | None:
+    def get(self, name: str, *, include_deleted: bool = False) -> StageRegistryEntry | None:
+        deleted_filter = "" if include_deleted else "AND deleted_at IS NULL"
         row = self.db.fetchone(
-            "SELECT * FROM task_stages_registry WHERE name = ?",
+            f"""
+            SELECT *
+              FROM task_stages_registry
+             WHERE name = ?
+               {deleted_filter}
+            """,  # nosec B608 - deleted_filter is controlled by a boolean.
             (name,),
         )
         return self._entry_from_row(row) if row is not None else None
@@ -71,9 +83,9 @@ class StageRegistryManager:
                     reviewer_agent, reviewer_agent_selector_json, review_policy,
                     dispatch_type, dispatch_target, dispatch_inputs_json, position_hint,
                     requires_human, is_terminal, default_max_work_attempts,
-                    default_max_review_rounds, bundled_hash, updated_at
+                    default_max_review_rounds, bundled_hash, deleted_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
                 ON CONFLICT(name) DO UPDATE SET
                     display_label = excluded.display_label,
                     description = excluded.description,
@@ -91,6 +103,7 @@ class StageRegistryManager:
                     default_max_work_attempts = excluded.default_max_work_attempts,
                     default_max_review_rounds = excluded.default_max_review_rounds,
                     bundled_hash = COALESCE(excluded.bundled_hash, task_stages_registry.bundled_hash),
+                    deleted_at = NULL,
                     updated_at = datetime('now')
                 """,
                 (
@@ -151,6 +164,101 @@ class StageRegistryManager:
                 [(task_type, stage_name, position) for stage_name, position in stages],
             )
 
+    def update_stage(self, name: str, updates: dict[str, Any]) -> StageRegistryEntry:
+        """Update editable stage metadata. Stage names are immutable."""
+
+        if "name" in updates and updates["name"] != name:
+            raise ValueError("stage names are immutable")
+        current = self.get(name)
+        if current is None:
+            raise ValueError(f"Unknown stage '{name}'")
+        payload = self._entry_payload(current)
+        payload.update({key: value for key, value in updates.items() if key != "name"})
+        entry = StageRegistryEntry(**payload)
+        self._validate_entry(entry)
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE task_stages_registry
+                   SET display_label = ?,
+                       description = ?,
+                       category = ?,
+                       default_agent = ?,
+                       reviewer_agent = ?,
+                       reviewer_agent_selector_json = ?,
+                       review_policy = ?,
+                       dispatch_type = ?,
+                       dispatch_target = ?,
+                       dispatch_inputs_json = ?,
+                       position_hint = ?,
+                       requires_human = ?,
+                       is_terminal = ?,
+                       default_max_work_attempts = ?,
+                       default_max_review_rounds = ?,
+                       updated_at = datetime('now')
+                 WHERE name = ?
+                   AND deleted_at IS NULL
+                """,
+                (
+                    entry.display_label,
+                    entry.description,
+                    entry.category,
+                    entry.default_agent,
+                    entry.reviewer_agent,
+                    entry.reviewer_agent_selector_json,
+                    entry.review_policy,
+                    entry.dispatch_type,
+                    entry.dispatch_target,
+                    entry.dispatch_inputs_json,
+                    entry.position_hint,
+                    1 if entry.requires_human else 0,
+                    1 if entry.is_terminal else 0,
+                    entry.default_max_work_attempts,
+                    entry.default_max_review_rounds,
+                    name,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Stage '{name}' could not be updated")
+        updated = self.get(name)
+        if updated is None:
+            raise ValueError(f"Unknown stage '{name}'")
+        return updated
+
+    def restore_stage(self, name: str) -> StageRegistryEntry:
+        from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
+
+        bundled = {entry.name: entry for entry in StageRegistryLoader().load_with_hashes()}
+        bundled_entry = bundled.get(name)
+        if bundled_entry is None:
+            raise ValueError(f"Stage '{name}' is not bundled and cannot be restored")
+        self.upsert(bundled_entry.to_registry_entry(), bundled_hash=bundled_entry.bundled_hash)
+        restored = self.get(name)
+        if restored is None:
+            raise ValueError(f"Stage '{name}' could not be restored")
+        return restored
+
+    def delete_stage(self, name: str) -> StageRegistryEntry:
+        current = self.get(name)
+        if current is None:
+            raise ValueError(f"Unknown stage '{name}'")
+        blocker = self._delete_blocker(name)
+        if blocker is not None:
+            raise ValueError(blocker)
+        deleted_at = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """
+            UPDATE task_stages_registry
+               SET deleted_at = ?, updated_at = datetime('now')
+             WHERE name = ?
+            """,
+            (deleted_at, name),
+        )
+        deleted = self.get(name, include_deleted=True)
+        if deleted is None:
+            raise ValueError(f"Stage '{name}' could not be deleted")
+        return deleted
+
     def _entry_from_row(self, row: sqlite3.Row) -> StageRegistryEntry:
         review_policy = self._row_value(row, "review_policy")
         if review_policy not in {"none", "required", "optional"}:
@@ -173,6 +281,9 @@ class StageRegistryManager:
             is_terminal=bool(row["is_terminal"]),
             default_max_work_attempts=int(self._row_value(row, "default_max_work_attempts") or 3),
             default_max_review_rounds=int(self._row_value(row, "default_max_review_rounds") or 5),
+            bundled_hash=self._row_value(row, "bundled_hash"),
+            deleted_at=self._row_value(row, "deleted_at"),
+            is_edited=self._is_row_edited(row),
         )
 
     def _ensure_phase2_columns(self) -> None:
@@ -199,6 +310,7 @@ class StageRegistryManager:
             "dispatch_inputs_json": (
                 "ALTER TABLE task_stages_registry ADD COLUMN dispatch_inputs_json TEXT"
             ),
+            "deleted_at": "ALTER TABLE task_stages_registry ADD COLUMN deleted_at TEXT",
         }
         with self.db.transaction() as conn:
             for column, sql in additions.items():
@@ -219,6 +331,113 @@ class StageRegistryManager:
     def _dispatch_type_from_row(cls, row: sqlite3.Row) -> DispatchType | None:
         value = cls._row_value(row, "dispatch_type")
         return value if value in {"agent", "pipeline"} else None
+
+    @classmethod
+    def _is_row_edited(cls, row: sqlite3.Row) -> bool:
+        bundled_hash = cls._row_value(row, "bundled_hash")
+        if not bundled_hash:
+            return False
+        return cls.row_hash(row) != str(bundled_hash)
+
+    @classmethod
+    def row_hash(cls, row: sqlite3.Row | dict[str, Any]) -> str:
+        import hashlib
+
+        body = json.dumps(
+            cls._row_canonical_payload(row),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()
+
+    @classmethod
+    def _row_canonical_payload(cls, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        def value(key: str) -> Any:
+            if isinstance(row, dict):
+                return row.get(key)
+            return cls._row_value(row, key)
+
+        return {
+            "name": value("name"),
+            "display_label": value("display_label"),
+            "description": value("description"),
+            "category": value("category"),
+            "default_agent": value("default_agent"),
+            "reviewer_agent": value("reviewer_agent"),
+            "reviewer_agent_selector_json": value("reviewer_agent_selector_json"),
+            "review_policy": value("review_policy") or "none",
+            "dispatch_type": value("dispatch_type"),
+            "dispatch_target": value("dispatch_target"),
+            "dispatch_inputs_json": value("dispatch_inputs_json"),
+            "position_hint": int(value("position_hint") or 0),
+            "requires_human": bool(value("requires_human")),
+            "is_terminal": bool(value("is_terminal")),
+            "default_max_work_attempts": int(value("default_max_work_attempts") or 3),
+            "default_max_review_rounds": int(value("default_max_review_rounds") or 5),
+        }
+
+    @staticmethod
+    def _entry_payload(entry: StageRegistryEntry) -> dict[str, Any]:
+        return {
+            "name": entry.name,
+            "display_label": entry.display_label,
+            "description": entry.description,
+            "category": entry.category,
+            "default_agent": entry.default_agent,
+            "reviewer_agent": entry.reviewer_agent,
+            "reviewer_agent_selector_json": entry.reviewer_agent_selector_json,
+            "review_policy": entry.review_policy,
+            "dispatch_type": entry.dispatch_type,
+            "dispatch_target": entry.dispatch_target,
+            "dispatch_inputs_json": entry.dispatch_inputs_json,
+            "position_hint": entry.position_hint,
+            "requires_human": entry.requires_human,
+            "is_terminal": entry.is_terminal,
+            "default_max_work_attempts": entry.default_max_work_attempts,
+            "default_max_review_rounds": entry.default_max_review_rounds,
+        }
+
+    def _delete_blocker(self, name: str) -> str | None:
+        active_state = self.db.fetchone(
+            """
+            SELECT task_id
+              FROM task_stage_states
+             WHERE stage_name = ?
+               AND state != 'done'
+             LIMIT 1
+            """,
+            (name,),
+        )
+        if active_state is not None:
+            return f"Stage '{name}' is referenced by active task stage states"
+        default_ref = self.db.fetchone(
+            "SELECT task_type FROM task_type_default_stages WHERE stage_name = ? LIMIT 1",
+            (name,),
+        )
+        if default_ref is not None:
+            return f"Stage '{name}' is referenced by task type defaults"
+        build_profiles = self.db.fetchone(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'build_profiles'"
+        )
+        if build_profiles is None:
+            return None
+        profile_ref = self.db.fetchone(
+            """
+            SELECT name
+              FROM build_profiles
+             WHERE deleted_at IS NULL
+               AND EXISTS (
+                   SELECT 1
+                     FROM json_each(skip_stages_json) AS skipped
+                    WHERE skipped.value = ?
+               )
+             LIMIT 1
+            """,
+            (name,),
+        )
+        if profile_ref is not None:
+            return f"Stage '{name}' is referenced by build profile '{profile_ref['name']}'"
+        return None
 
     @staticmethod
     def _validate_entry(entry: StageRegistryEntry) -> None:

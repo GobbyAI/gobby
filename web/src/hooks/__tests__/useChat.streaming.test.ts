@@ -60,6 +60,52 @@ describe("useChat streaming and event handling", () => {
     expect(assistantMsgs[0].content).toContain("Hello");
   });
 
+  it("ignores stream frames from a stale socket after reconnect", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      const { result } = renderHook(() => useChat());
+
+      const staleWs = mockWs.instances[0];
+      act(() => staleWs.simulateOpen());
+      act(() => staleWs.simulateClose());
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(mockWs.instances).toHaveLength(2);
+      const currentWs = mockWs.instances[1];
+      act(() => currentWs.simulateOpen());
+      act(() => result.current.sendMessage("Hello"));
+
+      const sentMsg = JSON.parse(
+        currentWs.send.mock.calls[currentWs.send.mock.calls.length - 1][0],
+      );
+      const requestId = sentMsg.request_id;
+      const chunk = {
+        type: "chat_stream",
+        message_id: "msg-1",
+        request_id: requestId,
+        content: "Hello ",
+        done: false,
+      };
+
+      act(() => staleWs.simulateMessage(chunk));
+      expect(
+        result.current.messages.filter((m) => m.role === "assistant"),
+      ).toHaveLength(0);
+
+      act(() => currentWs.simulateMessage(chunk));
+      const assistantMsgs = result.current.messages.filter(
+        (m) => m.role === "assistant",
+      );
+      expect(assistantMsgs).toHaveLength(1);
+      expect(assistantMsgs[0].content).toBe("Hello ");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("handles chat_stream done=true", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

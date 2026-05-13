@@ -20,6 +20,7 @@ interface RecordingContext {
 interface VoiceCaptureOptions {
   wsRef: RefObject<WebSocket | null>
   conversationIdRef: RefObject<string>
+  projectIdRef?: RefObject<string | null>
   sttEnabled: boolean
   voiceInputMode: VoiceInputMode
   voiceReady: boolean
@@ -40,6 +41,15 @@ interface VoiceCaptureReturn {
   cancelRecording: () => void
 }
 
+export interface VoiceAudioPayload {
+  type: 'voice_audio'
+  conversation_id: string
+  audio_data: string
+  mime_type: 'audio/wav'
+  request_id: string
+  project_id?: string
+}
+
 function createVoiceRequestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     try {
@@ -54,6 +64,7 @@ function createVoiceRequestId(): string {
 export function useVoiceCapture({
   wsRef,
   conversationIdRef,
+  projectIdRef,
   sttEnabled,
   voiceInputMode,
   voiceReady,
@@ -119,16 +130,26 @@ export function useVoiceCapture({
 
     try {
       if (mountedRef.current) setIsTranscribing(true)
+      const conversationId = conversationIdRef.current
+      if (!conversationId) {
+        setTransientError('Missing conversation')
+        return false
+      }
       const wavBuffer = utils.encodeWAV(audio, 1, sampleRate, 1, 16)
       const base64 = utils.arrayBufferToBase64(wavBuffer)
 
-      ws.send(JSON.stringify({
+      const payload: VoiceAudioPayload = {
         type: 'voice_audio',
-        conversation_id: conversationIdRef.current,
+        conversation_id: conversationId,
         audio_data: base64,
         mime_type: 'audio/wav',
         request_id: createVoiceRequestId(),
-      }))
+      }
+      if (projectIdRef?.current) {
+        payload.project_id = projectIdRef.current
+      }
+
+      ws.send(JSON.stringify(payload))
       return true
     } catch (err) {
       console.error('Voice: Failed to encode/send audio:', err)
@@ -136,7 +157,7 @@ export function useVoiceCapture({
       setTransientError('Failed to process audio')
       return false
     }
-  }, [conversationIdRef, setTransientError, wsRef])
+  }, [conversationIdRef, projectIdRef, setTransientError, wsRef])
 
   const stopRecording = useCallback(async () => {
     const rec = recCtxRef.current

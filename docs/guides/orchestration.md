@@ -55,6 +55,8 @@ its sibling guide tasks close.
 | `gobby-tasks-ops:build_task` | MCP entry point for starting lifecycle automation; requires `input_ref` |
 | `POST /api/build` | HTTP entry point for the same shared build service |
 | `POST /api/build/{stop,resume,clean,restart}` | HTTP control actions for project-wide ticks or task-scoped automation |
+| `gobby profiles` / `gobby-profiles` / `/api/profiles` | Build profile registry editing for reusable build presets |
+| `gobby stages` / `gobby-tasks` stage tools / `/api/stages` | Stage registry metadata and task-type default manifest editing |
 | `src/gobby/dispatch/dispatcher.py` | Heartbeat scanner, mutex handling, and action executor |
 | `src/gobby/dispatch/rules.py` | Ordered deterministic rules that map task state to actions |
 | `gobby-tasks` | Task lifecycle, dependencies, claims, close, review state, and escalation |
@@ -69,22 +71,36 @@ return the same build-result shape. Build control actions such as `stop`,
 
 ## Build State
 
-Build profiles and flags are convenience input. Dispatch reads the resolved task
-fields and manifest rows:
+Build profiles and flags are convenience input. Profiles resolve before initial
+manifest creation, then dispatch reads the resolved task fields and manifest
+rows:
 
 | Field | Meaning |
 | --- | --- |
 | `allow_automation` | Opt-in gate; tasks without it are invisible to dispatcher scans |
-| `unattended` | Stored task flag for automation posture; build currently writes `false` |
+| `unattended` | Stored task flag for automation posture; build writes the resolved profile or explicit value |
 | `isolation` | Execution isolation: `none`, `worktree`, or `clone` |
 | Stage manifest rows | Ordered lifecycle stages in `task_stage_states` |
 | `assigned_agent` | Leaf-stage agent chosen by expansion or build input |
 | `additional_skills` | Extra skills loaded into the dispatched worker |
 | `target_branch` | Artifact used as the base for isolated work and workspace merges |
+| `task_delivery_campaigns.delivery_mode` | Delivery intent resolved from the build profile |
+| `task_delivery_campaigns.source_repo` | GitHub source repo for PR delivery |
+| `task_delivery_campaigns.target_repo` | GitHub base repo for PR delivery |
 
 The current stage is the first manifest row whose state is not `done`. Blocked
 and escalated are projections around that row: they change queue visibility and
 human handoff behavior, but they do not replace the manifest state.
+
+On resume, existing manifest rows stay authoritative. Profile `skip_stages` is
+ignored with a warning and profile isolation does not replace the task's current
+isolation; explicit build isolation still applies. CLI uses
+`--isolation none|worktree|clone`, MCP `build_task` uses `isolation`, and HTTP
+`POST /api/build` accepts the same values.
+
+The bundled `submit` profile sets `delivery_mode=pull_request`. If a project
+override sets `delivery_target_repo`, submit builds open PRs against that
+repository while using the current project repository as the source.
 
 ## Dispatch Actions
 

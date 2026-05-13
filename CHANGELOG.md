@@ -15,6 +15,11 @@ embedding endpoints, and cleanup of early 0.4.x install rough edges.
 
 ### Added
 
+- Add editable stage and build-profile registries under Workflows, with
+  DB-backed `gobby profiles`, `gobby stages`, `gobby-profiles`, `/api/profiles`,
+  and `/api/stages` surfaces. `gobby build` now resolves the `default`,
+  `autopilot`, `fix`, `fix-merge`, and `submit` bundled profiles before
+  creating new manifests.
 - Add `gobby install --embedding-url`, `--embedding-model`, and
   `--embedding-dim` support for custom OpenAI-compatible embedding endpoints,
   including interactive install prompts and automatic dimension probing (#9,

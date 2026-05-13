@@ -79,7 +79,7 @@ def _make_stage_state(
         task_id=task_id,
         stage_name=stage_name,
         position=0,
-        state=state,  # type: ignore[arg-type]
+        state=state,
         review_policy="required",
         reviewer_agent="plan-adversary",
         entered_at=None,

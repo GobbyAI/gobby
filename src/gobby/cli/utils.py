@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import click
@@ -18,6 +19,8 @@ from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
+_UI_LOG_MAX_BYTES = 5 * 1024 * 1024
+_UI_LOG_BACKUP_COUNT = 3
 
 
 def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
@@ -566,6 +569,30 @@ def _kill_port_holder(port: int) -> None:
             continue
 
 
+def _open_ui_log_handler(log_file: Path) -> RotatingFileHandler:
+    """Open the UI log target with size-bounded rotation."""
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        log_file,
+        mode="a",
+        maxBytes=_UI_LOG_MAX_BYTES,
+        backupCount=_UI_LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    rollover_probe = logging.LogRecord(
+        name=__name__,
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=0,
+        msg="",
+        args=(),
+        exc_info=None,
+    )
+    if handler.shouldRollover(rollover_probe):
+        handler.doRollover()
+    return handler
+
+
 def spawn_ui_server(
     host: str,
     port: int,
@@ -624,10 +651,11 @@ def spawn_ui_server(
     cmd = ["npm", "run", "dev", "--", "--host", host, "--port", str(port)]
 
     try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-
-        log_f = open(log_file, "a")  # noqa: SIM115
+        log_handler = _open_ui_log_handler(log_file)
         try:
+            log_stream = log_handler.stream
+            if log_stream is None:
+                raise RuntimeError(f"Failed to open UI log stream: {log_file}")
             env = os.environ.copy()
             env["GOBBY_DAEMON_PORT"] = str(daemon_port)
             env["GOBBY_WS_PORT"] = str(ws_port)
@@ -635,18 +663,16 @@ def spawn_ui_server(
             process = subprocess.Popen(  # nosec B603 B607
                 cmd,
                 cwd=web_dir,
-                stdout=log_f,
+                stdout=log_stream,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
                 env=env,
             )
-        except Exception:
-            log_f.close()
-            raise
+        finally:
+            log_handler.close()
 
-        # Popen duplicates the fd internally; parent can close its handle
-        log_f.close()
+        # Popen duplicates the fd internally; parent can close its handler.
 
         # Give the process a moment to start, then verify it's still alive
         time.sleep(1.0)

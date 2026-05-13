@@ -17,7 +17,7 @@ def _config(**overrides: object) -> CommunicationsConfig:
         "channel_defaults": ChannelDefaults(rate_limit_per_minute=60, burst=10),
     }
     defaults.update(overrides)
-    return CommunicationsConfig(**defaults)  # type: ignore[arg-type]
+    return CommunicationsConfig(**defaults)
 
 
 def _channel(

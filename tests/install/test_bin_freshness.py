@@ -201,7 +201,7 @@ class TestBinUpdater:
             spec,
             BinFreshnessConfig(),
             bin_dir=bin_dir,
-            client=client,  # type: ignore[arg-type]
+            client=client,
         )
 
         assert record is not None
@@ -222,7 +222,7 @@ class TestBinUpdater:
             spec,
             BinFreshnessConfig(),
             bin_dir=bin_dir,
-            client=client,  # type: ignore[arg-type]
+            client=client,
         )
 
         assert record is not None
@@ -246,7 +246,7 @@ class TestBinUpdater:
             spec,
             BinFreshnessConfig(),
             bin_dir=bin_dir,
-            client=client,  # type: ignore[arg-type]
+            client=client,
         )
 
         assert record is not None
@@ -266,7 +266,7 @@ class TestBinUpdater:
             spec,
             BinFreshnessConfig(),
             bin_dir=bin_dir,
-            client=client,  # type: ignore[arg-type]
+            client=client,
         )
 
         assert record is not None
@@ -288,7 +288,7 @@ class TestBinUpdater:
             spec,
             BinFreshnessConfig(),
             bin_dir=bin_dir,
-            client=client,  # type: ignore[arg-type]
+            client=client,
         )
 
         assert record is not None
@@ -319,7 +319,7 @@ class TestBinUpdater:
                 spec,
                 BinFreshnessConfig(),
                 bin_dir=bin_dir,
-                client=client,  # type: ignore[arg-type]
+                client=client,
             )
 
         assert record is not None
@@ -355,13 +355,13 @@ class TestBinUpdater:
                 spec,
                 BinFreshnessConfig(),
                 bin_dir=bin_dir,
-                client=FakeClient(resolve_error=RuntimeError("should not run")),  # type: ignore[arg-type]
+                client=FakeClient(resolve_error=RuntimeError("should not run")),
             )
         finally:
             lock.release()
 
         assert result is None
-        assert store.get(spec.name).last_status == "up_to_date"  # type: ignore[union-attr]
+        assert store.get(spec.name).last_status == "up_to_date"
 
     def test_source_unavailable_below_floor_records_floor_violation(self, tmp_path: Path) -> None:
         db = _db(tmp_path)
@@ -376,7 +376,7 @@ class TestBinUpdater:
             spec,
             BinFreshnessConfig(),
             bin_dir=bin_dir,
-            client=client,  # type: ignore[arg-type]
+            client=client,
         )
 
         assert record is not None
@@ -391,7 +391,7 @@ class TestBinUpdater:
             db,
             BinFreshnessConfig(),
             bin_dir=bin_dir,
-            client=client,  # type: ignore[arg-type]
+            client=client,
         )
 
         assert len(records) == len(managed_bin_specs())

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.metrics import MeterProvider
@@ -105,5 +105,6 @@ def shutdown_providers() -> None:
         _METER_PROVIDER = None
 
     if _LOGGER_PROVIDER is not None:
-        _LOGGER_PROVIDER.shutdown()  # type: ignore[no-untyped-call]
+        # OpenTelemetry exposes shutdown with a broader callable shape than this sync path needs.
+        cast(Callable[[], None], _LOGGER_PROVIDER.shutdown)()
         _LOGGER_PROVIDER = None

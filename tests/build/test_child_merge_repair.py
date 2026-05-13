@@ -92,7 +92,7 @@ async def test_child_build_resume_repairs_parent_integration_metadata_only(
     async def fake_tick(*_args: object, **_kwargs: object) -> DispatcherTickSummary:
         return DispatcherTickSummary()
 
-    monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", fake_tick)
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fake_tick)
 
     await build(
         str(leaf.seq_num),

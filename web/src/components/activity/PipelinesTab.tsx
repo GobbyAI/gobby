@@ -182,7 +182,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       <div className="activity-panel-toolbar">
         <button
           type="button"
-          className="activity-filter-button ml-auto"
+          className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button ml-auto"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter pipelines"
           aria-label="Filter pipelines"
@@ -201,6 +201,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           >
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
           </svg>
+          <span className="activity-panel-action-btn__label">Filter</span>
           {statusFilter !== 'all' && (
             <span className="activity-filter-badge">1</span>
           )}

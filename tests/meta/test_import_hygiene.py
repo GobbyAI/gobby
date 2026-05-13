@@ -17,6 +17,7 @@ SRC_GOBBY_DIR = REPO_ROOT / "src" / "gobby"
 HOOKS_DIR = SRC_GOBBY_DIR / "hooks"
 TESTS_DIR = REPO_ROOT / "tests"
 SESSIONS_DIR = REPO_ROOT / "src" / "gobby" / "storage" / "sessions"
+STORAGE_TASKS_DIR = REPO_ROOT / "src" / "gobby" / "storage" / "tasks"
 
 
 def _iter_python_files(*roots: Path) -> list[Path]:
@@ -49,6 +50,16 @@ def test_storage_sessions_package_files_stay_under_size_limits() -> None:
         assert count < 1000, f"{name} exceeded 1000 LOC ({count})"
         if name not in {"__init__.py", "_manager.py"}:
             assert count < 400, f"{name} exceeded 400 LOC ({count})"
+
+
+def test_storage_tasks_package_files_stay_under_size_limits() -> None:
+    files = sorted(STORAGE_TASKS_DIR.glob("*.py"))
+    assert files, "Expected task storage package files to exist"
+
+    line_counts = {path.name: _count_lines(path) for path in files}
+
+    for name, count in line_counts.items():
+        assert count < 1000, f"{name} exceeded 1000 LOC ({count})"
 
 
 def test_no_file_references_old_session_manager_names() -> None:

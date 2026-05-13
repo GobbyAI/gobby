@@ -39,6 +39,7 @@ function makeChatHookState() {
     sendMessage: vi.fn(),
     sendMode: vi.fn(),
     sendProjectChange: mockSendProjectChange,
+    projectIdRef: { current: null },
     setProjectIdRef: mockSetProjectIdRef,
     sendWorktreeChange: vi.fn(),
     stopStreaming: vi.fn(),

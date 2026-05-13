@@ -20,7 +20,8 @@ rules:
           (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks-ops'
           and (tool_input.get('tool_name') or tool_input.get('tool')) in (
             'complete_stage', 'submit_for_review', 'approve_review', 'record_pr_opened',
-            'record_pr_verdict', 'record_merge_result', 'close_linked_github_issue')
+            'open_delivery_pr', 'record_pr_verdict', 'record_merge_result',
+            'close_linked_github_issue')
         )
         or (
           (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-merge'
@@ -47,7 +48,8 @@ rules:
           event.data.get('mcp_server') == 'gobby-tasks-ops'
           and event.data.get('mcp_tool') in (
             'complete_stage', 'submit_for_review', 'approve_review', 'record_pr_opened',
-            'record_pr_verdict', 'record_merge_result', 'close_linked_github_issue')
+            'open_delivery_pr', 'record_pr_verdict', 'record_merge_result',
+            'close_linked_github_issue')
         )
         or (
           event.data.get('mcp_server') == 'gobby-merge'
@@ -63,7 +65,8 @@ rules:
           and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks-ops'
           and (tool_input.get('tool_name') or tool_input.get('tool')) in (
             'complete_stage', 'submit_for_review', 'approve_review', 'record_pr_opened',
-            'record_pr_verdict', 'record_merge_result', 'close_linked_github_issue')
+            'open_delivery_pr', 'record_pr_verdict', 'record_merge_result',
+            'close_linked_github_issue')
         )
         or (
           event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')

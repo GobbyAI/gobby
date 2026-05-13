@@ -119,7 +119,7 @@ export function ChannelDetail({
       <div className={PANEL_CLS}>
         {/* Header */}
         <div className={HEADER_CLS}>
-          <button className={MODAL_CLOSE_CLS} onClick={onClose}>&times;</button>
+          <button className={MODAL_CLOSE_CLS} onClick={onClose} aria-label="Close channel details">&times;</button>
           <div className={HEADER_INFO_CLS}>
             <PlatformIcon type={channel.channel_type} size={20} />
             <span className={NAME_CLS}>{channel.name}</span>

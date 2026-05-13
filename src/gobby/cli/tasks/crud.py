@@ -20,10 +20,12 @@ from gobby.cli.tasks._utils import (
 )
 from gobby.cli.utils import resolve_project_ref
 from gobby.storage.tasks import TASK_TYPE_CHOICES
+from gobby.tasks.isolation import validate_task_isolation_artifacts
 from gobby.tasks.state_semantics import is_task_closed, serialize_task_state
 from gobby.utils.project_context import get_project_context
 
 TASK_TYPE_CHOICE = click.Choice(TASK_TYPE_CHOICES)
+ISOLATION_CHOICE = click.Choice(["none", "worktree", "clone"])
 
 
 def _current_stage_display(state: dict[str, Any]) -> str:
@@ -576,12 +578,18 @@ def show_task(task_id: str) -> None:
     type=TASK_TYPE_CHOICE,
     help="New task type",
 )
+@click.option(
+    "--isolation",
+    type=ISOLATION_CHOICE,
+    help="New automation isolation mode",
+)
 def update_task(
     task_id: str,
     title: str | None,
     priority: int | None,
     parent_task_id: str | None,
     task_type: str | None,
+    isolation: str | None,
 ) -> None:
     """Update a task.
 
@@ -612,7 +620,12 @@ def update_task(
     if task_type is not None:
         kwargs["task_type"] = task_type
 
-    task = manager.update_task(resolved.id, **kwargs)
+    try:
+        if isolation is not None:
+            kwargs["isolation"] = validate_task_isolation_artifacts(manager, resolved.id, isolation)
+        task = manager.update_task(resolved.id, **kwargs)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # Use standardized ref
     task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]

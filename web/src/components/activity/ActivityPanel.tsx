@@ -472,13 +472,31 @@ export function ActivityPanel({
               onSelect={handleTabSelect}
               wrapperRef={mobileTabMenuRef}
             />
-            <button
-              className="activity-panel-close"
-              onClick={handleClose}
-              title="Close panel"
-            >
-              {"\u2715"}
-            </button>
+            <span className="activity-panel-close-slot">
+              <button
+                type="button"
+                className="btn btn-accent btn-sm activity-panel-action-btn"
+                onClick={handleClose}
+                aria-label="Close panel"
+                title="Close panel"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+                <span className="activity-panel-action-btn__label">Close</span>
+              </button>
+            </span>
           </div>
 
           {/* Tab content */}

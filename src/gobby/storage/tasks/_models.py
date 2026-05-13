@@ -98,6 +98,15 @@ UNSET = UnsetType()
 type MaybeUnset[T] = T | UnsetType
 
 
+class TaskAlreadyEscalatedError(ValueError):
+    """Raised when an escalation is requested for an already escalated task."""
+
+    def __init__(self, task_id: str, reason: str | None) -> None:
+        self.task_id = task_id
+        self.reason = reason
+        super().__init__(f"Cannot escalate task {task_id}: task is already escalated.")
+
+
 def validate_category(category: str | None) -> str | None:
     """Validate and normalize a category value.
 

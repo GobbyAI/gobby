@@ -10,6 +10,7 @@ import type {
 } from "../../types/chat";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import type { PaletteItem } from "../../hooks/useColonAutocomplete";
+import type { VoiceInputMode } from "../../hooks/useSettings";
 import type { ArtifactType } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import { useArtifacts } from "../../hooks/useArtifacts";
@@ -68,6 +69,7 @@ interface ChatPageProps {
   onSessionsFiltersChange?: (filters: SessionsFilters) => void;
   onSttEnabledChange?: (enabled: boolean) => void;
   onTtsEnabledChange?: (enabled: boolean) => void;
+  onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
 }
 
 export function ChatPage({
@@ -95,6 +97,7 @@ export function ChatPage({
   onSessionsFiltersChange,
   onSttEnabledChange,
   onTtsEnabledChange,
+  onVoiceInputModeChange,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
@@ -861,6 +864,7 @@ export function ChatPage({
               stopTTS={voice.stopTTS}
               onSttEnabledChange={onSttEnabledChange}
               onTtsEnabledChange={onTtsEnabledChange}
+              onVoiceInputModeChange={onVoiceInputModeChange}
               isMobile={isMobile}
               onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
               provider={effectiveInputProvider}

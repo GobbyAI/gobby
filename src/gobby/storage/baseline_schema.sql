@@ -1572,6 +1572,10 @@ CREATE TABLE integration_workspace_mutex (
 CREATE TABLE task_delivery_campaigns (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     state TEXT NOT NULL DEFAULT 'pending',
+    delivery_mode TEXT NOT NULL DEFAULT 'auto'
+        CHECK (delivery_mode IN ('auto','pull_request')),
+    source_repo TEXT,
+    target_repo TEXT,
     merge_strategy TEXT NOT NULL DEFAULT 'squash'
         CHECK (merge_strategy IN ('merge', 'squash', 'rebase')),
     structured_pr_verdict TEXT,
@@ -1634,8 +1638,12 @@ CREATE TABLE task_stages_registry (
                 default_max_work_attempts INTEGER NOT NULL DEFAULT 3,
                 default_max_review_rounds INTEGER NOT NULL DEFAULT 5,
                 bundled_hash TEXT,
+                deleted_at TEXT,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+
+CREATE INDEX idx_task_stages_registry_deleted
+                ON task_stages_registry (deleted_at);
 
 CREATE TABLE task_type_default_stages (
                 task_type TEXT NOT NULL,
@@ -1647,6 +1655,36 @@ CREATE TABLE task_type_default_stages (
 
 CREATE INDEX idx_task_type_default_stages_position
                 ON task_type_default_stages (task_type, position);
+
+CREATE TABLE build_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                display_label TEXT NOT NULL,
+                description TEXT NOT NULL,
+                skip_stages_json TEXT NOT NULL DEFAULT '[]',
+                isolation TEXT NOT NULL DEFAULT 'worktree'
+                    CHECK (isolation IN ('none','worktree','clone')),
+                unattended INTEGER NOT NULL DEFAULT 0 CHECK (unattended IN (0, 1)),
+                delivery_mode TEXT NOT NULL DEFAULT 'auto'
+                    CHECK (delivery_mode IN ('auto','pull_request')),
+                delivery_target_repo TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                source TEXT NOT NULL CHECK (source IN ('installed','project')),
+                project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                bundled_hash TEXT,
+                deleted_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                CHECK (source != 'installed' OR project_id IS NULL)
+            );
+
+CREATE UNIQUE INDEX idx_build_profiles_active_unique
+                ON build_profiles (name, COALESCE(project_id, '__global__'), source)
+                WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_build_profiles_project_source
+                ON build_profiles (project_id, source, name);
 
 CREATE TABLE task_stage_states (
                 task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -1867,16 +1905,16 @@ INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", 
 INSERT INTO "sessions" ("id", "external_id", "machine_id", "source", "project_id", "title", "title_source", "status", "transcript_path", "summary_path", "summary_markdown", "git_branch", "parent_session_id", "transcript_processed", "agent_depth", "spawned_by_agent_id", "workflow_name", "agent_run_id", "context_injected", "original_prompt", "usage_input_tokens", "usage_output_tokens", "usage_cache_creation_tokens", "usage_cache_read_tokens", "context_window", "terminal_context", "seq_num", "model", "is_local", "had_edits", "digest_markdown", "last_turn_markdown", "chat_mode", "last_digest_input_hash", "message_count", "turn_count", "tool_call_count", "last_assistant_content", "approved_tools_json", "session_type", "sandbox_enabled", "sandbox_policy_hash", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000001', 'system', 'system', 'system', '00000000-0000-0000-0000-000000060887', '_system', NULL, 'active', NULL, NULL, NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, 0, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, 0, 0, NULL, NULL, 'plan', NULL, 0, 0, 0, NULL, NULL, 'terminal', 0, NULL, datetime('now'), datetime('now'));
 
 -- Seed rows for task_stages_registry
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('ideation', 'Ideation', 'Early problem framing; capture motivating questions and constraints.', 'discovery', 'analyst', NULL, NULL, 'none', NULL, NULL, NULL, 10, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('research', 'Research', 'Targeted investigation; produce findings consumable by architecture/PRD.', 'discovery', 'researcher', NULL, NULL, 'none', NULL, NULL, NULL, 20, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('architecture', 'Architecture', 'Cross-cutting design decisions and component shape.', 'design', 'architect', NULL, NULL, 'none', NULL, NULL, NULL, 30, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('prd', 'PRD', 'Productized requirements; bridges discovery and planning.', 'design', 'product-manager', NULL, NULL, 'none', NULL, NULL, NULL, 40, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('planning', 'Planning', 'Implementation plan authoring (interactive or autonomous).', 'design', 'planner', 'plan-adversary', NULL, 'required', NULL, NULL, NULL, 50, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('expansion', 'Expansion', 'Decompose plan into TDD-wrapped leaf tasks.', 'implementation', NULL, 'expansion-qa', NULL, 'required', 'pipeline', 'expand-task', '{"plan_file": "${{ artifacts.plan_file_path }}", "task_id": "${{ task_id }}"}', 80, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('development', 'Development', 'Leaf implementation work; drives TDD sandwiches.', 'implementation', 'backend-developer', NULL, '{"default": "qa-reviewer", "rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}]}', 'required', NULL, NULL, NULL, 100, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('holistic_qa', 'Holistic QA', 'Whole-epic review after every leaf is parked.', 'verification', 'holistic-reviewer', 'holistic-reviewer', NULL, 'required', NULL, NULL, NULL, 120, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('pr', 'Pull Request', 'Open/update PR, capture verdict, gate on external review.', 'delivery', 'merge-orchestrator', NULL, NULL, 'required', NULL, NULL, NULL, 130, 0, 0, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
-INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('merge', 'Merge', 'Land approved PR; resolve conflicts; close terminal task.', 'delivery', 'merge-orchestrator', NULL, NULL, 'none', NULL, NULL, NULL, 140, 0, 1, 3, 5, '65651b3a8b4e008ba401fdd9272494309d40b7d7839c7a49b4e664f73a1f09ab', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('ideation', 'Ideation', 'Early problem framing; capture motivating questions and constraints.', 'discovery', 'analyst', NULL, NULL, 'none', NULL, NULL, NULL, 10, 0, 0, 3, 5, '30d0d059953b56f2cf9e809b42993be29df0da15598a38925b79a900a71e6331', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('research', 'Research', 'Targeted investigation; produce findings consumable by architecture/PRD.', 'discovery', 'researcher', NULL, NULL, 'none', NULL, NULL, NULL, 20, 0, 0, 3, 5, 'c18eb91008e5375fcc3395a220cf6bf7146cb5c1752f68daf848598a45857221', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('architecture', 'Architecture', 'Cross-cutting design decisions and component shape.', 'design', 'architect', NULL, NULL, 'none', NULL, NULL, NULL, 30, 0, 0, 3, 5, 'd084b4acbf67c7012e577d2d386dc20ae45cbfebe347a58f3fbc89cef5038b2c', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('prd', 'PRD', 'Productized requirements; bridges discovery and planning.', 'design', 'product-manager', NULL, NULL, 'none', NULL, NULL, NULL, 40, 0, 0, 3, 5, 'fd609d682a6fe7e807cfb487f301bfdb39f352bc8836b87e030bb0bbe7836360', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('planning', 'Planning', 'Implementation plan authoring (interactive or autonomous).', 'design', 'planner', 'plan-adversary', NULL, 'required', NULL, NULL, NULL, 50, 0, 0, 3, 5, 'b7d0a297c57659700b759ce3f3fd6cc5e4d66e8a2a18759358ec683f613f2b51', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('expansion', 'Expansion', 'Decompose plan into TDD-wrapped leaf tasks.', 'implementation', NULL, 'expansion-qa', NULL, 'required', 'pipeline', 'expand-task', '{"plan_file": "${{ artifacts.plan_file_path }}", "task_id": "${{ task_id }}"}', 80, 0, 0, 3, 5, '7aea4dbb7119bcdab1cb5957239670ff4a68d2d78d50c6e3a7bda922fa3d9aa1', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('development', 'Development', 'Leaf implementation work; drives TDD sandwiches.', 'implementation', 'backend-developer', NULL, '{"default": "qa-reviewer", "rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}]}', 'required', NULL, NULL, NULL, 100, 0, 0, 3, 5, 'f8821338fc237ebc8abeb46a1e3303113e096593041a5dde768d0ff604221e54', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('holistic_qa', 'Holistic QA', 'Whole-epic review after every leaf is parked.', 'verification', 'holistic-reviewer', 'holistic-reviewer', NULL, 'required', NULL, NULL, NULL, 120, 0, 0, 3, 5, '27acabfc718ad4f28be4bd3ae6d3bc10eb1602ddee65a6946dc05b093dfbc673', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('pr', 'Pull Request', 'Open/update PR, capture verdict, gate on external review.', 'delivery', 'merge-orchestrator', NULL, NULL, 'required', NULL, NULL, NULL, 130, 0, 0, 3, 5, '38a13dbb652e4e1087abbfec0b97d1d4ac0161276183800e5e959a3a5d3b6cbb', datetime('now'));
+INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('merge', 'Merge', 'Land approved PR; resolve conflicts; close terminal task.', 'delivery', 'merge-orchestrator', NULL, NULL, 'none', NULL, NULL, NULL, 140, 0, 1, 3, 5, '636a12f800c8ceef76dd7fdea41baaa0b227fa3f178bf45e3802688e179ec6ef', datetime('now'));
 
 -- Seed rows for task_type_default_stages
 INSERT INTO "task_type_default_stages" ("task_type", "stage_name", "position") VALUES ('architecture_doc', 'research', 0);

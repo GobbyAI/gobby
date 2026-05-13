@@ -34,6 +34,11 @@ class TeamsAdapter(BaseChannelAdapter):
         # Cache of ConversationReferences keyed by conversation_id
         self._conversation_refs: dict[str, dict[str, Any]] = {}
 
+    def _require_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            raise ValueError("Adapter not initialized")
+        return self._client
+
     @property
     def channel_type(self) -> str:
         """The unique type identifier for this channel."""
@@ -90,8 +95,7 @@ class TeamsAdapter(BaseChannelAdapter):
 
     async def send_message(self, message: CommsMessage) -> str | None:
         """Send message and return platform message ID."""
-        if not self._client:
-            raise ValueError("Adapter not initialized")
+        client = self._require_client()
 
         async with self._token_lock:
             if time.time() >= self._token_expires_at:
@@ -135,7 +139,7 @@ class TeamsAdapter(BaseChannelAdapter):
         }
 
         response = await self._retry_request(
-            lambda: self._client.post(url, json=activity, headers=headers)  # type: ignore[union-attr]
+            lambda: client.post(url, json=activity, headers=headers)
         )
 
         data = response.json()
@@ -158,8 +162,7 @@ class TeamsAdapter(BaseChannelAdapter):
         Raises:
             ValueError: If no ConversationReference is stored for the conversation.
         """
-        if not self._client:
-            raise ValueError("Adapter not initialized")
+        client = self._require_client()
 
         conv_ref = self._conversation_refs.get(conversation_id)
         if not conv_ref:
@@ -199,7 +202,7 @@ class TeamsAdapter(BaseChannelAdapter):
         }
 
         response = await self._retry_request(
-            lambda: self._client.post(url, json=activity, headers=headers)  # type: ignore[union-attr]
+            lambda: client.post(url, json=activity, headers=headers)
         )
 
         data = response.json()

@@ -29,7 +29,7 @@ DROPPED_STAGE_NAMES = {"adversarial_review", "expansion_qa", "code_review_qa"}
 
 
 def _loader_types():
-    from gobby.storage.tasks._stage_registry_loader import (  # noqa: PLC0415
+    from gobby.storage.tasks._stage_registry_loader import (
         StageRegistryLoader,
         StageRegistryLoadError,
     )
@@ -248,10 +248,10 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
     db.execute(
         """
         UPDATE task_stages_registry
-        SET bundled_hash = ?, display_label = ?, review_policy = 'none', reviewer_agent = NULL
+        SET bundled_hash = ?
         WHERE name = ?
         """,
-        ("stale-hash", "Old Planning", "planning"),
+        ("stale-hash", "planning"),
     )
 
     result = StageRegistryLoader().sync(db)

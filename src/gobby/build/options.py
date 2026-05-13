@@ -6,17 +6,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gobby.build.workspaces import WorkspaceBackend
-from gobby.config.build import Isolation, StageCapOverride
+from gobby.config.build import DeliveryMode, Isolation, StageCapOverride
 
 
 @dataclass
 class BuildOptions:
     """Resolved options for a build request."""
 
+    profile: str = "default"
+    profile_explicit: bool = False
     quick: bool = False
     skip_stages: list[str] = field(default_factory=list)
+    skip_stages_explicit: bool = False
     isolation: Isolation = "worktree"
     isolation_explicit: bool = True
+    unattended: bool = False
+    unattended_explicit: bool = False
+    delivery_mode: DeliveryMode = "auto"
+    delivery_target_repo: str | None = None
     no_merge: bool = False
     pr: str | None = None
     stage_caps: list[StageCapOverride] = field(default_factory=list)
@@ -34,6 +41,38 @@ class BuildOptions:
     @property
     def workspace_backend_explicit(self) -> bool:
         return self.isolation_explicit
+
+
+@dataclass(frozen=True, slots=True)
+class BuildIsolationResolution:
+    """Resolved isolation value and whether the caller supplied an isolation knob."""
+
+    isolation: Isolation
+    explicit: bool
+
+
+def resolve_build_isolation(
+    *,
+    isolation: Isolation | None,
+    workspace_backend: WorkspaceBackend | None,
+    clone: bool,
+) -> BuildIsolationResolution:
+    """Resolve legacy and current build isolation fields with one conflict policy."""
+
+    if clone and isolation in {"none", "worktree"}:
+        raise ValueError(f"clone=true conflicts with isolation={isolation}")
+    if clone and workspace_backend == "worktree":
+        raise ValueError("clone=true conflicts with workspace_backend=worktree")
+    if isolation is not None and workspace_backend is not None and isolation != workspace_backend:
+        raise ValueError("isolation conflicts with workspace_backend")
+
+    resolved = isolation or workspace_backend or ("clone" if clone else "worktree")
+    if clone and resolved != "clone":
+        raise ValueError("clone=true requires isolation=clone or workspace_backend=clone")
+    return BuildIsolationResolution(
+        isolation=resolved,
+        explicit=isolation is not None or workspace_backend is not None or clone,
+    )
 
 
 def retry_attempt_cap(opts: BuildOptions) -> int | None:

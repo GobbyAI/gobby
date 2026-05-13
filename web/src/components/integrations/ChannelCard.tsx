@@ -10,7 +10,7 @@ import {
 import { cn } from '../../lib/utils'
 
 const CARD_CLS =
-  'flex cursor-pointer flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3.5 transition-colors duration-150 hover:border-[var(--accent)] hover:bg-[rgba(255,255,255,0.05)]'
+  'flex cursor-pointer flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3.5 transition-colors duration-150 hover:border-[var(--accent)] hover:bg-surface-tint'
 const CARD_DISABLED_CLS = 'opacity-70'
 const CARD_HEADER_CLS = 'flex items-center gap-2'
 const CARD_NAME_CLS =
@@ -19,7 +19,7 @@ const CARD_STATUS_CLS = 'flex items-center gap-1.5'
 const STATUS_TEXT_CLS = 'text-[length:var(--text-xs)] text-[var(--text-secondary)]'
 const CARD_FOOTER_CLS = 'flex justify-end gap-1'
 const CARD_ACTION_CLS =
-  'cursor-pointer rounded border-0 bg-transparent px-1.5 py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+  'cursor-pointer rounded border-0 bg-transparent px-1.5 py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-surface-tint-strong hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 const CARD_ACTION_DANGER_CLS = 'hover:text-[var(--color-error)]'
 
 interface ChannelCardProps {

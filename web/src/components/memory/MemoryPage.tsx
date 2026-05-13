@@ -289,6 +289,8 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
                   )}
                   onClick={() => setViewMode(mode)}
                   title={title}
+                  aria-label={title}
+                  aria-pressed={isActive}
                 >
                   <Icon />
                 </button>
@@ -307,6 +309,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
             className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0 text-[length:var(--text-base)] text-[var(--text-secondary)] transition-[background-color,color,opacity] duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11"
             onClick={refreshMemories}
             title="Refresh"
+            aria-label="Refresh memories"
             disabled={isLoading}
           >
             &#x21bb;

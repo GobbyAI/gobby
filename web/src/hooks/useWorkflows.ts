@@ -240,45 +240,6 @@ export function useWorkflows() {
     return null
   }, [])
 
-  const installFromTemplate = useCallback(async (id: string): Promise<WorkflowDetail | null> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/workflows/${encodeURIComponent(id)}/install`, {
-        method: 'POST',
-      })
-      const data = await response.json().catch(() => ({}))
-      if (response.ok && data.status === 'success') {
-        await fetchWorkflows()
-        return data.definition
-      }
-      window.alert(data.detail || 'Failed to install from template')
-    } catch (e) {
-      console.error('Failed to install from template:', e)
-      window.alert(`Failed to install from template: ${e instanceof Error ? e.message : String(e)}`)
-    }
-    return null
-  }, [fetchWorkflows])
-
-  const installAllTemplates = useCallback(async (workflowType?: string): Promise<number> => {
-    try {
-      const baseUrl = getBaseUrl()
-      const params = workflowType ? `?workflow_type=${encodeURIComponent(workflowType)}` : ''
-      const response = await fetch(`${baseUrl}/api/workflows/install-all-templates${params}`, {
-        method: 'POST',
-      })
-      const data = await response.json().catch(() => ({}))
-      if (response.ok && data.status === 'success') {
-        await fetchWorkflows()
-        return data.count || 0
-      }
-      window.alert(data.detail || 'Failed to install all templates')
-    } catch (e) {
-      console.error('Failed to install all templates:', e)
-      window.alert(`Failed: ${e instanceof Error ? e.message : String(e)}`)
-    }
-    return 0
-  }, [fetchWorkflows])
-
   const restoreWorkflow = useCallback(async (id: string): Promise<boolean> => {
     try {
       const baseUrl = getBaseUrl()
@@ -362,7 +323,5 @@ export function useWorkflows() {
     exportYaml,
     restoreWorkflow,
     selectWorkflow,
-    installFromTemplate,
-    installAllTemplates,
   }
 }

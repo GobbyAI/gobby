@@ -23,7 +23,18 @@ class TranscriptParserErrorLog:
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
 
-        if not self.logger.handlers:
+        for handler in list(self.logger.handlers):
+            if (
+                isinstance(handler, RotatingFileHandler)
+                and Path(handler.baseFilename) != self.log_path
+            ):
+                self.logger.removeHandler(handler)
+                handler.close()
+
+        if not any(
+            isinstance(handler, RotatingFileHandler) and Path(handler.baseFilename) == self.log_path
+            for handler in self.logger.handlers
+        ):
             # 10MB rotation, keep 5 backups
             handler = RotatingFileHandler(self.log_path, maxBytes=10 * 1024 * 1024, backupCount=5)
             # Custom formatter to just pass through the message

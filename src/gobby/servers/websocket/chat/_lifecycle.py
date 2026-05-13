@@ -121,6 +121,7 @@ class ChatLifecycleMixin:
         session = self._chat_sessions.get(conversation_id)
         db_session_id = getattr(session, "db_session_id", None) or conversation_id
         project_path = getattr(session, "project_path", None)
+        project_id = getattr(session, "project_id", None)
 
         # Normalize MCP fields using shared logic (same as CLI adapters)
         if data:
@@ -139,20 +140,31 @@ class ChatLifecycleMixin:
             )
             source = SessionSource("claude")
 
+        metadata: dict[str, Any] = {"_platform_session_id": db_session_id}
+        if project_path:
+            metadata["project_path"] = project_path
+
         event = HookEvent(
             event_type=event_type,
             session_id=db_session_id,
             source=source,
             timestamp=datetime.now(UTC),
             data=data,
-            metadata={"_platform_session_id": db_session_id},
+            metadata=metadata,
             cwd=project_path,
+            project_id=project_id,
         )
 
         try:
             # DEBUG: log event data to diagnose hook issues
+            redacted_event_data = {
+                key: (value if key != "tool_input" else "...")
+                for key, value in (data or {}).items()
+            }
             logger.debug(
-                f"_fire_lifecycle: {event_type.name} event_data={ ({k: (v if k != 'tool_input' else '...') for k, v in (data or {}).items()}) }",
+                "_fire_lifecycle: %s event_data=%s",
+                event_type.name,
+                redacted_event_data,
             )
             # WorkflowHookHandler.evaluate is sync (bridges to async internally)
             response: HookResponse = await run_db(self, workflow_handler.evaluate, event)

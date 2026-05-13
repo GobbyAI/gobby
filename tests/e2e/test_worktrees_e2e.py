@@ -9,25 +9,19 @@ Tests verify:
 5. Stats and stale worktree detection
 """
 
+import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
+from tests._timing import wait_for_condition
 from tests.e2e.conftest import DaemonInstance, MCPTestClient
 
-# Skip all worktree E2E tests - foreign key constraint failures due to race condition
-# between daemon database initialization and test fixture project creation.
-# The project created in git_repo_with_origin fixture may not be visible to
-# the daemon's database connection when create_worktree is called.
-# TODO: Fix by adding project existence verification or using daemon HTTP API
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skip(
-        reason="E2E worktree tests have race condition - daemon/fixture db sync issue"
-    ),
-]
+pytestmark = pytest.mark.e2e
 
 
 def extract_result(response: dict[str, Any]) -> dict[str, Any]:
@@ -37,8 +31,53 @@ def extract_result(response: dict[str, Any]) -> dict[str, Any]:
     This extracts the inner 'result' dict.
     """
     if "result" in response:
-        return response["result"]
+        result = response["result"]
+        if response.get("success") is True and isinstance(result, dict) and "success" not in result:
+            return {"success": True, **result}
+        return result
     return response
+
+
+def extract_internal_session_id(session_result: dict[str, Any]) -> str:
+    """Extract the database session ID from SessionStart hook context."""
+    additional_context = session_result.get("hookSpecificOutput", {}).get("additionalContext", "")
+    match = re.search(r"Gobby Session ID: #[0-9]+ \(([^)]+)\)", additional_context)
+    assert match, f"Could not find session ID in response: {session_result}"
+    return match.group(1)
+
+
+def read_project_id(project_path: Path) -> str:
+    project_json = project_path / ".gobby" / "project.json"
+    return json.loads(project_json.read_text(encoding="utf-8"))["id"]
+
+
+def register_project_session(cli_events, project_path: Path, external_id: str) -> str:
+    session_result = cli_events.session_start(
+        session_id=external_id,
+        project_id=read_project_id(project_path),
+    )
+    return extract_internal_session_id(session_result)
+
+
+def wait_for_project_registration(daemon_instance: DaemonInstance, project_id: str) -> None:
+    """Wait until the daemon can read a project registered through its test API."""
+
+    def project_is_visible() -> bool:
+        try:
+            response = httpx.get(
+                f"{daemon_instance.http_url}/api/projects/{project_id}",
+                timeout=2.0,
+            )
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError):
+            return False
+        return response.status_code == 200
+
+    wait_for_condition(
+        project_is_visible,
+        timeout=10.0,
+        interval=0.1,
+        description=f"registered project {project_id}",
+    )
 
 
 @pytest.fixture
@@ -101,7 +140,7 @@ def git_repo_with_origin(
     readme = e2e_project_dir / "README.md"
     readme.write_text("# Test Project\n")
     gitignore = e2e_project_dir / ".gitignore"
-    gitignore.write_text(".gobby/\n")
+    gitignore.write_text(".gobby/\n.gobby-home/\n")
     subprocess.run(
         ["git", "add", "."],
         cwd=str(e2e_project_dir),
@@ -146,40 +185,26 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    # Create the project in the daemon's database directly.
-    # The daemon uses its own database (from config), so we need to connect
-    # to that specific database to create the project.
-    import json
-
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-    from gobby.storage.projects import LocalProjectManager
-
-    # Connect to the daemon's database
-    db = LocalDatabase(daemon_instance.db_path)
-    run_migrations(db)
-
-    # Create the project
-    project_manager = LocalProjectManager(db)
+    project_id = "e2e-test-project"
     project_name = e2e_project_dir.name
-    project = project_manager.get_or_create(
+    cli_events.register_test_project(
+        project_id=project_id,
         name=project_name,
         repo_path=str(e2e_project_dir),
     )
+    wait_for_project_registration(daemon_instance, project_id)
 
     # Write project.json with the created project's ID
     project_json = gobby_dir / "project.json"
     project_json.write_text(
         json.dumps(
             {
-                "id": project.id,
-                "name": project.name,
+                "id": project_id,
+                "name": project_name,
                 "repo_path": str(e2e_project_dir),
             }
         )
     )
-
-    db.close()
 
     return e2e_project_dir
 
@@ -199,7 +224,7 @@ class TestWorktreeCreation:
         # Make direct call to capture error response
         with httpx.Client(base_url=daemon_instance.http_url, timeout=30.0) as client:
             resp = client.post(
-                "/mcp/tools/call",
+                "/api/mcp/tools/call",
                 json={
                     "server_name": "gobby-worktrees",
                     "tool_name": "create_worktree",
@@ -372,8 +397,6 @@ class TestWorktreeClaimRelease:
         cli_events,
     ) -> None:
         """Claiming a worktree assigns session ownership."""
-        import json as json_lib
-
         # Create worktree
         create_response = mcp_client.call_tool(
             server_name="gobby-worktrees",
@@ -387,27 +410,12 @@ class TestWorktreeClaimRelease:
         assert create_result.get("success") is True, f"Create failed: {create_result}"
         worktree_id = create_result["worktree_id"]
 
-        # Read project_id from project.json
-        project_json = git_repo_with_origin / ".gobby" / "project.json"
-        project_data = json_lib.loads(project_json.read_text())
-        project_id = project_data["id"]
-
         # Register a session via hook
-        session_result = cli_events.session_start(
-            session_id="claim-test-session",
-            project_id=project_id,
+        session_id = register_project_session(
+            cli_events,
+            git_repo_with_origin,
+            "claim-test-session",
         )
-
-        # Parse session_id from additionalContext
-        additional_context = session_result.get("hookSpecificOutput", {}).get(
-            "additionalContext", ""
-        )
-        session_id = None
-        for line in additional_context.split("\n"):
-            if line.startswith("session_id:"):
-                session_id = line.split(":", 1)[1].strip()
-                break
-        assert session_id, f"Could not find session_id in response: {session_result}"
 
         # Claim worktree
         claim_response = mcp_client.call_tool(
@@ -451,27 +459,11 @@ class TestWorktreeClaimRelease:
         worktree_id = create_result["worktree_id"]
 
         # Register a session first (agent_session_id has FK to sessions)
-        # Read project_id from project.json created by git_repo_with_origin fixture
-        import json as json_lib
-
-        project_json = git_repo_with_origin / ".gobby" / "project.json"
-        project_data = json_lib.loads(project_json.read_text())
-        project_id = project_data["id"]
-
-        session_result = cli_events.session_start(
-            session_id="release-test-session",
-            project_id=project_id,
+        session_id = register_project_session(
+            cli_events,
+            git_repo_with_origin,
+            "release-test-session",
         )
-        # Parse session_id from additionalContext
-        additional_context = session_result.get("hookSpecificOutput", {}).get(
-            "additionalContext", ""
-        )
-        session_id = None
-        for line in additional_context.split("\n"):
-            if line.startswith("session_id:"):
-                session_id = line.split(":", 1)[1].strip()
-                break
-        assert session_id, f"Could not find session_id in response: {session_result}"
 
         # Claim worktree
         mcp_client.call_tool(
@@ -797,11 +789,7 @@ class TestWorktreeToolSchema:
         assert response["name"] == "create_worktree"
         assert "inputSchema" in response
 
-        # The endpoint returns {name, server, inputSchema: {name, description, inputSchema}}
-        # due to double-wrapping. Access the inner inputSchema.
-        inner_schema = response["inputSchema"]
-        assert "inputSchema" in inner_schema
-        input_schema = inner_schema["inputSchema"]
+        input_schema = response["inputSchema"]
         assert "properties" in input_schema
         assert "branch_name" in input_schema["properties"]
 
@@ -814,8 +802,15 @@ class TestWorktreeTaskLinking:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
+        cli_events,
     ) -> None:
         """Create worktree with task ID links them."""
+        mcp_client.session_id = register_project_session(
+            cli_events,
+            git_repo_with_origin,
+            "task-link-session",
+        )
+
         # Create a task first
         task_response = mcp_client.call_tool(
             server_name="gobby-tasks",
@@ -823,10 +818,12 @@ class TestWorktreeTaskLinking:
             arguments={
                 "title": "Test task for worktree",
                 "description": "Testing task-worktree linking",
+                "category": "manual",
             },
         )
         task_result = extract_result(task_response)
         task_id = task_result.get("id")
+        assert task_id, f"Task creation failed: {task_result}"
 
         # Create worktree with task_id
         create_response = mcp_client.call_tool(
@@ -856,16 +853,24 @@ class TestWorktreeTaskLinking:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         git_repo_with_origin: Path,
+        cli_events,
     ) -> None:
         """Get worktree by task ID."""
+        mcp_client.session_id = register_project_session(
+            cli_events,
+            git_repo_with_origin,
+            "task-lookup-session",
+        )
+
         # Create task and worktree
         task_response = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="create_task",
-            arguments={"title": "Task for lookup test"},
+            arguments={"title": "Task for lookup test", "category": "manual"},
         )
         task_result = extract_result(task_response)
         task_id = task_result.get("id")
+        assert task_id, f"Task creation failed: {task_result}"
 
         create_response = mcp_client.call_tool(
             server_name="gobby-worktrees",

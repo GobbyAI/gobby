@@ -567,7 +567,7 @@ class TestRunningAgentRegistryCleanup:
         )
         registry.add(autonomous_agent)
 
-        removed = registry.cleanup_by_pids({None})  # type: ignore
+        removed = registry.cleanup_by_pids({None})
 
         # Agent should not be removed since pid is None
         assert len(removed) == 0

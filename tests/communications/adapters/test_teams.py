@@ -304,7 +304,7 @@ async def test_token_refresh_lock(
             refresh_call_count += 1
             await original_refresh()
 
-        adapter._refresh_token = counting_refresh  # type: ignore[assignment]
+        adapter._refresh_token = counting_refresh
 
         # Mock send response
         mock_send_resp = MagicMock()

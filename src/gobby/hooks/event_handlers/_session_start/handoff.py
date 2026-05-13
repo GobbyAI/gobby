@@ -107,7 +107,12 @@ def populate_handoff_session_variables(
         dispatched = False
         if handler._dispatch_session_summaries_fn:
             try:
-                handler._dispatch_session_summaries_fn(parent_session_id, True, summary_event)
+                handler._dispatch_session_summaries_fn(
+                    parent_session_id,
+                    True,
+                    summary_event,
+                    False,
+                )
                 dispatched = True
             except Exception as e:
                 handler.logger.warning(

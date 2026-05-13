@@ -13,14 +13,17 @@ import asyncio
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import aiofiles
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
-    from gobby.servers.websocket.server import WebSocketServer
     from gobby.storage.sessions import SessionManager
+
+    class WebSocketServer(Protocol):
+        async def broadcast(self, message: dict[str, Any]) -> None: ...
+
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields

@@ -11,7 +11,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +23,15 @@ from gobby.utils.version import get_version
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+    class _ProductionUIServices(Protocol):
+        @property
+        def config(self) -> Any: ...
+
+    class _ProductionUIServer(Protocol):
+        @property
+        def services(self) -> _ProductionUIServices: ...
+
 
 logger = logging.getLogger(__name__)
 _CODEX_SYNC_TIMEOUT_SECONDS = 10.0
@@ -509,6 +518,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_memory_router,
         create_metrics_router,
         create_pipelines_router,
+        create_profiles_router,
         create_projects_router,
         create_providers_router,
         create_rules_router,
@@ -544,6 +554,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_files_router(server))
     app.include_router(create_github_triage_router(server))
     app.include_router(create_projects_router(server))
+    app.include_router(create_profiles_router(server))
     app.include_router(create_providers_router(server))
     app.include_router(create_skills_router(server))
     app.include_router(create_voice_router(server))
@@ -621,7 +632,7 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
     logger.debug(f"WebSocket proxy mounted at /ws -> localhost:{ws_port}")
 
 
-def _mount_production_ui(app: FastAPI, server: "HTTPServer") -> None:
+def _mount_production_ui(app: FastAPI, server: "_ProductionUIServer") -> None:
     """Mount static files and SPA catch-all for production UI mode."""
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles

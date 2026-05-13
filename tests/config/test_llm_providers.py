@@ -53,7 +53,7 @@ class TestLLMProviderConfigBasic:
         from gobby.config.llm_providers import LLMProviderConfig
 
         with pytest.raises(ValidationError):
-            LLMProviderConfig(models="model", auth_mode="invalid")  # type: ignore
+            LLMProviderConfig(models="model", auth_mode="invalid")
 
 
 class TestLLMProviderConfigGetModels:

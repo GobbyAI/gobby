@@ -38,6 +38,7 @@ from gobby.hooks.dispatchers.webhook import (
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.project_context import resolve_hook_project_context
+from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_types import HookSessionManager
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
@@ -405,6 +406,7 @@ class HookManager:
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
             self._record_session_activity_pulse(event)
+            reconcile_session_activation(event, self._event_handlers, logger=self.logger)
 
             with create_span("hook.session_start.rules"):
                 workflow_context, blocking_response = self._evaluate_workflow_rules(event)
@@ -416,6 +418,9 @@ class HookManager:
                 if webhook_block:
                     return webhook_block
         else:
+            if event.event_type == HookEventType.BEFORE_AGENT:
+                reconcile_session_activation(event, self._event_handlers, logger=self.logger)
+
             workflow_context, blocking_response = self._evaluate_workflow_rules(event)
             if blocking_response:
                 return blocking_response
@@ -819,7 +824,11 @@ class HookManager:
             return result
 
     def _dispatch_session_summaries(
-        self, session_id: str, background: bool = False, done_event: threading.Event | None = None
+        self,
+        session_id: str,
+        background: bool = False,
+        done_event: threading.Event | None = None,
+        set_handoff_ready: bool = False,
     ) -> None:
         """Fire session summary generation.
 
@@ -844,6 +853,7 @@ class HookManager:
                     session_manager=self._session_manager,
                     llm_service=self._llm_service,
                     db=self._database,
+                    set_handoff_ready=set_handoff_ready,
                 )
             except Exception as exc:
                 self.logger.error(

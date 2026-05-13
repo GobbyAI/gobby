@@ -507,7 +507,7 @@ def _run_git_command(args: list[str]) -> int:
     """Run a git command and return the exit code."""
     import subprocess
 
-    result = subprocess.run(args, capture_output=True, timeout=30)  # noqa: S603
+    result = subprocess.run(args, capture_output=True, timeout=30)
     return result.returncode
 
 

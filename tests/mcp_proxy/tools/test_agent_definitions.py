@@ -35,7 +35,7 @@ def _insert_agent(
     tags: list[str] | None = None,
     **overrides: object,
 ) -> None:
-    body = AgentDefinitionBody(name=name, enabled=enabled, **overrides)  # type: ignore[arg-type]
+    body = AgentDefinitionBody(name=name, enabled=enabled, **overrides)
     mgr.create(
         name=name,
         definition_json=body.model_dump_json(),

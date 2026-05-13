@@ -475,9 +475,10 @@ call_tool("gobby-workflows", "get_pipeline_status", {
 
 `gobby-tasks-ops:build_task` is the MCP entrypoint for lifecycle automation.
 It accepts an `input_ref` pointing at a plan file, epic, or automated leaf, plus
-automation options such as `quick`, `stage`, `workspace_backend`,
+automation options such as `quick`, `stage`, `isolation`, `workspace_backend`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`, and
-`max_retries`.
+`max_retries`. Prefer `isolation` (`none`, `worktree`, or `clone`) for new
+callers; `workspace_backend` remains available for compatibility.
 
 Build automation can run docs leaf work inside the parent epic's isolation
 context. After expansion, dispatch routes stage rows by manifest policy; docs

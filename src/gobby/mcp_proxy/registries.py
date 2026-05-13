@@ -156,6 +156,12 @@ def setup_internal_registries(
         manager.add_registry(plan_registry)
         logger.debug("Plans registry initialized")
 
+        from gobby.mcp_proxy.tools.profiles import create_profiles_registry
+
+        profiles_registry = create_profiles_registry(db, default_project_id=project_id)
+        manager.add_registry(profiles_registry)
+        logger.debug("Profiles registry initialized")
+
     # Initialize sessions registry (messages + session CRUD)
     if session_manager is not None:
         from gobby.mcp_proxy.tools.sessions import create_session_messages_registry

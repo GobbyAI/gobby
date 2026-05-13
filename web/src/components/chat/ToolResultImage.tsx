@@ -53,6 +53,8 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
           <img
             src={src}
             alt="Tool result image"
+            loading="lazy"
+            decoding="async"
             className="block max-h-96 max-w-full rounded-md object-contain"
           />
         </button>
@@ -112,6 +114,8 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
             <img
               src={src}
               alt="Full-size tool result image"
+              loading="lazy"
+              decoding="async"
               className={
                 fitToScreen
                   ? 'max-h-full max-w-full object-contain'

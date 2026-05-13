@@ -252,10 +252,35 @@ class TestSessionEndHandling:
             "sess-123", "handoff_ready"
         )
 
-    def test_session_end_preserves_handoff_ready_from_compact(
+    def test_session_end_marks_handoff_ready_with_compact_reason(
         self, mock_dependencies: dict
     ) -> None:
-        """Test SESSION_END doesn't downgrade handoff_ready set by PRE_COMPACT."""
+        """Test SESSION_END marks handoff_ready when event reason is 'compact'."""
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = None
+        mock_session.status = "active"
+        mock_dependencies["session_storage"].get.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            data={"reason": "compact"},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+            "sess-123", "handoff_ready"
+        )
+
+    def test_session_end_expires_stale_handoff_ready_without_handoff_reason(
+        self, mock_dependencies: dict
+    ) -> None:
+        """Test ordinary SESSION_END does not preserve stale handoff_ready state."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
@@ -274,7 +299,7 @@ class TestSessionEndHandling:
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status.assert_called_once_with(
-            "sess-123", "handoff_ready"
+            "sess-123", "expired"
         )
 
     def test_session_end_handoff_ready_error_handled(self, mock_dependencies: dict) -> None:

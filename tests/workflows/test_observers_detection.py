@@ -165,7 +165,7 @@ class TestDetectPlanModeFromContext:
         assert "mode_level" not in variables
 
     def test_handles_none_prompt(self, variables) -> None:
-        detect_plan_mode_from_context(None, variables, SESSION_ID)  # type: ignore[arg-type]
+        detect_plan_mode_from_context(None, variables, SESSION_ID)
         assert "mode_level" not in variables
 
     def test_ignores_plan_mode_inside_conversation_history(self, variables) -> None:

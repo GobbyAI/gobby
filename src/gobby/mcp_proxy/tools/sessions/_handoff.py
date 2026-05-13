@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def register_handoff_tools(
     registry: InternalToolRegistry,
-    session_manager: SessionManager,
+    session_manager: SessionManager | None,
     llm_service: Any | None = None,
     transcript_processor: Any | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
@@ -33,12 +33,16 @@ def register_handoff_tools(
     from gobby.utils.session_context import resolve_session_ref
 
     def _resolve_session_id(ref: str) -> str:
+        if session_manager is None:
+            raise ValueError("Session manager not available")
         return resolve_session_ref(session_manager, ref)
 
     def _send_to_peer(from_session_id: str, to_session_ref: str, content: str) -> dict[str, Any]:
         """Send handoff content to a peer session via P2P message."""
         if inter_session_message_manager is None:
             return {"success": False, "error": "Inter-session message manager not available"}
+        if session_manager is None:
+            return {"success": False, "error": "Session manager not available"}
 
         try:
             resolved_to = _resolve_session_id(to_session_ref)

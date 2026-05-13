@@ -6,8 +6,9 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.app_context import get_app_context
+from gobby.build.options import resolve_build_isolation
 from gobby.build.service import BuildOptions, build
-from gobby.config.build import StageCapOverride
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
 if TYPE_CHECKING:
@@ -33,6 +34,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         input_ref: str,
         quick: bool = False,
         skip_stages: list[str] | None = None,
+        isolation: Isolation | None = None,
         workspace_backend: WorkspaceBackend | None = None,
         clone: bool = False,
         no_merge: bool = False,
@@ -50,15 +52,18 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
-        if clone and workspace_backend == "worktree":
-            raise ValueError("clone=true conflicts with workspace_backend=worktree")
-        backend = workspace_backend or ("clone" if clone else "worktree")
+        resolved_isolation = resolve_build_isolation(
+            isolation=isolation,
+            workspace_backend=workspace_backend,
+            clone=clone,
+        )
 
         opts = BuildOptions(
             quick=quick,
             skip_stages=skip_stages or [],
-            isolation=backend,
-            isolation_explicit=workspace_backend is not None or clone,
+            skip_stages_explicit=skip_stages is not None,
+            isolation=resolved_isolation.isolation,
+            isolation_explicit=resolved_isolation.explicit,
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),
@@ -76,6 +81,8 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             services=get_app_context(),
         )
         payload = asdict(result)
+        if not payload.get("warnings"):
+            payload.pop("warnings", None)
         dispatcher_tick = payload.get("dispatcher_tick")
         if (
             isinstance(dispatcher_tick, dict)
@@ -97,6 +104,10 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "array",
                     "items": {"type": "string"},
                     "default": [],
+                },
+                "isolation": {
+                    "type": "string",
+                    "enum": ["none", "worktree", "clone"],
                 },
                 "workspace_backend": {
                     "type": "string",

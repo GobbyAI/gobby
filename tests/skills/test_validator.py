@@ -235,13 +235,13 @@ class TestValidateSkillTags:
 
     def test_rejects_non_list(self) -> None:
         """Test that non-list values are rejected."""
-        result = validate_skill_tags("git")  # type: ignore
+        result = validate_skill_tags("git")
         assert result.valid is False
         assert any("list" in e.lower() for e in result.errors)
 
     def test_rejects_non_string_tags(self) -> None:
         """Test that non-string tags are rejected."""
-        result = validate_skill_tags([123, "valid"])  # type: ignore
+        result = validate_skill_tags([123, "valid"])
         assert result.valid is False
         assert any("string" in e.lower() for e in result.errors)
 

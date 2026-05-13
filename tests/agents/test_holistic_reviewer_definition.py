@@ -66,9 +66,7 @@ def test_reads_subtree() -> None:
 def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
     agent = _agent()
     instructions = agent["instructions"]
-    status = next(step for step in agent["steps"] if step["name"] == "review")[
-        "status_message"
-    ]
+    status = next(step for step in agent["steps"] if step["name"] == "review")["status_message"]
 
     assert "Discovery Brief" in instructions
     assert "descendant task set" in instructions

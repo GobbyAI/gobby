@@ -111,21 +111,30 @@ class TestExpandEnvVars:
 
     def test_secret_resolver_takes_priority_over_env(self) -> None:
         """Test that secret_resolver is checked before env vars."""
-        resolver = lambda name: "secret_value" if name == "MY_KEY" else None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return "secret_value" if name == "MY_KEY" else None
+
         with patch.dict(os.environ, {"MY_KEY": "env_value"}):
             result = expand_env_vars("key: ${MY_KEY}", secret_resolver=resolver)
             assert result == "key: secret_value"
 
     def test_secret_resolver_fallback_to_env(self) -> None:
         """Test that env var is used when secret_resolver returns None."""
-        resolver = lambda name: None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return None
+
         with patch.dict(os.environ, {"MY_KEY": "env_value"}):
             result = expand_env_vars("key: ${MY_KEY}", secret_resolver=resolver)
             assert result == "key: env_value"
 
     def test_secret_resolver_fallback_to_default(self) -> None:
         """Test that default is used when both resolver and env return nothing."""
-        resolver = lambda name: None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return None
+
         env = os.environ.copy()
         env.pop("UNSET_VAR", None)
         with patch.dict(os.environ, env, clear=True):
@@ -134,7 +143,10 @@ class TestExpandEnvVars:
 
     def test_secret_resolver_unresolved_warns(self) -> None:
         """Test that unresolved vars log a warning."""
-        resolver = lambda name: None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return None
+
         env = os.environ.copy()
         env.pop("MISSING_VAR", None)
         with patch.dict(os.environ, env, clear=True):
@@ -166,13 +178,19 @@ class TestExpandEnvVars:
 
     def test_secret_ref_resolved(self) -> None:
         """Test $secret:NAME resolves from secrets store only."""
-        resolver = lambda name: "my_secret" if name == "API_KEY" else None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return "my_secret" if name == "API_KEY" else None
+
         result = expand_env_vars("key: $secret:API_KEY", secret_resolver=resolver)
         assert result == "key: my_secret"
 
     def test_secret_ref_no_env_fallback(self) -> None:
         """Test $secret:NAME does NOT fall back to env vars."""
-        resolver = lambda name: None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return None
+
         with patch.dict(os.environ, {"API_KEY": "env_value"}):
             with patch("gobby.config.app.logger"):
                 result = expand_env_vars("key: $secret:API_KEY", secret_resolver=resolver)
@@ -185,7 +203,10 @@ class TestExpandEnvVars:
 
     def test_secret_ref_warns_on_missing(self) -> None:
         """Test $secret:NAME logs warning when not found."""
-        resolver = lambda name: None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return None
+
         with patch("gobby.config.app.logger") as mock_logger:
             result = expand_env_vars("key: $secret:MISSING", secret_resolver=resolver)
             assert result == "key: $secret:MISSING"
@@ -194,7 +215,10 @@ class TestExpandEnvVars:
 
     def test_mixed_secret_ref_and_env_var(self) -> None:
         """Test $secret:NAME and ${VAR} in same content."""
-        resolver = lambda name: "secret_val" if name == "SECRET_KEY" else None  # noqa: E731
+
+        def resolver(name: str) -> str | None:
+            return "secret_val" if name == "SECRET_KEY" else None
+
         with patch.dict(os.environ, {"ENV_KEY": "env_val"}):
             result = expand_env_vars(
                 "a: $secret:SECRET_KEY, b: ${ENV_KEY}",

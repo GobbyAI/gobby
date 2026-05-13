@@ -734,17 +734,17 @@ class KnowledgeGraphService:
         and writes edges to Neo4j for matches above the similarity threshold.
         Gracefully no-ops if the collection doesn't exist.
         """
-        assert self._vector_store is not None  # noqa: S101
-
+        vector_store = self._vector_store
+        if vector_store is None:
+            return
         collection = f"{self._code_symbol_collection_prefix}{project_id}"
         links: list[dict[str, Any]] = []
-
         for entity in entities:
             embedding = entity_embeddings.get(entity.entity_key)
             if not embedding:
                 continue
             try:
-                results = await self._vector_store.search(
+                results = await vector_store.search(
                     query_embedding=embedding,
                     collection_name=collection,
                     limit=3,

@@ -186,7 +186,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                 if (!src) return null
                 return (
                   <div key={`${message.id}-b${i}`} className="my-2">
-                    <img src={src} alt="Image content" className="max-w-full rounded-lg border border-border" />
+                    <img src={src} alt="Image content" loading="lazy" decoding="async" className="max-w-full rounded-lg border border-border" />
                   </div>
                 )
               }

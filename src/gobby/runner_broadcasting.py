@@ -156,7 +156,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
         task.add_done_callback(_log_broadcast_exception)
 
     # Store module-level reference for direct invocation from spawn/completion paths
-    global _agent_event_callback  # noqa: PLW0603
+    global _agent_event_callback
     _agent_event_callback = broadcast_agent_event
 
     logger.debug("Agent event broadcasting and PTY reading enabled")
@@ -193,7 +193,7 @@ def setup_pipeline_event_broadcasting(
                     await asyncio.to_thread(_dispatch.on_pipeline_failed, payload, db=db)
                 else:
                     await asyncio.to_thread(_dispatch.on_pipeline_cancelled, payload, db=db)
-            except Exception as exc:  # noqa: BLE001 - log and continue to broadcast
+            except Exception as exc:
                 logger.warning(
                     "Pipeline terminal dispatch handler raised for %s execution_id=%s: %s",
                     event,

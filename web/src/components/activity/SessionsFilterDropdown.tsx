@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ActivityFilterFooter } from "./ActivityFilterFooter";
+import { FilterCheckboxRow, FilterSection } from "./FilterPrimitives";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { getProviderDisplayName } from "../../lib/providerModels";
 import { useIsMobile } from "../../hooks/useIsMobile";
@@ -173,26 +175,26 @@ export function SessionsFilterDropdown({
         aria-label="Session filters"
         aria-modal={isMobile || undefined}
       >
-        <div className="grid grid-cols-2 divide-x divide-border">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] divide-x divide-border">
           {/* Left column: Mode + Provider */}
           <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
-            <Section label="Mode">
+            <FilterSection label="Mode">
               {MODE_OPTIONS.map((option) => (
-                <CheckboxRow
+                <FilterCheckboxRow
                   key={option.value}
                   label={option.label}
                   checked={isInclusiveSetChecked(filters.modes, option.value)}
                   onToggle={() => handleModeToggle(option.value)}
                 />
               ))}
-            </Section>
+            </FilterSection>
 
-            <Section label="Provider">
+            <FilterSection label="Provider">
               {sortedProviderOptions.length === 0 ? (
                 <EmptyHint>No providers available</EmptyHint>
               ) : (
                 sortedProviderOptions.map((provider) => (
-                  <CheckboxRow
+                  <FilterCheckboxRow
                     key={provider}
                     label={getProviderDisplayName(provider) || provider}
                     checked={isInclusiveSetChecked(filters.providers, provider)}
@@ -200,12 +202,12 @@ export function SessionsFilterDropdown({
                   />
                 ))
               )}
-            </Section>
+            </FilterSection>
           </div>
 
           {/* Right column: Session ref + Task ref + Date range */}
           <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
-            <Section label="Session ref">
+            <FilterSection label="Session ref">
               <RefRangeInputs
                 minValue={filters.sessionRefMin}
                 maxValue={filters.sessionRefMax}
@@ -213,9 +215,9 @@ export function SessionsFilterDropdown({
                 onChangeMax={(value) => update({ sessionRefMax: value })}
                 ariaLabelPrefix="Session ref"
               />
-            </Section>
+            </FilterSection>
 
-            <Section label="Task ref">
+            <FilterSection label="Task ref">
               <div className="flex flex-col gap-0.5 px-2 py-1">
                 {TASK_REF_ROLES.map((role) => (
                   <label
@@ -239,16 +241,15 @@ export function SessionsFilterDropdown({
                 onChangeMax={(value) => update({ taskRefMax: value })}
                 ariaLabelPrefix="Task ref"
               />
-            </Section>
+            </FilterSection>
 
-            <Section label="Date range">
+            <FilterSection label="Date range">
               <div className="px-2 py-1">
                 <SegmentedControl<DatePreset>
                   value={filters.datePreset === "custom" ? "all" : filters.datePreset}
                   onChange={handleDatePresetChange}
                   options={DATE_PRESET_OPTIONS}
                   ariaLabel="Date preset"
-                  className="w-full"
                 />
               </div>
               <button
@@ -281,62 +282,17 @@ export function SessionsFilterDropdown({
                   />
                 </div>
               )}
-            </Section>
+            </FilterSection>
           </div>
         </div>
 
-        <div
-          className="flex items-center justify-between border-t border-border px-2 py-1.5"
-          style={{ background: "var(--bg-secondary)" }}
-        >
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={handleReset}
-            disabled={activeCount === 0}
-          >
-            Reset
-          </button>
-          <button type="button" className="btn btn-accent btn-sm" onClick={onClose}>
-            Apply
-          </button>
-        </div>
+        <ActivityFilterFooter
+          onReset={handleReset}
+          onApply={onClose}
+          resetDisabled={activeCount === 0}
+        />
       </div>
     </>
-  );
-}
-
-function Section({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-0.5 py-0.5">
-      <div className="px-2 py-1 text-[length:var(--text-sm)] font-medium uppercase tracking-wide text-muted-foreground/80">
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function CheckboxRow({
-  label,
-  checked,
-  onToggle,
-}: {
-  label: string;
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <label className="flex min-w-0 items-center gap-1.5 px-2 py-1 rounded text-[length:var(--text-md)] text-muted-foreground cursor-pointer hover:bg-muted/50">
-      <input type="checkbox" className="w-3 h-3" checked={checked} onChange={onToggle} />
-      <span className="truncate">{label}</span>
-    </label>
   );
 }
 
@@ -358,7 +314,7 @@ function RefRangeInputs({
   ariaLabelPrefix: string;
 }) {
   const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
-  const inputClassName = `min-w-0 flex-1 px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
+  const inputClassName = `w-[4.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground focus:outline-none ${
     isInvalid
       ? "border-[var(--color-error)] focus:border-[var(--color-error)]"
       : "border-border focus:border-accent"
@@ -368,7 +324,9 @@ function RefRangeInputs({
     <div className="px-2 py-1">
       <div className="flex items-center gap-1">
         <input
-          type="number"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
           className={inputClassName}
           placeholder="from"
           value={minValue !== null ? String(minValue) : ""}
@@ -378,7 +336,9 @@ function RefRangeInputs({
         />
         <span className="text-[length:var(--text-md)] text-muted-foreground">→</span>
         <input
-          type="number"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
           className={inputClassName}
           placeholder="to"
           value={maxValue !== null ? String(maxValue) : ""}

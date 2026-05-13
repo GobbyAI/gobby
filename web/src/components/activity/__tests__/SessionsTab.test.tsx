@@ -4,10 +4,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { SessionsTab } from "../SessionsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../test/mocks/fetch";
 import type { GobbySession } from "../../../types/sessions";
+import type { SessionMessage } from "../../../hooks/useSessionDetail";
 
 type SessionDetailMock = {
   session: GobbySession | null;
-  messages: Array<{ id?: string; role?: string; content?: string; timestamp?: string }>;
+  messages: SessionMessage[];
   isLoading: boolean;
   transcriptStatus: { content_state: string } | null;
 };
@@ -196,6 +197,29 @@ const PIPELINE_SESSION = makeSession({
   seq_num: 204,
   updated_at: "2026-04-08T12:20:00Z",
 });
+
+function mockElementScrollIntoView() {
+  const scrollIntoView = vi.fn();
+  const originalDescriptor = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "scrollIntoView",
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scrollIntoView,
+  });
+
+  return {
+    scrollIntoView,
+    restore() {
+      if (originalDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", originalDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    },
+  };
+}
 
 describe("SessionsTab", () => {
   beforeEach(() => {
@@ -423,15 +447,7 @@ describe("SessionsTab", () => {
 
   it("scrolls the watching transcript to bottom when selecting another session", async () => {
     localStorage.removeItem("gobby-watching-session-id");
-    const scrollIntoView = vi.fn();
-    const originalDescriptor = Object.getOwnPropertyDescriptor(
-      Element.prototype,
-      "scrollIntoView",
-    );
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView,
-    });
+    const { scrollIntoView, restore } = mockElementScrollIntoView();
     try {
       mockUseSessionDetail.mockImplementation((sessionId) => ({
         session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
@@ -465,11 +481,100 @@ describe("SessionsTab", () => {
       });
       expect(scrollIntoView).toHaveBeenCalledTimes(2);
     } finally {
-      if (originalDescriptor) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", originalDescriptor);
-      } else {
-        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
-      }
+      restore();
+    }
+  });
+
+  it("scrolls the watching transcript when the last message grows in place", async () => {
+    localStorage.removeItem("gobby-watching-session-id");
+    const { scrollIntoView, restore } = mockElementScrollIntoView();
+    let transcriptContent = "abc";
+
+    try {
+      mockUseSessionDetail.mockImplementation(() => ({
+        session: PAUSED_SESSION,
+        messages: [
+          {
+            id: "msg-1",
+            role: "assistant",
+            content: transcriptContent,
+            timestamp: "2026-04-08T12:11:00Z",
+          },
+        ],
+        isLoading: false,
+        transcriptStatus: null,
+      }));
+
+      const { rerender } = render(
+        <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("abc")).toBeInTheDocument();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      });
+
+      transcriptContent = "abcdef";
+      rerender(
+        <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("abcdef")).toBeInTheDocument();
+        expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not scroll transcript output while summary mode is active", async () => {
+    localStorage.removeItem("gobby-watching-session-id");
+    const { scrollIntoView, restore } = mockElementScrollIntoView();
+    let transcriptContent = "abc";
+
+    try {
+      mockUseSessionDetail.mockImplementation(() => ({
+        session: PAUSED_SESSION,
+        messages: [
+          {
+            id: "msg-1",
+            role: "assistant",
+            content: transcriptContent,
+            timestamp: "2026-04-08T12:11:00Z",
+          },
+        ],
+        isLoading: false,
+        transcriptStatus: null,
+      }));
+
+      const { rerender } = render(
+        <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("abc")).toBeInTheDocument();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+      expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
+        "# Session Summary",
+      );
+
+      scrollIntoView.mockClear();
+      transcriptContent = "abcdef";
+      rerender(
+        <SessionsTab sessions={[PAUSED_SESSION]} />,
+      );
+
+      expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
+        "# Session Summary",
+      );
+      expect(screen.queryByText("abcdef")).toBeNull();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      restore();
     }
   });
 

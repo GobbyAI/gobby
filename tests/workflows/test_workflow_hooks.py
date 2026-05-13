@@ -1,11 +1,16 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.git_utils import DirtyFiles
-from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.hooks import (
+    _NO_REPO_SYSTEM_PROJECTS,
+    WorkflowHookHandler,
+    _is_known_no_repo_project,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +33,7 @@ def test_handler_delegates_to_evaluate(workflow_handler) -> None:
         event_type=HookEventType.SESSION_START,
         session_id=MOCK_EXTERNAL_ID,
         source=SessionSource.CLAUDE,
-        timestamp=None,  # type: ignore
+        timestamp=None,
         data={},
     )
 
@@ -43,7 +48,7 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
         event_type=HookEventType.BEFORE_TOOL,
         session_id=MOCK_EXTERNAL_ID,
         source=SessionSource.CLAUDE,
-        timestamp=None,  # type: ignore
+        timestamp=None,
         data={},
     )
 
@@ -52,7 +57,8 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
     assert response.decision == "allow"
 
 
-def test_hook_manager_integration():
+def test_hook_manager_integration() -> None:
+    """HookManager delegates workflow hook evaluation when daemon health is cached."""
     with (
         patch("gobby.hooks.factory.LocalDatabase"),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
@@ -81,7 +87,7 @@ def test_hook_manager_integration():
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
             metadata={"_platform_session_id": MOCK_SESSION_ID},
         )
@@ -125,7 +131,7 @@ def test_hook_manager_blocks_on_workflow():
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
             metadata={"_platform_session_id": MOCK_SESSION_ID},
         )
@@ -147,7 +153,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
         )
 
@@ -162,7 +168,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.SESSION_START,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
         )
 
@@ -182,7 +188,7 @@ class TestWorkflowHookHandlerDisabled:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={},
         )
 
@@ -200,8 +206,6 @@ class TestProjectPathResolution:
         This ensures worktree agents get dirty file checks scoped to their
         worktree directory, not the daemon's cwd.
         """
-        from unittest.mock import AsyncMock
-
         worktree_path = "/tmp/worktrees/agent-worktree-123"
         handler = WorkflowHookHandler(loop=None)
         # Wire up a mock rule engine with async evaluate
@@ -214,7 +218,7 @@ class TestProjectPathResolution:
             event_type=HookEventType.BEFORE_TOOL,
             session_id=MOCK_EXTERNAL_ID,
             source=SessionSource.CLAUDE,
-            timestamp=None,  # type: ignore
+            timestamp=None,
             data={"tool_name": "Edit"},
             cwd=worktree_path,
         )
@@ -235,3 +239,83 @@ class TestProjectPathResolution:
             # Every call should use event.cwd, not None
             for call in mock_dirty.call_args_list:
                 assert call[0][0] == worktree_path
+
+    def test_dirty_files_none_returns_empty_without_git_status(self) -> None:
+        from gobby.workflows.git_utils import get_dirty_files_categorized
+
+        with patch("gobby.workflows.git_utils.subprocess.run") as mock_run:
+            dirty = get_dirty_files_categorized(None)
+
+        assert not dirty
+        mock_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_personal_no_repo_project_does_not_warn_or_shell_out(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        handler = WorkflowHookHandler(loop=None)
+        mock_engine = MagicMock()
+        mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+        mock_engine.db = MagicMock()
+        handler.rule_engine = mock_engine
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=None,
+            data={"tool_name": "Edit"},
+            project_id=PERSONAL_PROJECT_ID,
+            metadata={"_platform_session_id": MOCK_SESSION_ID},
+        )
+
+        with (
+            caplog.at_level("WARNING", logger="gobby.workflows.hooks"),
+            patch("gobby.workflows.git_utils.subprocess.run") as mock_run,
+        ):
+            await handler._evaluate_rules(event)
+
+        assert "no project_path resolved" not in caplog.text
+        mock_run.assert_not_called()
+
+    def test_no_repo_project_ids_include_constants_and_legacy_literals(self) -> None:
+        expected = {
+            PERSONAL_PROJECT_ID,
+            GLOBAL_PROJECT_ID,
+            ORPHANED_PROJECT_ID,
+            "_personal",
+            "_global",
+            "_orphaned",
+            "_migrated",
+        }
+
+        assert _NO_REPO_SYSTEM_PROJECTS == expected
+        for project_id in expected:
+            assert _is_known_no_repo_project(project_id)
+
+    @pytest.mark.asyncio
+    async def test_unexpected_missing_project_path_still_warns(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        handler = WorkflowHookHandler(loop=None)
+        mock_engine = MagicMock()
+        mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+        mock_engine.db = MagicMock()
+        handler.rule_engine = mock_engine
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=None,
+            data={"tool_name": "Edit"},
+            project_id="project-with-missing-path",
+            metadata={"_platform_session_id": MOCK_SESSION_ID},
+        )
+
+        with caplog.at_level("WARNING", logger="gobby.workflows.hooks"):
+            await handler._evaluate_rules(event)
+
+        assert "no project_path resolved" in caplog.text

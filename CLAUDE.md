@@ -329,14 +329,17 @@ Build state is resolved before dispatch:
 - `isolation` is explicit task state: `none`, `worktree`, or `clone`.
 - `stages` is the ordered manifest materialized in `task_stage_states` from the
   stage registry. The current stage is the first row whose state is not `done`.
-- Phase 3.2 profile bundles such as `quick`, `review`, `full`, and `full-yolo`
-  are CLI/MCP/HTTP sugar that resolve to the peer build fields above at build
-  time.
+- Build profiles are DB-backed registry rows synced from
+  `src/gobby/install/shared/registry/build_profiles.yaml`. The `default`
+  profile resolves unless a caller supplies another profile; explicit CLI,
+  MCP, and HTTP build fields override profile defaults for the same fields.
+  Profile skip stages only shape a new lifecycle. Existing manifests must be
+  cleaned or restarted before their stage shape changes.
 - `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
   falls back to `backend-developer` with an audit marker.
 
 `gobby build` is the single entry point for turning a plan, epic, or leaf task into
-dispatchable state. The CLI command, MCP tool (`gobby-tasks-ops:build_task`), and HTTP
+dispatchable state. The CLI command, MCP tool (`gobby-build:build_task`), and HTTP
 route (`POST /api/build`) must all call the shared build service in
 `src/gobby/build/service.py`, returning the same `BuildResult`.
 `gobby unbuild <ref>` is the task-scoped CLI inverse for an existing built task:

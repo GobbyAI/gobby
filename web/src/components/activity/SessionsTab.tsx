@@ -2,12 +2,11 @@ import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 import { useSessionDetail } from "../../hooks/useSessionDetail";
 import type { GobbySession } from "../../types/sessions";
-import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
+import type { SwappedSessionTarget } from "../../types/chat";
 import { getSessionTitleText } from "../../lib/sessionTitle";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
-import { MessageItem } from "../chat/MessageItem";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import { SourceIcon } from "../shared/SourceIcon";
 import {
@@ -46,6 +45,7 @@ import {
   entryTimestamp,
   parseTimestamp,
 } from "./SessionsTab.helpers";
+import { WatchingTranscript } from "./WatchingTranscript";
 
 // Canonical session-providers — sessions can exist for any of these regardless
 // of current local availability, so the filter affordance reflects what was
@@ -166,7 +166,6 @@ export const SessionsTab = memo(function SessionsTab({
   const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
   const initialSelectionAppliedRef = useRef(false);
   const selectionClearedRef = useRef(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const noopArtifactCtx = useMemo(
     () => ({
@@ -463,51 +462,6 @@ export const SessionsTab = memo(function SessionsTab({
 
   const selectedSession = selectedSessionDetail ?? selectedCatalogSession;
 
-  const chatMessages: ChatMessage[] = useMemo(
-    () =>
-      messages.map((message) => {
-        const chatMessage: ChatMessage = {
-          id: message.id,
-          role: (message.role as "user" | "assistant" | "system") || "assistant",
-          content: message.content || "",
-          timestamp: new Date(message.timestamp),
-          contentBlocks: message.content_blocks,
-        };
-        if (message.content_blocks) {
-          for (const block of message.content_blocks) {
-            if (block.type === "tool_chain" && block.tool_calls) {
-              const filteredCalls = block.tool_calls.filter(
-                (toolCall: { tool_name?: string; status?: string }) =>
-                  !(
-                    toolCall.tool_name === "AskUserQuestion" &&
-                    toolCall.status !== "calling"
-                  ),
-              );
-              block.tool_calls = filteredCalls;
-              chatMessage.toolCalls = [
-                ...(chatMessage.toolCalls || []),
-                ...filteredCalls,
-              ];
-            } else if (block.type === "thinking") {
-              chatMessage.thinkingContent =
-                (chatMessage.thinkingContent || "") + block.content;
-            }
-          }
-        }
-        return chatMessage;
-      }),
-    [messages],
-  );
-
-  useEffect(() => {
-    if (contentMode === "transcript") {
-      const messagesEnd = messagesEndRef.current;
-      if (messagesEnd && typeof messagesEnd.scrollIntoView === "function") {
-        messagesEnd.scrollIntoView({ behavior: "auto" });
-      }
-    }
-  }, [chatMessages.length, contentMode, selectedSessionId]);
-
   const handleSelect = useCallback((id: string) => {
     selectionClearedRef.current = false;
     setSelectedSessionId(id);
@@ -660,11 +614,12 @@ export const SessionsTab = memo(function SessionsTab({
           options={STATUS_MODE_OPTIONS}
           ariaLabel="Session status filter"
           size="md"
+          controlHeight="sm"
           className="activity-panel-toolbar-segmented"
         />
         <button
           type="button"
-          className="activity-filter-button"
+          className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter sessions"
           aria-label="Filter sessions"
@@ -683,6 +638,7 @@ export const SessionsTab = memo(function SessionsTab({
           >
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
           </svg>
+          <span className="activity-panel-action-btn__label">Filter</span>
           {activeFilterCount > 0 && (
             <span className="activity-filter-badge">{activeFilterCount}</span>
           )}
@@ -880,20 +836,12 @@ export const SessionsTab = memo(function SessionsTab({
                 )}
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto chat-scaled">
-                {isLoadingDetail ? (
-                  <ActivityPanelEmpty body="Loading messages…" />
-                ) : chatMessages.length === 0 ? (
-                  <ActivityPanelEmpty body={transcriptEmptyStateMessage} />
-                ) : (
-                  <>
-                    {chatMessages.map((message) => (
-                      <MessageItem key={message.id} message={message} />
-                    ))}
-                    <div ref={messagesEndRef} />
-                  </>
-                )}
-              </div>
+              <WatchingTranscript
+                sessionId={selectedSessionId}
+                messages={messages}
+                isLoading={isLoadingDetail}
+                emptyStateMessage={transcriptEmptyStateMessage}
+              />
             )}
           </ArtifactContext.Provider>
         </div>

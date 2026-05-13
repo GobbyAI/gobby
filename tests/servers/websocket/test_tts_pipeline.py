@@ -26,7 +26,7 @@ class OrderedTTS:
 class FailingTTS:
     async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
         raise RuntimeError("reference conditioning invalid")
-        yield  # pragma: no cover  # noqa: RET503
+        yield  # pragma: no cover
 
 
 class DummyWebSocket:

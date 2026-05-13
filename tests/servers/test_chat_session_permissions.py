@@ -335,7 +335,9 @@ class TestWaitForToolApproval:
         session._tool_approval_callback = AsyncMock()
 
         task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
-        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
         session.provide_approval("approve")
         result = await task
 
@@ -347,7 +349,9 @@ class TestWaitForToolApproval:
         session._tool_approval_callback = AsyncMock()
 
         task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
-        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
         session.provide_approval("reject")
         result = await task
 
@@ -359,7 +363,9 @@ class TestWaitForToolApproval:
         session._on_approved_tools_persist = MagicMock()
 
         task = asyncio.create_task(session._wait_for_tool_approval("Bash", {"command": "ls"}))
-        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
         session.provide_approval("approve_always")
         result = await task
 

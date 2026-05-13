@@ -1,12 +1,13 @@
 """Manifest emitter for the yolo cap-exhausted fallback path (§2.21a).
 
-Idempotent stub-manifest writer. NEVER raises: on unsalvageable plans the
-emitter appends a ``## Yolo Fallbacks`` audit section and returns
-``"fallback_force_approve"`` so dispatch can advance lifecycle deterministically.
+Idempotent stub-manifest writer. File and parse failures append a
+``## Yolo Fallbacks`` audit section and return ``"fallback_force_approve"``
+so dispatch can advance lifecycle deterministically.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,8 @@ from gobby.plans.parser import (
     resolve_plan_id,
 )
 from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
+
+logger = logging.getLogger(__name__)
 
 EmitOutcome = Literal[
     "fresh",
@@ -79,14 +82,15 @@ def emit_stub_manifest(
     3. Malformed manifest present → replace with synthesized one →
        ``"replaced_malformed"``.
     4. No manifest → synthesize one → ``"fresh"``.
-    5. Anything unsalvageable → append a ``## Yolo Fallbacks`` audit section →
-       ``"fallback_force_approve"``. The function NEVER raises.
+    5. File or parse failures → append a ``## Yolo Fallbacks`` audit section →
+       ``"fallback_force_approve"``.
     """
 
     path = Path(plan_path)
     try:
         return _emit(path, by_actor=by_actor, plan_kind=plan_kind, plan_id=plan_id)
-    except Exception as exc:  # noqa: BLE001 — yolo invariant: absorb everything
+    except (OSError, PlanParseError) as exc:
+        logger.warning("Manifest emitter falling back for %s: %s", path, exc)
         _append_yolo_fallback(path, by_actor=by_actor, reason=f"emitter exception: {exc!r}")
         return "fallback_force_approve"
 
@@ -142,7 +146,8 @@ def _emit(path: Path, *, by_actor: str, plan_kind: PlanKind, plan_id: str | None
             plan_id=plan_id,
         )
 
-    assert draft_error is not None
+    if draft_error is None:
+        raise RuntimeError(f"Plan parser returned neither document nor error for {path}")
     _append_yolo_fallback(
         path,
         by_actor=by_actor,

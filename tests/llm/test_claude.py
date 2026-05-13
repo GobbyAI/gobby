@@ -359,6 +359,26 @@ class TestGenerateJson:
             assert result == {"key": "value"}
 
     @pytest.mark.asyncio
+    async def test_generate_json_sdk_disables_filesystem_settings_with_empty_list(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        """Internal SDK calls isolate settings with setting_sources=[]."""
+        captured_sources: list[list[str] | None] = []
+
+        async def mock_query(prompt: str, options: object) -> object:
+            captured_sources.append(options.setting_sources)
+            yield MockAssistantMessage([MockTextBlock('{"isolated": true}')])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider._generate_json_sdk("Generate JSON")
+
+        assert result == {"isolated": True}
+        assert captured_sources == [[]]
+
+    @pytest.mark.asyncio
     async def test_generate_json_sdk_invalid_json(self, claude_config: DaemonConfig) -> None:
         """SDK path raises ValueError with response snippet on invalid JSON."""
 

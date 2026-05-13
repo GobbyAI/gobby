@@ -1,7 +1,5 @@
 """Compile path for task expansion runs."""
 
-# mypy: disable-error-code="no-any-return"
-
 from __future__ import annotations
 
 import logging
@@ -41,7 +39,7 @@ async def compile_run(self: Any, run_id: str) -> ExpansionRun:
     self.run_manager.start(run_id)
     self.run_manager.append_log(run_id, level="info", message="Starting expansion compile")
     if _dev_is_only_enabled_stage(task):
-        return self._complete_dev_only_run(run_id, task)
+        return cast(ExpansionRun, self._complete_dev_only_run(run_id, task))
 
     plan_doc = self._parse_contract_plan(run, task)
     if plan_doc is not None:
@@ -84,7 +82,7 @@ async def compile_run(self: Any, run_id: str) -> ExpansionRun:
     refreshed = self.run_manager.get(run_id)
     if refreshed is None:
         raise RuntimeError(f"Expansion run {run_id} disappeared after compile")
-    return refreshed
+    return cast(ExpansionRun, refreshed)
 
 
 async def compile_and_apply_run(
@@ -101,10 +99,10 @@ async def compile_and_apply_run(
     if run.compiled_spec is None:
         run = await self.compile_run(run_id)
     if run.compiled_spec is None and run.status == "completed":
-        return run
+        return cast(ExpansionRun, run)
     if auto_apply:
-        return self.apply_run(run.id, session_id=session_id)
-    return run
+        return cast(ExpansionRun, self.apply_run(run.id, session_id=session_id))
+    return cast(ExpansionRun, run)
 
 
 def normalize_compiled_spec(
@@ -117,7 +115,7 @@ def normalize_compiled_spec(
     """Normalize ad-hoc LLM output into the compiled expansion schema."""
     if "phases" not in raw_spec or "tasks" not in raw_spec:
         raise ValueError("Expansion compiler must return {phases,tasks}")
-    return self._normalize_native_compiled_spec(raw_spec, task=task, plan_file=plan_file)
+    return _normalize_native_compiled_spec(self, raw_spec, task=task, plan_file=plan_file)
 
 
 def _list_agent_definitions_for_selection(
@@ -137,13 +135,13 @@ def _list_agent_definitions_for_selection(
         self._agent_definition_cache[project_id] = [
             agent for agent in agents if isinstance(agent, dict)
         ]
-    return self._agent_definition_cache[project_id]
+    return cast(list[dict[str, Any]], self._agent_definition_cache[project_id])
 
 
 async def _generate_raw_spec(self: Any, run: ExpansionRun, task: Task) -> dict[str, Any]:
     """Call the configured LLM and return raw JSON output."""
     prompt_context = self._build_prompt_context(run, task)
-    return await self._invoke_llm_compile(run, prompt_context)
+    return await _invoke_llm_compile(self, run, prompt_context)
 
 
 async def _invoke_llm_compile(
@@ -346,7 +344,7 @@ def _normalize_native_compiled_spec(
 def _render_prompt(self: Any, path: str, context: dict[str, Any]) -> str:
     """Render a prompt from DB-backed prompts with a bundled-file fallback."""
     try:
-        return self.prompt_loader.render(path, context)
+        return cast(str, self.prompt_loader.render(path, context))
     except FileNotFoundError:
         prompt_file = _BUNDLED_PROMPTS_DIR / f"{path}.md"
         raw_content = _read_text_if_exists(prompt_file)
@@ -375,7 +373,7 @@ def _get_verification_commands(self: Any, repo_path: Path | None) -> dict[str, s
     if isinstance(verification, dict):
         return {key: str(value) for key, value in verification.items() if value}
     if self.config is not None:
-        return self.config.get_verification_defaults().all_commands()
+        return cast(dict[str, str], self.config.get_verification_defaults().all_commands())
     return {}
 
 

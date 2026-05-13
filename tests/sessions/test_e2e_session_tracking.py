@@ -2,6 +2,8 @@ import json
 import os
 from collections.abc import AsyncGenerator
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,26 +17,24 @@ from tests._timing import wait_for_async_condition
 pytestmark = pytest.mark.unit
 
 
-# Mock WebSocket Server
 class MockWebSocketServer:
-    def __init__(self):
-        self.broadcasted_messages = []
+    def __init__(self) -> None:
+        self.broadcasted_messages: list[dict[str, Any]] = []
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: dict[str, Any]) -> None:
         self.broadcasted_messages.append(message)
 
 
 @pytest.fixture
-def mock_db(tmp_path) -> LocalDatabase:
+def mock_db(tmp_path: Path) -> LocalDatabase:
     # Use file-based DB for tests (in-memory doesn't work with asyncio.to_thread))
     db = LocalDatabase(tmp_path / "test.db")
     return db
 
 
 @pytest.fixture
-async def env(tmp_path) -> AsyncGenerator[dict]:
-    # Use file-based DB for tests (in-memory doesn't work with asyncio.to_thread
-    # because each thread gets a separate connection/database)
+async def env(tmp_path: Path) -> AsyncGenerator[dict[str, Any]]:
+    # Use file-based DB because each to_thread connection would get a separate in-memory DB.
     db = LocalDatabase(tmp_path / "test.db")
 
     # Initialize migrations manually for this memory DB
@@ -48,9 +48,7 @@ async def env(tmp_path) -> AsyncGenerator[dict]:
         # Mock WebSocket
         ws = MockWebSocketServer()
 
-        # Create Processor with SHARED db
-        # Note: type ignore for MockWebSocketServer as it doesn't fully implement protocol but enough for test
-        processor = SessionMessageProcessor(db, poll_interval=0.1, websocket_server=ws)  # type: ignore
+        processor = SessionMessageProcessor(db, poll_interval=0.1, websocket_server=ws)
 
         # Configure mock config
         mock_config = MagicMock()
@@ -65,21 +63,25 @@ async def env(tmp_path) -> AsyncGenerator[dict]:
         hm = HookManager(daemon_host="test", message_processor=processor, config=mock_config)
 
         # Force daemon status to be ready for tests
-        hm._get_cached_daemon_status = MagicMock(return_value=(True, "OK", "running", None))  # type: ignore
+        with patch.object(
+            hm,
+            "_get_cached_daemon_status",
+            MagicMock(return_value=(True, "OK", "running", None)),
+        ):
+            # Insert a valid project for FK constraints
+            db.execute(
+                "INSERT INTO projects (id, name, repo_path, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("proj-1", "Test Project", str(tmp_path), datetime.now(), datetime.now()),
+            )
 
-        # Insert a valid project for FK constraints
-        db.execute(
-            "INSERT INTO projects (id, name, repo_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            ("proj-1", "Test Project", str(tmp_path), datetime.now(), datetime.now()),
-        )
+            # Start processor
+            await processor.start()
 
-        # Start processor
-        await processor.start()
+            yield {"hm": hm, "proc": processor, "ws": ws, "db": db, "tmp": tmp_path}
 
-        yield {"hm": hm, "proc": processor, "ws": ws, "db": db, "tmp": tmp_path}
-
-        await processor.stop()
-        hm.shutdown()
+            await processor.stop()
+            hm.shutdown()
 
 
 @pytest.mark.e2e
@@ -87,7 +89,7 @@ async def env(tmp_path) -> AsyncGenerator[dict]:
     not os.environ.get("GOBBY_RUN_E2E_SESSION_LIFECYCLE"),
     reason="requires GOBBY_RUN_E2E_SESSION_LIFECYCLE until full-suite isolation is fixed",
 )
-async def test_full_lifecycle(env):
+async def test_full_lifecycle(env: dict[str, Any]) -> None:
     hm = env["hm"]
     ws = env["ws"]
     db = env["db"]
@@ -125,7 +127,9 @@ async def test_full_lifecycle(env):
         f.write(msg1 + "\n")
 
     await wait_for_async_condition(
-        lambda: len(db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,)))
+        lambda: len(
+            db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,))
+        )
         >= 1,
         timeout=2.0,
         description="stored session message",

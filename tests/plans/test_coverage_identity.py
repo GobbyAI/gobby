@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.plans.coverage import (
     CoverageHeader,
     CoverageReport,
     CoverageRow,
+    CoverageRowLeaf,
     CoverageStatus,
     TaskTreeSource,
 )
@@ -17,6 +19,7 @@ from gobby.plans.coverage_manifest import (
     coverage_manifest_path,
     write_manifest,
 )
+from gobby.plans.evidence import EvidenceKind, EvidenceResolveStatus, EvidenceRow
 
 pytestmark = pytest.mark.unit
 
@@ -27,6 +30,8 @@ def _report(
     root_task_ref: str = "#1",
     plan_id: str = "plan",
     plan_hash: str = "hash",
+    task_tree_source_hash: str = "tree",
+    row: CoverageRow | None = None,
 ) -> CoverageReport:
     return CoverageReport(
         header=CoverageHeader(
@@ -36,10 +41,18 @@ def _report(
             project_id=project_id,
             generated_at="2026-04-27T00:00:00Z",
             task_tree_source=TaskTreeSource.db,
-            task_tree_source_hash="tree",
+            task_tree_source_hash=task_tree_source_hash,
             evidence_summary=(),
         ),
-        rows=(CoverageRow(section_id="A1", item_id="A1.1", status=CoverageStatus.covered),),
+        rows=(
+            row
+            or CoverageRow(
+                section_id="A1",
+                item_id="A1.1",
+                plan_node_hash="node-hash",
+                status=CoverageStatus.covered,
+            ),
+        ),
     )
 
 
@@ -79,6 +92,61 @@ def test_regenerate_overwrites_and_audits(tmp_path: Path) -> None:
     lines = log.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert "project #1 plan old -> new" in lines[0]
+
+
+def test_regenerate_preserves_stable_row_decisions(tmp_path: Path) -> None:
+    path = write_manifest(
+        _report(
+            plan_hash="old",
+            task_tree_source_hash="old-tree",
+            row=CoverageRow(
+                section_id="A1",
+                item_id="A1.1",
+                plan_node_hash="node-hash",
+                status=CoverageStatus.covered,
+                leaves=(
+                    CoverageRowLeaf(
+                        leaf_task_ref="#2",
+                        validation_criteria_snippet="acceptance covered",
+                        matched_artifact_ref="src/example.py",
+                    ),
+                ),
+                evidence=(
+                    EvidenceRow(
+                        kind=EvidenceKind.none,
+                        ref="none",
+                        status=EvidenceResolveStatus.resolved,
+                        detail="manual acceptance",
+                        artifacts_touched=("src/example.py",),
+                    ),
+                ),
+            ),
+        ),
+        tmp_path,
+    )
+
+    write_manifest(
+        _report(
+            plan_hash="new",
+            task_tree_source_hash="new-tree",
+            row=CoverageRow(
+                section_id="A1",
+                item_id="A1.1",
+                plan_node_hash="node-hash",
+                status=CoverageStatus.missing,
+            ),
+        ),
+        tmp_path,
+        regenerate=True,
+    )
+
+    manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+    row = manifest["rows"][0]
+    assert manifest["header"]["plan_hash"] == "new"
+    assert manifest["header"]["task_tree_source_hash"] == "new-tree"
+    assert row["status"] == "covered"
+    assert row["leaves"][0]["leaf_task_ref"] == "#2"
+    assert row["evidence"][0]["detail"] == "manual acceptance"
 
 
 def test_casefold_leaf_collision_raises_path_identity_mismatch(tmp_path: Path) -> None:

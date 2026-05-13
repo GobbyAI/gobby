@@ -515,10 +515,10 @@ async def test_base_adapter_send_attachment_raises() -> None:
         def supports_polling(self) -> bool:
             return False
 
-        async def initialize(self, config, secret_resolver):  # type: ignore[override]
+        async def initialize(self, config, secret_resolver):
             pass
 
-        async def send_message(self, message):  # type: ignore[override]
+        async def send_message(self, message):
             return None
 
         async def shutdown(self):
@@ -527,10 +527,10 @@ async def test_base_adapter_send_attachment_raises() -> None:
         def capabilities(self):
             return ChannelCapabilities()
 
-        def parse_webhook(self, payload, headers):  # type: ignore[override]
+        def parse_webhook(self, payload, headers):
             return []
 
-        def verify_webhook(self, payload, headers, secret):  # type: ignore[override]
+        def verify_webhook(self, payload, headers, secret):
             return False
 
     adapter = MinimalAdapter()

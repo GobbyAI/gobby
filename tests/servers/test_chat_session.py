@@ -29,9 +29,9 @@ class TestCanUseTool:
     @pytest.mark.asyncio
     async def test_start_uses_can_use_tool_not_bypass(self, session: ChatSession) -> None:
         """start() should pass can_use_tool callback, not permission_mode=bypassPermissions."""
-        captured_options = {}
+        captured_options: dict[str, Any] = {}
 
-        def capture_options(**kwargs):  # type: ignore[no-untyped-def]
+        def capture_options(**kwargs: Any) -> MagicMock:
             captured_options.update(kwargs)
             return MagicMock()
 
@@ -58,6 +58,7 @@ class TestCanUseTool:
             # Should have can_use_tool callback
             assert captured_options.get("can_use_tool") is not None
             assert callable(captured_options["can_use_tool"])
+            assert captured_options["setting_sources"] == []
 
     @pytest.mark.asyncio
     async def test_auto_approves_non_ask_user_question(self, session: ChatSession) -> None:
@@ -170,6 +171,7 @@ class TestDefaultModelResolution:
         result = await task
 
         assert isinstance(result, PermissionResultAllow)
+        assert result.updated_input is not None
         assert result.updated_input["answers"] == answers
 
 
@@ -227,7 +229,9 @@ class TestToolApproval:
         task = asyncio.create_task(
             session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
         )
-        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
         session.provide_approval("reject")
         result = await task
 
@@ -242,7 +246,9 @@ class TestToolApproval:
         task = asyncio.create_task(
             session._wait_for_tool_approval("Write", {"file_path": "/tmp/test"})
         )
-        await wait_for_async_condition(lambda: session.has_pending_approval, description="pending approval")
+        await wait_for_async_condition(
+            lambda: session.has_pending_approval, description="pending approval"
+        )
         session.provide_approval("approve")
         result = await task
 

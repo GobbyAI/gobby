@@ -9,6 +9,7 @@ Falls back to simple storage when VectorStore is unavailable.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -26,6 +27,12 @@ logger = logging.getLogger(__name__)
 NEAR_EXACT_THRESHOLD = 0.95  # Score above this → duplicate, skip
 SIMILAR_THRESHOLD = 0.85  # Score above this → update if new content is richer
 VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
+_DETAIL_MARKER_RE = re.compile(
+    r"`[^`]+`|https?://\S+|[/~][\w./-]+|#[0-9]+|\b\d{4}-\d{2}-\d{2}\b|\b\d+(?:\.\d+)?\b"
+)
+_STRUCTURED_LINE_RE = re.compile(r"^\s*(?:[-*]\s+|\w[\w .-]{0,40}:\s+\S)", re.MULTILINE)
+_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]+(?:\s+|$)")
+_WORD_RE = re.compile(r"[A-Za-z0-9_'-]+")
 
 
 @dataclass
@@ -35,6 +42,24 @@ class DedupResult:
     added: list[Memory] = field(default_factory=list)
     updated: list[Memory] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
+
+
+def _memory_richness_score(content: str) -> tuple[int, int, int, int, int]:
+    """Score memory detail deterministically without treating length as the main signal."""
+    stripped = content.strip()
+    if not stripped:
+        return (0, 0, 0, 0, 0)
+
+    detail_markers = len(_DETAIL_MARKER_RE.findall(stripped))
+    structured_lines = len(_STRUCTURED_LINE_RE.findall(stripped))
+    sentence_count = max(1, len(_SENTENCE_BOUNDARY_RE.findall(stripped)))
+    unique_words = {word.lower() for word in _WORD_RE.findall(stripped) if len(word) > 2}
+    return (detail_markers, structured_lines, sentence_count, len(unique_words), len(stripped))
+
+
+def _is_richer_memory_content(candidate: str, existing: str) -> bool:
+    """Return whether candidate content carries more actionable memory detail."""
+    return _memory_richness_score(candidate) > _memory_richness_score(existing)
 
 
 class DedupService:
@@ -137,9 +162,7 @@ class DedupService:
                     existing = self.storage.get_memory(memory_id)
                 except ValueError:
                     continue
-                # TODO: Replace length heuristic with semantic richness comparison
-                # Length is a rough proxy — longer content isn't always richer.
-                if existing and len(content) > len(existing.content):
+                if existing and _is_richer_memory_content(content, existing.content):
                     updated = self.storage.update_memory(memory_id, content=content)
                     await self._embed_and_upsert(memory_id, content, project_id)
                     result.updated.append(updated)

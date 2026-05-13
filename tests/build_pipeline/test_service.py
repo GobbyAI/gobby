@@ -53,7 +53,7 @@ def _disable_dispatcher_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     async def no_tick(*_args: object, **_kwargs: object) -> DispatcherTickSummary:
         return DispatcherTickSummary()
 
-    monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", no_tick)
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", no_tick)
 
 
 def _init_git_repo(path: Path) -> None:
@@ -220,7 +220,7 @@ async def test_build_validates_clones_dir_when_clone_isolation(
     plan_file.write_text("# Plan\n")
     clones_dir = tmp_path / "clones"
     clones_dir.mkdir()
-    monkeypatch.setattr("gobby.build.service.os.access", lambda _path, _mode: False)
+    monkeypatch.setattr("gobby.build.validation.os.access", lambda _path, _mode: False)
 
     with pytest.raises(ValueError, match="clones_dir.*writable"):
         await _build(
@@ -347,7 +347,7 @@ async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
         tick_kwargs.append(dict(kwargs))
         return DispatcherTickSummary()
 
-    monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", fake_tick)
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fake_tick)
 
     result = await _build(
         str(plan_file),
@@ -386,7 +386,7 @@ async def test_explicit_build_tick_bypasses_paused_dispatcher_cron(
         tick_kwargs.append(dict(kwargs))
         return DispatcherTickSummary(ticks=1)
 
-    monkeypatch.setattr("gobby.build.service._kick_dispatcher_tick", fake_tick)
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fake_tick)
     build_stop(db=temp_db, project_id=project_id)
 
     result = await _build(

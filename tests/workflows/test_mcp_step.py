@@ -50,12 +50,12 @@ class TestMCPStepConfig:
     def test_config_requires_server(self) -> None:
         """Test that server is required."""
         with pytest.raises(ValidationError):
-            MCPStepConfig(tool="some_tool")  # type: ignore
+            MCPStepConfig(tool="some_tool")
 
     def test_config_requires_tool(self) -> None:
         """Test that tool is required."""
         with pytest.raises(ValidationError):
-            MCPStepConfig(server="some_server")  # type: ignore
+            MCPStepConfig(server="some_server")
 
 
 # =============================================================================

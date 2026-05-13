@@ -7,6 +7,7 @@ All inference runs in a thread pool since it's CPU-bound.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import tempfile
 from pathlib import Path
@@ -161,9 +162,4 @@ class WhisperSTT:
     @property
     def is_available(self) -> bool:
         """Check if faster-whisper is installed."""
-        try:
-            import faster_whisper  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("faster_whisper") is not None

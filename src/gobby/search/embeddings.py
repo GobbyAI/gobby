@@ -244,8 +244,12 @@ async def generate_embeddings(
             text = prefixed_texts[i]
             results[i] = text_to_embedding.get(text)
 
-    # All slots should be filled now
-    return results  # type: ignore[return-value]
+    filled_results: list[list[float]] = []
+    for result in results:
+        if result is None:
+            raise RuntimeError("Embedding cache fill left a missing result")
+        filled_results.append(result)
+    return filled_results
 
 
 async def _try_reload_model(model: str, api_base: str) -> bool:
@@ -254,7 +258,7 @@ async def _try_reload_model(model: str, api_base: str) -> bool:
     Respects a cooldown to avoid hammering the server when multiple
     concurrent calls all see the same eviction error.
     """
-    global _last_reload_attempt  # noqa: PLW0603
+    global _last_reload_attempt
     now = time.monotonic()
     if now - _last_reload_attempt < _RELOAD_COOLDOWN:
         logger.debug("Skipping model reload — cooldown active")
@@ -274,7 +278,7 @@ async def _try_recover_local_lm_studio_service(
     expected_dim: int | None,
 ) -> bool:
     """Attempt one bounded LM Studio service recovery after a connection failure."""
-    global _last_local_lm_studio_recovery_attempt  # noqa: PLW0603
+    global _last_local_lm_studio_recovery_attempt
     now = time.monotonic()
     if now - _last_local_lm_studio_recovery_attempt < _LOCAL_LM_STUDIO_RECOVERY_COOLDOWN:
         logger.debug("Skipping LM Studio service recovery — cooldown active")

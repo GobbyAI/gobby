@@ -11,7 +11,7 @@ const LIST_CLS = 'flex-1 overflow-y-auto'
 const EMPTY_CLS = 'flex flex-1 items-center justify-center p-10 text-[length:var(--text-sm)] text-[var(--text-secondary)]'
 
 const ROW_CLS =
-  'cursor-pointer border-b border-[var(--border)] px-3 py-2.5 transition-colors duration-100 hover:bg-[rgba(255,255,255,0.03)]'
+  'cursor-pointer border-b border-[var(--border)] px-3 py-2.5 transition-colors duration-100 hover:bg-surface-tint-subtle'
 const ROW_EXPANDED_CLS = 'bg-[var(--bg-secondary)]'
 
 const SUMMARY_CLS = 'flex items-center gap-2 text-[length:var(--text-xs)]'

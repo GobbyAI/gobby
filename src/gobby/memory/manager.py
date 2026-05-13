@@ -314,8 +314,10 @@ class MemoryManager:
 
         async def _run_dedup() -> None:
             try:
-                assert self._dedup_service is not None  # noqa: S101
-                await self._dedup_service.process(
+                dedup_service = self._dedup_service
+                if dedup_service is None:
+                    return
+                await dedup_service.process(
                     content=content,
                     project_id=project_id,
                     memory_type=memory_type,

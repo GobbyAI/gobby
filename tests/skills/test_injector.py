@@ -312,15 +312,15 @@ class TestMatchesDepth:
 
     def test_invalid_type_float(self) -> None:
         """Float is not int, list, or str -- hits the logger.warning fallthrough."""
-        assert self.injector._matches_depth(3.14, 0) is False  # type: ignore[arg-type]
+        assert self.injector._matches_depth(3.14, 0) is False
 
     def test_invalid_type_none(self) -> None:
         """None is not int, list, or str -- hits the logger.warning fallthrough."""
-        assert self.injector._matches_depth(None, 0) is False  # type: ignore[arg-type]
+        assert self.injector._matches_depth(None, 0) is False
 
     def test_invalid_type_dict(self) -> None:
         """Dict is not a valid depth_spec -- hits the logger.warning fallthrough."""
-        assert self.injector._matches_depth({}, 0) is False  # type: ignore[arg-type]
+        assert self.injector._matches_depth({}, 0) is False
 
 
 # =============================================================================

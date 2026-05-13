@@ -524,6 +524,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           className={CTRL_BTN_CLS}
           onClick={() => fgRef.current?.zoomToFit(400)}
           title="Zoom to fit"
+          aria-label="Zoom to fit"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
@@ -534,6 +535,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           className={cn(CTRL_BTN_CLS, animateIdle && CTRL_BTN_ACTIVE_CLS)}
           onClick={toggleAnimate}
           title={animateIdle ? 'Pause idle animation' : 'Animate when idle'}
+          aria-label={animateIdle ? 'Pause idle animation' : 'Animate when idle'}
         >
           {animateIdle ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -551,6 +553,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           className={cn(CTRL_BTN_CLS, showPhysics && CTRL_BTN_ACTIVE_CLS)}
           onClick={() => setShowPhysics(p => !p)}
           title="Physics controls"
+          aria-label="Physics controls"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3" />

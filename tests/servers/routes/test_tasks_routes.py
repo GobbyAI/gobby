@@ -453,6 +453,46 @@ class TestUpdateTask:
         assert response.status_code == 200
         assert response.json()["allow_automation"] is True
 
+    def test_update_isolation(self, client: TestClient, sample_task: dict) -> None:
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"isolation": "none"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["isolation"] == "none"
+
+    def test_update_isolation_rejects_invalid_enum(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"isolation": "sandbox"},
+        )
+
+        assert response.status_code == 422
+
+    def test_update_isolation_rejects_artifact_conflict(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+    ) -> None:
+        task_manager.artifacts.set_artifacts_atomic(
+            sample_task["id"],
+            clone_path="/tmp/gobby-clone",
+            clone_id="clone-row-1",
+            base_commit_sha="abc123",
+        )
+
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"isolation": "worktree"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "task already has clone artifact: /tmp/gobby-clone"
+
 
 # ---------------------------------------------------------------------------
 # DELETE /tasks/{task_id}

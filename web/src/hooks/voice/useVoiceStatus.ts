@@ -61,7 +61,11 @@ export function useVoiceStatus({
 
     const syncVoiceStatus = async () => {
       try {
-        const res = await fetch('/api/voice/status')
+        const params = new URLSearchParams()
+        if (sttEnabled) params.set('want_stt', 'true')
+        if (ttsEnabled) params.set('want_tts', 'true')
+        const query = params.toString()
+        const res = await fetch(query ? `/api/voice/status?${query}` : '/api/voice/status')
         const data = res.ok ? (await res.json() as RawVoiceStatus) : null
         if (pollCancelledRef.current) return
 
@@ -82,7 +86,7 @@ export function useVoiceStatus({
     }
 
     void syncVoiceStatus()
-  }, [applyVoiceStatus])
+  }, [applyVoiceStatus, sttEnabled, ttsEnabled])
 
   useEffect(() => {
     pollCancelledRef.current = false

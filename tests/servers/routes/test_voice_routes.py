@@ -149,6 +149,59 @@ class TestVoiceRoutes:
         assert data["tts_warmup_status"] == "loading"
         assert data["voice_loading"] is True
 
+    def test_status_forwards_scoped_voice_targets(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        mock_ws = MagicMock()
+        mock_ws.get_voice_status.return_value = {
+            "enabled": True,
+            "stt_enabled": True,
+            "stt_available": True,
+            "stt_reason": "",
+            "whisper_model": "base",
+            "stt_warmup_status": "ready",
+            "stt_warmup_error": "",
+            "tts_enabled": True,
+            "tts_warmup_status": "loading",
+            "tts_warmup_error": "",
+            "voice_ready": True,
+            "voice_loading": False,
+        }
+        server_with_voice.services.websocket_server = mock_ws
+
+        response = client.get("/api/voice/status?want_stt=true&want_tts=false")
+
+        assert response.status_code == 200
+        mock_ws.get_voice_status.assert_called_once_with(want_stt=True, want_tts=False)
+        data = response.json()
+        assert data["voice_ready"] is True
+        assert data["voice_loading"] is False
+
+    def test_status_forwards_partial_scoped_voice_targets(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        mock_ws = MagicMock()
+        mock_ws.get_voice_status.return_value = {
+            "enabled": True,
+            "stt_enabled": True,
+            "stt_available": True,
+            "stt_reason": "",
+            "whisper_model": "base",
+            "stt_warmup_status": "ready",
+            "stt_warmup_error": "",
+            "tts_enabled": True,
+            "tts_warmup_status": "idle",
+            "tts_warmup_error": "",
+            "voice_ready": True,
+            "voice_loading": False,
+        }
+        server_with_voice.services.websocket_server = mock_ws
+
+        response = client.get("/api/voice/status?want_stt=true")
+
+        assert response.status_code == 200
+        mock_ws.get_voice_status.assert_called_once_with(want_stt=True, want_tts=None)
+
     def test_status_stt_disabled(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """STT unavailable when stt_enabled=False."""
         server_with_voice.config.voice = VoiceConfig(enabled=True, stt_enabled=False)

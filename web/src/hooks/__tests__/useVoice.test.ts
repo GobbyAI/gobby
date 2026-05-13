@@ -143,6 +143,7 @@ function pcmChunk(marker: number): ArrayBuffer {
 
 describe('useVoice', () => {
   let wsRef: { current: { readyState: number; send: ReturnType<typeof vi.fn> } | null }
+  let projectIdRef: { current: string | null }
   let getUserMediaMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -160,6 +161,7 @@ describe('useVoice', () => {
         send: vi.fn(),
       },
     }
+    projectIdRef = { current: null }
 
     vi.stubGlobal('WebSocket', {
       OPEN: 1,
@@ -229,6 +231,7 @@ describe('useVoice', () => {
         wsRef as any,
         'conv-1',
         0,
+        projectIdRef,
         { sttEnabled: true, ttsEnabled: true, voiceInputMode: 'ptt' },
         connected,
       ),
@@ -244,6 +247,59 @@ describe('useVoice', () => {
         expect.objectContaining({ type: 'voice_mode_toggle', conversation_id: 'conv-1', enabled: true }),
       ]))
     })
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status?want_stt=true&want_tts=true')
+  })
+
+  it('scopes mic-only warmup and status polling to STT', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    renderHook(() => useVoice(
+      wsRef as any,
+      'conv-stt-only',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await waitFor(() => {
+      const payloads = wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))
+      expect(payloads).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'voice_prepare',
+          conversation_id: 'conv-stt-only',
+          stt_enabled: true,
+          tts_enabled: false,
+        }),
+      ]))
+    })
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status?want_stt=true')
+  })
+
+  it('omits disabled voice targets from status polling', async () => {
+    renderHook(() => useVoice(
+      wsRef as any,
+      'conv-no-voice',
+      0,
+      projectIdRef,
+      { sttEnabled: false, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith('/api/voice/status')
+    })
   })
 
   it('records PTT audio and sends WAV using the actual capture sample rate', async () => {
@@ -251,6 +307,7 @@ describe('useVoice', () => {
       wsRef as any,
       'conv-ptt',
       0,
+      projectIdRef,
       { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
       true,
     ))
@@ -284,6 +341,41 @@ describe('useVoice', () => {
         mime_type: 'audio/wav',
       }),
     ]))
+    const voiceAudio = payloads?.find((payload) => payload.type === 'voice_audio')
+    expect(voiceAudio).not.toHaveProperty('project_id')
+  })
+
+  it('includes the selected project in PTT voice audio payloads', async () => {
+    projectIdRef.current = 'project-ptt'
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-ptt-project',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await act(async () => {
+      await result.current.startRecording()
+    })
+
+    act(() => {
+      lastWorkletNode?.port.onmessage?.(workletMessage(new Float32Array(16_000).fill(0.25)))
+    })
+
+    await act(async () => {
+      await result.current.stopRecording()
+    })
+
+    const payloads = wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))
+    expect(payloads).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'voice_audio',
+        conversation_id: 'conv-ptt-project',
+        project_id: 'project-ptt',
+      }),
+    ]))
   })
 
   it('discards short PTT captures without sending audio', async () => {
@@ -294,6 +386,7 @@ describe('useVoice', () => {
       wsRef as any,
       'conv-short',
       0,
+      projectIdRef,
       { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
       true,
     ))
@@ -319,10 +412,12 @@ describe('useVoice', () => {
   })
 
   it('keeps VAD auto-submit and barge-in behavior', async () => {
+    projectIdRef.current = 'project-vad'
     const { result } = renderHook(() => useVoice(
       wsRef as any,
       'conv-vad',
       0,
+      projectIdRef,
       { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'vad' },
       true,
     ))
@@ -341,7 +436,11 @@ describe('useVoice', () => {
     const payloads = wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))
     expect(payloads).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'tts_stop', conversation_id: 'conv-vad' }),
-      expect.objectContaining({ type: 'voice_audio', conversation_id: 'conv-vad' }),
+      expect.objectContaining({
+        type: 'voice_audio',
+        conversation_id: 'conv-vad',
+        project_id: 'project-vad',
+      }),
     ]))
   })
 
@@ -351,6 +450,7 @@ describe('useVoice', () => {
       wsRef as any,
       'conv-tts',
       0,
+      projectIdRef,
       { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
       true,
     ))
@@ -394,6 +494,7 @@ describe('useVoice', () => {
       wsRef as any,
       'conv-tts',
       0,
+      projectIdRef,
       { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
       true,
     ))
@@ -448,6 +549,7 @@ describe('useVoice', () => {
         wsRef as any,
         'conv-switch',
         switchKey,
+        projectIdRef,
         { sttEnabled: true, ttsEnabled: true, voiceInputMode: 'ptt' },
         true,
       ),

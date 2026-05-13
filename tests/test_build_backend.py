@@ -51,7 +51,7 @@ def test_stage_ui_copies_dist_to_package(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr("shutil.which", lambda name: None if name == "npm" else "/usr/bin/" + name)
 
     backend = _load_backend(repo_root)
-    backend._stage_ui()  # type: ignore[attr-defined]
+    backend._stage_ui()
 
     staged = repo_root / "src" / "gobby" / "ui" / "web" / "dist"
     assert (staged / "index.html").read_text() == "<html></html>"
@@ -75,7 +75,7 @@ def test_stage_ui_skip_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("GOBBY_SKIP_UI_BUILD", "1")
 
     backend = _load_backend(repo_root)
-    backend._stage_ui()  # type: ignore[attr-defined]
+    backend._stage_ui()
 
     assert (staged_dir / "index.html").read_text() == "stale"
 
@@ -96,7 +96,7 @@ def test_stage_ui_reuses_pre_staged_when_no_web(
     monkeypatch.delenv("GOBBY_SKIP_UI_BUILD", raising=False)
 
     backend = _load_backend(repo_root)
-    backend._stage_ui()  # type: ignore[attr-defined]
+    backend._stage_ui()
 
     assert (staged_dir / "index.html").read_text() == "pre-staged"
 
@@ -125,7 +125,7 @@ def test_build_wheel_accepts_wheel_with_ui_index(
 
     monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
 
-    assert backend.build_wheel(str(wheel_dir)) == "gobby-0-py3-none-any.whl"  # type: ignore[attr-defined]
+    assert backend.build_wheel(str(wheel_dir)) == "gobby-0-py3-none-any.whl"
 
 
 def test_build_wheel_rejects_wheel_missing_ui_index(
@@ -153,4 +153,4 @@ def test_build_wheel_rejects_wheel_missing_ui_index(
     monkeypatch.setattr(backend, "_orig", lambda: SimpleNamespace(build_wheel=fake_build_wheel))
 
     with pytest.raises(RuntimeError, match="gobby/ui/web/dist/index.html"):
-        backend.build_wheel(str(wheel_dir))  # type: ignore[attr-defined]
+        backend.build_wheel(str(wheel_dir))

@@ -194,7 +194,7 @@ def get_local_embedding_service_failure_reason() -> str | None:
 
 
 def _set_local_embedding_service_failure_reason(reason: str | None) -> None:
-    global _last_local_embedding_service_failure_reason  # noqa: PLW0603
+    global _last_local_embedding_service_failure_reason
     _last_local_embedding_service_failure_reason = reason
 
 

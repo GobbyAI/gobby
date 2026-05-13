@@ -246,20 +246,22 @@ def spawn_agent_cmd(
         )
         response.raise_for_status()
         result = response.json()
-    except httpx.ConnectError:
+    except httpx.ConnectError as e:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         click.echo("Start with: gobby start", err=True)
-        return
+        raise SystemExit(1) from e
     except httpx.HTTPStatusError as e:
         click.echo(f"Error: Daemon returned {e.response.status_code}", err=True)
         click.echo(e.response.text, err=True)
-        return
+        raise SystemExit(1) from e
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
-        return
+        raise SystemExit(1) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
+        if not result.get("success"):
+            raise SystemExit(1)
         return
 
     # Check result
@@ -283,6 +285,7 @@ def spawn_agent_cmd(
     else:
         error = result.get("error", "Unknown error")
         click.echo(f"Failed to start agent: {error}", err=True)
+        raise SystemExit(1)
 
 
 @agents.group("runs")

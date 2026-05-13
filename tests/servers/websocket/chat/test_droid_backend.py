@@ -213,7 +213,7 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
             for event in _parse_droid_stream_line(line):
                 yield event
 
-    backend.send_message = fake_send_message  # type: ignore[method-assign]
+    backend.send_message = fake_send_message
 
     events = [event async for event in session.send_message("hello")]
 

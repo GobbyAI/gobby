@@ -67,7 +67,7 @@ def _register_tools(
     )
     register_handoff_tools(
         registry,
-        session_manager,  # type: ignore[arg-type]
+        session_manager,
         llm_service=llm_service,
         transcript_processor=transcript_processor,
         inter_session_message_manager=inter_session_message_manager,
@@ -89,7 +89,7 @@ class TestSetHandoffContext:
         from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
 
         registry = InternalToolRegistry(name="test", description="test")
-        register_handoff_tools(registry, session_manager=None)  # type: ignore[arg-type]
+        register_handoff_tools(registry, session_manager=None)
 
         with session_context_for_test("s1"):
             result = await registry.call("set_handoff_context", {})

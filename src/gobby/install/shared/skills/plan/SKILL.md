@@ -564,6 +564,7 @@ run = spawn_agent(
     agent="plan-adversary",
     task_id=anchor.id,                    # NOT planning_task_id
     parent_session_id=<self>,
+    isolation="none",                     # ALWAYS "none" for plan-adversary
     prompt=(
         f"Plan artifact: {artifact_path}\n"
         f"Parent task: {plan_parent_ref}\n"
@@ -575,6 +576,29 @@ run = spawn_agent(
 )
 set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 ```
+
+**ISOLATION RULES — NON-NEGOTIABLE:**
+
+- **ALWAYS pass `isolation="none"` on the `plan-adversary` spawn.** The agent
+  definition already sets `isolation: none`; passing it explicitly is defensive
+  and self-documenting. It costs nothing.
+- **NEVER pass `isolation="worktree"` or `isolation="clone"` for `plan-adversary`
+  (or for the Step 7.3a pre-flight fact-checker).** Both agents are read-only
+  reviewers. Their only legitimate write is the post-approval manifest append to
+  the plan file in the main worktree — which the adversary contract restricts to
+  `task_artifacts.plan_file_path`. A worktree spawn forks a branch from `HEAD`
+  *before* the coordinator's between-round fix commits land, which causes
+  reviewers to analyze stale code and emit false-positive findings. This is a
+  documented failure mode, not a theoretical risk.
+- **NEVER copy isolation defaults from worker-agent spawn patterns.** Worker
+  agents (developer, qa, etc.) use `isolation="worktree"` because they perform
+  concurrent file edits. Reviewers do not.
+- **ALWAYS use `gobby build <plan_file> --isolation none` for plan-side
+  build/dispatch work.** Planning build dispatch writes task and plan artifacts
+  in the main worktree; it is not source implementation work.
+- If you find yourself reaching for any `isolation` value other than `"none"`
+  here, stop and re-read this block. There is no scenario where a different
+  value is correct for the planning review loop.
 
 The spawn path auto-injects `assigned_task_id` and auto-claims the anchor for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here. The anchor (not the planning epic) is what the adversary marks at terminal.
 
@@ -806,5 +830,5 @@ This skill is the coordinator for the lifecycle-dispatch flow.
 - Round N, where N > 1, the coordinator (this chat session, with context restored fresh by the post-spawn compact-self from Round N-1) revises the plan file in place using the latest `## Adversary Findings — Round N-1`, runs the Step 5 verification checklist, then creates a new adversary anchor and spawns `plan-adversary` for Round N. There is no separate `planner` agent spawn — the coordinator IS the planner for all revision rounds.
 - Wake routing reads the active anchor with `get_task`. `status=review_approved` proceeds only after the plan file contains `## M1 Task Manifest`; `status=open` with remaining budget triggers coordinator revision and the next adversary spawn; `status=open` with exhausted budget surfaces final findings; `status=escalated` surfaces the escalation reason.
 - The daemon's task-completion notification is the wake signal. Do not use `ScheduleWakeup`, `Monitor`, or polling in Phase 3.
-- In delegated mode, load the `build` skill before Phase 3b, ask for build scope, then either trigger `gobby build <plan_file>` with the resolved profile or show the exact CLI command.
+- In delegated mode, load the `build` skill before Phase 3b, ask for build scope, then either trigger `gobby build <plan_file> --isolation none` or show that exact CLI command.
 - The coordinator owns surgical plan-file revisions between rounds in both modes. Manifest writes belong to `plan-adversary` (final act of approval); the coordinator must not author the manifest.

@@ -103,6 +103,11 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         templates = get_workflow_templates()
         return {"status": "success", "templates": templates, "count": len(templates)}
 
+    @router.post("/install-all-templates")
+    async def install_all_templates_removed() -> None:
+        """Legacy workflow template install route tombstone."""
+        raise HTTPException(status_code=404, detail="Workflow template install route removed")
+
     @router.get("")
     async def list_workflows(
         workflow_type: str | None = Query(None),
@@ -268,24 +273,6 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.error(f"Error deleting workflow definition: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    @router.post("/{definition_id}/install")
-    async def install_from_template(definition_id: str) -> dict[str, Any]:
-        """Legacy endpoint — template rows no longer exist."""
-        raise HTTPException(
-            status_code=410,
-            detail="Template installation is no longer needed. Definitions are installed directly during sync.",
-        )
-
-    @router.post("/install-all-templates")
-    async def install_all_templates(
-        workflow_type: str | None = Query(None),
-    ) -> dict[str, Any]:
-        """Legacy endpoint — template rows no longer exist."""
-        raise HTTPException(
-            status_code=410,
-            detail="Template installation is no longer needed. Definitions are installed directly during sync.",
-        )
 
     @router.post("/{definition_id}/restore-from-template")
     async def restore_from_template(definition_id: str) -> dict[str, Any]:

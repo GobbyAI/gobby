@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from collections.abc import Mapping
 from dataclasses import asdict
+from typing import Any
 
 import click
 
@@ -22,7 +25,8 @@ from gobby.build import (
     build_stop_target,
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
-from gobby.config.build import StageCapOverride
+from gobby.build.profiles import BuildProfileError
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
@@ -31,6 +35,24 @@ from .utils import resolve_project_ref
 logger = logging.getLogger(__name__)
 
 DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS = 900.0
+_PROFILE_ERROR_RE = re.compile(
+    r"^(?:"
+    r"build profile(?:s)?\b|"
+    r"unknown build profile\b|"
+    r"duplicate build profile\b|"
+    r"malformed build profiles\b|"
+    r"bundled build profiles\b|"
+    r"build profile name\b|"
+    r"delivery_target_repo\b|"
+    r"source must be installed or project\b|"
+    r"installed build profiles must be global\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+class BuildProfileClickException(click.ClickException):
+    exit_code = 4
 
 
 def resolve_project_id() -> str:
@@ -103,6 +125,8 @@ def _stage_cap_options(stage_caps: list[StageCapOverride]) -> list[str]:
 def _echo_build_result(result: BuildResult) -> None:
     click.echo(f"Task: {result.task_id}")
     click.echo(f"Lifecycle: {result.initial_lifecycle}")
+    for warning in result.warnings:
+        click.echo(f"Warning: {warning}", err=True)
     if result.applied_stages_skipped:
         click.echo(f"Skipped stages: {', '.join(result.applied_stages_skipped)}")
     tick = result.dispatcher_tick
@@ -132,8 +156,8 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "max_active_agents": opts.max_active_agents,
         "max_retries": opts.max_retries,
     }
-    if opts.workspace_backend_explicit:
-        payload["workspace_backend"] = opts.workspace_backend
+    if opts.isolation_explicit:
+        payload["isolation"] = opts.isolation
     return payload
 
 
@@ -153,6 +177,7 @@ def _result_from_payload(payload: dict[str, object]) -> BuildResult:
         tick_dispatched=_payload_int(payload.get("tick_dispatched"), dispatcher_tick.ticks),
         dispatcher_tick=dispatcher_tick,
         manifest=manifest if isinstance(manifest, list) else None,
+        warnings=_payload_string_list(payload.get("warnings")),
     )
 
 
@@ -207,8 +232,11 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         if response.status_code == 200:
             return _result_from_payload(response.json())
         if response.status_code == 400:
-            detail = response.json().get("detail", response.text)
-            raise click.ClickException(str(detail))
+            detail = _daemon_error_detail(response)
+            message = _daemon_error_message(detail)
+            if _is_profile_error(detail, response.headers):
+                raise BuildProfileClickException(message)
+            raise click.ClickException(message)
         return None
     except click.ClickException:
         raise
@@ -222,6 +250,48 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
     except Exception:
         logger.debug("Daemon build request failed; falling back to local build", exc_info=True)
         return None
+
+
+def _daemon_error_detail(response: Any) -> Any:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text
+    if isinstance(payload, dict):
+        return payload.get("detail", payload)
+    return payload
+
+
+def _daemon_error_message(detail: Any) -> str:
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail") or detail.get("error")
+        return str(message) if message is not None else str(detail)
+    return str(detail)
+
+
+def _is_profile_error(detail: Any, headers: Mapping[str, str] | None = None) -> bool:
+    if headers is not None and headers.get("X-Error-Type") == "build_profile":
+        return True
+    if isinstance(detail, dict):
+        structured_seen = False
+        for key in ("error_code", "type", "error_type", "code"):
+            value = detail.get(key)
+            if value is None:
+                continue
+            structured_seen = True
+            return value in {
+                "BUILD_PROFILE_ERROR",
+                "BuildProfileError",
+                "build_profile_error",
+                "build_profile",
+            }
+        if structured_seen:
+            return False
+        message = detail.get("message") or detail.get("detail") or detail.get("error")
+        return isinstance(message, str) and bool(_PROFILE_ERROR_RE.search(message))
+    if isinstance(detail, str):
+        return bool(_PROFILE_ERROR_RE.search(detail))
+    return False
 
 
 def _echo_build_control_result(result: BuildControlResult) -> None:
@@ -295,6 +365,11 @@ def _open_database() -> LocalDatabase:
     multiple=True,
     help="Stage selector/cap override, e.g. development:max_review_rounds=4.",
 )
+@click.option(
+    "--isolation",
+    type=click.Choice(["none", "worktree", "clone"]),
+    help="Build workspace isolation mode.",
+)
 @click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
 @click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
@@ -331,6 +406,7 @@ def build_command(
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
+    isolation: Isolation | None,
     use_clone: bool,
     no_merge: bool,
     pr: str | None,
@@ -368,12 +444,16 @@ def build_command(
         return
     if target_ref is not None:
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
+    if use_clone and isolation in {"none", "worktree"}:
+        raise click.ClickException(f"--clone conflicts with --isolation {isolation}")
+    resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
 
     opts = BuildOptions(
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
-        isolation="clone" if use_clone else "worktree",
-        isolation_explicit=use_clone,
+        skip_stages_explicit=bool(skip_stage),
+        isolation=resolved_isolation,
+        isolation_explicit=isolation is not None or use_clone,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),
@@ -389,6 +469,8 @@ def build_command(
         db = _open_database()
         try:
             result = asyncio.run(build(input_ref, opts, db=db, project_id=project_id))
+        except BuildProfileError as exc:
+            raise BuildProfileClickException(str(exc)) from exc
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
         finally:

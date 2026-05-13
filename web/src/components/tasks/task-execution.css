@@ -132,42 +132,20 @@
   justify-content: space-between;
 }
 
+/* The filter button shares the .btn .btn-accent .btn-sm chrome with
+   AgentStatusBar (Attach/Resume/Detach/+) and SessionsTab (Summary/Swap)
+   buttons — apply those classes in JSX. This block only adds badge
+   positioning and the stronger open-popover fill that distinguishes the
+   active state from resting btn-accent. */
 .activity-filter-button {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-row-height, 2.25rem);
-  height: var(--control-row-height, 2.25rem);
-  flex-shrink: 0;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 0.45rem;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s,
-    color 0.15s;
 }
 
-.activity-filter-button:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.activity-filter-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* Filled-accent pill — the single shared active-state treatment across
-   the activity panel filter row. Same shape used by SegmentedControl's
-   active option and Sessions' chip pills: accent fill + accent text,
-   neutral border (no per-component variation). */
+/* Open-popover state — stronger accent fill so the active surface reads
+   distinct from the resting btn-accent treatment. */
 .activity-filter-button[aria-expanded="true"] {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .activity-filter-badge {

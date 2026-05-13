@@ -485,7 +485,7 @@ class TestGenerateSummary:
                 session_id="test-session",
                 llm_service=mock_llm_service,
                 transcript_processor=mock_transcript_processor,
-                mode="invalid_mode",  # type: ignore
+                mode="invalid_mode",
             )
 
         assert "Invalid mode 'invalid_mode'" in str(exc_info.value)

@@ -253,10 +253,8 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
         project_path = None
 
     if project_path is None:
-        logger.debug(
-            "get_dirty_files: project_path is None, git status will use daemon's cwd "
-            "which may not be the project directory"
-        )
+        logger.debug("get_dirty_files: project_path is None, treating session as no-repo")
+        return DirtyFiles(set(), set())
 
     # Validate cwd exists before shelling out — subprocess.run raises
     # FileNotFoundError for both missing binary AND missing cwd, and the

@@ -362,7 +362,10 @@ class TestPromptChangeNotifier:
         """Test removing a listener."""
         notifier = PromptChangeNotifier()
         events: list[PromptChangeEvent] = []
-        listener = lambda e: events.append(e)  # noqa: E731
+
+        def listener(event: PromptChangeEvent) -> None:
+            events.append(event)
+
         notifier.add_listener(listener)
         notifier.remove_listener(listener)
 

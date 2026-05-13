@@ -63,12 +63,13 @@ export function CommandBar({
         {onTogglePanel && (
           <button
             type="button"
-            className="command-bar-btn"
+            className="btn btn-accent btn-sm command-bar-btn"
             onClick={onTogglePanel}
             aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
             title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
           >
             <PanelIcon pinned={isPanelPinned} />
+            <span className="command-bar-btn__label">Toggle Panel</span>
           </button>
         )}
       </div>

@@ -216,7 +216,7 @@ class TestTaskExpansionConfigCustom:
         from gobby.config.tasks import TaskExpansionConfig
 
         for strategy in ["auto", "phased", "sequential", "parallel"]:
-            config = TaskExpansionConfig(default_strategy=strategy)  # type: ignore
+            config = TaskExpansionConfig(default_strategy=strategy)
             assert config.default_strategy == strategy
 
     def test_custom_timeouts(self) -> None:
@@ -236,7 +236,7 @@ class TestTaskExpansionConfigValidation:
         from gobby.config.tasks import TaskExpansionConfig
 
         with pytest.raises(ValidationError):
-            TaskExpansionConfig(default_strategy="invalid")  # type: ignore
+            TaskExpansionConfig.model_validate({"default_strategy": "invalid"})
 
 
 # =============================================================================
@@ -358,7 +358,7 @@ class TestTaskValidationConfigValidation:
         from gobby.config.tasks import TaskValidationConfig
 
         with pytest.raises(ValidationError):
-            TaskValidationConfig(escalation_notify="invalid")  # type: ignore
+            TaskValidationConfig.model_validate({"escalation_notify": "invalid"})
 
 
 # =============================================================================
@@ -732,7 +732,7 @@ class TestWorkflowVariablesMergeWithDB:
         # Pydantic should coerce or reject
         # "not_a_bool" as string is truthy but shouldn't be valid
         with pytest.raises(ValidationError):
-            WorkflowVariablesConfig(**effective)
+            WorkflowVariablesConfig.model_validate(effective)
 
     def test_extra_db_fields_are_ignored(self) -> None:
         """Extra fields from DB that aren't in config are ignored (model_config)."""
