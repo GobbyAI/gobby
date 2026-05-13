@@ -58,6 +58,7 @@ class TestCanUseTool:
             # Should have can_use_tool callback
             assert captured_options.get("can_use_tool") is not None
             assert callable(captured_options["can_use_tool"])
+            assert captured_options["setting_sources"] == []
 
     @pytest.mark.asyncio
     async def test_auto_approves_non_ask_user_question(self, session: ChatSession) -> None:

@@ -9,6 +9,7 @@ from gobby.memory.services.dedup import (
     SIMILAR_THRESHOLD,
     DedupResult,
     DedupService,
+    _memory_richness_score,
 )
 from gobby.memory.vectorstore import VectorStoreUnavailableError
 
@@ -112,7 +113,7 @@ class TestProcess:
     async def test_process_similar_updates_when_richer(
         self, dedup_service, mock_vector_store, mock_storage, mock_embed_fn
     ) -> None:
-        """process() updates existing memory when new content is longer."""
+        """process() updates existing memory when new content scores richer."""
         mock_vector_store.search.return_value = [("mem-old", 0.90)]
 
         mock_existing = MagicMock()
@@ -140,7 +141,7 @@ class TestProcess:
     async def test_process_similar_noop_when_existing_sufficient(
         self, dedup_service, mock_vector_store, mock_storage, mock_embed_fn
     ) -> None:
-        """process() returns empty result when existing content is longer."""
+        """process() returns empty result when existing content scores richer."""
         mock_vector_store.search.return_value = [("mem-old", 0.90)]
 
         mock_existing = MagicMock()
@@ -154,6 +155,54 @@ class TestProcess:
         )
 
         assert result.added == []
+        assert result.updated == []
+        mock_storage.update_memory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_similar_updates_with_shorter_but_more_detailed_content(
+        self, dedup_service, mock_vector_store, mock_storage
+    ) -> None:
+        """Structured details can replace vague longer text."""
+        mock_vector_store.search.return_value = [("mem-old", 0.90)]
+
+        mock_existing = MagicMock()
+        mock_existing.id = "mem-old"
+        mock_existing.content = (
+            "Gobby keeps a local database for user information and project state."
+        )
+        mock_storage.get_memory.return_value = mock_existing
+
+        richer = "Memory DB: ~/.gobby/gobby-hub.db; scope=project; task #14567."
+        mock_updated = MagicMock()
+        mock_updated.id = "mem-old"
+        mock_updated.content = richer
+        mock_storage.update_memory.return_value = mock_updated
+
+        result = await dedup_service.process(content=richer, project_id="proj-1")
+
+        assert len(result.updated) == 1
+        mock_storage.update_memory.assert_called_once_with("mem-old", content=richer)
+
+    @pytest.mark.asyncio
+    async def test_process_similar_keeps_concise_detail_over_longer_vague_content(
+        self, dedup_service, mock_vector_store, mock_storage
+    ) -> None:
+        """Longer vague prose does not replace concise operational detail."""
+        mock_vector_store.search.return_value = [("mem-old", 0.90)]
+
+        mock_existing = MagicMock()
+        mock_existing.id = "mem-old"
+        mock_existing.content = "API root: https://api.example.test; timeout=30."
+        mock_storage.get_memory.return_value = mock_existing
+
+        result = await dedup_service.process(
+            content=(
+                "The API setup has several useful operational details that are worth "
+                "remembering for future work on integrations and request handling."
+            ),
+            project_id="proj-1",
+        )
+
         assert result.updated == []
         mock_storage.update_memory.assert_not_called()
 
@@ -259,3 +308,9 @@ class TestThresholds:
 
     def test_thresholds_ordered(self) -> None:
         assert SIMILAR_THRESHOLD < NEAR_EXACT_THRESHOLD
+
+    def test_richness_score_prioritizes_details_before_length(self) -> None:
+        detailed = "API root: https://api.example.test; timeout=30."
+        vague = "This API setup has useful operational details for future integration work."
+
+        assert _memory_richness_score(detailed) > _memory_richness_score(vague)
