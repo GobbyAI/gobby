@@ -236,7 +236,7 @@ Connection error mapping: catch `redis.exceptions.ConnectionError`, `redis.excep
 
 The `query()` parser must collapse FalkorDB's response into the same `list[dict[str, Any]]` shape that callers expect — the dict keys are the column aliases from the Cypher RETURN clause. This keeps `KnowledgeGraphService` and `CodeGraph` consumers oblivious to the transport change.
 
-Do **not** leave `src/gobby/memory/neo4j_client.py` in place; that file is removed in 1.3.
+Deletion of `src/gobby/memory/neo4j_client.py` is owned exclusively by §1.3 and runs AFTER Phase 2 has rewired the live consumers (`src/gobby/memory/manager.py` and `src/gobby/memory/services/knowledge_graph.py` — see §1.3's import-site enumeration). §1.2 must NOT delete or rename the legacy client; doing so before Phase 2 would break those imports at module-load time.
 
 **Tests (R21-F1) — owned by this task:**
 
@@ -1371,7 +1371,7 @@ The persisted state file is `~/.gobby/setup_state.json` (underscore, not hyphen 
 ### 6.2 Update Services.tsx CLI flags (Docker-only) [category: code] (depends: 6.1)
 `kind: deliverable`
 
-Targets: `web/src/setup/steps/Services.tsx`, `web/src/setup/utils/password.ts` (password-utility helper cited in body)
+Targets: `web/src/setup/steps/Services.tsx` (password guard lives here — see executable instructions below), `web/src/setup/steps/Launch.tsx` (summary edit co-located in this task — see "Launch.tsx summary edit" subsection)
 
 The Services step's existing Docker-only gate in `web/src/setup/App.tsx` (`skipIf: (s) => !s.detected_tools?.docker`) is unchanged — FalkorDB is Docker-only in 0.4.0, so the existing gate is correct. No `detect.ts` changes needed.
 
@@ -1393,7 +1393,7 @@ if (password) {
 
 **Custom-password validation flow (R27-F1) — owned executable instructions for the `[p]` branch:**
 
-When the user picks `[p]` and types a custom password, the wizard MUST mirror the same charset rule that § 1.1's `validate_falkordb_password` enforces (printable ASCII, no whitespace / control / non-ASCII). Implement it as a TS-side guard `validateFalkorPassword(value: string): string | null` (returns the rejection message or null) in `web/src/setup/steps/Services.tsx` (or a sibling `web/src/setup/utils/password.ts` if more than one wizard step ever needs it). On invalid input:
+When the user picks `[p]` and types a custom password, the wizard MUST mirror the same charset rule that § 1.1's `validate_falkordb_password` enforces (printable ASCII, no whitespace / control / non-ASCII). Implement it as a TS-side guard `validateFalkorPassword(value: string): string | null` (returns the rejection message or null) inside `web/src/setup/steps/Services.tsx` itself — pin to a single co-located helper rather than a new utility module so this task's deliverable surface is deterministic. Extracting to a sibling utility is explicitly out of scope for §6.2; if a second wizard step ever needs the same guard, that's a follow-up refactor. On invalid input:
 
 - Stay in the `password` phase. Do NOT advance to `installing`. Do NOT call `runGobby(...)`. Do NOT call `finish(...)`.
 - Render the rejection message inline above the input field so the operator can edit and resubmit without leaving the wizard.
@@ -1438,7 +1438,8 @@ Target: `web/src/setup/steps/Launch.tsx:211-212`
 
 **Acceptance:**
 
-- 6.2.1 — `Services.tsx` emits `--falkordb-*` flags on the Docker-only path. file: `web/src/setup/steps/Services.tsx`.
+- 6.2.1 — `Services.tsx` emits `--falkordb-*` flags on the Docker-only path; the inline `validateFalkorPassword` guard rejects whitespace/control/non-ASCII input and keeps the user in the `password` phase until a valid value is supplied. file: `web/src/setup/steps/Services.tsx`.
+- 6.2.2 — `Launch.tsx` summary uses the renamed `falkordb_installed` / `falkordb_password_set` state fields. file: `web/src/setup/steps/Launch.tsx`.
 
 ### 6.3 Regenerate the bundled setup.mjs artifact [category: code] (depends: 6.2)
 `kind: deliverable`
