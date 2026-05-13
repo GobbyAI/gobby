@@ -17,7 +17,7 @@ export function ArtifactVersionBar({ artifact, onSetVersion }: ArtifactVersionBa
         variant="ghost"
         onClick={() => onSetVersion(currentVersionIndex - 1)}
         disabled={currentVersionIndex <= 0}
-        className="h-6 w-6 p-0"
+        className="h-6 w-6 p-0 pointer-coarse:h-11 pointer-coarse:w-11"
         aria-label="Previous version"
       >
         <ChevronLeftIcon />
@@ -30,7 +30,7 @@ export function ArtifactVersionBar({ artifact, onSetVersion }: ArtifactVersionBa
         variant="ghost"
         onClick={() => onSetVersion(currentVersionIndex + 1)}
         disabled={currentVersionIndex >= versions.length - 1}
-        className="h-6 w-6 p-0"
+        className="h-6 w-6 p-0 pointer-coarse:h-11 pointer-coarse:w-11"
         aria-label="Next version"
       >
         <ChevronRightIcon />
