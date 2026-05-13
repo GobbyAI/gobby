@@ -8,10 +8,11 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.2]
+## [0.4.3]
 
-A patch release focused on packaging correctness for installed wheels, custom
-embedding endpoints, and cleanup of early 0.4.x install rough edges.
+A patch release focused on build-profile delivery, build isolation controls,
+voice/chat reliability, workflow UI polish, and release hardening since
+`0.4.2`.
 
 ### Added
 
@@ -19,7 +20,68 @@ embedding endpoints, and cleanup of early 0.4.x install rough edges.
   DB-backed `gobby profiles`, `gobby stages`, `gobby-profiles`, `/api/profiles`,
   and `/api/stages` surfaces. `gobby build` now resolves the `default`,
   `autopilot`, `fix`, `fix-merge`, and `submit` bundled profiles before
-  creating new manifests.
+  creating new manifests (#14140).
+- Add cross-repo submit delivery support, including build-profile delivery repo
+  configuration, delivery state storage, task delivery MCP tools, merge
+  orchestrator handoff wiring, and docs for submit-profile operation (#14545).
+- Add explicit build isolation controls across CLI, task CRUD, MCP, and HTTP
+  build/task surfaces so callers can choose the intended isolation behavior
+  instead of relying on implicit defaults (#14566, #14570).
+- Move voice controls into the chat toolbar while preserving voice capture
+  state, settings coverage, and chat input layout behavior (#14539).
+
+### Changed
+
+- Split the build service and stage-state storage managers into focused modules,
+  reducing large-file pressure while keeping lifecycle, target-branch,
+  validation, project-control, and stage-state behavior covered by tests
+  (#14498, #14518).
+- Remove stale workflow-template install endpoints and clean up the Workflows UI
+  around reports, rules, stages, and profiles (#14541).
+- Polish activity filters, session reference inputs, chat/status-bar sizing,
+  workflow header buttons, and icon-button accessibility labels, with
+  `jsx-a11y` linting enabled for the web app (#14308, #14521, #14522, #14526,
+  #14573, #14575, #14577).
+- Remove Python suppression comments and clean actionable TODO debt across LLM,
+  memory, chat, provider-model, and test surfaces (#14544, #14567).
+
+### Fixed
+
+- Add a session-activation reconciliation backstop and keep auto-compact
+  sessions live through hook/session-end flows (#14475, #14525, #14542).
+- Propagate voice project context, scope voice model warmup targets correctly,
+  and harden voice/STT availability tests (#14524, #14527, #14577).
+- Prevent duplicate web chat streams and keep the Watching Transcript panel
+  pinned during live updates (#14523, #14528).
+- Resolve reports pytest failures and fold in follow-up CodeRabbit cleanup for
+  build, delivery, profile, stage, memory, SQL, websocket, and workflow paths
+  (#14540, #14542, #14546, #14571, #14572, #14574).
+
+### Security
+
+- Bump `authlib` to 1.7.2 to address GHSA-r95x-qfjj-fjj2 (#14576).
+
+### Documentation
+
+- Document explicit build-isolation surfaces across CLI, dispatch, HTTP, MCP,
+  orchestration, spec-writing, task-expansion, and task guides (#14570).
+- Mandate `isolation=none` for plan-adversary spawn behavior and drop stale
+  build-profile names from project guidance (#14538, #14565).
+- Advance the Neo4j-to-FalkorDB swap plan through adversarial review rounds,
+  coverage updates, and an appended M1 task manifest (#12746, #14564).
+
+### Release
+
+- Bump the package and `src/gobby/__init__.py` version to 0.4.3 and regenerate
+  the workspace lockfile entry (#14519).
+
+## [0.4.2]
+
+A patch release focused on packaging correctness for installed wheels, custom
+embedding endpoints, and cleanup of early 0.4.x install rough edges.
+
+### Added
+
 - Add `gobby install --embedding-url`, `--embedding-model`, and
   `--embedding-dim` support for custom OpenAI-compatible embedding endpoints,
   including interactive install prompts and automatic dimension probing (#9,
