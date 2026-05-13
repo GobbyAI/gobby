@@ -108,7 +108,24 @@ echo ""
 # Pytest - tests with coverage (80% threshold)
 # Uses verbose mode with timestamps to correlate test execution with daemon logs
 echo ">>> Running pytest with coverage..."
-if uv run pytest -v --tb=line -rFEw --cov=gobby --cov-fail-under=80 --cov-report=term-missing 2>&1 | timestamp | tee "$REPORTS_DIR/pytest-$TIMESTAMP.txt"; then
+PYTEST_ISOLATION_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gobby-pre-push-${TIMESTAMP}.XXXXXX")
+mkdir -p \
+    "$PYTEST_ISOLATION_DIR/home" \
+    "$PYTEST_ISOLATION_DIR/gobby-home" \
+    "$PYTEST_ISOLATION_DIR/logs" \
+    "$PYTEST_ISOLATION_DIR/hooks"
+if GOBBY_TEST_PROTECT=1 \
+    HOME="$PYTEST_ISOLATION_DIR/home" \
+    GOBBY_HOME="$PYTEST_ISOLATION_DIR/gobby-home" \
+    GOBBY_DATABASE_PATH="$PYTEST_ISOLATION_DIR/test.db" \
+    GOBBY_CONFIG_FILE="$PYTEST_ISOLATION_DIR/config-test.yaml" \
+    GOBBY_HOOKS_DIR="$PYTEST_ISOLATION_DIR/hooks" \
+    GOBBY_LOGGING_CLIENT="$PYTEST_ISOLATION_DIR/logs/gobby.log" \
+    GOBBY_LOGGING_CLIENT_ERROR="$PYTEST_ISOLATION_DIR/logs/gobby-error.log" \
+    GOBBY_LOGGING_MCP_SERVER="$PYTEST_ISOLATION_DIR/logs/mcp-server.log" \
+    GOBBY_LOGGING_MCP_CLIENT="$PYTEST_ISOLATION_DIR/logs/mcp-client.log" \
+    GOBBY_LOGGING_HOOK_MANAGER="$PYTEST_ISOLATION_DIR/logs/hook-manager.log" \
+    uv run pytest -v --tb=line -rFEw --cov=gobby --cov-fail-under=80 --cov-report=term-missing 2>&1 | timestamp | tee "$REPORTS_DIR/pytest-$TIMESTAMP.txt"; then
     echo "✓ Pytest passed"
 else
     echo "✗ Pytest failed"
