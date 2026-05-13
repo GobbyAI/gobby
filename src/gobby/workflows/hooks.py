@@ -25,11 +25,7 @@ _NO_REPO_PROJECT_CONSTANTS = frozenset(
         ORPHANED_PROJECT_ID,
     }
 )
-_NO_REPO_LEGACY_PROJECT_IDS = frozenset(
-    legacy_id
-    for legacy_id in {"_personal", "_global", "_orphaned"}
-    if legacy_id not in _NO_REPO_PROJECT_CONSTANTS
-)
+_NO_REPO_LEGACY_PROJECT_IDS = frozenset({"_personal", "_global", "_orphaned"})
 _NO_REPO_SYSTEM_PROJECTS = frozenset(
     {
         *_NO_REPO_PROJECT_CONSTANTS,

@@ -16,6 +16,7 @@ from gobby.storage.tasks._models import (
     MaybeUnset,
     Task,
     TaskAlreadyClaimedError,
+    TaskAlreadyEscalatedError,
     TaskClosedError,
 )
 from gobby.storage.tasks._stage_states import (
@@ -253,8 +254,10 @@ def escalate_task(
     call that could fail after the escalation has already landed.
     """
     task = get_task(db, task_id)
-    if task.is_escalated or is_task_closed(task):
-        raise ValueError(f"Cannot escalate task {task_id}: task is closed or escalated.")
+    if task.is_escalated:
+        raise TaskAlreadyEscalatedError(task_id, task.escalation_reason)
+    if is_task_closed(task):
+        raise ValueError(f"Cannot escalate task {task_id}: task is closed.")
 
     return release_task_claim(
         db,

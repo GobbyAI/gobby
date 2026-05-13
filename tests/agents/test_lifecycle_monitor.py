@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -82,7 +83,9 @@ def _make_terminal_run(
         tmux_session_name=tmux_session_name,
         clone_id=clone_id,
     )
-    return agent_run_manager.get(run.id)
+    stored_run = agent_run_manager.get(run.id)
+    assert stored_run is not None
+    return stored_run
 
 
 def _make_autonomous_run(
@@ -90,7 +93,7 @@ def _make_autonomous_run(
     sample_session: dict,
     monitor: AgentLifecycleMonitor,
     run_id: str = "run-auto",
-    task: asyncio.Task | None = None,
+    task: asyncio.Task[Any] | None = None,
     child_session_id: str | None = None,
     clone_id: str | None = None,
 ) -> AgentRun:
@@ -109,7 +112,9 @@ def _make_autonomous_run(
     )
     if task is not None:
         monitor.register_async_task(run.id, task)
-    return agent_run_manager.get(run.id)
+    stored_run = agent_run_manager.get(run.id)
+    assert stored_run is not None
+    return stored_run
 
 
 class TestCheckDeadAgents:

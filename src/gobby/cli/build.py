@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
 
@@ -233,7 +234,7 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         if response.status_code == 400:
             detail = _daemon_error_detail(response)
             message = _daemon_error_message(detail)
-            if _is_profile_error(detail):
+            if _is_profile_error(detail, response.headers):
                 raise BuildProfileClickException(message)
             raise click.ClickException(message)
         return None
@@ -268,10 +269,26 @@ def _daemon_error_message(detail: Any) -> str:
     return str(detail)
 
 
-def _is_profile_error(detail: Any) -> bool:
+def _is_profile_error(detail: Any, headers: Mapping[str, str] | None = None) -> bool:
+    if headers is not None and headers.get("X-Error-Type") == "build_profile":
+        return True
     if isinstance(detail, dict):
-        error_type = detail.get("type") or detail.get("error_type") or detail.get("code")
-        return error_type in {"BuildProfileError", "build_profile_error", "build_profile"}
+        structured_seen = False
+        for key in ("error_code", "type", "error_type", "code"):
+            value = detail.get(key)
+            if value is None:
+                continue
+            structured_seen = True
+            return value in {
+                "BUILD_PROFILE_ERROR",
+                "BuildProfileError",
+                "build_profile_error",
+                "build_profile",
+            }
+        if structured_seen:
+            return False
+        message = detail.get("message") or detail.get("detail") or detail.get("error")
+        return isinstance(message, str) and bool(_PROFILE_ERROR_RE.search(message))
     if isinstance(detail, str):
         return bool(_PROFILE_ERROR_RE.search(detail))
     return False

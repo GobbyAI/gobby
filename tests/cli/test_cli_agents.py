@@ -387,7 +387,7 @@ class TestAgentsSpawnCommand:
             ["agents", "spawn", "Test prompt", "--session", "sess-parent"],
         )
 
-        assert result.exit_code == 0  # CLI exits cleanly with error message
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
         assert "gobby start" in result.output
 
@@ -419,7 +419,7 @@ class TestAgentsSpawnCommand:
             ["agents", "spawn", "Test prompt", "--session", "sess-parent"],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Error: Daemon returned 500" in result.output
 
     @patch("gobby.cli.agents.resolve_session_id")
@@ -448,7 +448,7 @@ class TestAgentsSpawnCommand:
             ["agents", "spawn", "Test prompt", "--session", "sess-nonexistent"],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Failed to start agent" in result.output
         assert "Session not found" in result.output
 
@@ -472,7 +472,7 @@ class TestAgentsSpawnCommand:
             ["agents", "spawn", "Test prompt", "--session", "sess-parent"],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Error: Unexpected error" in result.output
 
     def test_start_terminal_choices(self, runner: CliRunner) -> None:

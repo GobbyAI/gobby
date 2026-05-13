@@ -147,6 +147,24 @@ def delete_stage(name: str) -> None:
         db.close()
 
 
+def _set_parse_error(raw: str, position: int, reason: str) -> click.ClickException:
+    return click.ClickException(f"--set value {raw!r} is invalid at position {position}: {reason}")
+
+
+def _parse_default_stage(raw: str) -> tuple[str, int]:
+    stage_name, separator, position_text = raw.partition(":")
+    if not separator:
+        raise _set_parse_error(raw, len(raw), "expected stage:position")
+    if not stage_name:
+        raise _set_parse_error(raw, 0, "stage name is required")
+    if not position_text:
+        raise _set_parse_error(raw, len(raw), "position is required")
+    try:
+        return stage_name, int(position_text)
+    except ValueError as exc:
+        raise _set_parse_error(raw, len(stage_name) + 1, "position must be an integer") from exc
+
+
 @stages.command("defaults")
 @click.argument("task_type")
 @click.option(
@@ -159,17 +177,10 @@ def defaults(task_type: str, stage_values: tuple[str, ...]) -> None:
     db, manager = _open_manager()
     try:
         if stage_values:
-            parsed: list[tuple[str, int]] = []
-            for raw in stage_values:
-                stage_name, separator, position_text = raw.partition(":")
-                if not separator:
-                    raise click.ClickException("--set must use stage:position")
-                try:
-                    position = int(position_text)
-                except ValueError as exc:
-                    raise click.ClickException("--set position must be an integer") from exc
-                parsed.append((stage_name, position))
-            manager.set_default_stages(task_type, parsed)
+            manager.set_default_stages(
+                task_type,
+                [_parse_default_stage(raw) for raw in stage_values],
+            )
         _echo(
             [
                 {"stage_name": stage_name, "position": position}

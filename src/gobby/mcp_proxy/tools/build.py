@@ -67,7 +67,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             skip_stages=skip_stages or [],
             skip_stages_explicit=skip_stages is not None,
             isolation=backend,
-            isolation_explicit=isolation is not None or workspace_backend is not None or clone,
+            isolation_explicit=isolation is not None or workspace_backend is not None or bool(clone),
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),

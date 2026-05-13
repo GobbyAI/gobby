@@ -57,7 +57,8 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
     assert response.decision == "allow"
 
 
-def test_hook_manager_integration():
+def test_hook_manager_integration() -> None:
+    """HookManager delegates workflow hook evaluation when daemon health is cached."""
     with (
         patch("gobby.hooks.factory.LocalDatabase"),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,

@@ -117,7 +117,11 @@ class StageRegistryLoader:
         return self._parse_entries(payload), _digest
 
     def load_with_hashes(self) -> list[StageRegistryEntry]:
-        """Return entries with per-entry bundled_hash values for compatibility callers."""
+        """Compatibility alias for callers that expect per-entry bundled hashes.
+
+        ``load_with_hash`` returns the bundle-file hash separately; entries from
+        both methods already carry their individual ``bundled_hash`` values.
+        """
         entries, _digest = self.load_with_hash()
         return entries
 

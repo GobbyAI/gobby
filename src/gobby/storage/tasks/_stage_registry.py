@@ -426,10 +426,14 @@ class StageRegistryManager:
             SELECT name
               FROM build_profiles
              WHERE deleted_at IS NULL
-               AND skip_stages_json LIKE ?
+               AND EXISTS (
+                   SELECT 1
+                     FROM json_each(skip_stages_json) AS skipped
+                    WHERE skipped.value = ?
+               )
              LIMIT 1
             """,
-            (f'%"{name}"%',),
+            (name,),
         )
         if profile_ref is not None:
             return f"Stage '{name}' is referenced by build profile '{profile_ref['name']}'"

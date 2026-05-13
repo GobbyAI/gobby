@@ -80,7 +80,7 @@ class TestSpawnAgentCmd:
     ) -> None:
         result = runner.invoke(agents, ["spawn", "Do work", "--session", "sess"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Cannot connect to Gobby daemon" in result.output
         mock_resolve_session.assert_called_once_with("sess")
         mock_post.assert_called_once()
@@ -99,7 +99,7 @@ class TestSpawnAgentCmd:
         with patch("gobby.cli.agents.httpx.post", return_value=response):
             result = runner.invoke(agents, ["spawn", "Do work", "--session", "sess"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Daemon returned 500" in result.output
         assert "boom" in result.output
 
@@ -118,7 +118,7 @@ class TestSpawnAgentCmd:
         with patch("gobby.cli.agents.httpx.post", return_value=response):
             result = runner.invoke(agents, ["spawn", "Do work", "--session", "sess"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Failed to start agent: agent rejected" in result.output
 
 

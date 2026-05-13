@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
-from typing import Any, cast
+from typing import Any, TypeGuard
 
 import click
 
@@ -18,27 +22,45 @@ from gobby.storage.build_profiles import (
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
+logger = logging.getLogger(__name__)
 
-def _open_manager(*, sync: bool = True) -> tuple[LocalDatabase, BuildProfileManager]:
+
+@contextmanager
+def _open_manager(*, sync: bool = True) -> Iterator[BuildProfileManager]:
     db = LocalDatabase()
     try:
         run_migrations(db)
         if sync:
             BuildProfileLoader().sync(db)
-        return db, BuildProfileManager(db)
+        manager = BuildProfileManager(db)
+    except (OSError, RuntimeError, sqlite3.Error, BuildProfileError) as exc:
+        logger.exception(
+            "Failed to open build profile manager",
+            extra={"sync": sync, "error_type": type(exc).__name__},
+        )
+        db.close()
+        raise
     except Exception:
         db.close()
         raise
+    try:
+        yield manager
+    finally:
+        db.close()
 
 
 def _scope(source: str, project_id: str | None) -> str | None:
     return None if source == "installed" else project_id
 
 
+def _is_profile_source(source: str) -> TypeGuard[BuildProfileSource]:
+    return source in {"installed", "project"}
+
+
 def _profile_source(source: str) -> BuildProfileSource:
-    if source not in {"installed", "project"}:
+    if not _is_profile_source(source):
         raise click.ClickException(f"Invalid build profile source: {source}")
-    return cast(BuildProfileSource, source)
+    return source
 
 
 def _parse_csv(raw: str | None) -> list[str]:
@@ -60,8 +82,7 @@ def profiles() -> None:
 @click.option("--project-id")
 @click.option("--include-deleted", is_flag=True, default=False)
 def list_profiles(project_id: str | None, include_deleted: bool) -> None:
-    db, manager = _open_manager(sync=False)
-    try:
+    with _open_manager(sync=False) as manager:
         _echo(
             [
                 asdict(profile)
@@ -71,8 +92,6 @@ def list_profiles(project_id: str | None, include_deleted: bool) -> None:
                 )
             ]
         )
-    finally:
-        db.close()
 
 
 @profiles.command("show")
@@ -81,8 +100,7 @@ def list_profiles(project_id: str | None, include_deleted: bool) -> None:
 @click.option("--project-id")
 @click.option("--include-deleted", is_flag=True, default=False)
 def show_profile(name: str, source: str, project_id: str | None, include_deleted: bool) -> None:
-    db, manager = _open_manager(sync=False)
-    try:
+    with _open_manager(sync=False) as manager:
         profile = manager.get(
             name,
             source=_profile_source(source),
@@ -92,8 +110,6 @@ def show_profile(name: str, source: str, project_id: str | None, include_deleted
         if profile is None:
             raise click.ClickException(f"Unknown build profile '{name}'")
         _echo(asdict(profile))
-    finally:
-        db.close()
 
 
 @profiles.command("create")
@@ -123,27 +139,39 @@ def create_profile(
     project_id: str | None,
     tags: str | None,
 ) -> None:
-    db, manager = _open_manager()
     try:
-        profile = manager.create(
-            name=name,
-            display_label=display_label,
-            description=description,
-            skip_stages=_parse_csv(skip_stages),
-            isolation=isolation,
-            unattended=unattended,
-            delivery_mode=delivery_mode,
-            delivery_target_repo=delivery_target_repo,
-            enabled=enabled,
-            source=_profile_source(source),
-            project_id=_scope(source, project_id),
-            tags=_parse_csv(tags),
-        )
-        _echo(asdict(profile))
+        with _open_manager() as manager:
+            profile = manager.create(
+                name=name,
+                display_label=display_label,
+                description=description,
+                skip_stages=_parse_csv(skip_stages),
+                isolation=isolation,
+                unattended=unattended,
+                delivery_mode=delivery_mode,
+                delivery_target_repo=delivery_target_repo,
+                enabled=enabled,
+                source=_profile_source(source),
+                project_id=_scope(source, project_id),
+                tags=_parse_csv(tags),
+            )
+            _echo(asdict(profile))
     except BuildProfileError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()
+
+
+def _profile_toggle(name: str, source: str, project_id: str | None, enabled: bool) -> None:
+    try:
+        with _open_manager() as manager:
+            profile = manager.set_enabled(
+                name,
+                source=_profile_source(source),
+                project_id=_scope(source, project_id),
+                enabled=enabled,
+            )
+            _echo(asdict(profile))
+    except BuildProfileError as e:
+        raise click.ClickException(str(e)) from e
 
 
 @profiles.command("update")
@@ -194,35 +222,17 @@ def update_profile(
         updates["enabled"] = enabled
     if tags is not None:
         updates["tags"] = _parse_csv(tags)
-    db, manager = _open_manager()
     try:
-        profile = manager.update(
-            name,
-            source=_profile_source(source),
-            project_id=_scope(source, project_id),
-            updates=updates,
-        )
-        _echo(asdict(profile))
+        with _open_manager() as manager:
+            profile = manager.update(
+                name,
+                source=_profile_source(source),
+                project_id=_scope(source, project_id),
+                updates=updates,
+            )
+            _echo(asdict(profile))
     except BuildProfileError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()
-
-
-def _profile_toggle(name: str, source: str, project_id: str | None, enabled: bool) -> None:
-    db, manager = _open_manager()
-    try:
-        profile = manager.set_enabled(
-            name,
-            source=_profile_source(source),
-            project_id=_scope(source, project_id),
-            enabled=enabled,
-        )
-        _echo(asdict(profile))
-    except BuildProfileError as e:
-        raise click.ClickException(str(e)) from e
-    finally:
-        db.close()
 
 
 @profiles.command("enable")
@@ -246,21 +256,19 @@ def disable_profile(name: str, source: str, project_id: str | None) -> None:
 @click.option("--source", type=click.Choice(["installed", "project"]), default="installed")
 @click.option("--project-id")
 def restore_profile(name: str, source: str, project_id: str | None) -> None:
-    db, manager = _open_manager()
     try:
-        _echo(
-            asdict(
-                manager.restore(
-                    name,
-                    source=_profile_source(source),
-                    project_id=_scope(source, project_id),
+        with _open_manager() as manager:
+            _echo(
+                asdict(
+                    manager.restore(
+                        name,
+                        source=_profile_source(source),
+                        project_id=_scope(source, project_id),
+                    )
                 )
             )
-        )
     except BuildProfileError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()
 
 
 @profiles.command("delete")
@@ -269,16 +277,14 @@ def restore_profile(name: str, source: str, project_id: str | None) -> None:
 @click.option("--project-id")
 @click.option("--purge", is_flag=True, default=False)
 def delete_profile(name: str, source: str, project_id: str | None, purge: bool) -> None:
-    db, manager = _open_manager()
     try:
-        profile = manager.delete(
-            name,
-            source=_profile_source(source),
-            project_id=_scope(source, project_id),
-            purge=purge,
-        )
-        _echo(asdict(profile) if profile is not None else {"deleted": True})
+        with _open_manager() as manager:
+            profile = manager.delete(
+                name,
+                source=_profile_source(source),
+                project_id=_scope(source, project_id),
+                purge=purge,
+            )
+            _echo(asdict(profile) if profile is not None else {"deleted": True})
     except BuildProfileError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()

@@ -329,17 +329,17 @@ class StageStateTransitions:
 
     def escalate_stage_failure(self, task_id: str, reason: str) -> None:
         """Escalate a task for a stage failure, treating duplicate reasons as idempotent."""
+        from gobby.storage.tasks import TaskAlreadyEscalatedError
         from gobby.storage.tasks._transitions import escalate_task
 
         try:
             escalate_task(self.db, task_id, reason=reason)
-        except ValueError:
-            row = self.db.fetchone(
-                "SELECT is_escalated, escalation_reason FROM tasks WHERE id = ?",
-                (task_id,),
-            )
-            if row is not None and bool(row["is_escalated"]) and row["escalation_reason"] == reason:
+        except TaskAlreadyEscalatedError as exc:
+            if exc.reason == reason:
                 return
+            logger.exception("failed to escalate task %s after stage failure", task_id)
+            raise
+        except ValueError:
             logger.exception("failed to escalate task %s after stage failure", task_id)
             raise
         except Exception:

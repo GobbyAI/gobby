@@ -99,6 +99,7 @@ class CoverageRow:
     section_id: str
     item_id: str
     status: CoverageStatus
+    plan_node_hash: str = ""
     leaves: tuple[CoverageRowLeaf, ...] = ()
     deferral_target: str | None = None
     evidence: tuple[EvidenceRow, ...] = ()
@@ -376,6 +377,7 @@ def _evaluate_item(
         return CoverageRow(
             section_id=section.section_id,
             item_id=item.item_id,
+            plan_node_hash=_plan_node_hash(section, item),
             status=CoverageStatus.covered,
             leaves=tuple(covered_leaves),
             evidence=evidence,
@@ -384,6 +386,7 @@ def _evaluate_item(
         return CoverageRow(
             section_id=section.section_id,
             item_id=item.item_id,
+            plan_node_hash=_plan_node_hash(section, item),
             status=CoverageStatus.invalid,
             leaves=tuple(invalid_leaves),
             evidence=evidence,
@@ -399,6 +402,7 @@ def _evaluate_item(
         return CoverageRow(
             section_id=section.section_id,
             item_id=item.item_id,
+            plan_node_hash=_plan_node_hash(section, item),
             status=CoverageStatus.deferred if status == "valid" else CoverageStatus.invalid,
             deferral_target=section.deferral.task_ref,
             evidence=evidence,
@@ -407,6 +411,7 @@ def _evaluate_item(
     return CoverageRow(
         section_id=section.section_id,
         item_id=item.item_id,
+        plan_node_hash=_plan_node_hash(section, item),
         status=CoverageStatus.missing,
         evidence=evidence,
     )
@@ -458,6 +463,7 @@ def _row_from_manifest(raw: object, *, evidence: tuple[EvidenceRow, ...]) -> Cov
     return CoverageRow(
         section_id=str(raw.get("section_id", "")),
         item_id=str(raw.get("item_id", "")),
+        plan_node_hash=str(raw.get("plan_node_hash", "")),
         status=_coverage_status(raw.get("status")),
         leaves=tuple(_leaf_from_manifest(value) for value in _sequence(raw.get("leaves"))),
         deferral_target=_optional_string(raw.get("deferral_target")),
@@ -486,6 +492,7 @@ def _missing_rows(
         CoverageRow(
             section_id=section.section_id,
             item_id=item.item_id,
+            plan_node_hash=_plan_node_hash(section, item),
             status=CoverageStatus.missing,
             evidence=evidence,
         )
@@ -809,6 +816,17 @@ def _records_hash(records: Sequence[_TaskRecord]) -> str:
         }
         for record in records
     ]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _plan_node_hash(section: PlanSection, item: AcceptanceItem) -> str:
+    payload = {
+        "section_id": section.section_id,
+        "item_id": item.item_id,
+        "prose": item.prose,
+        "artifact_kind": item.artifact_kind.value,
+        "artifact_ref": item.artifact_ref,
+    }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 

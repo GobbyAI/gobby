@@ -419,12 +419,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 kwargs[field_name] = getattr(request_data, field_name)
             if "isolation" in kwargs:
                 if kwargs["isolation"] is None:
-                    raise ValueError("isolation cannot be None")
-                kwargs["isolation"] = validate_task_isolation_artifacts(
-                    server.task_manager,
-                    resolved_id,
-                    cast(str, kwargs["isolation"]),
-                )
+                    kwargs.pop("isolation")
+                else:
+                    kwargs["isolation"] = validate_task_isolation_artifacts(
+                        server.task_manager,
+                        resolved_id,
+                        cast(str, kwargs["isolation"]),
+                    )
 
             if not kwargs:
                 return task.to_dict()

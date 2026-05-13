@@ -47,12 +47,10 @@ from gobby.storage.tasks import (
     Task,
 )
 
-_STAGE_CAP_UPDATE_ASSIGNMENTS = frozenset(
-    {
-        "max_work_attempts = ?",
-        "max_review_rounds = ?",
-    }
-)
+_STAGE_CAP_UPDATE_ASSIGNMENTS = {
+    "max_work_attempts": "max_work_attempts = ?",
+    "max_review_rounds": "max_review_rounds = ?",
+}
 
 
 async def build(
@@ -459,17 +457,13 @@ def _apply_stage_caps_to_existing_lifecycle(
             else retry_cap
         )
         if max_work_attempts is not None:
-            updates.append("max_work_attempts = ?")
+            updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_work_attempts"])
             params.append(max_work_attempts)
         if max_review_rounds is not None:
-            updates.append("max_review_rounds = ?")
+            updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_review_rounds"])
             params.append(max_review_rounds)
         if not updates:
             continue
-        # The dynamic SET clause is limited to hardcoded assignments above.
-        invalid_updates = set(updates) - _STAGE_CAP_UPDATE_ASSIGNMENTS
-        if invalid_updates:
-            raise ValueError(f"invalid stage cap update: {sorted(invalid_updates)[0]}")
         params.extend([task_id, stage_name])
         task_manager.db.execute(
             f"""

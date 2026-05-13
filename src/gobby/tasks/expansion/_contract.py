@@ -525,8 +525,17 @@ def _registry_plan_id_for_run(
     root_ref = f"#{task.seq_num}" if task.seq_num is not None else None
     try:
         records = manager.list_plans(state="active", project_id=task.project_id)
-    except (sqlite3.Error, LookupError, ValueError) as exc:
-        logger.debug("Could not resolve plan registry id for expansion run: %s", exc)
+    except (sqlite3.Error, LookupError, KeyError, TypeError, ValueError) as exc:
+        logger.debug(
+            "Could not resolve plan registry id for expansion run",
+            extra={
+                "task_id": task.id,
+                "project_id": task.project_id,
+                "plan_file": str(plan_path),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
         return None
     relative_plan_path = _relative_plan_path(plan_path, repo_path)
     run_plan_path = Path(run.plan_file) if run.plan_file else None

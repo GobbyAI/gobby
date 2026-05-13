@@ -174,7 +174,11 @@ def create_build_router(server: HTTPServer) -> APIRouter:
             )
             return _build_result_json(result)
         except BuildProfileError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise HTTPException(
+                status_code=400,
+                detail={"message": str(e), "error_code": "BUILD_PROFILE_ERROR"},
+                headers={"X-Error-Type": "build_profile"},
+            ) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

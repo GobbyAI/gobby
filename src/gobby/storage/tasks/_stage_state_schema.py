@@ -98,6 +98,9 @@ class StageStateSchema:
             )
             for row in rows:
                 registry = self.rows.registry_entry(row["stage_name"])
+                work_attempt_count = row.get("work_attempt_count")
+                if work_attempt_count is None:
+                    work_attempt_count = row.get("attempt_count", 0)
                 conn.execute(
                     """
                     INSERT INTO task_stage_states (
@@ -121,7 +124,7 @@ class StageStateSchema:
                         row.get("completed_at"),
                         row.get("completed_by_session_id"),
                         row.get("completed_commit_sha"),
-                        row.get("work_attempt_count", row.get("attempt_count", 0)) or 0,
+                        work_attempt_count or 0,
                         row.get("review_round_count", 0) or 0,
                         row.get("max_work_attempts"),
                         row.get("max_review_rounds"),

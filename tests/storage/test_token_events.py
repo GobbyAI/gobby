@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import logging
 from typing import Protocol, cast
-from unittest.mock import Mock
 
 import pytest
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.database import LocalDatabase
 from gobby.storage.token_events import TokenEventStore, _row_value, merge_event_totals
 
 pytestmark = pytest.mark.unit
@@ -77,8 +76,8 @@ def test_row_to_event_dict_logs_metadata_context(caplog: pytest.LogCaptureFixtur
     assert extra.raw_metadata_size == len("{not-json")
 
 
-def test_list_session_events_rejects_non_positive_limit() -> None:
-    store = TokenEventStore(db=Mock(spec=DatabaseProtocol))
+def test_list_session_events_rejects_non_positive_limit(temp_db: LocalDatabase) -> None:
+    store = TokenEventStore(db=temp_db)
 
     with pytest.raises(ValueError, match="limit must be a positive integer"):
         store.list_session_events("sess-1", limit=0)

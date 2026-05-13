@@ -89,7 +89,15 @@ export function StagesTab({
   }, []);
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void load();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [load, refreshKey]);
 
   const filtered = useMemo(() => {

@@ -6,6 +6,7 @@ import {
   WORKFLOWS_CARD_BADGE_CLS,
   WORKFLOWS_CARD_BADGE_DRIFT_CLS,
   WORKFLOWS_CARD_BADGES_CLS,
+  WORKFLOWS_CARD_HEADER_CLICKABLE_CLS,
   WORKFLOWS_CARD_CLS,
   WORKFLOWS_CARD_DELETED_CLS,
   WORKFLOWS_CARD_DESC_CLS,
@@ -23,6 +24,7 @@ import {
   WORKFLOWS_MODAL_SUBMIT_CLS,
   WORKFLOWS_TOGGLE_KNOB_CLS,
   WORKFLOWS_TOGGLE_KNOB_ON_CLS,
+  WORKFLOWS_TOGGLE_CLS,
   WORKFLOWS_TOGGLE_TRACK_CLS,
   WORKFLOWS_TOGGLE_TRACK_ON_CLS,
 } from "./workflows-styles";
@@ -103,7 +105,15 @@ export function ProfilesTab({
   }, [projectId]);
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void load();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [load, refreshKey]);
 
   const filtered = useMemo(() => {
@@ -180,63 +190,72 @@ export function ProfilesTab({
         )}
         <div className={WORKFLOWS_GRID_CLS}>
           {filtered.map((profile) => (
-            <button
+            <article
               key={`${profile.source}:${profile.project_id ?? "global"}:${profile.name}`}
-              type="button"
-              className={`${WORKFLOWS_CARD_CLS} text-left ${profile.deleted_at ? WORKFLOWS_CARD_DELETED_CLS : ""}`}
-              onClick={() => {
-                setCreating(false);
-                setSelected(profile);
-              }}
+              className={`${WORKFLOWS_CARD_CLS} ${profile.deleted_at ? WORKFLOWS_CARD_DELETED_CLS : ""}`}
             >
-              <div className={WORKFLOWS_CARD_HEADER_CLS}>
-                <span
-                  className={`${WORKFLOWS_CARD_NAME_CLS} ${profile.deleted_at ? WORKFLOWS_CARD_NAME_DELETED_CLS : ""}`}
-                >
-                  {profile.display_label}
-                </span>
-                <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.name}</span>
-              </div>
-              <div className={WORKFLOWS_CARD_DESC_CLS}>{profile.description}</div>
-              <div className={WORKFLOWS_CARD_BADGES_CLS}>
-                <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.source}</span>
-                <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.isolation}</span>
-                <span className={WORKFLOWS_CARD_BADGE_CLS}>
-                  {profile.unattended ? "unattended" : "attended"}
-                </span>
-                <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.delivery_mode}</span>
-                <span
-                  className={
-                    profile.state === "edited"
-                      ? WORKFLOWS_CARD_BADGE_DRIFT_CLS
-                      : WORKFLOWS_CARD_BADGE_CLS
-                  }
-                >
-                  {profile.state}
-                </span>
-              </div>
-              {profile.source === "project" && globalNames.has(profile.name) && (
-                <div className="text-xs text-[var(--text-secondary)]">
-                  Overrides global "{profile.name}"
+              <button
+                type="button"
+                className={WORKFLOWS_CARD_HEADER_CLICKABLE_CLS}
+                onClick={() => {
+                  setCreating(false);
+                  setSelected(profile);
+                }}
+              >
+                <div className={WORKFLOWS_CARD_HEADER_CLS}>
+                  <span
+                    className={`${WORKFLOWS_CARD_NAME_CLS} ${profile.deleted_at ? WORKFLOWS_CARD_NAME_DELETED_CLS : ""}`}
+                  >
+                    {profile.display_label}
+                  </span>
+                  <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.name}</span>
                 </div>
-              )}
+                <div className={WORKFLOWS_CARD_DESC_CLS}>{profile.description}</div>
+                <div className={WORKFLOWS_CARD_BADGES_CLS}>
+                  <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.source}</span>
+                  <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.isolation}</span>
+                  <span className={WORKFLOWS_CARD_BADGE_CLS}>
+                    {profile.unattended ? "unattended" : "attended"}
+                  </span>
+                  <span className={WORKFLOWS_CARD_BADGE_CLS}>{profile.delivery_mode}</span>
+                  <span
+                    className={
+                      profile.state === "edited"
+                        ? WORKFLOWS_CARD_BADGE_DRIFT_CLS
+                        : WORKFLOWS_CARD_BADGE_CLS
+                    }
+                  >
+                    {profile.state}
+                  </span>
+                </div>
+                {profile.source === "project" && globalNames.has(profile.name) && (
+                  <div className="text-xs text-[var(--text-secondary)]">
+                    Overrides global "{profile.name}"
+                  </div>
+                )}
+              </button>
               <div className={WORKFLOWS_CARD_FOOTER_CLS}>
                 <span className="text-xs text-[var(--text-secondary)]">
                   skips {profile.skip_stages.length}
                 </span>
-                <span
-                  className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${profile.enabled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void toggleEnabled(profile);
-                  }}
+                <button
+                  type="button"
+                  className={WORKFLOWS_TOGGLE_CLS}
+                  onClick={() => void toggleEnabled(profile)}
+                  aria-pressed={profile.enabled}
+                  aria-label={`${profile.enabled ? "Disable" : "Enable"} ${profile.display_label}`}
                 >
                   <span
-                    className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${profile.enabled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
-                  />
-                </span>
+                    className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${profile.enabled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
+                    aria-hidden="true"
+                  >
+                    <span
+                      className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${profile.enabled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
+                    />
+                  </span>
+                </button>
               </div>
-            </button>
+            </article>
           ))}
         </div>
       </div>
@@ -410,9 +429,9 @@ function ProfileEditor({
         value={draft.isolation}
         onChange={(e) => setField("isolation", e.target.value as Isolation)}
       >
-        <option>none</option>
-        <option>worktree</option>
-        <option>clone</option>
+        <option value="none">none</option>
+        <option value="worktree">worktree</option>
+        <option value="clone">clone</option>
       </select>
       <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Delivery Mode</label>
       <select

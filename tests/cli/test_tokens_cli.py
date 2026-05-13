@@ -76,18 +76,32 @@ def test_load_session_messages_wraps_parse_errors(
 
 def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_db = _FakeDatabase([{"id": "sess-1"}])
-    fake_manager = SimpleNamespace(get=lambda session_id: _make_session(session_id))
+    fake_manager = SimpleNamespace(get=_make_session)
 
-    monkeypatch.setattr(
-        tokens_module,
-        "resolve_project_ref",
-        lambda _ref, exit_on_not_found=False: "proj-1",
-    )
-    monkeypatch.setattr(tokens_module, "LocalDatabase", lambda: fake_db)
-    monkeypatch.setattr(tokens_module, "run_migrations", lambda db: None)
-    monkeypatch.setattr(tokens_module, "SessionManager", lambda db: fake_manager)
-    monkeypatch.setattr(tokens_module, "TokenEventStore", lambda db: _FakeStore())
-    monkeypatch.setattr(tokens_module, "_load_session_messages", lambda *_args, **_kwargs: [])
+    def resolve_project_ref(_ref: str | None, exit_on_not_found: bool = False) -> str:
+        return "proj-1"
+
+    def local_database() -> _FakeDatabase:
+        return fake_db
+
+    def run_migrations(_db: _FakeDatabase) -> None:
+        return None
+
+    def session_manager(_db: _FakeDatabase) -> SimpleNamespace:
+        return fake_manager
+
+    def token_event_store(_db: _FakeDatabase) -> _FakeStore:
+        return _FakeStore()
+
+    def load_session_messages(*_args: object, **_kwargs: object) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(tokens_module, "resolve_project_ref", resolve_project_ref)
+    monkeypatch.setattr(tokens_module, "LocalDatabase", local_database)
+    monkeypatch.setattr(tokens_module, "run_migrations", run_migrations)
+    monkeypatch.setattr(tokens_module, "SessionManager", session_manager)
+    monkeypatch.setattr(tokens_module, "TokenEventStore", token_event_store)
+    monkeypatch.setattr(tokens_module, "_load_session_messages", load_session_messages)
 
     result = runner.invoke(tokens_module.tokens, ["audit", "--all", "--project", "proj-1"])
 
@@ -101,17 +115,29 @@ def test_audit_all_continues_after_transcript_failure(
     runner: CliRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_db = _FakeDatabase([{"id": "sess-1"}, {"id": "sess-2"}])
-    fake_manager = SimpleNamespace(get=lambda session_id: _make_session(session_id))
+    fake_manager = SimpleNamespace(get=_make_session)
 
     def _load_messages(session_id: str, session: Any) -> list[Any]:
         if session_id == "sess-1":
             raise click.ClickException("bad transcript")
         return []
 
-    monkeypatch.setattr(tokens_module, "LocalDatabase", lambda: fake_db)
-    monkeypatch.setattr(tokens_module, "run_migrations", lambda db: None)
-    monkeypatch.setattr(tokens_module, "SessionManager", lambda db: fake_manager)
-    monkeypatch.setattr(tokens_module, "TokenEventStore", lambda db: _FakeStore())
+    def local_database() -> _FakeDatabase:
+        return fake_db
+
+    def run_migrations(_db: _FakeDatabase) -> None:
+        return None
+
+    def session_manager(_db: _FakeDatabase) -> SimpleNamespace:
+        return fake_manager
+
+    def token_event_store(_db: _FakeDatabase) -> _FakeStore:
+        return _FakeStore()
+
+    monkeypatch.setattr(tokens_module, "LocalDatabase", local_database)
+    monkeypatch.setattr(tokens_module, "run_migrations", run_migrations)
+    monkeypatch.setattr(tokens_module, "SessionManager", session_manager)
+    monkeypatch.setattr(tokens_module, "TokenEventStore", token_event_store)
     monkeypatch.setattr(tokens_module, "_load_session_messages", _load_messages)
 
     result = runner.invoke(tokens_module.tokens, ["audit", "--all"])

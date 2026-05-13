@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,7 +21,9 @@ async def test_complete_and_notify_agent_run_offloads_complete_run() -> None:
     completion_registry.notify = AsyncMock()
     to_thread_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
 
-    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+    async def fake_to_thread(
+        func: Callable[..., object], *args: object, **kwargs: object
+    ) -> object:
         to_thread_calls.append((func, args, kwargs))
         return func(*args, **kwargs)
 

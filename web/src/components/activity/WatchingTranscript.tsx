@@ -20,6 +20,7 @@ function normalizeRole(role: string): ChatMessage["role"] {
 }
 
 function visibleToolCalls(toolCalls: ToolCall[]): ToolCall[] {
+  // Completed AskUserQuestion calls are rendered as interaction state elsewhere.
   return toolCalls.filter(
     (toolCall) =>
       !(

@@ -38,7 +38,7 @@ class ServiceContainer:
     database: DatabaseProtocol
 
     # Core Managers
-    session_manager: SessionManager
+    session_manager: SessionManager | None
     task_manager: LocalTaskManager
     db_executor: DatabaseExecutor | None = None
     span_storage: Any | None = None  # SpanStorage

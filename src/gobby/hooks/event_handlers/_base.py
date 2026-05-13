@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
+# The final bool is set_handoff_ready for handoff-gated summary dispatches.
+DispatchSessionSummariesFn = Callable[[str, bool, threading.Event | None, bool], None]
+
 
 class EventHandlersBase:
     """Base class for EventHandlers mixins with type hints for shared state."""
@@ -37,7 +40,7 @@ class EventHandlersBase:
     _resolve_project_id: Callable[[str | None, str | None], str]
     _code_index_trigger: Any | None
     _pending_subagent_depths: dict[str, int]
-    _dispatch_session_summaries_fn: Callable[[str, bool, threading.Event | None, bool], None] | None
+    _dispatch_session_summaries_fn: DispatchSessionSummariesFn | None
     logger: logging.Logger
     _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
 

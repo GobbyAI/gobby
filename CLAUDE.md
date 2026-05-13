@@ -333,7 +333,9 @@ Build state is resolved before dispatch:
   canonical profile names are not yet decided. The only build option flag
   surfaced today is `--quick` (CLI) / `"quick": true` (MCP/HTTP). Named
   profile bundles that resolve to peer build fields will land with the
-  registry work.
+  registry work. Today, quick mode is a smoke path: it limits initial
+  dispatcher ticks, disables automation after kickoff, and may change as the
+  profiles registry becomes canonical.
 - `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
   falls back to `backend-developer` with an audit marker.
 

@@ -357,7 +357,7 @@ class ChatMessagingMixin:
             any_sent = False
             for ws, meta in list(self.clients.items()):
                 cid = meta.get("conversation_id") if meta else None
-                if cid != conversation_id:
+                if cid is not None and cid != conversation_id:
                     continue
                 try:
                     await ws.send(encoded)

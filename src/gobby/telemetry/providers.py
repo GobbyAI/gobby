@@ -105,6 +105,5 @@ def shutdown_providers() -> None:
         _METER_PROVIDER = None
 
     if _LOGGER_PROVIDER is not None:
-        shutdown = cast(Callable[[], None], _LOGGER_PROVIDER.shutdown)
-        shutdown()
+        cast(Callable[[], None], _LOGGER_PROVIDER.shutdown)()
         _LOGGER_PROVIDER = None

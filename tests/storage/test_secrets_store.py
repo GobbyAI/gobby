@@ -94,7 +94,7 @@ class TestSecretInfo:
         )
         assert hasattr(info, "__slots__")
         with pytest.raises(AttributeError):
-            info.nonexistent = "value"
+            setattr(info, "nonexistent", "value")  # noqa: B010 - intentionally exercises slots
 
 
 # =============================================================================
@@ -249,12 +249,12 @@ class TestSecretStoreSet:
                 return None  # Simulate row vanishing
             return original_fetchone(sql, params)
 
-        temp_db.fetchone = patched_fetchone
+        setattr(temp_db, "fetchone", patched_fetchone)  # noqa: B010 - monkeypatches instance method
         try:
             with pytest.raises(ValueError, match="not found after upsert"):
                 store.set("VANISH", "value")
         finally:
-            temp_db.fetchone = original_fetchone
+            setattr(temp_db, "fetchone", original_fetchone)  # noqa: B010
 
     def test_set_encrypts_value(self, store: SecretStore, temp_db: LocalDatabase) -> None:
         """The stored value in the DB should NOT be the plaintext."""

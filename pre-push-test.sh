@@ -109,12 +109,15 @@ echo ""
 # Uses verbose mode with timestamps to correlate test execution with daemon logs
 echo ">>> Running pytest with coverage..."
 PYTEST_ISOLATION_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gobby-pre-push-${TIMESTAMP}.XXXXXX")
-mkdir -p \
+if ! mkdir -p \
     "$PYTEST_ISOLATION_DIR/home" \
     "$PYTEST_ISOLATION_DIR/gobby-home" \
     "$PYTEST_ISOLATION_DIR/logs" \
-    "$PYTEST_ISOLATION_DIR/hooks"
-if GOBBY_TEST_PROTECT=1 \
+    "$PYTEST_ISOLATION_DIR/hooks"; then
+    echo "✗ Failed to create pytest isolation directories under PYTEST_ISOLATION_DIR=$PYTEST_ISOLATION_DIR"
+    echo "  Check directory permissions and available disk space."
+    FAILED=1
+elif GOBBY_TEST_PROTECT=1 \
     HOME="$PYTEST_ISOLATION_DIR/home" \
     GOBBY_HOME="$PYTEST_ISOLATION_DIR/gobby-home" \
     GOBBY_DATABASE_PATH="$PYTEST_ISOLATION_DIR/test.db" \

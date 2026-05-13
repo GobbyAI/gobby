@@ -256,6 +256,8 @@ def test_daemon_profile_error_detection_prefers_structured_type() -> None:
     from gobby.cli.build import _is_profile_error
 
     assert _is_profile_error({"type": "build_profile_error", "message": "Nope"}) is True
+    assert _is_profile_error({"error_code": "BUILD_PROFILE_ERROR", "message": "Nope"}) is True
+    assert _is_profile_error({"message": "Nope"}, {"X-Error-Type": "build_profile"}) is True
     assert _is_profile_error({"type": "validation_error", "message": "Build profile text"}) is False
 
 

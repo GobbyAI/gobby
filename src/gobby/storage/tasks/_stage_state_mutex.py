@@ -9,6 +9,8 @@ from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex, RuntimeStag
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_types import StageState, StageState5
 
+_RUNTIME_SNAPSHOT_STATES = frozenset({"ready", "in_progress", "needs_review", "review_approved"})
+
 
 class StageStateMutexFactory:
     def __init__(self, storage: TaskDispatchMutexManager, rows: StageStateRows) -> None:
@@ -45,6 +47,6 @@ class StageStateMutexFactory:
 
 
 def snapshot_state(value: StageState5) -> RuntimeStageSnapshotState | None:
-    if value in {"ready", "in_progress", "needs_review", "review_approved"}:
+    if value in _RUNTIME_SNAPSHOT_STATES:
         return cast(RuntimeStageSnapshotState, value)
     return None

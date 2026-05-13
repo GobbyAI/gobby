@@ -40,7 +40,9 @@ def _make_terminal_run(
     )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
-    return agent_run_manager.get(run.id)
+    stored_run = agent_run_manager.get(run.id)
+    assert stored_run is not None
+    return stored_run
 
 
 def _write_codex_transcript(path: Path) -> None:

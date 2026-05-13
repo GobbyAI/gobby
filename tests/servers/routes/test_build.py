@@ -145,6 +145,26 @@ def test_post_api_build_returns_400_for_validation_errors() -> None:
     assert response.json()["detail"] == "--no-merge requires isolated work"
 
 
+def test_post_api_build_returns_structured_profile_errors() -> None:
+    from gobby.build.profiles import BuildProfileError
+
+    with patch(
+        "gobby.servers.routes.build.build",
+        new=AsyncMock(side_effect=BuildProfileError("Unknown build profile 'missing'")),
+    ):
+        response = _client().post(
+            "/api/build",
+            json={"input_ref": "plan.md", "quick": True},
+        )
+
+    assert response.status_code == 400
+    assert response.headers["X-Error-Type"] == "build_profile"
+    assert response.json()["detail"] == {
+        "message": "Unknown build profile 'missing'",
+        "error_code": "BUILD_PROFILE_ERROR",
+    }
+
+
 @pytest.mark.parametrize("isolation", ["none", "worktree"])
 def test_post_api_build_rejects_clone_isolation_conflicts(isolation: str) -> None:
     response = _client().post(
