@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
+import { inputFocusCls } from '../shared/focusStyles'
 import {
   TASK_MODAL_BACKDROP_BASE_CLS,
   TASK_MODAL_CLOSE_BTN_CLS,
@@ -57,9 +58,9 @@ const ROW_CLS = 'flex gap-3 [&>div]:flex-1'
 const LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] font-medium text-[var(--text-muted)]'
 const REQUIRED_CLS = 'text-[var(--color-error)]'
 const INPUT_CLS =
-  'rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11'
+  `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} pointer-coarse:min-h-11`
 const TEXTAREA_CLS =
-  'min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none'
+  `min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
 
 const ACTIONS_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] pt-2'
 const CANCEL_BTN_CLS =

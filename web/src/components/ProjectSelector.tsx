@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { ProjectOption } from "../types/chat";
 import { cn } from "../lib/utils";
 import { SegmentedControl } from "./ui/SegmentedControl";
+import { inputFocusCls } from "./shared/focusStyles";
 
 type ProjectMode = "personal" | "project";
 
@@ -137,7 +138,7 @@ export function ProjectSelector({
             aria-label="Project search results"
           >
             <input
-              className="w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground focus:outline-none"
+              className={`w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground ${inputFocusCls}`}
               placeholder="Search"
               value={projectSearch}
               onChange={(e) => setProjectSearch(e.target.value)}

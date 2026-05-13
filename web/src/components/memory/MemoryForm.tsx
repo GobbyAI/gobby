@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { GobbyMemory } from '../../hooks/useMemory'
+import { inputFocusCls } from '../shared/focusStyles'
 
 interface MemoryFormProps {
   memory: GobbyMemory | null
@@ -17,7 +18,7 @@ export interface MemoryFormData {
 const MEMORY_TYPES = ['fact', 'preference', 'pattern', 'context'] as const
 
 const FIELD_INPUT_CLS =
-  'rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-base)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11'
+  `rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-base)] text-[var(--text-primary)] ${inputFocusCls} pointer-coarse:min-h-11`
 const FIELD_LABEL_CLS = 'text-[length:var(--text-sm)] font-medium text-[var(--text-muted)]'
 const FIELD_WRAP_CLS = 'flex flex-col gap-1'
 

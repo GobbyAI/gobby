@@ -9,6 +9,7 @@ import type { MemoryFormData } from './MemoryForm'
 import { MemoryDetail } from './MemoryDetail'
 import { IS_MOBILE, IS_IOS, WEBGL_CAP } from '../../utils/platform'
 import { cn } from '../../lib/utils'
+import { inputFocusCls } from '../shared/focusStyles'
 
 const DEFAULT_KNOWLEDGE_GRAPH_LIMIT = IS_IOS ? 150 : IS_MOBILE ? 250 : 500
 const GRAPH_LIMIT_MIN = 50
@@ -298,7 +299,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
             })}
           </div>
           <input
-            className="box-border min-w-0 max-w-[180px] flex-[1_1_140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-[length:var(--text-base)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11"
+            className={`box-border min-w-0 max-w-[180px] flex-[1_1_140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-[length:var(--text-base)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls} pointer-coarse:min-h-11`}
             type="text"
             placeholder="Search"
             value={searchText}

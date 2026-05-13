@@ -1,5 +1,6 @@
 import type { MemoryFilters as MemoryFiltersType, MemoryStats } from '../../hooks/useMemory'
 import { cn } from '../../lib/utils'
+import { inputFocusCls } from '../shared/focusStyles'
 
 interface MemoryFiltersProps {
   filters: MemoryFiltersType
@@ -95,7 +96,7 @@ export function MemoryFilters({
                 const v = Math.max(limitMin, Math.min(limitMax, Number(e.target.value) || limitMin))
                 onKnowledgeGraphLimitChange(v)
               }}
-              className="w-16 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-1.5 py-1 text-right text-[length:var(--text-sm)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11"
+              className={`w-16 rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-1.5 py-1 text-right text-[length:var(--text-sm)] text-[var(--text-primary)] ${inputFocusCls} pointer-coarse:min-h-11`}
             />
           </label>
         )}
