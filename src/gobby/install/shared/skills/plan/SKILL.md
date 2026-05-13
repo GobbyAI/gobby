@@ -564,6 +564,7 @@ run = spawn_agent(
     agent="plan-adversary",
     task_id=anchor.id,                    # NOT planning_task_id
     parent_session_id=<self>,
+    isolation="none",                     # ALWAYS "none" for plan-adversary
     prompt=(
         f"Plan artifact: {artifact_path}\n"
         f"Parent task: {plan_parent_ref}\n"
@@ -575,6 +576,26 @@ run = spawn_agent(
 )
 set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 ```
+
+**ISOLATION RULES — NON-NEGOTIABLE:**
+
+- **ALWAYS pass `isolation="none"` on the `plan-adversary` spawn.** The agent
+  definition already sets `isolation: none`; passing it explicitly is defensive
+  and self-documenting. It costs nothing.
+- **NEVER pass `isolation="worktree"` or `isolation="clone"` for `plan-adversary`
+  (or for the Step 7.3a pre-flight fact-checker).** Both agents are read-only
+  reviewers. Their only legitimate write is the post-approval manifest append to
+  the plan file in the main worktree — which the adversary contract restricts to
+  `task_artifacts.plan_file_path`. A worktree spawn forks a branch from `HEAD`
+  *before* the coordinator's between-round fix commits land, which causes
+  reviewers to analyze stale code and emit false-positive findings. This is a
+  documented failure mode, not a theoretical risk.
+- **NEVER copy isolation defaults from worker-agent spawn patterns.** Worker
+  agents (developer, qa, etc.) use `isolation="worktree"` because they perform
+  concurrent file edits. Reviewers do not.
+- If you find yourself reaching for any `isolation` value other than `"none"`
+  here, stop and re-read this block. There is no scenario where a different
+  value is correct for the planning review loop.
 
 The spawn path auto-injects `assigned_task_id` and auto-claims the anchor for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here. The anchor (not the planning epic) is what the adversary marks at terminal.
 
