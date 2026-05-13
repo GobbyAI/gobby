@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import contextlib
 import importlib
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gobby.communications.adapters.base import BaseChannelAdapter
 
 _ADAPTER_REGISTRY: dict[str, type[BaseChannelAdapter]] = {}
+logger = logging.getLogger(__name__)
 
 
 def register_adapter(channel_type: str, adapter_class: type[BaseChannelAdapter]) -> None:
@@ -35,7 +36,9 @@ for _adapter_module in (
     "gobby.communications.adapters.sms",
     "gobby.communications.adapters.gobby_chat",
 ):
-    with contextlib.suppress(ImportError):
+    try:
         importlib.import_module(_adapter_module)
+    except ImportError as exc:
+        logger.debug("Skipping communications adapter %s: %s", _adapter_module, exc)
 
 del _adapter_module

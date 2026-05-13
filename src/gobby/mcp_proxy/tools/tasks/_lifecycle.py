@@ -26,6 +26,8 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
 
 
 def _is_uuid(value: object) -> bool:
+    """Return True only for string UUID values accepted by task lifecycle helpers."""
+
     return isinstance(value, str) and _helpers_is_uuid(value)
 
 

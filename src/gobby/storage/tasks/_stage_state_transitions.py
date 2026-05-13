@@ -14,6 +14,7 @@ from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_types import IllegalStageTransitionError, StageState, StageState5
 from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
+from gobby.utils.sql import sql_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,8 @@ class StageStateTransitions:
                         validation_override_reason=validation_override_reason,
                     )
             updated = self.rows.get(task_id, stage_name)
-            assert updated is not None
+            if updated is None:
+                raise RuntimeError(f"Stage '{stage_name}' disappeared after transition")
             if verb == "reject_review" and updated.review_round_count >= self.effective_cap(
                 updated, "review"
             ):
@@ -173,7 +175,7 @@ class StageStateTransitions:
         cited_ids = tuple(dict.fromkeys(cited_subtasks))
         if not cited_ids:
             return
-        placeholders = ",".join("?" for _ in cited_ids)
+        placeholders = sql_placeholders(len(cited_ids))
         rows = conn.execute(
             f"""
             WITH RECURSIVE subtree(id) AS (

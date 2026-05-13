@@ -6,6 +6,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.app_context import get_app_context
+from gobby.build.options import resolve_build_isolation
 from gobby.build.service import BuildOptions, build
 from gobby.config.build import Isolation, StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -51,23 +52,18 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
-        if clone and isolation in {"none", "worktree"}:
-            raise ValueError(f"clone=true conflicts with isolation={isolation}")
-        if clone and workspace_backend == "worktree":
-            raise ValueError("clone=true conflicts with workspace_backend=worktree")
-        if isolation is not None and workspace_backend is not None:
-            if isolation != workspace_backend:
-                raise ValueError("isolation conflicts with workspace_backend")
-        backend = isolation or workspace_backend or ("clone" if clone else "worktree")
-        if clone and backend != "clone":
-            raise ValueError("clone=true requires isolation=clone or workspace_backend=clone")
+        resolved_isolation = resolve_build_isolation(
+            isolation=isolation,
+            workspace_backend=workspace_backend,
+            clone=clone,
+        )
 
         opts = BuildOptions(
             quick=quick,
             skip_stages=skip_stages or [],
             skip_stages_explicit=skip_stages is not None,
-            isolation=backend,
-            isolation_explicit=isolation is not None or workspace_backend is not None or bool(clone),
+            isolation=resolved_isolation.isolation,
+            isolation_explicit=resolved_isolation.explicit,
             no_merge=no_merge,
             pr=pr,
             stage_caps=_stage_caps_from_payload(stage or []),

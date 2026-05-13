@@ -1,4 +1,4 @@
-interface ActivityFilterFooterProps {
+export interface ActivityFilterFooterProps {
   onReset: () => void
   onApply: () => void
   resetDisabled?: boolean

@@ -146,7 +146,8 @@ class VectorStore:
 
         # Check if collection exists; create if not
         client = self._client
-        assert client is not None
+        if client is None:
+            raise RuntimeError(_UNINITIALIZED_MESSAGE)
         exists = await asyncio.to_thread(client.collection_exists, self._collection_name)
         if not exists:
             await asyncio.to_thread(

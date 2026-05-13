@@ -1,6 +1,7 @@
 # Migrate Knowledge Graph Backend from Neo4j to FalkorDB
 
 ## Overview
+
 `kind: framing`
 
 Replace Neo4j (HTTP Query API v2 + JVM + APOC) with FalkorDB (Redis RESP + native vector indexes + single binary) across the Python daemon (`gobby`), the Rust read client (`gobby-cli`), and the web UI (browser components + Ink onboarding wizard). Targets the 0.4.0 ship.
@@ -8,6 +9,7 @@ Replace Neo4j (HTTP Query API v2 + JVM + APOC) with FalkorDB (Redis RESP + nativ
 The architectural fact that shapes this plan: **the Rust crate is read-only** and **all graph writes happen in the Python daemon** — both for the memory knowledge graph (`KnowledgeGraphService` + `Neo4jClient`) and the code knowledge graph (`code_index/CodeGraph`). Dialect translation is concentrated in Python; Rust just needs a transport swap. Both repos must land in lockstep because the Rust crate reads the graph the daemon writes.
 
 ## Constraints
+
 `kind: framing`
 
 - **No compatibility shim, no dual-backend abstraction.** Full rip-and-replace; pick FalkorDB and commit.
@@ -18,6 +20,7 @@ The architectural fact that shapes this plan: **the Rust crate is read-only** an
 - **Drop the vestigial 1536 dim default** in `ensure_vector_index`. The replacement requires `dimension` as a positional kwarg sourced from `EmbeddingsConfig.dim`. Closes a footgun.
 
 ## P1 Phase 1: Python — FalkorClient and Config
+
 `kind: framing`
 
 **Goal**: Stand up `FalkorClient` and `FalkorConfig` so subsequent phases can wire them in.
@@ -273,6 +276,7 @@ This task depends on Phase 2 because `KnowledgeGraphService` and `CodeGraph` sti
 - 1.3.3 — `src/gobby/memory/services/knowledge_graph.py` no longer imports `Neo4jClient` or `Neo4jConnectionError`. file: `src/gobby/memory/services/knowledge_graph.py`.
 
 ## P2 Phase 2: Python — Cypher Dialect Translation and Wire-Up
+
 `kind: framing`
 
 **Goal**: Translate every Cypher statement to FalkorDB dialect and wire the new client into `KnowledgeGraphService`, `MemoryManager`, `CodeGraph`, and `CodeIndexContext`.
@@ -458,6 +462,7 @@ The CodeGraph constructor signature changes here, so the test must move with the
 - 2.2.2 — Runner init constructs `CodeGraph` with `FalkorClient`. file: `src/gobby/runner_init/services.py`.
 
 ## P3 Phase 3: Python — Installer, Bootstrap, and CLI Flags
+
 `kind: framing`
 
 **Goal**: Replace the Neo4j installer with a Docker-only FalkorDB installer; rename CLI flags; migrate bootstrap and config_store keys.
@@ -1122,6 +1127,7 @@ This task is critical to running before Phase 7 (Rust) lands, because gobby-cli 
 - 3.6.1 — One-shot migration preserves backend-agnostic tunables (`graph_search`, `graph_min_score`, `rrf_k`, `graph_name`) under `databases.falkordb.*` when user-overridden, drops every `databases.neo4j.*` connection/auth key (`url`, `auth`, `database`, `host`, `port`) including the `$secret:auth` config reference, and removes the orphaned `auth` secret only when no remaining JSON-encoded `$secret:auth` reference survives. file: `src/gobby/storage/migrations.py`.
 
 ## P4 Phase 4: Python — Admin Payload and Memory Routes
+
 `kind: framing`
 
 **Goal**: Update the `/api/admin/status` endpoint to emit `memory.falkordb` (matching the new frontend hook) and rename `_neo4j_client` references in memory routes.
@@ -1363,6 +1369,7 @@ This task is a **prerequisite for any UI / API change that exposes the FalkorDB 
 - 4.4.8 — Export-then-import round-trip via `POST /api/config/export` -> `POST /api/config/import` leaves the `secrets` row for `requirepass` byte-identical and never invokes `validate_falkordb_password` on a `$secret:<name>` sentinel. behavior: "export-then-import round-trip preserves the requirepass secrets row unchanged" in `tests/servers/routes/test_configuration_routes.py`.
 
 ## P5 Phase 5: Web UI — Browser Components
+
 `kind: framing`
 
 **Goal**: Update the browser-side hooks, types, components, and tests to consume the renamed admin payload and reflect FalkorDB branding.
@@ -1527,6 +1534,7 @@ Behavior is unchanged across both components — only identifier names and user-
 - 5.3.1 — `MemoryPage` references the renamed hook; KnowledgeGraph empty-state copy mentions FalkorDB. file: `web/src/components/memory/MemoryPage.tsx`.
 
 ## P6 Phase 6: Web UI — Ink Setup Wizard (in scope for 0.4.0)
+
 `kind: framing`
 
 **Goal**: Update the Ink-based setup wizard so `gobby setup` invokes the new CLI flags and persists state under the new field names. Manual end-to-end verification required before merge.
@@ -1709,6 +1717,7 @@ If wizard bitrot independent of this migration is uncovered during this verifica
 - 6.4.1 — Manual end-to-end run completes a fresh install through the Ink setup wizard against FalkorDB. behavior: "Ink setup wizard completes a fresh install end-to-end against FalkorDB" in `web/src/setup/`.
 
 ## P7 Phase 7: Rust gobby-cli — FalkorDB Read Client
+
 `kind: framing`
 
 **Goal**: Replace the Neo4j HTTP client in `crates/gcode/src/neo4j.rs` with a FalkorDB client using the official `falkordb` Rust crate; rename config; preserve all 8 read function signatures.
@@ -2133,6 +2142,7 @@ Both must exit 0. If either fails, a `mod neo4j;`, `use crate::neo4j;`, or `neo4
 - 7.4.1 — All `gobby-cli` callsites use `FalkorClient`; full Rust source sweep removes residual Neo4j references. behavior: "ripgrep `Neo4j|neo4j` over Rust source returns zero hits" in `crates/`.
 
 ## P8 Phase 8: Cross-Repo Cutover Choreography
+
 `kind: framing`
 
 **Goal**: Define the operational dance for landing both repos atomically — merge ordering, validation matrix, CLI flag deprecation policy, runtime warnings for users on upgrade.
@@ -2337,6 +2347,7 @@ Per Plan-Coverage Contract table-row decomposition: the validation matrix above 
 - 8.3.24 — Matrix row 23 passes: password charset validator round-trip — accepted password (`Pa$$w0rd!`) persists through `gobby install --falkordb-password`, the wizard `[p]` path, `/api/config/values` PUT, and `gobby-config set_config`; rejected samples (empty, whitespace, tab, control, non-ASCII) all surface the `ValueError` at the appropriate layer (CLI exit 1, wizard inline re-prompt, HTTP 422 from `/api/config/values`, MCP error) and DO NOT persist; with the accepted password installed, `redis-cli -a "<pw>" PING` returns `PONG` confirming the quoted-healthcheck change in § 3.2. behavior: "matrix row 23 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
 
 ## P9 Phase 9: Documentation
+
 `kind: framing`
 
 **Goal**: Update all user-facing and developer-facing documentation in both repos.
@@ -2385,6 +2396,7 @@ Sweep with `rg -l Neo4j ../gobby-cli` and update:
 - 9.2.1 — Rust repo documentation updated for the FalkorDB swap. file: `crates/gcode/README.md`.
 
 ## Task Mapping
+
 `kind: framing`
 
 <!-- Updated after task creation -->
@@ -2392,6 +2404,7 @@ Sweep with `rg -l Neo4j ../gobby-cli` and update:
 |-----------|----------|--------|
 
 ## M1 Task Manifest
+
 `kind: manifest`
 
 ```yaml

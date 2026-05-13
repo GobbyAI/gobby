@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -10,6 +11,8 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.git import get_github_url
+
+logger = logging.getLogger(__name__)
 
 
 def record_build_delivery_campaign(
@@ -35,6 +38,15 @@ def record_build_delivery_campaign(
         source_repo=source_repo,
         target_repo=target_repo,
         state="pending",
+    )
+    logger.info(
+        "Recorded build delivery campaign",
+        extra={
+            "task_id": task_id,
+            "project_id": project_id,
+            "source_repo": source_repo,
+            "target_repo": target_repo,
+        },
     )
 
 

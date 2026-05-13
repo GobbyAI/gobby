@@ -1,5 +1,6 @@
 """Tests for DedupService (vector similarity dedup)."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_vector_store():
+def mock_vector_store() -> MagicMock:
     """Mock VectorStore."""
     store = MagicMock()
     store.search = AsyncMock(return_value=[])
@@ -27,7 +28,7 @@ def mock_vector_store():
 
 
 @pytest.fixture
-def mock_storage():
+def mock_storage() -> MagicMock:
     """Mock LocalMemoryManager (SQLite storage)."""
     storage = MagicMock()
     storage.get_memory = MagicMock(return_value=None)
@@ -35,14 +36,16 @@ def mock_storage():
 
 
 @pytest.fixture
-def mock_embed_fn():
+def mock_embed_fn() -> AsyncMock:
     """Mock embedding function."""
     fn = AsyncMock(return_value=[0.1] * 1536)
     return fn
 
 
 @pytest.fixture
-def dedup_service(mock_vector_store, mock_storage, mock_embed_fn):
+def dedup_service(
+    mock_vector_store: Any, mock_storage: Any, mock_embed_fn: Any
+) -> DedupService:
     """Create DedupService with all mocks."""
     return DedupService(
         vector_store=mock_vector_store,
@@ -76,7 +79,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_no_similar_returns_empty(
-        self, dedup_service, mock_vector_store, mock_embed_fn
+        self, dedup_service: DedupService, mock_vector_store: Any, mock_embed_fn: Any
     ) -> None:
         """process() returns empty result when no similar memories found."""
         mock_vector_store.search.return_value = []
@@ -95,7 +98,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_near_exact_duplicate_noop(
-        self, dedup_service, mock_vector_store, mock_embed_fn
+        self, dedup_service: DedupService, mock_vector_store: Any, mock_embed_fn: Any
     ) -> None:
         """process() returns empty result for near-exact duplicates (score > 0.95)."""
         mock_vector_store.search.return_value = [("mem-existing", 0.96)]
@@ -111,7 +114,11 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_similar_updates_when_richer(
-        self, dedup_service, mock_vector_store, mock_storage, mock_embed_fn
+        self,
+        dedup_service: DedupService,
+        mock_vector_store: Any,
+        mock_storage: Any,
+        mock_embed_fn: Any,
     ) -> None:
         """process() updates existing memory when new content scores richer."""
         mock_vector_store.search.return_value = [("mem-old", 0.90)]
@@ -139,7 +146,11 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_similar_noop_when_existing_sufficient(
-        self, dedup_service, mock_vector_store, mock_storage, mock_embed_fn
+        self,
+        dedup_service: DedupService,
+        mock_vector_store: Any,
+        mock_storage: Any,
+        mock_embed_fn: Any,
     ) -> None:
         """process() returns empty result when existing content scores richer."""
         mock_vector_store.search.return_value = [("mem-old", 0.90)]
@@ -160,7 +171,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_similar_updates_with_shorter_but_more_detailed_content(
-        self, dedup_service, mock_vector_store, mock_storage
+        self, dedup_service: DedupService, mock_vector_store: Any, mock_storage: Any
     ) -> None:
         """Structured details can replace vague longer text."""
         mock_vector_store.search.return_value = [("mem-old", 0.90)]
@@ -185,7 +196,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_similar_keeps_concise_detail_over_longer_vague_content(
-        self, dedup_service, mock_vector_store, mock_storage
+        self, dedup_service: DedupService, mock_vector_store: Any, mock_storage: Any
     ) -> None:
         """Longer vague prose does not replace concise operational detail."""
         mock_vector_store.search.return_value = [("mem-old", 0.90)]
@@ -208,7 +219,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_below_threshold_no_action(
-        self, dedup_service, mock_vector_store, mock_embed_fn
+        self, dedup_service: DedupService, mock_vector_store: Any, mock_embed_fn: Any
     ) -> None:
         """process() returns empty when all results are below similarity threshold."""
         mock_vector_store.search.return_value = [("mem-unrelated", 0.5)]
@@ -223,7 +234,11 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_fallback_on_embed_failure(
-        self, dedup_service, mock_embed_fn, mock_storage, mock_vector_store
+        self,
+        dedup_service: DedupService,
+        mock_embed_fn: Any,
+        mock_storage: Any,
+        mock_vector_store: Any,
     ) -> None:
         """process() falls back to simple store when embedding fails."""
         mock_embed_fn.side_effect = [
@@ -248,7 +263,11 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_fallback_on_search_failure(
-        self, dedup_service, mock_embed_fn, mock_vector_store, mock_storage
+        self,
+        dedup_service: DedupService,
+        mock_embed_fn: Any,
+        mock_vector_store: Any,
+        mock_storage: Any,
     ) -> None:
         """process() falls back to simple store when vector search fails."""
         mock_vector_store.search.side_effect = Exception("Qdrant down")
@@ -266,7 +285,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_vectorstore_unavailable_does_not_disable_embeddings(
-        self, dedup_service, mock_embed_fn, mock_vector_store
+        self, dedup_service: DedupService, mock_embed_fn: Any, mock_vector_store: Any
     ) -> None:
         """Transient VectorStore upsert failures should not disable future embeddings."""
         mock_vector_store.upsert.side_effect = VectorStoreUnavailableError()
@@ -280,7 +299,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_uses_project_filter(
-        self, dedup_service, mock_vector_store, mock_embed_fn
+        self, dedup_service: DedupService, mock_vector_store: Any, mock_embed_fn: Any
     ) -> None:
         """process() passes project_id as filter to vector search."""
         mock_vector_store.search.return_value = []
@@ -292,7 +311,7 @@ class TestProcess:
 
     @pytest.mark.asyncio
     async def test_process_no_project_no_filter(
-        self, dedup_service, mock_vector_store, mock_embed_fn
+        self, dedup_service: DedupService, mock_vector_store: Any, mock_embed_fn: Any
     ) -> None:
         """process() passes None filter when no project_id."""
         mock_vector_store.search.return_value = []
@@ -314,3 +333,9 @@ class TestThresholds:
         vague = "This API setup has useful operational details for future integration work."
 
         assert _memory_richness_score(detailed) > _memory_richness_score(vague)
+
+    def test_richness_score_does_not_count_version_dots_as_sentences(self) -> None:
+        versioned = _memory_richness_score("Use SDK v1.2.3 for retries.")
+        plain = _memory_richness_score("Use SDK v123 for retries.")
+
+        assert versioned[2] == plain[2] == 1

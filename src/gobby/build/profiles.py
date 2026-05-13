@@ -24,6 +24,8 @@ def resolve_build_profile_options(
         BuildProfileLoader().sync(db)
     profile = manager.resolve(opts.profile or "default", project_id=project_id)
     has_request_skip_stages = opts.skip_stages_explicit or bool(opts.skip_stages)
+    # Request-supplied peer fields win over profile defaults; fields without an
+    # explicit marker remain direct build options rather than profile overlays.
     return BuildOptions(
         profile=opts.profile,
         profile_explicit=opts.profile_explicit,

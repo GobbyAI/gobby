@@ -149,7 +149,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
       sourceOptionsForTab(activeTab).map((opt) => opt.value),
     );
     if (!allowed.has(sourceFilter)) {
-      queueMicrotask(() => setSourceFilter("installed"));
+      setSourceFilter("installed");
     }
   }, [activeTab, sourceFilter]);
 

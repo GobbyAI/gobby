@@ -51,6 +51,10 @@ interface DefaultStageEntry {
   position: number;
 }
 
+type ParsedDefaultStageLine =
+  | { ok: true; stage: DefaultStageEntry }
+  | { ok: false; error: string };
+
 const CATEGORY_OPTIONS = [
   "discovery",
   "design",
@@ -58,6 +62,23 @@ const CATEGORY_OPTIONS = [
   "verification",
   "delivery",
 ];
+
+function parseDefaultStageLine(line: string, index: number): ParsedDefaultStageLine {
+  const separatorIndex = line.lastIndexOf(":");
+  if (separatorIndex < 0) {
+    return { ok: false, error: `Defaults line ${index + 1} needs stage:position` };
+  }
+  const stageName = line.slice(0, separatorIndex).trim();
+  if (!stageName) {
+    return { ok: false, error: `Defaults line ${index + 1} needs a stage name` };
+  }
+  const positionText = line.slice(separatorIndex + 1).trim();
+  const position = Number(positionText);
+  if (!Number.isInteger(position)) {
+    return { ok: false, error: `Defaults line ${index + 1} needs an integer position` };
+  }
+  return { ok: true, stage: { stage_name: stageName, position } };
+}
 
 export function StagesTab({
   searchText,
@@ -270,18 +291,12 @@ function StageEditor({
       .map((line) => line.trim())
       .filter(Boolean);
     for (const [index, line] of lines.entries()) {
-      const [stageNameText, positionText] = line.split(":");
-      const stage_name = stageNameText?.trim() ?? "";
-      if (!stage_name) {
-        setError(`Defaults line ${index + 1} needs a stage name`);
+      const parsed = parseDefaultStageLine(line, index);
+      if (!parsed.ok) {
+        setError(parsed.error);
         return;
       }
-      const position = Number(positionText);
-      if (positionText === undefined || !Number.isFinite(position)) {
-        setError(`Defaults line ${index + 1} needs a finite numeric position`);
-        return;
-      }
-      stages.push({ stage_name, position });
+      stages.push(parsed.stage);
     }
     const res = await fetch(`/api/task-types/${encodeURIComponent(taskType)}/default-stages`, {
       method: "PUT",

@@ -76,7 +76,8 @@ async def build(
     target_branch = await _resolve_target_branch(db, project_id, opts, input_kind)
 
     if input_kind == "plan_file":
-        assert isinstance(task_or_plan, Path)
+        if not isinstance(task_or_plan, Path):
+            raise TypeError("plan_file input did not resolve to a path")
         return await _build_plan_file(
             task_manager,
             task_or_plan,
@@ -89,7 +90,8 @@ async def build(
             services,
         )
 
-    assert isinstance(task_or_plan, Task)
+    if not isinstance(task_or_plan, Task):
+        raise TypeError("task input did not resolve to a task")
     task = task_or_plan
     if task_manager.stage_states.list_for_task(task.id):
         return await _resume_existing_lifecycle(

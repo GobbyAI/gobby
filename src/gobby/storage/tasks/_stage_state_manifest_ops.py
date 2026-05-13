@@ -169,7 +169,8 @@ class StageStateManifestOps:
                 )
                 self.record_shape_event(task_id, previous_shape, "add_stage", holder)
             added = self.rows.get(task_id, spec.stage_name)
-            assert added is not None
+            if added is None:
+                raise RuntimeError(f"Stage '{spec.stage_name}' disappeared after add_stage")
             return added
 
     def remove_stage(
@@ -192,7 +193,8 @@ class StageStateManifestOps:
             self.validate_remove(task_id, stage_name, row, current)
             previous_shape = self.rows.shape_signature(task_id)
             now = _now()
-            assert row is not None
+            if row is None:
+                raise RuntimeError(f"Stage '{stage_name}' disappeared before remove_stage")
             with self.db.transaction() as conn:
                 conn.execute(
                     "DELETE FROM task_stage_states WHERE task_id = ? AND stage_name = ?",

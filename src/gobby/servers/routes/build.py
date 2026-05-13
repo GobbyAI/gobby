@@ -23,6 +23,7 @@ from gobby.build import (
     build_stop_target,
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
+from gobby.build.options import resolve_build_isolation
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
@@ -66,17 +67,10 @@ class BuildControlRequest(BaseModel):
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
-    if request_data.clone and request_data.isolation in {"none", "worktree"}:
-        raise ValueError(f"clone=true conflicts with isolation={request_data.isolation}")
-    if request_data.clone and request_data.workspace_backend == "worktree":
-        raise ValueError("clone=true conflicts with workspace_backend=worktree")
-    if request_data.isolation and request_data.workspace_backend:
-        if request_data.isolation != request_data.workspace_backend:
-            raise ValueError("isolation conflicts with workspace_backend")
-    backend = (
-        request_data.isolation
-        or request_data.workspace_backend
-        or ("clone" if request_data.clone else "worktree")
+    isolation = resolve_build_isolation(
+        isolation=request_data.isolation,
+        workspace_backend=request_data.workspace_backend,
+        clone=request_data.clone,
     )
     return BuildOptions(
         profile=request_data.profile or "default",
@@ -84,12 +78,8 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         quick=request_data.quick,
         skip_stages=request_data.skip_stages,
         skip_stages_explicit="skip_stages" in request_data.model_fields_set,
-        isolation=backend,
-        isolation_explicit=(
-            "isolation" in request_data.model_fields_set
-            or request_data.workspace_backend is not None
-            or request_data.clone
-        ),
+        isolation=isolation.isolation,
+        isolation_explicit=isolation.explicit,
         unattended=request_data.unattended if request_data.unattended is not None else False,
         unattended_explicit="unattended" in request_data.model_fields_set,
         no_merge=request_data.no_merge,

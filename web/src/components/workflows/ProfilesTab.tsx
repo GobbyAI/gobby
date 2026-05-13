@@ -82,6 +82,7 @@ export function ProfilesTab({
       setProfiles(data.profiles ?? []);
       setError(null);
     } catch (err) {
+      console.error("Failed to load build profiles", err);
       setError(err instanceof Error ? err.message : "Failed to load profiles");
     }
     try {
@@ -97,6 +98,7 @@ export function ProfilesTab({
       );
       setStageLoadError(null);
     } catch (err) {
+      console.error("Failed to load stage registry for profiles", err);
       setStageNames(new Set());
       setStageLoadError(err instanceof Error ? err.message : "Failed to load stage registry");
     } finally {

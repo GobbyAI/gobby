@@ -31,6 +31,7 @@ _DETAIL_MARKER_RE = re.compile(
     r"`[^`]+`|https?://\S+|[/~][\w./-]+|#[0-9]+|\b\d{4}-\d{2}-\d{2}\b|\b\d+(?:\.\d+)?\b"
 )
 _STRUCTURED_LINE_RE = re.compile(r"^\s*(?:[-*]\s+|\w[\w .-]{0,40}:\s+\S)", re.MULTILINE)
+_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]+(?:\s+|$)")
 _WORD_RE = re.compile(r"[A-Za-z0-9_'-]+")
 
 
@@ -51,7 +52,7 @@ def _memory_richness_score(content: str) -> tuple[int, int, int, int, int]:
 
     detail_markers = len(_DETAIL_MARKER_RE.findall(stripped))
     structured_lines = len(_STRUCTURED_LINE_RE.findall(stripped))
-    sentence_count = max(1, sum(stripped.count(mark) for mark in ".!?"))
+    sentence_count = max(1, len(_SENTENCE_BOUNDARY_RE.findall(stripped)))
     unique_words = {word.lower() for word in _WORD_RE.findall(stripped) if len(word) > 2}
     return (detail_markers, structured_lines, sentence_count, len(unique_words), len(stripped))
 

@@ -22,6 +22,7 @@ from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     normalize_reviewer_agent_selector,
 )
+from gobby.utils.sql import sql_placeholders
 
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
 ReviewPolicy = Literal["none", "required", "optional"]
@@ -202,7 +203,7 @@ class StageRegistryLoader:
                 )
                 upserted += 1
             if bundled_names:
-                placeholders = ",".join("?" for _ in bundled_names)
+                placeholders = sql_placeholders(len(bundled_names))
                 orphaned = db.fetchall(
                     f"""
                     SELECT name

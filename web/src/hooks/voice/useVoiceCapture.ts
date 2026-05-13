@@ -41,6 +41,15 @@ interface VoiceCaptureReturn {
   cancelRecording: () => void
 }
 
+export interface VoiceAudioPayload {
+  type: 'voice_audio'
+  conversation_id: string
+  audio_data: string
+  mime_type: 'audio/wav'
+  request_id: string
+  project_id?: string
+}
+
 function createVoiceRequestId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     try {
@@ -121,12 +130,17 @@ export function useVoiceCapture({
 
     try {
       if (mountedRef.current) setIsTranscribing(true)
+      const conversationId = conversationIdRef.current
+      if (!conversationId) {
+        setTransientError('Missing conversation')
+        return false
+      }
       const wavBuffer = utils.encodeWAV(audio, 1, sampleRate, 1, 16)
       const base64 = utils.arrayBufferToBase64(wavBuffer)
 
-      const payload: Record<string, unknown> = {
+      const payload: VoiceAudioPayload = {
         type: 'voice_audio',
-        conversation_id: conversationIdRef.current,
+        conversation_id: conversationId,
         audio_data: base64,
         mime_type: 'audio/wav',
         request_id: createVoiceRequestId(),

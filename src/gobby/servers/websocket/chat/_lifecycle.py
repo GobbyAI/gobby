@@ -157,8 +157,14 @@ class ChatLifecycleMixin:
 
         try:
             # DEBUG: log event data to diagnose hook issues
+            redacted_event_data = {
+                key: (value if key != "tool_input" else "...")
+                for key, value in (data or {}).items()
+            }
             logger.debug(
-                f"_fire_lifecycle: {event_type.name} event_data={ ({k: (v if k != 'tool_input' else '...') for k, v in (data or {}).items()}) }",
+                "_fire_lifecycle: %s event_data=%s",
+                event_type.name,
+                redacted_event_data,
             )
             # WorkflowHookHandler.evaluate is sync (bridges to async internally)
             response: HookResponse = await run_db(self, workflow_handler.evaluate, event)

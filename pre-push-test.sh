@@ -23,6 +23,14 @@ echo ""
 
 # Track failures
 FAILED=0
+PYTEST_ISOLATION_DIR=""
+
+cleanup() {
+    if [ -n "${PYTEST_ISOLATION_DIR:-}" ] && [ -d "$PYTEST_ISOLATION_DIR" ]; then
+        rm -rf "$PYTEST_ISOLATION_DIR"
+    fi
+}
+trap cleanup EXIT
 
 # Ruff - autofix safe changes only (no unsafe fixes)
 echo ">>> Running ruff check + format..."

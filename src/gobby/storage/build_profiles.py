@@ -16,6 +16,7 @@ import yaml
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.paths import get_install_dir
 from gobby.storage.database import DatabaseProtocol
+from gobby.utils.sql import sql_placeholders
 
 BuildProfileSource = Literal["installed", "project"]
 BuildProfileState = Literal["bundled", "edited", "custom", "deleted"]
@@ -109,7 +110,7 @@ class BuildProfileLoader:
                 manager.upsert_installed(profile)
                 upserted += 1
             if names:
-                placeholders = ",".join("?" for _ in names)
+                placeholders = sql_placeholders(len(names))
                 orphaned = db.fetchall(
                     f"""
                     SELECT name
@@ -705,10 +706,10 @@ def _json_list(raw: str | None, field_name: str) -> list[str]:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        logger.debug("Malformed build profile JSON list in %s: %s", field_name, exc)
+        logger.warning("Malformed build profile JSON list in %s: %s", field_name, exc)
         return []
     if not isinstance(payload, list):
-        logger.debug(
+        logger.warning(
             "Build profile JSON field %s must contain a list, got %s",
             field_name,
             type(payload).__name__,

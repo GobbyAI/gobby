@@ -6,6 +6,7 @@ import errno
 import logging
 import os
 from pathlib import Path
+from types import TracebackType
 from typing import Protocol, cast
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,12 @@ class NativeBinFileLock:
     def __enter__(self) -> NativeBinFileLock:
         return self
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.release()
 
 

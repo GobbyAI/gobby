@@ -105,5 +105,6 @@ def shutdown_providers() -> None:
         _METER_PROVIDER = None
 
     if _LOGGER_PROVIDER is not None:
+        # OpenTelemetry exposes shutdown with a broader callable shape than this sync path needs.
         cast(Callable[[], None], _LOGGER_PROVIDER.shutdown)()
         _LOGGER_PROVIDER = None

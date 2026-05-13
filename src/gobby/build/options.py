@@ -43,6 +43,38 @@ class BuildOptions:
         return self.isolation_explicit
 
 
+@dataclass(frozen=True, slots=True)
+class BuildIsolationResolution:
+    """Resolved isolation value and whether the caller supplied an isolation knob."""
+
+    isolation: Isolation
+    explicit: bool
+
+
+def resolve_build_isolation(
+    *,
+    isolation: Isolation | None,
+    workspace_backend: WorkspaceBackend | None,
+    clone: bool,
+) -> BuildIsolationResolution:
+    """Resolve legacy and current build isolation fields with one conflict policy."""
+
+    if clone and isolation in {"none", "worktree"}:
+        raise ValueError(f"clone=true conflicts with isolation={isolation}")
+    if clone and workspace_backend == "worktree":
+        raise ValueError("clone=true conflicts with workspace_backend=worktree")
+    if isolation is not None and workspace_backend is not None and isolation != workspace_backend:
+        raise ValueError("isolation conflicts with workspace_backend")
+
+    resolved = isolation or workspace_backend or ("clone" if clone else "worktree")
+    if clone and resolved != "clone":
+        raise ValueError("clone=true requires isolation=clone or workspace_backend=clone")
+    return BuildIsolationResolution(
+        isolation=resolved,
+        explicit=isolation is not None or workspace_backend is not None or clone,
+    )
+
+
 def retry_attempt_cap(opts: BuildOptions) -> int | None:
     """Return total allowed attempts/rounds for a max-retries request."""
     if opts.max_retries is None:
