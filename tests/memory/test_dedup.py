@@ -43,9 +43,7 @@ def mock_embed_fn() -> AsyncMock:
 
 
 @pytest.fixture
-def dedup_service(
-    mock_vector_store: Any, mock_storage: Any, mock_embed_fn: Any
-) -> DedupService:
+def dedup_service(mock_vector_store: Any, mock_storage: Any, mock_embed_fn: Any) -> DedupService:
     """Create DedupService with all mocks."""
     return DedupService(
         vector_store=mock_vector_store,
