@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+import logging
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._delivery as delivery_tools
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.tasks import LocalTaskManager
 from tests.storage.tasks._stage_test_helpers import create_task
@@ -13,7 +16,7 @@ from tests.storage.tasks._stage_test_helpers import create_task
 pytestmark = pytest.mark.unit
 
 
-def _registry(temp_db: Any):
+def _registry(temp_db: Any) -> InternalToolRegistry:
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
         sync_manager=MagicMock(),
@@ -45,15 +48,15 @@ class FakeGitHub:
         raise AssertionError(f"unexpected GitHub tool: {tool_name}")
 
 
-def _registry_with_github(temp_db: Any, github: FakeGitHub):
+def _registry_with_github(temp_db: Any, github: FakeGitHub) -> InternalToolRegistry:
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
         sync_manager=MagicMock(),
-        mcp_manager=github,
+        mcp_manager=cast(Any, github),
     )
 
 
-def test_delivery_state_tools_are_registered(temp_db) -> None:
+def test_delivery_state_tools_are_registered(temp_db: Any) -> None:
     registry = _registry(temp_db)
 
     assert registry.get_tool("record_pr_state") is not None
@@ -61,7 +64,9 @@ def test_delivery_state_tools_are_registered(temp_db) -> None:
     assert registry.get_tool("open_delivery_pr") is not None
 
 
-def test_record_pr_state_persists_delivery_unit(temp_db, sample_project) -> None:
+def test_record_pr_state_persists_delivery_unit(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     registry = _registry(temp_db)
     record = registry.get_tool("record_pr_state")
@@ -91,7 +96,9 @@ def test_record_pr_state_persists_delivery_unit(temp_db, sample_project) -> None
 
 
 @pytest.mark.asyncio
-async def test_open_delivery_pr_uses_github_mcp_for_same_repo(temp_db, sample_project) -> None:
+async def test_open_delivery_pr_uses_github_mcp_for_same_repo(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     github = FakeGitHub()
     registry = _registry_with_github(temp_db, github)
@@ -133,7 +140,9 @@ async def test_open_delivery_pr_uses_github_mcp_for_same_repo(temp_db, sample_pr
 
 
 @pytest.mark.asyncio
-async def test_open_delivery_pr_reuses_existing_github_pr(temp_db, sample_project) -> None:
+async def test_open_delivery_pr_reuses_existing_github_pr(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     github = FakeGitHub(
         list_result=[
@@ -162,7 +171,9 @@ async def test_open_delivery_pr_reuses_existing_github_pr(temp_db, sample_projec
 
 
 @pytest.mark.asyncio
-async def test_open_delivery_pr_reuses_local_delivery_unit(temp_db, sample_project) -> None:
+async def test_open_delivery_pr_reuses_local_delivery_unit(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     github = FakeGitHub()
     registry = _registry_with_github(temp_db, github)
@@ -197,8 +208,8 @@ async def test_open_delivery_pr_reuses_local_delivery_unit(temp_db, sample_proje
 @pytest.mark.asyncio
 async def test_open_delivery_pr_uses_rest_head_repo_for_same_org_cross_repo(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: Any,
+    sample_project: dict[str, Any],
 ) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     github = FakeGitHub()
@@ -231,3 +242,39 @@ async def test_open_delivery_pr_uses_rest_head_repo_for_same_org_cross_repo(
     assert captured["head"] == "org:feature/cross"
     assert captured["head_repo"] == "source"
     assert [name for name, _args in github.calls] == ["list_pull_requests"]
+
+
+def test_push_branch_rejects_invalid_branch_ref(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="source_branch is not a valid git branch ref"):
+        delivery_tools._push_branch(
+            repo_path=str(tmp_path),
+            source_branch="bad branch",
+            remote_branch="feature/good",
+            force_with_lease=False,
+        )
+
+
+def test_github_token_logs_environment_source(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "secret")
+
+    with caplog.at_level(logging.DEBUG):
+        token = delivery_tools._github_token(object())
+
+    assert token == "secret"
+    assert "Using GitHub token from environment variable GH_TOKEN" in caplog.text
+
+
+def test_github_token_logs_missing_and_lookup_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    for name in delivery_tools._GITHUB_TOKEN_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+    with caplog.at_level(logging.DEBUG):
+        token = delivery_tools._github_token(object())
+
+    assert token is None
+    assert "No GitHub token found in environment; checking stored secrets" in caplog.text
+    assert "GitHub token lookup from secret store failed" in caplog.text

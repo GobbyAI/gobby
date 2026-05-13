@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
@@ -20,6 +21,7 @@ BuildProfileSource = Literal["installed", "project"]
 BuildProfileState = Literal["bundled", "edited", "custom", "deleted"]
 _SOURCES = {"installed", "project"}
 _RESERVED_PROFILE_NAMES = {"none", "null"}
+logger = logging.getLogger(__name__)
 
 
 class BuildProfileError(ValueError):
@@ -331,6 +333,7 @@ class BuildProfileManager:
             bundled_hash=None,
         )
         self._validate_profile(profile)
+        self._ensure_no_active_duplicate(profile)
         self._insert_profile(profile)
         created = self.get(
             name,
@@ -357,6 +360,8 @@ class BuildProfileManager:
             raise BuildProfileError("build profile names are immutable")
         payload = self._profile_dataclass_payload(current)
         payload.update({key: value for key, value in updates.items() if key != "name"})
+        if payload.get("delivery_target_repo") == "":
+            payload["delivery_target_repo"] = None
         profile = BuildProfile(**payload)
         self._validate_profile(profile)
         self._update_profile(profile)
@@ -482,6 +487,25 @@ class BuildProfileManager:
             self._insert_params(profile),
         )
 
+    def _ensure_no_active_duplicate(self, profile: BuildProfile) -> None:
+        row = self.db.fetchone(
+            """
+            SELECT id
+              FROM build_profiles
+             WHERE name = ?
+               AND source = ?
+               AND ((project_id IS NULL AND ? IS NULL) OR project_id = ?)
+               AND deleted_at IS NULL
+             LIMIT 1
+            """,
+            (profile.name, profile.source, profile.project_id, profile.project_id),
+        )
+        if row is not None:
+            scope = "global" if profile.project_id is None else f"project {profile.project_id}"
+            raise BuildProfileError(
+                f"Active build profile '{profile.name}' already exists for {profile.source} {scope}"
+            )
+
     def _update_profile(self, profile: BuildProfile, *, restore_deleted: bool = False) -> None:
         deleted_assignment = "deleted_at = NULL," if restore_deleted else ""
         self.db.execute(
@@ -541,7 +565,7 @@ class BuildProfileManager:
             name=row["name"],
             display_label=row["display_label"],
             description=row["description"],
-            skip_stages=_json_list(row["skip_stages_json"]),
+            skip_stages=_json_list(row["skip_stages_json"], "skip_stages_json"),
             isolation=row["isolation"],
             unattended=bool(row["unattended"]),
             delivery_mode=row["delivery_mode"],
@@ -549,7 +573,7 @@ class BuildProfileManager:
             enabled=bool(row["enabled"]),
             source=row["source"],
             project_id=row["project_id"],
-            tags=_json_list(row["tags_json"]),
+            tags=_json_list(row["tags_json"], "tags_json"),
             bundled_hash=row["bundled_hash"],
             deleted_at=row["deleted_at"],
             created_at=row["created_at"],
@@ -608,13 +632,13 @@ class BuildProfileManager:
             "name": row["name"],
             "display_label": row["display_label"],
             "description": row["description"],
-            "skip_stages": _json_list(row["skip_stages_json"]),
+            "skip_stages": _json_list(row["skip_stages_json"], "skip_stages_json"),
             "isolation": row["isolation"],
             "unattended": bool(row["unattended"]),
             "delivery_mode": row["delivery_mode"],
             "delivery_target_repo": row["delivery_target_repo"],
             "enabled": bool(row["enabled"]),
-            "tags": _json_list(row["tags_json"]),
+            "tags": _json_list(row["tags_json"], "tags_json"),
         }
 
     @staticmethod
@@ -623,11 +647,11 @@ class BuildProfileManager:
             "name": row["name"],
             "display_label": row["display_label"],
             "description": row["description"],
-            "skip_stages": _json_list(row["skip_stages_json"]),
+            "skip_stages": _json_list(row["skip_stages_json"], "skip_stages_json"),
             "isolation": row["isolation"],
             "unattended": bool(row["unattended"]),
             "enabled": bool(row["enabled"]),
-            "tags": _json_list(row["tags_json"]),
+            "tags": _json_list(row["tags_json"], "tags_json"),
         }
 
     @staticmethod
@@ -675,14 +699,20 @@ def _validate_delivery_target_repo(repo: str | None) -> None:
         raise BuildProfileError(f"delivery_target_repo {repo!r} is invalid; expected 'owner/repo'")
 
 
-def _json_list(raw: str | None) -> list[str]:
+def _json_list(raw: str | None, field_name: str) -> list[str]:
     if raw is None:
         return []
     try:
         payload = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        logger.debug("Malformed build profile JSON list in %s: %s", field_name, exc)
         return []
     if not isinstance(payload, list):
+        logger.debug(
+            "Build profile JSON field %s must contain a list, got %s",
+            field_name,
+            type(payload).__name__,
+        )
         return []
     return [str(item) for item in payload]
 

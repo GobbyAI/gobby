@@ -19,11 +19,12 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
 
-def _open_manager() -> tuple[LocalDatabase, BuildProfileManager]:
+def _open_manager(*, sync: bool = True) -> tuple[LocalDatabase, BuildProfileManager]:
     db = LocalDatabase()
     try:
         run_migrations(db)
-        BuildProfileLoader().sync(db)
+        if sync:
+            BuildProfileLoader().sync(db)
         return db, BuildProfileManager(db)
     except Exception:
         db.close()
@@ -59,7 +60,7 @@ def profiles() -> None:
 @click.option("--project-id")
 @click.option("--include-deleted", is_flag=True, default=False)
 def list_profiles(project_id: str | None, include_deleted: bool) -> None:
-    db, manager = _open_manager()
+    db, manager = _open_manager(sync=False)
     try:
         _echo(
             [
@@ -80,7 +81,7 @@ def list_profiles(project_id: str | None, include_deleted: bool) -> None:
 @click.option("--project-id")
 @click.option("--include-deleted", is_flag=True, default=False)
 def show_profile(name: str, source: str, project_id: str | None, include_deleted: bool) -> None:
-    db, manager = _open_manager()
+    db, manager = _open_manager(sync=False)
     try:
         profile = manager.get(
             name,
@@ -186,6 +187,8 @@ def update_profile(
     if delivery_mode is not None:
         updates["delivery_mode"] = delivery_mode
     if delivery_target_repo is not None:
+        # Click passes None when the option is omitted; only an explicit empty
+        # value should clear the stored delivery target.
         updates["delivery_target_repo"] = delivery_target_repo or None
     if enabled is not None:
         updates["enabled"] = enabled

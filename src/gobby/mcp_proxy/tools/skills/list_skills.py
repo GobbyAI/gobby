@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
+from gobby.storage.skills import Skill
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             needs_overfetch = active_names is not None or not include_internal
             active_set = set(active_names) if active_names is not None else None
 
-            def _apply_post_filters(batch: list[Any]) -> list[Any]:
+            def _apply_post_filters(batch: list[Skill]) -> list[Skill]:
                 filtered = batch
                 if not include_internal:
                     filtered = [s for s in filtered if not s.is_internal()]
@@ -84,7 +85,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 *,
                 limit_value: int,
                 offset_value: int = 0,
-            ) -> list[Any]:
+            ) -> list[Skill]:
                 return await asyncio.to_thread(
                     ctx.storage.list_skills,
                     project_id=ctx.project_id,
@@ -95,7 +96,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     include_global=True,
                 )
 
-            skills: list[Any] = []
+            skills: list[Skill] = []
             if not needs_overfetch:
                 skills = await _list_skills_batch(limit_value=limit)
             else:

@@ -5,16 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
 
+from gobby.llm.claude_models import ChatEvent
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
 from gobby.servers.websocket.chat.local_openai_warmup import LocalOpenAIModelWarmupError
 
 pytestmark = pytest.mark.unit
+ChatContent = str | list[dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +50,7 @@ class DisconnectedWebSocket:
 class _FakeSession:
     """Minimal ChatSession stand-in."""
 
-    def __init__(self) -> None:
+    def __init__(self, events: list[ChatEvent] | None = None) -> None:
         self.db_session_id = "db-session-123"
         self.message_index = 0
         self.seq_num = 1
@@ -57,11 +60,11 @@ class _FakeSession:
         self._tool_approval_callback: Any = None
         self._accumulated_output_tokens = 0
         self._last_model = None
+        self._events = [] if events is None else events
 
-    async def send_message(self, content: Any) -> Any:
-        """Yield nothing — tests inject events directly."""
-        return
-        yield  # make it an async generator
+    async def send_message(self, content: ChatContent) -> AsyncIterator[ChatEvent]:
+        for event in self._events:
+            yield event
 
 
 class ChatMixinHost(ChatMessagingMixin):
@@ -76,6 +79,7 @@ class ChatMixinHost(ChatMessagingMixin):
         self._pending_agents: dict[str, str] = {}
         self.message_manager: Any = None
         self.session_manager: Any = None
+        self.create_session_error: Exception | None = None
 
     async def _send_error(
         self, websocket: object, message: str, request_id: str | None = None, code: str = "ERROR"
@@ -102,7 +106,11 @@ class ChatMixinHost(ChatMessagingMixin):
         model: str | None = None,
         project_id: str | None = None,
         resume_session_id: str | None = None,
+        provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> Any:
+        if self.create_session_error is not None:
+            raise self.create_session_error
         session = _FakeSession()
         self._chat_sessions[conversation_id] = session
         return session
@@ -131,18 +139,12 @@ class TestSafeSend:
         # Instead, test the mechanism by creating a DoneEvent-only stream.
         from gobby.llm.claude_models import TextChunk
 
-        events = [
+        events: list[ChatEvent] = [
             TextChunk(content="hello"),
             TextChunk(content=" world"),  # should NOT be sent
         ]
 
-        session = _FakeSession()
-
-        async def _fake_send_message(content: Any) -> Any:
-            for e in events:
-                yield e
-
-        session.send_message = _fake_send_message
+        session = _FakeSession(events)
         host._chat_sessions["conv-1"] = session
 
         await host._stream_chat_response(ws, "conv-1", "test", None)
@@ -158,19 +160,13 @@ class TestSafeSend:
 
         from gobby.llm.claude_models import TextChunk
 
-        events = [
+        events: list[ChatEvent] = [
             TextChunk(content="first"),
             TextChunk(content="second"),  # send will fail
             TextChunk(content="third"),  # should be skipped
         ]
 
-        session = _FakeSession()
-
-        async def _fake_send_message(content: Any) -> Any:
-            for e in events:
-                yield e
-
-        session.send_message = _fake_send_message
+        session = _FakeSession(events)
         host._chat_sessions["conv-2"] = session
 
         await host._stream_chat_response(ws, "conv-2", "test", None)
@@ -192,26 +188,18 @@ class TestSafeSend:
         mock_msg_mgr = AsyncMock()
         host.message_manager = mock_msg_mgr
 
-        session = _FakeSession()
-
-        async def _fake_send_message(content: Any) -> Any:
-            yield DoneEvent(tool_calls_count=0)
-
-        session.send_message = _fake_send_message
+        session = _FakeSession([DoneEvent(tool_calls_count=0)])
         host._chat_sessions["conv-3"] = session
 
-        result = await host._stream_chat_response(ws, "conv-3", "test", None)
-        assert result is None
+        await host._stream_chat_response(ws, "conv-3", "test", None)
         assert ws in host.clients
 
     @pytest.mark.asyncio
     async def test_startup_warmup_error_is_sent_to_client(self, host: ChatMixinHost) -> None:
         ws = MockWebSocket()
         host.clients[ws] = {"conversation_id": "conv-warmup"}
-        host._create_chat_session = AsyncMock(
-            side_effect=LocalOpenAIModelWarmupError(
-                "Load the local model in LM Studio or enable Just-In-Time loading."
-            )
+        host.create_session_error = LocalOpenAIModelWarmupError(
+            "Load the local model in LM Studio or enable Just-In-Time loading."
         )
 
         await host._stream_chat_response(ws, "conv-warmup", "test", None)
@@ -291,19 +279,18 @@ class TestOrphanedToolResult:
 
         from gobby.llm.claude_models import DoneEvent, ToolResultEvent
 
-        session = _FakeSession()
-
-        async def _fake_send_message(content: Any) -> Any:
-            # Emit ToolResultEvent WITHOUT a preceding ToolCallEvent
-            yield ToolResultEvent(
-                tool_call_id="orphan-tc-1",
-                result="some result",
-                error=None,
-                success=True,
-            )
-            yield DoneEvent(tool_calls_count=0)
-
-        session.send_message = _fake_send_message
+        session = _FakeSession(
+            [
+                ToolResultEvent(
+                    tool_call_id="orphan-tc-1",
+                    result="some result",
+                    error=None,
+                    success=True,
+                ),
+                DoneEvent(tool_calls_count=0),
+            ]
+        )
+        # Emit ToolResultEvent WITHOUT a preceding ToolCallEvent.
         host._chat_sessions["conv-6"] = session
 
         with caplog.at_level(logging.WARNING):

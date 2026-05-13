@@ -59,6 +59,8 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if isolation != workspace_backend:
                 raise ValueError("isolation conflicts with workspace_backend")
         backend = isolation or workspace_backend or ("clone" if clone else "worktree")
+        if clone and backend != "clone":
+            raise ValueError("clone=true requires isolation=clone or workspace_backend=clone")
 
         opts = BuildOptions(
             quick=quick,

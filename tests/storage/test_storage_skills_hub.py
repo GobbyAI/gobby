@@ -1,10 +1,19 @@
 """Tests for skill hub tracking fields."""
 
+from collections.abc import Mapping
+from typing import Protocol
+
 import pytest
 
 from gobby.storage.skills import Skill
 
 pytestmark = pytest.mark.unit
+
+
+class RowLike(Protocol):
+    def __getitem__(self, key: str) -> object: ...
+
+    def keys(self) -> list[str]: ...
 
 
 class TestSkillHubFields:
@@ -44,13 +53,13 @@ class TestSkillHubFields:
 
 
 class MockRow:
-    def __init__(self, data):
-        self.data = data
+    def __init__(self, data: Mapping[str, object]) -> None:
+        self.data = dict(data)
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str) -> object:
         return self.data[key]
 
-    def keys(self):
+    def keys(self) -> list[str]:
         return list(self.data.keys())
 
 
@@ -77,7 +86,7 @@ def test_skill_from_row_with_hub_fields() -> None:
         "hub_slug": "gobby-hub",
         "hub_version": "1.2.3",
     }
-    row = MockRow(row_data)
+    row: RowLike = MockRow(row_data)
 
     skill = Skill.from_row(row)
 

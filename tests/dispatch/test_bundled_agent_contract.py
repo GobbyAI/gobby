@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,7 +40,7 @@ SELF_TERMINATION_KILL_AGENT_PHRASES = (
 
 
 def _tool_inventory(
-    temp_db, temp_dir: Path, sample_project: dict[str, object]
+    temp_db: Any, temp_dir: Path, sample_project: dict[str, Any]
 ) -> dict[str, set[str]]:
     from gobby.config.app import DaemonConfig
     from gobby.mcp_proxy.registries import setup_internal_registries
@@ -82,9 +83,9 @@ def _all_agent_yaml_files() -> list[Path]:
 
 
 def test_bundled_agent_mcp_references_match_registered_tool_inventory(
-    temp_db,
+    temp_db: Any,
     temp_dir: Path,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     inventory = _tool_inventory(temp_db, temp_dir, sample_project)
     missing: list[str] = []
@@ -112,12 +113,12 @@ def test_bundled_agent_mcp_references_match_registered_tool_inventory(
 
 
 def test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools() -> None:
-    paths = [
-        *AGENTS_DIR.glob("*.yaml"),
-        *Path("src/gobby/install/shared/skills").rglob("SKILL.md"),
+    path_groups = [
+        list(AGENTS_DIR.glob("*.yaml")),
+        list(Path("src/gobby/install/shared/skills").rglob("SKILL.md")),
     ]
     offenders: list[str] = []
-    for path in sorted(paths):
+    for path in sorted(path for group in path_groups for path in group):
         text = path.read_text(encoding="utf-8")
         for tool_name in REMOVED_LIFECYCLE_TOOLS:
             if tool_name in text:

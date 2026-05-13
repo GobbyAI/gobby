@@ -29,9 +29,9 @@ class TestCanUseTool:
     @pytest.mark.asyncio
     async def test_start_uses_can_use_tool_not_bypass(self, session: ChatSession) -> None:
         """start() should pass can_use_tool callback, not permission_mode=bypassPermissions."""
-        captured_options = {}
+        captured_options: dict[str, Any] = {}
 
-        def capture_options(**kwargs):
+        def capture_options(**kwargs: Any) -> MagicMock:
             captured_options.update(kwargs)
             return MagicMock()
 
@@ -171,6 +171,7 @@ class TestDefaultModelResolution:
         result = await task
 
         assert isinstance(result, PermissionResultAllow)
+        assert result.updated_input is not None
         assert result.updated_input["answers"] == answers
 
 

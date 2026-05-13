@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import subprocess  # nosec B404 # used for fixed git push/current-branch commands.
@@ -17,6 +18,7 @@ from gobby.storage.delivery import TaskDeliveryStateManager
 
 _GITHUB_TOKEN_ENV_NAMES = ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 _GITHUB_TOKEN_SECRET_NAMES = ("github_personal_access_token", "github_token", "gh_token")
+logger = logging.getLogger(__name__)
 
 
 def _resolve_task(ctx: RegistryContext, task_id: str) -> str:
@@ -384,6 +386,8 @@ def _push_branch(
     remote_branch: str,
     force_with_lease: bool,
 ) -> None:
+    _validate_branch_ref(repo_path, source_branch, label="source")
+    _validate_branch_ref(repo_path, remote_branch, label="remote")
     command = ["git", "push", "--no-verify"]
     if force_with_lease:
         command.append("--force-with-lease")
@@ -398,6 +402,21 @@ def _push_branch(
     )
     if result.returncode != 0:
         raise RuntimeError(f"git push failed: {result.stderr.strip() or result.stdout.strip()}")
+
+
+def _validate_branch_ref(repo_path: str, branch: str, *, label: str) -> None:
+    result = subprocess.run(  # nosec B603 B607 # fixed git command with validated args.
+        ["git", "check-ref-format", "--branch", branch],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        suffix = f": {detail}" if detail else ""
+        raise ValueError(f"{label}_branch is not a valid git branch ref: {branch!r}{suffix}")
 
 
 async def _open_or_reuse_github_pr(
@@ -536,7 +555,9 @@ def _github_token(db: Any) -> str | None:
     for name in _GITHUB_TOKEN_ENV_NAMES:
         token = os.environ.get(name)
         if token:
+            logger.debug("Using GitHub token from environment variable %s", name)
             return token
+    logger.debug("No GitHub token found in environment; checking stored secrets")
     try:
         from gobby.storage.secrets import SecretStore
 
@@ -544,9 +565,12 @@ def _github_token(db: Any) -> str | None:
         for name in _GITHUB_TOKEN_SECRET_NAMES:
             token = store.get(name)
             if token:
+                logger.debug("Using GitHub token from secret store entry %s", name)
                 return token
-    except (LookupError, OSError, RuntimeError, sqlite3.Error):
+    except (AttributeError, LookupError, OSError, RuntimeError, sqlite3.Error) as exc:
+        logger.debug("GitHub token lookup from secret store failed: %s", exc, exc_info=True)
         return None
+    logger.debug("No GitHub token found in environment or stored secrets")
     return None
 
 

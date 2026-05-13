@@ -252,6 +252,20 @@ def test_build_payload_includes_max_retries_zero() -> None:
     assert payload["max_retries"] == 0
 
 
+def test_daemon_profile_error_detection_prefers_structured_type() -> None:
+    from gobby.cli.build import _is_profile_error
+
+    assert _is_profile_error({"type": "build_profile_error", "message": "Nope"}) is True
+    assert _is_profile_error({"type": "validation_error", "message": "Build profile text"}) is False
+
+
+def test_daemon_profile_error_detection_uses_strict_message_fallback() -> None:
+    from gobby.cli.build import _is_profile_error
+
+    assert _is_profile_error("Unknown build profile 'missing'") is True
+    assert _is_profile_error("Task description mentions build profile but is unrelated") is False
+
+
 def test_build_cli_without_input_invokes_interactive_build_skill() -> None:
     from gobby.cli import cli
 

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import asdict
+from typing import Any
 
 import click
 
@@ -32,6 +34,20 @@ from .utils import resolve_project_ref
 logger = logging.getLogger(__name__)
 
 DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS = 900.0
+_PROFILE_ERROR_RE = re.compile(
+    r"^(?:"
+    r"build profile(?:s)?\b|"
+    r"unknown build profile\b|"
+    r"duplicate build profile\b|"
+    r"malformed build profiles\b|"
+    r"bundled build profiles\b|"
+    r"build profile name\b|"
+    r"delivery_target_repo\b|"
+    r"source must be installed or project\b|"
+    r"installed build profiles must be global\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 class BuildProfileClickException(click.ClickException):
@@ -215,10 +231,11 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         if response.status_code == 200:
             return _result_from_payload(response.json())
         if response.status_code == 400:
-            detail = response.json().get("detail", response.text)
-            if _is_profile_error(str(detail)):
-                raise BuildProfileClickException(str(detail))
-            raise click.ClickException(str(detail))
+            detail = _daemon_error_detail(response)
+            message = _daemon_error_message(detail)
+            if _is_profile_error(detail):
+                raise BuildProfileClickException(message)
+            raise click.ClickException(message)
         return None
     except click.ClickException:
         raise
@@ -234,8 +251,30 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         return None
 
 
-def _is_profile_error(message: str) -> bool:
-    return "Build profile" in message or "build profile" in message
+def _daemon_error_detail(response: Any) -> Any:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text
+    if isinstance(payload, dict):
+        return payload.get("detail", payload)
+    return payload
+
+
+def _daemon_error_message(detail: Any) -> str:
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail") or detail.get("error")
+        return str(message) if message is not None else str(detail)
+    return str(detail)
+
+
+def _is_profile_error(detail: Any) -> bool:
+    if isinstance(detail, dict):
+        error_type = detail.get("type") or detail.get("error_type") or detail.get("code")
+        return error_type in {"BuildProfileError", "build_profile_error", "build_profile"}
+    if isinstance(detail, str):
+        return bool(_PROFILE_ERROR_RE.search(detail))
+    return False
 
 
 def _echo_build_control_result(result: BuildControlResult) -> None:

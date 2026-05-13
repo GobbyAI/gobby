@@ -302,6 +302,7 @@ def _string_key_mapping(value: Mapping[Any, Any], source: str) -> dict[str, Any]
 
 __all__ = [
     "BuildConfig",
+    "DeliveryMode",
     "Isolation",
     "SKIPPABLE_STAGES",
     "StageCapOverride",

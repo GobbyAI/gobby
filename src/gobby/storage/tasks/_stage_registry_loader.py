@@ -117,6 +117,7 @@ class StageRegistryLoader:
         return self._parse_entries(payload), _digest
 
     def load_with_hashes(self) -> list[StageRegistryEntry]:
+        """Return entries with per-entry bundled_hash values for compatibility callers."""
         entries, _digest = self.load_with_hash()
         return entries
 
@@ -146,9 +147,6 @@ class StageRegistryLoader:
                     if current_hash == entry.bundled_hash and stored_hash == entry.bundled_hash:
                         skipped += 1
                         continue
-                if row is not None and row["bundled_hash"] == entry.bundled_hash:
-                    skipped += 1
-                    continue
                 db.execute(
                     """
                     INSERT INTO task_stages_registry (

@@ -17,7 +17,7 @@ import msgspec
 logger = logging.getLogger(__name__)
 
 
-def extract_json_from_text(text: str) -> str | None:
+def extract_json_from_text(text: str | None) -> str | None:
     """
     Extract JSON from text, handling markdown code blocks and mixed content.
 
@@ -91,7 +91,7 @@ def extract_json_from_text(text: str) -> str | None:
     return None
 
 
-def extract_json_object(text: str) -> dict[str, Any] | None:
+def extract_json_object(text: str | None) -> dict[str, Any] | None:
     """
     Extract and parse a JSON object from text.
 
@@ -119,7 +119,7 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def decode_llm_response[T](
-    text: str,
+    text: str | None,
     response_type: type[T],
     *,
     strict: bool = True,

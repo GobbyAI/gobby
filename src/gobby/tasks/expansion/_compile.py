@@ -115,10 +115,7 @@ def normalize_compiled_spec(
     """Normalize ad-hoc LLM output into the compiled expansion schema."""
     if "phases" not in raw_spec or "tasks" not in raw_spec:
         raise ValueError("Expansion compiler must return {phases,tasks}")
-    return cast(
-        dict[str, Any],
-        self._normalize_native_compiled_spec(raw_spec, task=task, plan_file=plan_file),
-    )
+    return _normalize_native_compiled_spec(self, raw_spec, task=task, plan_file=plan_file)
 
 
 def _list_agent_definitions_for_selection(
@@ -144,7 +141,7 @@ def _list_agent_definitions_for_selection(
 async def _generate_raw_spec(self: Any, run: ExpansionRun, task: Task) -> dict[str, Any]:
     """Call the configured LLM and return raw JSON output."""
     prompt_context = self._build_prompt_context(run, task)
-    return cast(dict[str, Any], await self._invoke_llm_compile(run, prompt_context))
+    return await _invoke_llm_compile(self, run, prompt_context)
 
 
 async def _invoke_llm_compile(

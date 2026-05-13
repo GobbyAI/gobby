@@ -177,7 +177,7 @@ class StageRegistryManager:
         entry = StageRegistryEntry(**payload)
         self._validate_entry(entry)
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE task_stages_registry
                    SET display_label = ?,
@@ -218,6 +218,8 @@ class StageRegistryManager:
                     name,
                 ),
             )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Stage '{name}' could not be updated")
         updated = self.get(name)
         if updated is None:
             raise ValueError(f"Unknown stage '{name}'")

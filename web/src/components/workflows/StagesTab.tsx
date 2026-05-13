@@ -46,6 +46,11 @@ interface StageEntry {
   is_edited: boolean;
 }
 
+interface DefaultStageEntry {
+  stage_name: string;
+  position: number;
+}
+
 const CATEGORY_OPTIONS = [
   "discovery",
   "design",
@@ -84,7 +89,7 @@ export function StagesTab({
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => void load());
+    void load();
   }, [load, refreshKey]);
 
   const filtered = useMemo(() => {
@@ -185,13 +190,28 @@ function StageEditor({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetch(`/api/task-types/${encodeURIComponent(taskType)}/default-stages`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const rows = data?.stages ?? [];
-        setDefaults(rows.map((row: any) => `${row.stage_name}:${row.position}`).join("\n"));
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to load defaults (${res.status})`);
+        return res.json();
       })
-      .catch(() => {});
+      .then((data) => {
+        if (cancelled) return;
+        const rows = (data?.stages ?? []) as DefaultStageEntry[];
+        setDefaults(rows.map((row) => `${row.stage_name}:${row.position}`).join("\n"));
+        setError(null);
+      })
+      .catch((err) => {
+        console.error("Failed to load stage defaults", err);
+        if (!cancelled) {
+          setDefaults("");
+          setError(err instanceof Error ? err.message : "Failed to load defaults");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [taskType]);
 
   if (!draft) {
@@ -235,14 +255,26 @@ function StageEditor({
   };
 
   const saveDefaults = async () => {
-    const stages = defaults
+    setError(null);
+    const stages: { stage_name: string; position: number }[] = [];
+    const lines = defaults
       .split("\n")
       .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [stage_name, position] = line.split(":");
-        return { stage_name, position: Number(position) };
-      });
+      .filter(Boolean);
+    for (const [index, line] of lines.entries()) {
+      const [stageNameText, positionText] = line.split(":");
+      const stage_name = stageNameText?.trim() ?? "";
+      if (!stage_name) {
+        setError(`Defaults line ${index + 1} needs a stage name`);
+        return;
+      }
+      const position = Number(positionText);
+      if (positionText === undefined || !Number.isFinite(position)) {
+        setError(`Defaults line ${index + 1} needs a finite numeric position`);
+        return;
+      }
+      stages.push({ stage_name, position });
+    }
     const res = await fetch(`/api/task-types/${encodeURIComponent(taskType)}/default-stages`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -251,7 +283,11 @@ function StageEditor({
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       setError(data?.detail ?? "Defaults save failed");
+      return;
     }
+    const data = await res.json().catch(() => null);
+    const rows = (data?.stages ?? []) as DefaultStageEntry[];
+    setDefaults(rows.map((row) => `${row.stage_name}:${row.position}`).join("\n"));
   };
 
   return (

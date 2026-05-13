@@ -66,6 +66,8 @@ export function ProfilesTab({
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stageNames, setStageNames] = useState<Set<string>>(new Set());
+  const [stageLoadError, setStageLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,13 +81,29 @@ export function ProfilesTab({
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load profiles");
+    }
+    try {
+      const res = await fetch("/api/stages/registry");
+      if (!res.ok) throw new Error(`Failed to load stage registry (${res.status})`);
+      const data = await res.json();
+      setStageNames(
+        new Set(
+          (data.stages ?? [])
+            .map((stage: { name?: unknown }) => stage.name)
+            .filter((name: unknown): name is string => typeof name === "string" && name.length > 0),
+        ),
+      );
+      setStageLoadError(null);
+    } catch (err) {
+      setStageNames(new Set());
+      setStageLoadError(err instanceof Error ? err.message : "Failed to load stage registry");
     } finally {
       setLoading(false);
     }
   }, [projectId]);
 
   useEffect(() => {
-    queueMicrotask(() => void load());
+    void load();
   }, [load, refreshKey]);
 
   const filtered = useMemo(() => {
@@ -118,11 +136,26 @@ export function ProfilesTab({
     const action = profile.enabled ? "disable" : "enable";
     const params = new URLSearchParams({ source: profile.source });
     if (profile.project_id) params.set("project_id", profile.project_id);
-    const res = await fetch(`/api/profiles/${profile.name}/${action}?${params}`, {
-      method: "POST",
-    });
-    if (!res.ok) return;
-    await load();
+    try {
+      const res = await fetch(`/api/profiles/${profile.name}/${action}?${params}`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(
+          data?.detail ??
+            `Failed to ${action} profile "${profile.display_label}" (${res.status})`,
+        );
+        return;
+      }
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `Failed to ${action} profile "${profile.display_label}": ${err.message}`
+          : `Failed to ${action} profile "${profile.display_label}"`,
+      );
+    }
   };
 
   return (
@@ -212,6 +245,8 @@ export function ProfilesTab({
         profile={selected}
         creating={creating}
         projectId={projectId}
+        stageNames={stageNames}
+        stageLoadError={stageLoadError}
         onSaved={async () => {
           setCreating(false);
           await load();
@@ -225,11 +260,15 @@ function ProfileEditor({
   profile,
   creating,
   projectId,
+  stageNames,
+  stageLoadError,
   onSaved,
 }: {
   profile: BuildProfile | null;
   creating: boolean;
   projectId?: string;
+  stageNames: Set<string>;
+  stageLoadError: string | null;
   onSaved: () => Promise<void>;
 }) {
   const empty: BuildProfile = {
@@ -260,8 +299,18 @@ function ProfileEditor({
     setDraft({ ...draft, [key]: value });
   };
 
+  const unknownSkipStages = draft.skip_stages.filter((stage) => !stageNames.has(stage));
+
   const save = async () => {
     setError(null);
+    if (stageLoadError && draft.skip_stages.length > 0) {
+      setError(`Cannot validate skip stages: ${stageLoadError}`);
+      return;
+    }
+    if (unknownSkipStages.length > 0) {
+      setError(`Unknown skip stage: ${unknownSkipStages.join(", ")}`);
+      return;
+    }
     const body = {
       name: draft.name,
       display_label: draft.display_label,
@@ -347,6 +396,14 @@ function ProfileEditor({
           )
         }
       />
+      {stageLoadError && (
+        <div className="mt-1 text-xs text-[var(--color-error)]">{stageLoadError}</div>
+      )}
+      {unknownSkipStages.length > 0 && (
+        <div className="mt-1 text-xs text-[var(--color-error)]">
+          Unknown: {unknownSkipStages.join(", ")}
+        </div>
+      )}
       <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Isolation</label>
       <select
         className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}

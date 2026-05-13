@@ -3,23 +3,42 @@
 from __future__ import annotations
 
 import errno
-import importlib
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
 
 logger = logging.getLogger(__name__)
 
-try:
-    fcntl: Any = importlib.import_module("fcntl")
-except ImportError:  # pragma: no cover - Windows only
-    fcntl = None
 
-try:
-    msvcrt: Any = importlib.import_module("msvcrt")
-except ImportError:  # pragma: no cover - Unix only
-    msvcrt = None
+class _FcntlModule(Protocol):
+    LOCK_EX: int
+    LOCK_NB: int
+    LOCK_UN: int
+
+    def flock(self, fd: int, operation: int) -> None: ...
+
+
+class _MsvcrtModule(Protocol):
+    LK_NBLCK: int
+    LK_UNLCK: int
+
+    def locking(self, fd: int, mode: int, nbytes: int) -> None: ...
+
+
+if os.name == "posix":  # pragma: no cover - platform dependent
+    import fcntl as _fcntl_import
+
+    _fcntl: _FcntlModule | None = _fcntl_import
+else:  # pragma: no cover - Windows only
+    _fcntl = None
+
+if os.name == "nt":  # pragma: no cover - Windows only
+    import msvcrt as _msvcrt_import
+
+    _msvcrt: _MsvcrtModule | None = cast(_MsvcrtModule, _msvcrt_import)
+else:  # pragma: no cover - Unix only
+    _msvcrt = None
 
 
 class NativeBinFileLock:
@@ -35,11 +54,11 @@ class NativeBinFileLock:
         if self._closed:
             return
         try:
-            if fcntl is not None:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-            elif msvcrt is not None:  # pragma: no cover - Windows only
+            if _fcntl is not None:
+                _fcntl.flock(self._fd, _fcntl.LOCK_UN)
+            elif _msvcrt is not None:  # pragma: no cover - Windows only
                 os.lseek(self._fd, 0, os.SEEK_SET)
-                msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+                _msvcrt.locking(self._fd, _msvcrt.LK_UNLCK, 1)
         except OSError as exc:
             if exc.errno != errno.EBADF:
                 self._closed = True
@@ -68,11 +87,11 @@ def try_acquire_native_bin_lock(tool_name: str, *, bin_dir: Path) -> NativeBinFi
     lock_path = lock_dir / f"{tool_name}.lock"
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        if fcntl is not None:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        elif msvcrt is not None:  # pragma: no cover - Windows only
+        if _fcntl is not None:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        elif _msvcrt is not None:  # pragma: no cover - Windows only
             os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
         else:  # pragma: no cover - no known supported platform
             raise OSError("no supported file locking implementation")
     except OSError as exc:

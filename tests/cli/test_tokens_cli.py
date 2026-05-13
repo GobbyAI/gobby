@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NoReturn
 
 import click
 import pytest
@@ -64,7 +65,7 @@ def test_load_session_messages_wraps_parse_errors(
     transcript.write_text("{}", encoding="utf-8")
     session = SimpleNamespace(transcript_path=str(transcript), source="claude")
 
-    def _raise_parse_error(self, lines, start_index=0):
+    def _raise_parse_error(self: object, lines: Sequence[str], start_index: int = 0) -> NoReturn:
         raise ValueError("boom")
 
     monkeypatch.setattr(tokens_module.ClaudeTranscriptParser, "parse_lines", _raise_parse_error)

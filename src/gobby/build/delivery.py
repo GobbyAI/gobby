@@ -73,7 +73,7 @@ def normalize_github_repo(repo: str | None) -> str:
         or name.strip() != name
     ):
         raise ValueError(f"Invalid GitHub repo {repo!r}; expected 'owner/repo'")
-    return f"{owner}/{name.removesuffix('.git')}"
+    return f"{owner}/{name}"
 
 
 def github_repo_from_url(url: str) -> str | None:

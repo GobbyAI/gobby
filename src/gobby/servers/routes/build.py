@@ -90,7 +90,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
             or request_data.workspace_backend is not None
             or request_data.clone
         ),
-        unattended=bool(request_data.unattended) if request_data.unattended is not None else False,
+        unattended=request_data.unattended if request_data.unattended is not None else False,
         unattended_explicit="unattended" in request_data.model_fields_set,
         no_merge=request_data.no_merge,
         pr=request_data.pr,

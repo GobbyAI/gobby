@@ -191,8 +191,10 @@ class UIConfig(BaseModel):
 
 
 __all__ = [
-    # Local definitions only - no re-exports
+    "CompactHandoffConfig",
     "DaemonConfig",
+    "GobbyTasksConfig",
+    "WorkflowConfig",
     "deep_merge",
     "expand_env_vars",
     "load_yaml",

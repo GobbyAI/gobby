@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Protocol, cast
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +18,14 @@ from fastapi.testclient import TestClient
 from gobby.servers.app_factory import _mount_production_ui
 
 pytestmark = pytest.mark.unit
+
+
+class _ServicesShape(Protocol):
+    config: object
+
+
+class _ServerShape(Protocol):
+    services: _ServicesShape
 
 
 def _make_dist_only_web_dir(root: Path) -> Path:
@@ -30,9 +39,9 @@ def _make_dist_only_web_dir(root: Path) -> Path:
     return web
 
 
-def _server_stub(web_dir: Path) -> SimpleNamespace:
+def _server_stub(web_dir: Path) -> _ServerShape:
     config = SimpleNamespace(ui=SimpleNamespace(web_dir=str(web_dir)))
-    return SimpleNamespace(services=SimpleNamespace(config=config))
+    return cast(_ServerShape, SimpleNamespace(services=SimpleNamespace(config=config)))
 
 
 def test_mount_production_ui_serves_index_on_root(tmp_path: Path) -> None:

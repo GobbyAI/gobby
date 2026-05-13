@@ -64,6 +64,24 @@ STAGE_REGISTRY_ENTRY_SCHEMA: dict[str, Any] = {
     "required": ["name", "display_label", "review_policy", "position_hint"],
 }
 
+STAGE_REGISTRY_MUTATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "stage": STAGE_REGISTRY_ENTRY_SCHEMA,
+    },
+    "required": ["ok", "stage"],
+}
+
+TASK_TYPE_DEFAULT_STAGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "stage_name": {"type": "string"},
+        "position": {"type": "integer"},
+    },
+    "required": ["stage_name", "position"],
+}
+
 
 def _resolve_task(ctx: RegistryContext, task_id: str) -> str:
     return resolve_task_id_for_mcp(ctx.task_manager, task_id)
@@ -154,7 +172,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
             },
             "required": ["name", "updates"],
         },
-        output_schema={"type": "object"},
+        output_schema=STAGE_REGISTRY_MUTATION_SCHEMA,
         func=update_stage,
     )
 
@@ -171,7 +189,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "properties": {"name": {"type": "string"}},
             "required": ["name"],
         },
-        output_schema={"type": "object"},
+        output_schema=STAGE_REGISTRY_MUTATION_SCHEMA,
         func=restore_stage,
     )
 
@@ -188,7 +206,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "properties": {"name": {"type": "string"}},
             "required": ["name"],
         },
-        output_schema={"type": "object"},
+        output_schema=STAGE_REGISTRY_MUTATION_SCHEMA,
         func=delete_stage,
     )
 
@@ -197,12 +215,31 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
         stages: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Replace a task type's default stage manifest."""
-        normalized = [
-            (str(item["stage_name"]), int(item["position"]))
-            for item in stages
-            if "stage_name" in item and "position" in item
-        ]
-        ctx.task_manager.stages_registry.set_default_stages(task_type, normalized)
+        normalized: list[tuple[str, int]] = []
+        for index, item in enumerate(stages):
+            stage_name = item.get("stage_name")
+            if not isinstance(stage_name, str) or not stage_name.strip():
+                return {
+                    "ok": False,
+                    "error": "invalid_default_stage",
+                    "message": f"stages[{index}].stage_name must be a non-empty string",
+                }
+            position = item.get("position")
+            if not isinstance(position, int) or isinstance(position, bool):
+                return {
+                    "ok": False,
+                    "error": "invalid_default_stage",
+                    "message": f"stages[{index}].position must be an integer",
+                }
+            normalized.append((stage_name.strip(), position))
+        try:
+            ctx.task_manager.stages_registry.set_default_stages(task_type, normalized)
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "error": "invalid_default_stage",
+                "message": str(exc),
+            }
         return {
             "ok": True,
             "task_type": task_type,
@@ -225,17 +262,24 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "array",
                     "items": {
                         "type": "object",
-                        "properties": {
-                            "stage_name": {"type": "string"},
-                            "position": {"type": "integer"},
-                        },
-                        "required": ["stage_name", "position"],
+                        "properties": TASK_TYPE_DEFAULT_STAGE_SCHEMA["properties"],
+                        "required": TASK_TYPE_DEFAULT_STAGE_SCHEMA["required"],
                     },
                 },
             },
             "required": ["task_type", "stages"],
         },
-        output_schema={"type": "object"},
+        output_schema={
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "task_type": {"type": "string"},
+                "stages": {"type": "array", "items": TASK_TYPE_DEFAULT_STAGE_SCHEMA},
+                "error": {"type": "string"},
+                "message": {"type": "string"},
+            },
+            "required": ["ok"],
+        },
         func=set_task_type_defaults,
     )
 
@@ -272,13 +316,7 @@ def create_stage_read_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "task_type": {"type": "string"},
                 "stages": {
                     "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "stage_name": {"type": "string"},
-                            "position": {"type": "integer"},
-                        },
-                    },
+                    "items": TASK_TYPE_DEFAULT_STAGE_SCHEMA,
                 },
             },
             "required": ["ok"],

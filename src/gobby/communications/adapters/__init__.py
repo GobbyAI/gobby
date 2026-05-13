@@ -37,3 +37,5 @@ for _adapter_module in (
 ):
     with contextlib.suppress(ImportError):
         importlib.import_module(_adapter_module)
+
+del _adapter_module

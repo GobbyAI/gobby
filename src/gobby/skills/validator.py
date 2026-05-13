@@ -179,7 +179,7 @@ def validate_skill_compatibility(compatibility: str | None) -> ValidationResult:
     return result
 
 
-def validate_skill_tags(tags: list[str] | None) -> ValidationResult:
+def validate_skill_tags(tags: object) -> ValidationResult:
     """Validate skill tags.
 
     Requirements:

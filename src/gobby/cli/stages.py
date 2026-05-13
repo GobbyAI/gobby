@@ -164,7 +164,11 @@ def defaults(task_type: str, stage_values: tuple[str, ...]) -> None:
                 stage_name, separator, position_text = raw.partition(":")
                 if not separator:
                     raise click.ClickException("--set must use stage:position")
-                parsed.append((stage_name, int(position_text)))
+                try:
+                    position = int(position_text)
+                except ValueError as exc:
+                    raise click.ClickException("--set position must be an integer") from exc
+                parsed.append((stage_name, position))
             manager.set_default_stages(task_type, parsed)
         _echo(
             [

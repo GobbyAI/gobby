@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 # Max file size to read (1MB default)
 DEFAULT_MAX_SIZE = 1_048_576
+GIT_PORCELAIN_STATUS_MIN_LINE_LENGTH = 4
+GIT_PORCELAIN_PATH_OFFSET = 3
 
 # Extensions treated as images
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp"}
@@ -401,12 +403,12 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
             if rc_status == 0:
                 files: dict[str, str] = {}
                 for line in stdout_status.splitlines():
-                    if not line or len(line) < 4:
+                    if not line or len(line) < GIT_PORCELAIN_STATUS_MIN_LINE_LENGTH:
                         continue
                     # Format: "XY PATH" — XY is exactly 2 chars, then space, then path
                     xy = line[0:2]
                     status_code = xy.strip() or "?"
-                    file_path = line[3:]
+                    file_path = line[GIT_PORCELAIN_PATH_OFFSET:]
                     # Handle renames: "R  old -> new"
                     if " -> " in file_path:
                         file_path = file_path.split(" -> ")[-1]

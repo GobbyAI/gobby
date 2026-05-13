@@ -40,17 +40,19 @@ def require_stage_state_types() -> dict[str, Any]:
     return {name: getattr(module, name) for name in required} | {"module": module}
 
 
-def stage_states_manager(db) -> Any:
+def stage_states_manager(db: Any) -> Any:
     types = require_stage_state_types()
     return types["StageStatesManager"](db, LocalTaskManager(db).lifecycle_events)
 
 
-def stage_registry_manager(db) -> Any:
+def stage_registry_manager(db: Any) -> Any:
     _, manager_cls = require_stage_registry_types()
     return manager_cls(db)
 
 
-def create_task(db, sample_project: dict[str, Any], *, title: str = "Stage task", **kwargs: Any):
+def create_task(
+    db: Any, sample_project: dict[str, Any], *, title: str = "Stage task", **kwargs: Any
+) -> Any:
     return LocalTaskManager(db).create_task(
         project_id=sample_project["id"],
         title=title,
@@ -64,7 +66,7 @@ def spec(stage_name: str, position: int, **kwargs: Any) -> Any:
 
 
 def initialize_manifest(
-    db,
+    db: Any,
     task_id: str,
     specs: Sequence[Any],
     *,
@@ -78,7 +80,7 @@ def initialize_manifest(
 
 
 def make_task_with_manifest(
-    db,
+    db: Any,
     sample_project: dict[str, Any],
     specs: Sequence[Any],
     *,
@@ -92,7 +94,7 @@ def make_task_with_manifest(
 
 
 def set_stage_state(
-    db,
+    db: Any,
     task_id: str,
     stage_name: str,
     state: str,
@@ -121,7 +123,7 @@ def set_stage_state(
     )
 
 
-def stage_row(db, task_id: str, stage_name: str) -> dict[str, Any]:
+def stage_row(db: Any, task_id: str, stage_name: str) -> dict[str, Any]:
     row = db.fetchone(
         """
         SELECT *
@@ -134,7 +136,7 @@ def stage_row(db, task_id: str, stage_name: str) -> dict[str, Any]:
     return dict(row)
 
 
-def stage_rows(db, task_id: str) -> list[dict[str, Any]]:
+def stage_rows(db: Any, task_id: str) -> list[dict[str, Any]]:
     return [
         dict(row)
         for row in db.fetchall(
@@ -149,7 +151,7 @@ def stage_rows(db, task_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def lifecycle_events(db, task_id: str) -> list[dict[str, Any]]:
+def lifecycle_events(db: Any, task_id: str) -> list[dict[str, Any]]:
     return [
         dict(row)
         for row in db.fetchall(
@@ -164,7 +166,7 @@ def lifecycle_events(db, task_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def task_row(db, task_id: str) -> dict[str, Any]:
+def task_row(db: Any, task_id: str) -> dict[str, Any]:
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
     assert row is not None, f"missing task {task_id}"
     return dict(row)
