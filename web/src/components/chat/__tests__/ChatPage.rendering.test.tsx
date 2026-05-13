@@ -125,6 +125,64 @@ describe("ChatPage – rendering", () => {
     });
   });
 
+  it("keeps a compact voice status row above the lower status bar while voice is enabled", async () => {
+    const { rerender } = render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice({
+          ttsEnabled: true,
+          voiceAvailable: true,
+          voiceReady: false,
+          voiceLoading: false,
+        })}
+      />,
+    );
+
+    const voiceStatus = await screen.findByTestId("voice-status-bar");
+    const agentStatus = screen.getByTestId("agent-status-bar");
+
+    expect(voiceStatus).toHaveTextContent("Warming voice...");
+    expect(voiceStatus).toHaveAttribute("data-loading", "true");
+    expect(
+      voiceStatus.compareDocumentPosition(agentStatus) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    rerender(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice({
+          ttsEnabled: true,
+          voiceAvailable: true,
+          voiceReady: true,
+          voiceLoading: false,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-status-bar")).toBeInTheDocument();
+    expect(screen.getByTestId("voice-status-bar")).toHaveAttribute(
+      "data-loading",
+      "false",
+    );
+  });
+
+  it("does not reserve the voice status row when voice is disabled", async () => {
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("voice-status-bar")).toBeNull();
+  });
 
   it("opens the Artifacts tab when a show_file artifact event arrives", async () => {
     let artifactEvent:

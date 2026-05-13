@@ -882,18 +882,22 @@
   }
 }
 
-/* Voice status bar — between AgentStatusBar and ChatInput. Routes the shared
-   --activity-panel-bar-height token so the row aligns with .command-bar and
-   .agent-status-bar at every viewport. */
+/* Voice status bar — compact row above AgentStatusBar. Keep it shorter than
+   the primary bars so transient warmup state does not dominate the bottom UI. */
 .voice-status-bar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-height: var(--activity-panel-bar-height);
-  padding: 0 1rem;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  min-height: 1.5rem;
+  padding: 0 0.75rem;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border);
   font-size: var(--text-xs);
+  line-height: 1;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.voice-status-bar--idle {
+  pointer-events: none;
 }
