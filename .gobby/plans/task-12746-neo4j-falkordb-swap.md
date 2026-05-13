@@ -177,7 +177,7 @@ These updates land with the config-class rename — leaving them stale would blo
 ### 1.2 Implement FalkorClient mirroring Neo4jClient surface [category: code] (depends: 1.1)
 `kind: deliverable`
 
-Targets: `src/gobby/memory/falkor_client.py` (new file), `src/gobby/memory/__init__.py` (export update), `src/gobby/memory/neo4j_client.py` (the file this client supersedes — body and §1.3 cite the deletion), `tests/memory/test_falkor_client.py`, `tests/memory/test_falkor_write_methods.py`, `tests/memory/test_falkor_vector_search.py`
+Targets: `src/gobby/memory/falkor_client.py` (new file), `src/gobby/memory/neo4j_client.py` (the file this client supersedes — body and §1.3 cite the deletion), `tests/memory/test_falkor_client.py`, `tests/memory/test_falkor_write_methods.py`, `tests/memory/test_falkor_vector_search.py`. **No `src/gobby/memory/__init__.py` exists** — memory is a namespace package; consumers import directly from `gobby.memory.falkor_client` rather than through a package init (see §1.3 for the verified namespace-package statement and the live import sites).
 
 Create `src/gobby/memory/falkor_client.py` exposing the same public surface as `src/gobby/memory/neo4j_client.py` so `KnowledgeGraphService` and `CodeGraph` only need a constructor swap, not a behavioral rewrite. Use the official `falkordb` Python package (async API, built on `redis.asyncio`).
 
@@ -977,7 +977,7 @@ This task is critical to running before Phase 7 (Rust) lands, because gobby-cli 
 
 **Acceptance:**
 
-- 3.6.1 — One-shot migration moves `databases.neo4j.*` keys to `databases.falkordb.*` in config_store. file: `src/gobby/storage/migrations.py`.
+- 3.6.1 — One-shot migration preserves backend-agnostic tunables (`graph_search`, `graph_min_score`, `rrf_k`, `graph_name`) under `databases.falkordb.*` when user-overridden, drops every `databases.neo4j.*` connection/auth key (`url`, `auth`, `database`, `host`, `port`) including the `$secret:auth` config reference, and removes the orphaned `auth` secret only when no remaining JSON-encoded `$secret:auth` reference survives. file: `src/gobby/storage/migrations.py`.
 
 ## P4 Phase 4: Python — Admin Payload and Memory Routes
 `kind: framing`
@@ -1076,7 +1076,7 @@ This rename happens here in source; the route test must move with it.
 ### 4.3 Sweep daemon-wide for residual Neo4j references [category: refactor] (depends: 1.3, 3.4, 3.5, 4.1, 4.2, Phase 2, 3.3, 3.6)
 `kind: deliverable`
 
-Targets: `src/gobby/runner_init/services.py`, `src/gobby/runner_lifecycle.py`, `src/gobby/runner_maintenance.py`, `src/gobby/cli/daemon.py`, `src/gobby/cli/memory.py`, `src/gobby/utils/status.py`, `src/gobby/config/code_index.py`, `src/gobby/mcp_proxy/tools/memory.py`, `src/gobby/cli/pack.py` (audit-only — body's step 3 and config-export check cite this path; verify whether it exists before editing), `tests/runner_helpers.py`. Verify each; edit any that touches Neo4j. `tests/runner_helpers.py` is the R22-F4 conftest cascade target.
+Targets: `src/gobby/runner_init/services.py`, `src/gobby/runner_lifecycle_subsystems.py` (live health-check + code-index start path — `_check_external_services` at line 69, `_start_code_index_tasks` at line 274), `src/gobby/runner_lifecycle_shutdown.py` (live shutdown path — `_close_managers_and_storage` at line 286), `src/gobby/code_index/sync_worker.py` (sync worker signature change for stale-graph-client handling), `src/gobby/runner_maintenance.py`, `src/gobby/cli/daemon.py`, `src/gobby/cli/memory.py`, `src/gobby/cli/pack.py` (live file with Neo4j-named Docker volume `gobby_neo4j_data` at line 47 and "Neo4j + Qdrant" help text at lines 151/232/239/386/397 — fully owned by this sweep, NOT audit-only), `src/gobby/utils/status.py`, `src/gobby/config/code_index.py`, `src/gobby/mcp_proxy/tools/memory.py`, `tests/runner_helpers.py`. Verify each; edit any that touches Neo4j. `tests/runner_helpers.py` is the R22-F4 conftest cascade target.
 
 These call sites still read `db_cfg.neo4j.*`, inject `GOBBY_NEO4J_PASSWORD` into subprocess env, key reports/payloads under `neo4j`, expose Neo4j-branded MCP tool descriptions, or print Neo4j-named status output. The earlier tasks (1.1, 2.1, 2.2, 3.3, 3.4, 3.6, 4.1, 4.2) only touched the core wiring — these surfaces are the long tail.
 
@@ -1084,17 +1084,17 @@ For each file:
 
 1. `grep -n 'neo4j\|Neo4j\|NEO4J' <file>` to enumerate hits
 2. Replace `db_cfg.neo4j.*` → `db_cfg.falkordb.*` (host/port/password/graph_name) using the new `FalkorConfig` shape from 1.1
-3. Replace `GOBBY_NEO4J_PASSWORD` → `GOBBY_FALKORDB_PASSWORD` in any subprocess env injection (audit the daemon's subprocess spawns; `src/gobby/cli/pack.py` does not exist as previously claimed — verify via `rg GOBBY_NEO4J_PASSWORD src/`)
+3. Replace `GOBBY_NEO4J_PASSWORD` → `GOBBY_FALKORDB_PASSWORD` in any subprocess env injection (audit the daemon's subprocess spawns via `rg GOBBY_NEO4J_PASSWORD src/`). **`src/gobby/cli/pack.py` requires concrete edits in this same sweep:** (a) rename the Docker volume entry `gobby_neo4j_data` to `gobby_falkordb_data` in the `DOCKER_VOLUMES` list at line 47; (b) rewrite the user-facing help/docstring text at lines 151, 232, 239, 386, 397 — change "Neo4j + Qdrant" to "FalkorDB + Qdrant" and "Stop Docker services (Qdrant, Neo4j)" to "Stop Docker services (Qdrant, FalkorDB)"; (c) decide on the legacy Neo4j compose fallback path at line 155 ("Fall back to legacy Neo4j compose") — keep it ONLY if it is needed for the §8.2 stale-config / §8.3 row 18 upgrade-path tests to find and tear down a pre-migration Neo4j compose file; otherwise remove it. The pack/unpack flow is the canonical user-facing backup surface, so leaving Neo4j-named volumes or help text behind would surface to operators every time they pack or unpack a project.
 4. Rename payload/report keys: `report["neo4j"]` → `report["falkordb"]`, log keys `neo4j_url` → `falkordb_url`, etc.
 5. For `mcp_proxy/tools/memory.py`: the tool descriptions on `search_knowledge_graph`, `rebuild_knowledge_graph`, `clear_knowledge_graph` may mention Neo4j by name — rewrite to mention FalkorDB or the neutral phrase "knowledge graph backend"
 6. For `cli/memory.py`: any user-facing `gobby memory` subcommand text mentioning Neo4j must be updated
 7. For `utils/status.py`: the status formatter likely has a Neo4j row — replace with FalkorDB
 
-**Lifecycle semantics (R23-F1) — owned by this task, edits land in `src/gobby/runner_lifecycle.py`:**
+**Lifecycle semantics (R23-F1) — owned by this task, edits land in the live lifecycle subsystem files: `src/gobby/runner_lifecycle_subsystems.py` for health-check and code-index-start; `src/gobby/runner_lifecycle_shutdown.py` for shutdown; `src/gobby/code_index/sync_worker.py` for the loop signature change. `_check_external_services`, `_start_code_index_tasks`, and `_close_managers_and_storage` all live in the subsystem modules listed above. Verify via `grep -n '_check_external_services\|_close_managers_and_storage' src/gobby/runner_lifecycle*.py` before editing:**
 
 The daemon owns TWO independent FalkorDB clients: `runner.memory_manager._falkor_client` (graph_name `gobby_kg`, from § 2.1) and the CodeGraph client wired into `runner.code_indexer.context._graph` (graph_name `gobby_code`, from § 2.2). The pre-migration Neo4j lifecycle path only degrades and closes the MemoryManager client; without explicit handling, an implementation that follows the rename-only sweep above leaves CodeGraph holding a dead client after a failed health check AND leaks the code-graph connection at shutdown.
 
-Two specific edits in `runner_lifecycle.py`:
+Two specific edits across the live lifecycle subsystem files (per the file-layout note above):
 
 a. **Health-check failure path:** the periodic FalkorDB health check (currently named for Neo4j; rename per the sweep above) MUST, on unhealthy return, clear BOTH backend reference paths — call `runner.memory_manager.clear_graph_clients()` (the new method added in § 2.1 step 4; it nulls BOTH `_falkor_client` AND `_kg_service` because `KnowledgeGraphService` holds its own client reference per R24-F2 — a code path that just zeroes `_falkor_client` would leave `_kg_service` non-None, allowing memory graph routes and graph-augmented search to keep using a stale wrapper while the status payload claims graph features are disabled) AND call `runner.code_indexer.clear_graph_client()` (the new sync method added in § 2.2 — note `runner.code_indexer` IS the `CodeIndexContext` instance, R24-F1, NOT a wrapper with a `.context` property; using `runner.code_indexer.context.clear_graph_client()` would AttributeError at first health-check tick). This makes `/api/memories/...` and `/api/code-index/...` routes fall back to the "graph unavailable" path simultaneously, matching the user-visible single-backend semantics — partial degradation (memory works, code-index doesn't, or vice versa) is a confusing operator UX and a frequent source of false bug reports.
 b. **Shutdown ordering:** in the runner's shutdown sequence, await `runner.code_indexer.close_graph_client()` (the new async method added in § 2.2 — same `runner.code_indexer` direct attribute, no `.context` indirection per R24-F1) BEFORE calling `LocalDatabase.close()`. The MemoryManager already has its own `close()` plumbing; ensure both close paths fire even if one raises (use `try/except/finally` around the pair so one client's close failure does not strand the other connection open).

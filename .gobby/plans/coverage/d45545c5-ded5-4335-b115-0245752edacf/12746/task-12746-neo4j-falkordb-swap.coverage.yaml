@@ -1,11 +1,11 @@
 header:
   plan_id: task-12746-neo4j-falkordb-swap
-  plan_hash: 275b0dd4aa654bdd29a23334e6dd6a242c520112c2fb9bf197ee1c2040661066
+  plan_hash: 8f0c478e8ff89f721ad6886cd701448347366213c6063550570a3a365fe6515a
   root_task_ref: '12746'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-05-13T03:14:27Z'
+  generated_at: '2026-05-13T03:27:04Z'
   task_tree_source: db
-  task_tree_source_hash: 4da6dc23331a4fe5f71e4c9c880e0793154a4566ad6992d02b57b4786571e5a5
+  task_tree_source_hash: 9e7b51a7090295db2c2300381cf3e57e146b804aac0bdf8fe931710079635a7a
   evidence_summary: []
 rows:
 - section_id: '1.1'
