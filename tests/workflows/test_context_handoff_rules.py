@@ -7,6 +7,7 @@ Verifies context handoff rules sync correctly and have proper structure:
 - inject-compact-handoff: inject_context on session_start
 - inject-task-context-on-start: inject_context on session_start
 - preserve-context-on-compact: set_variable on pre_compact (reset tracking vars)
+- auto-compact-after-task-close: after_tool close_task compaction handoff
 
 """
 
@@ -32,6 +33,7 @@ CONTEXT_HANDOFF_RULES = {
     "inject-task-context-on-start",
     "prepare-clear-handoff",
     "preserve-context-on-compact",
+    "auto-compact-after-task-close",
 }
 
 
@@ -300,3 +302,53 @@ class TestPreserveContextOnCompact:
         ]
         assert len(reset_flag) == 1
         assert reset_flag[0].value is True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# auto-compact-after-task-close
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestAutoCompactAfterTaskClose:
+    """Compact web chat or nudge terminal after closing one task with substantial work left."""
+
+    def test_event_and_effects(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("auto-compact-after-task-close")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.event.value == "after_tool"
+        effects = body.resolved_effects
+        assert len(effects) == 2
+
+        web_chat_calls = [effect for effect in effects if effect.type == "mcp_call"]
+        terminal_nudges = [effect for effect in effects if effect.type == "inject_context"]
+        assert len(web_chat_calls) == 1
+        assert len(terminal_nudges) == 1
+
+        web_chat_call = web_chat_calls[0]
+        assert web_chat_call.server == "gobby-sessions"
+        assert web_chat_call.tool == "compact_self"
+        assert web_chat_call.background is True
+        assert "session_type" in (web_chat_call.when or "")
+        assert "web_chat" in (web_chat_call.when or "")
+
+        terminal_nudge = terminal_nudges[0]
+        assert "session_type" in (terminal_nudge.when or "")
+        assert "web_chat" in (terminal_nudge.when or "")
+        assert terminal_nudge.template is not None
+        assert "compact_self" in terminal_nudge.template
+
+    def test_condition_references_close_task_and_helpers(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("auto-compact-after-task-close")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.when is not None
+        assert "gobby-tasks" in body.when
+        assert "close_task" in body.when
+        assert "tool_call_succeeded()" in body.when
+        assert "task_type_in" in body.when
+        assert "claimed_tasks" in body.when

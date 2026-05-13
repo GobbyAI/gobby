@@ -110,6 +110,24 @@ class TestTaskTreeComplete:
         assert ev.evaluate("task_tree_complete('task-123')") is True
 
 
+class TestTaskTypeIn:
+    def test_task_type_in_helper_is_available(self, mock_task_manager: MagicMock) -> None:
+        task = _make_task()
+        task.task_type = "epic"
+        mock_task_manager.get_task.return_value = task
+
+        ctx: dict[str, Any] = {"variables": {}}
+        ev = _build_evaluator(ctx, task_manager=mock_task_manager)
+
+        assert ev.evaluate("task_type_in(['task-123'], 'epic')") is True
+
+    def test_task_type_in_without_manager_returns_false(self) -> None:
+        ctx: dict[str, Any] = {"variables": {}}
+        ev = _build_evaluator(ctx, task_manager=None)
+
+        assert ev.evaluate("task_type_in(['task-123'], 'epic')") is False
+
+
 # --- has_stop_signal tests ---
 
 
@@ -240,6 +258,51 @@ class TestMcpFailed:
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx)
         assert ev.evaluate("mcp_failed('gobby-agents', 'spawn_agent')") is False
+
+
+class TestToolCallSucceeded:
+    def _eval(
+        self,
+        data: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> SafeExpressionEvaluator:
+        ctx: dict[str, Any] = {
+            "variables": {},
+            "event": SimpleNamespace(data=data, metadata=metadata or {}),
+        }
+        return _build_evaluator(ctx)
+
+    def test_returns_true_for_successful_tool_call(self) -> None:
+        ev = self._eval({"tool_output": {"success": True, "result": {"id": "ok"}}})
+
+        assert ev.evaluate("tool_call_succeeded()") is True
+
+    def test_rejects_top_level_is_error(self) -> None:
+        ev = self._eval({"is_error": True, "tool_output": {"success": True}})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_top_level_error(self) -> None:
+        ev = self._eval({"error": "tool failed", "tool_output": {"success": True}})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_failure_metadata(self) -> None:
+        ev = self._eval({"tool_output": {"success": True}}, metadata={"is_failure": True})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_nested_mcp_error_result(self) -> None:
+        ev = self._eval({"tool_output": {"success": True, "result": {"error": "nested"}}})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_nested_mcp_success_false(self) -> None:
+        ev = self._eval(
+            {"tool_output": {"success": True, "result": {"success": False, "error": "bad"}}}
+        )
+
+        assert ev.evaluate("tool_call_succeeded()") is False
 
 
 # --- mcp_result_has tests ---

@@ -1,0 +1,30 @@
+tags: [context-handoff, context, handoff, lifecycle, gobby, default]
+
+rules:
+  auto-compact-after-task-close:
+    description: "Compact or nudge context handoff after closing one task while substantial claimed work remains"
+    event: after_tool
+    enabled: true
+    priority: 12
+    when: >
+      event.data.get('mcp_server') == 'gobby-tasks'
+      and event.data.get('mcp_tool') == 'close_task'
+      and tool_call_succeeded()
+      and variables.get('claimed_tasks')
+      and (
+        len(variables.get('claimed_tasks', {})) > 1
+        or task_type_in(variables.get('claimed_tasks'), 'epic')
+      )
+    effects:
+      - type: mcp_call
+        when: "event.metadata.get('session_type') == 'web_chat'"
+        server: gobby-sessions
+        tool: compact_self
+        arguments:
+          session_id: "{{ event.session_id }}"
+        background: true
+      - type: inject_context
+        when: "event.metadata.get('session_type') != 'web_chat'"
+        template: |
+          You closed a task, but this session still has multiple claimed tasks or a claimed epic.
+          Call `gobby-sessions:compact_self` for this session before continuing.

@@ -231,6 +231,24 @@ def _resolve_session_for_compaction(
     return resolved_id, session, None
 
 
+async def _compact_live_web_chat_fallback(
+    web_chat_session_registry: WebChatSessionRegistry | None,
+    *session_ids: str | None,
+) -> dict[str, Any] | None:
+    """Compact a live web-chat session when DB-backed session lookup is unavailable."""
+    if web_chat_session_registry is None:
+        return None
+
+    seen: set[str] = set()
+    for session_id in session_ids:
+        if not session_id or session_id in seen:
+            continue
+        seen.add(session_id)
+        if web_chat_session_registry.find_session(session_id)[1] is not None:
+            return await web_chat_session_registry.compact_session(session_id)
+    return None
+
+
 def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
@@ -286,6 +304,13 @@ def register_terminal_tools(
             session_manager,
         )
         if error:
+            web_chat_fallback = await _compact_live_web_chat_fallback(
+                web_chat_session_registry,
+                session_id,
+                resolved_session_id,
+            )
+            if web_chat_fallback is not None:
+                return web_chat_fallback
             return {"compacted": False, "reason": error}
         assert resolved_session_id is not None
         assert session is not None

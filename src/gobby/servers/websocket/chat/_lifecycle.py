@@ -140,7 +140,10 @@ class ChatLifecycleMixin:
             )
             source = SessionSource("claude")
 
-        metadata: dict[str, Any] = {"_platform_session_id": db_session_id}
+        metadata: dict[str, Any] = {
+            "_platform_session_id": db_session_id,
+            "session_type": "web_chat",
+        }
         if project_path:
             metadata["project_path"] = project_path
 

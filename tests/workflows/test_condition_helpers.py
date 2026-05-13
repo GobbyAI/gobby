@@ -10,6 +10,7 @@ from gobby.workflows.condition_helpers import (
     is_task_complete,
     task_needs_human_review,
     task_tree_complete,
+    task_type_in,
 )
 
 pytestmark = pytest.mark.unit
@@ -240,3 +241,42 @@ class TestTaskNeedsHumanReview:
 
     def test_no_manager_returns_false(self) -> None:
         assert task_needs_human_review(None, "#100") is False
+
+
+class TestTaskTypeIn:
+    def test_matches_epic_by_uuid(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, task.id, "epic") is True
+
+    def test_matches_epic_by_hash_ref(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, _seq_ref(task), "epic") is True
+
+    def test_matches_epic_by_int_seq_ref(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, task.seq_num, "epic") is True
+
+    def test_matches_mixed_list_when_any_task_type_matches(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        normal = _task(manager, sample_project, title="Normal", task_type="task")
+        epic = _task(manager, sample_project, title="Epic", task_type="epic")
+
+        assert task_type_in(manager, [normal.id, epic.seq_num], "epic") is True
+
+    def test_returns_false_for_missing_task(self, temp_db) -> None:
+        assert task_type_in(_manager(temp_db), "#999999", "epic") is False
+
+    def test_returns_false_without_task_manager(self) -> None:
+        assert task_type_in(None, "#1", "epic") is False
+
+    def test_returns_false_for_non_matching_type(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="task")
+
+        assert task_type_in(manager, task.id, "epic") is False

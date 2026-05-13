@@ -7,6 +7,7 @@ and lazy boolean evaluation for deferred computation.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import operator
 import re
@@ -49,6 +50,7 @@ _NESTED_TEXT_KEYS = (
     "response",
     "output",
 )
+_FAILURE_STATUSES = frozenset({"error", "failed", "failure"})
 
 
 class LazyBool:
@@ -409,6 +411,39 @@ def _assistant_response_text(context: dict[str, Any]) -> str:
     return text
 
 
+def _tool_payload_failed(payload: Any) -> bool:
+    """Return True when a normalized tool payload carries failure metadata."""
+    if isinstance(payload, str):
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return False
+        return _tool_payload_failed(decoded)
+
+    if isinstance(payload, list | tuple):
+        return any(_tool_payload_failed(item) for item in payload)
+
+    if not isinstance(payload, dict):
+        return False
+
+    if payload.get("is_error") is True:
+        return True
+    if payload.get("success") is False:
+        return True
+    if payload.get("error"):
+        return True
+
+    status = payload.get("status")
+    if isinstance(status, str) and status.lower() in _FAILURE_STATUSES:
+        return True
+
+    result = payload.get("result")
+    if isinstance(result, dict | list | tuple | str):
+        return _tool_payload_failed(result)
+
+    return False
+
+
 def build_condition_helpers(
     task_manager: Any = None,
     stop_registry: Any = None,
@@ -433,6 +468,7 @@ def build_condition_helpers(
         task_needs_human_review,
         task_state_in,
         task_tree_complete,
+        task_type_in,
     )
 
     ctx = context or {}
@@ -458,10 +494,14 @@ def build_condition_helpers(
         funcs["task_state_in"] = lambda task_id, *states: task_state_in(
             task_manager, task_id, *states
         )
+        funcs["task_type_in"] = lambda task_id_or_ids, *types: task_type_in(
+            task_manager, task_id_or_ids, *types
+        )
     else:
         funcs["task_tree_complete"] = lambda task_id: True
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
+        funcs["task_type_in"] = lambda task_id_or_ids, *types: False
 
     # --- Stop signal helper ---
 
@@ -528,6 +568,25 @@ def build_condition_helpers(
             return False
         return bool(result.get(field) == value)
 
+    def _tool_call_succeeded() -> bool:
+        """Check whether the current normalized after-tool event succeeded."""
+        event = ctx.get("event")
+        data = getattr(event, "data", None)
+        if not isinstance(data, dict):
+            return False
+
+        metadata = getattr(event, "metadata", {})
+        if isinstance(metadata, dict) and metadata.get("is_failure"):
+            return False
+
+        top_level = {
+            key: data.get(key) for key in ("is_error", "success", "error", "status") if key in data
+        }
+        if _tool_payload_failed(top_level):
+            return False
+
+        return not _tool_payload_failed(data.get("tool_output"))
+
     def _skill_loaded(name: str) -> bool:
         """Check the canonical skill ledger."""
         variables = _get_variables(ctx)
@@ -573,6 +632,7 @@ def build_condition_helpers(
     funcs["mcp_result_is_null"] = _mcp_result_is_null
     funcs["mcp_failed"] = _mcp_failed
     funcs["mcp_result_has"] = _mcp_result_has
+    funcs["tool_call_succeeded"] = _tool_call_succeeded
     funcs["skill_loaded"] = _skill_loaded
     funcs["assistant_response_matches_any"] = _assistant_response_matches_any
 

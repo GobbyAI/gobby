@@ -7,6 +7,7 @@ so they can be called from rule ``when`` conditions, e.g.:
 """
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from gobby.tasks.state_semantics import projected_task_state
@@ -125,6 +126,48 @@ def task_state_in(task_manager: Any, task_id: str | int | None, *states: str) ->
 
     normalized_states = {state.strip() for state in states if isinstance(state, str)}
     return projected_task_state(task) in normalized_states
+
+
+def _normalize_task_ids(task_id_or_ids: Any) -> list[str] | None:
+    """Normalize a single task ref or iterable of refs to string refs."""
+    if task_id_or_ids is None:
+        return []
+    if isinstance(task_id_or_ids, str | int):
+        return [_normalize_task_id(task_id_or_ids)]
+    if isinstance(task_id_or_ids, Iterable):
+        return [_normalize_task_id(item) for item in task_id_or_ids if item is not None]
+    logger.warning(f"task_type_in: Unexpected task_id type: {type(task_id_or_ids)}")
+    return None
+
+
+def task_type_in(task_manager: Any, task_id_or_ids: Any, *types: str) -> bool:
+    """Check whether any referenced task has a task_type in the provided set.
+
+    Accepts UUIDs, ``#N`` refs, integer seq refs, and iterables containing any
+    mix of those forms.
+    """
+    if not task_manager or not types:
+        return False
+
+    normalized_types = {
+        task_type.strip().lower() for task_type in types if isinstance(task_type, str)
+    }
+    if not normalized_types:
+        return False
+
+    task_ids = _normalize_task_ids(task_id_or_ids)
+    if task_ids is None:
+        return False
+
+    for task_id in task_ids:
+        task = _get_task(task_manager, task_id)
+        if not task:
+            logger.debug("task_type_in: Task '%s' not found", task_id)
+            continue
+        task_type = getattr(task, "task_type", None)
+        if isinstance(task_type, str) and task_type.lower() in normalized_types:
+            return True
+    return False
 
 
 def _is_tree_complete(task_manager: Any, task_id: str) -> bool:

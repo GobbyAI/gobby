@@ -553,6 +553,52 @@ class TestCompactSelfWebChatPath:
             call("Continue where you last left off."),
         ]
 
+    @pytest.mark.parametrize("lookup_id", ["db-id", "conv-1"])
+    def test_web_chat_fallback_compacts_live_session_when_db_lookup_missing(
+        self,
+        lookup_id: str,
+    ) -> None:
+        live_session = MagicMock()
+        live_session.db_session_id = "db-id"
+        live_session.conversation_id = "conv-1"
+        live_session.send_message.side_effect = lambda command: _done_stream()
+
+        web_chat_registry = WebChatSessionRegistry()
+        web_chat_registry.register("conv-1", live_session)
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = None
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(
+                registry,
+                session_manager,
+                MagicMock(),
+                web_chat_session_registry=web_chat_registry,
+            )
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id=lookup_id))
+
+        assert result == {
+            "compacted": True,
+            "command": "/compact",
+            "via": "web_chat",
+            "queued": False,
+        }
+        assert live_session.send_message.call_args_list == [
+            call("/compact"),
+            call("Continue where you last left off."),
+        ]
+
 
 class TestCompactSelfUnsupportedSessionType:
     def test_unsupported_session_type_returns_compacted_false(self) -> None:
