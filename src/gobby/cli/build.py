@@ -128,7 +128,6 @@ def _echo_build_result(result: BuildResult) -> None:
 def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
     payload: dict[str, object] = {
         "input_ref": input_ref,
-        "profile": opts.profile,
         "quick": opts.quick,
         "skip_stages": opts.skip_stages,
         "no_merge": opts.no_merge,
@@ -141,9 +140,10 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "max_retries": opts.max_retries,
     }
     if opts.isolation_explicit:
-        payload["isolation"] = opts.isolation
-    if opts.unattended_explicit:
-        payload["unattended"] = opts.unattended
+        if opts.isolation in {"worktree", "clone"}:
+            payload["workspace_backend"] = opts.isolation
+        else:
+            payload["isolation"] = opts.isolation
     return payload
 
 
@@ -313,15 +313,6 @@ def _open_database() -> LocalDatabase:
     help="Stage selector/cap override, e.g. development:max_review_rounds=4.",
 )
 @click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
-@click.option("--profile", help="Build profile to apply. Defaults to 'default'.")
-@click.option(
-    "--isolation",
-    type=click.Choice(["none", "worktree", "clone"]),
-    help="Workspace isolation mode.",
-)
-@click.option(
-    "--unattended/--no-unattended", default=None, help="Override profile unattended mode."
-)
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
 @click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
 @click.option("--target-branch", help="Target branch for the build.")
@@ -358,9 +349,6 @@ def build_command(
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
     use_clone: bool,
-    profile: str | None,
-    isolation: Isolation | None,
-    unattended: bool | None,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -397,20 +385,14 @@ def build_command(
         return
     if target_ref is not None:
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
-    if use_clone and isolation == "worktree":
-        raise click.ClickException("--clone conflicts with --isolation worktree")
-    resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
+    resolved_isolation: Isolation = "clone" if use_clone else "worktree"
 
     opts = BuildOptions(
-        profile=profile or "default",
-        profile_explicit=profile is not None,
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
         skip_stages_explicit=bool(skip_stage),
         isolation=resolved_isolation,
-        isolation_explicit=isolation is not None or use_clone,
-        unattended=bool(unattended) if unattended is not None else False,
-        unattended_explicit=unattended is not None,
+        isolation_explicit=use_clone,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),

@@ -23,14 +23,15 @@ def resolve_build_profile_options(
     if manager.get("default", source="installed", project_id=None, include_deleted=True) is None:
         BuildProfileLoader().sync(db)
     profile = manager.resolve(opts.profile or "default", project_id=project_id)
+    has_request_skip_stages = opts.skip_stages_explicit or bool(opts.skip_stages)
     return BuildOptions(
         profile=opts.profile,
         profile_explicit=opts.profile_explicit,
         quick=opts.quick,
-        skip_stages=list(profile.skip_stages)
-        if not opts.skip_stages_explicit
-        else list(opts.skip_stages),
-        skip_stages_explicit=opts.skip_stages_explicit,
+        skip_stages=list(opts.skip_stages)
+        if has_request_skip_stages
+        else list(profile.skip_stages),
+        skip_stages_explicit=has_request_skip_stages,
         isolation=profile.isolation if not opts.isolation_explicit else opts.isolation,
         isolation_explicit=opts.isolation_explicit,
         unattended=profile.unattended if not opts.unattended_explicit else opts.unattended,

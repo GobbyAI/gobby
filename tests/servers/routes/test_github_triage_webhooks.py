@@ -45,7 +45,7 @@ def test_github_triage_webhook_persists_delivery_and_returns_202(
 
     response = TestClient(server.app).post(
         f"/api/github/webhooks/triage/{sample_project['id']}",
-        data=raw_body,
+        content=raw_body,
         headers=_signed_headers(raw_body, secret),
     )
 

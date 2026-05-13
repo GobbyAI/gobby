@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.dispatch_tick import (
@@ -354,8 +353,7 @@ async def _resume_existing_lifecycle(
                 "--skip-stage can only shape a new lifecycle; use build restart or clean first"
             )
         warnings.append("Profile skip_stages ignored because the task already has a manifest")
-    task_isolation = cast(Isolation, str(task.isolation))
-    resume_opts = replace(opts, isolation=task_isolation) if not opts.isolation_explicit else opts
+    resume_opts = opts
     _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
     record_build_delivery_campaign(
         db,

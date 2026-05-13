@@ -31,6 +31,7 @@ from gobby.storage.tasks._stage_types import (
     StageState,
     StageState5,
 )
+from gobby.storage.tasks._stage_utils import _close_task_in_txn
 
 __all__ = [
     "IllegalManifestMutationError",
@@ -43,6 +44,7 @@ __all__ = [
     "StageState",
     "StageState5",
     "StageStatesManager",
+    "_close_task_in_txn",
 ]
 
 
