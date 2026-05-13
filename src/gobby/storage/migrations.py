@@ -608,7 +608,9 @@ def _apply_registry_editing_schema(db: LocalDatabase) -> None:
 
 
 def _apply_cross_repo_delivery_profile_schema(db: LocalDatabase) -> None:
-    campaign_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(task_delivery_campaigns)")}
+    campaign_columns = {
+        row["name"] for row in db.fetchall("PRAGMA table_info(task_delivery_campaigns)")
+    }
     campaign_additions = {
         "delivery_mode": (
             "ALTER TABLE task_delivery_campaigns ADD COLUMN delivery_mode TEXT "
