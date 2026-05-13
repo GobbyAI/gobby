@@ -251,19 +251,22 @@ These renames must land in the same PR as `falkor_client.py` itself — leaving 
 - 1.2.1 — `FalkorClient` exposes a `Neo4jClient`-equivalent surface for graph reads and writes. symbol: `gobby.memory.falkor_client.FalkorClient`.
 - 1.2.2 — `ensure_vector_index` requires `dimension` as a positional kwarg sourced from `EmbeddingsConfig.dim`; the 1536 default footgun is removed. symbol: `gobby.memory.falkor_client.FalkorClient.ensure_vector_index`.
 
-### 1.3 Delete neo4j_client.py and update memory module exports [category: refactor] (depends: 1.2, Phase 2)
+### 1.3 Delete neo4j_client.py and rewrite remaining Neo4j-named imports [category: refactor] (depends: 1.2, Phase 2)
 `kind: deliverable`
 
-Target: `src/gobby/memory/neo4j_client.py` (delete), `src/gobby/memory/__init__.py`
+Targets: `src/gobby/memory/neo4j_client.py` (delete), `src/gobby/memory/manager.py` (remove the live `from gobby.memory.neo4j_client import Neo4jClient` import at line 12 and any remaining `Neo4jClient` references), `src/gobby/memory/services/knowledge_graph.py` (remove the live `from gobby.memory.neo4j_client import Neo4jConnectionError` at line 19 and the TYPE_CHECKING `from gobby.memory.neo4j_client import Neo4jClient` at line 25; route to the `FalkorClient` / `FalkorConnectionError` surface from § 1.2)
 
-Delete `src/gobby/memory/neo4j_client.py` outright. Update `src/gobby/memory/__init__.py` to remove any `from .neo4j_client import …` re-exports and add `from .falkor_client import FalkorClient, FalkorConnectionError, FalkorQueryError`.
+Delete `src/gobby/memory/neo4j_client.py` outright.
 
-This task depends on Phase 2 because `KnowledgeGraphService` and `CodeGraph` still import from `neo4j_client` until that phase finishes. Run last in this ordering.
+The `src/gobby/memory/` package has no package-init file today (memory is a namespace package — verified by `ls src/gobby/memory/`), so there are no package-level re-exports to rewrite. Every consumer of `Neo4jClient` / `Neo4jConnectionError` imports from `gobby.memory.neo4j_client` directly — verified via `grep -rn 'from gobby.memory.neo4j_client' src/gobby/` showing exactly two consumer files: `src/gobby/memory/manager.py` (line 12) and `src/gobby/memory/services/knowledge_graph.py` (lines 19 + 25). These two import sites must be rewritten to use the FalkorClient surface from § 1.2.
+
+This task depends on Phase 2 because `KnowledgeGraphService` and `CodeGraph` still import from `neo4j_client` until that phase finishes the wire-up. Run last in this ordering — after § 2.1 has switched `MemoryManager` to take the FalkorDB-shaped kwargs and § 2.2 has switched `CodeGraph` to a `FalkorClient`.
 
 **Acceptance:**
 
 - 1.3.1 — `src/gobby/memory/neo4j_client.py` is deleted. file: `src/gobby/memory/neo4j_client.py`.
-- 1.3.2 — `src/gobby/memory/__init__.py` exports `FalkorClient` and no longer exports `Neo4jClient`. file: `src/gobby/memory/__init__.py`.
+- 1.3.2 — `src/gobby/memory/manager.py` no longer imports `Neo4jClient`. file: `src/gobby/memory/manager.py`.
+- 1.3.3 — `src/gobby/memory/services/knowledge_graph.py` no longer imports `Neo4jClient` or `Neo4jConnectionError`. file: `src/gobby/memory/services/knowledge_graph.py`.
 
 ## P2 Phase 2: Python — Cypher Dialect Translation and Wire-Up
 `kind: framing`
@@ -2056,7 +2059,32 @@ If any check fails, that branch does not merge. Fix and re-run the full matrix.
 
 **Acceptance:**
 
+Per Plan-Coverage Contract table-row decomposition: the validation matrix above enumerates 23 independent rows of work; each gets a stable acceptance item below (8.3.1 documents the matrix and merge ordering themselves; 8.3.2 through 8.3.24 cover one matrix row each, indexed against the row number in the table). The acceptance kind on each row item is `behavior` — these are manual operator checks observed against a live FalkorDB instance, not file diffs.
+
 - 8.3.1 — Cross-repo validation matrix and merge ordering documented inline in this plan. behavior: "validation matrix and merge ordering documented" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.2 — Matrix row 1 passes: `gobby install` from clean `~/.gobby` exits 0; `docker compose -f ~/.gobby/services/docker-compose.yml ps` shows the FalkorDB profile healthy; the FalkorDB Browser at `http://localhost:13000` loads; `gobby status` reports FalkorDB healthy. behavior: "matrix row 1 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.3 — Matrix row 2 passes: `gobby install --falkordb` from clean `~/.gobby` exits 0 with only the FalkorDB container started (no CLI hooks/git/embedding/voice). behavior: "matrix row 2 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.4 — Matrix row 3 passes: `gobby install --neo4j-password foo` and `gobby uninstall --neo4j` both hard-fail with the § 8.1 migration message. behavior: "matrix row 3 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.5 — Matrix row 4 passes: `uv run pytest tests/memory/ tests/cli/ tests/code_index/ tests/config/ tests/utils/ tests/servers/routes/ tests/mcp_proxy/ tests/test_runner_lifecycle.py tests/test_runner_shutdown.py --cov=gobby --cov-fail-under=80 --cov-report=term-missing` exits 0. behavior: "matrix row 4 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.6 — Matrix row 5 passes: `uv run mypy src/gobby/memory/ src/gobby/code_index/ src/gobby/cli/installers/` exits 0. behavior: "matrix row 5 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.7 — Matrix row 6 passes: `uv run ruff check src/` exits 0. behavior: "matrix row 6 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.8 — Matrix row 7 passes: `cd web && npm run type-check && npm run test && npm run build` all exit 0. behavior: "matrix row 7 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.9 — Matrix row 8 passes: `gobby setup` end-to-end (clean state) completes; FalkorDB installed via Docker; `setup_state.json` shows `falkordb_*` fields populated. behavior: "matrix row 8 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.10 — Matrix row 9 passes: `gobby setup` end-to-end with `[p]` (custom password) accepts the password; persists in config_store + bootstrap; `docker compose ... exec -T falkordb redis-cli -a <pw> PING` returns `PONG`. behavior: "matrix row 9 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.11 — Matrix row 10 passes: `gobby setup` migration test (pre-existing `neo4j_*` state file) rewrites to `falkordb_*` without crashing. behavior: "matrix row 10 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.12 — Matrix row 11 passes: `cargo test -p gobby-code && cargo build --release -p gobby-code` exits 0. behavior: "matrix row 11 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.13 — Matrix row 12 passes: `gcode index .` against a fixture project then `gcode callers <known_function>` returns expected callers matching the saved fixture diff. behavior: "matrix row 12 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.14 — Matrix row 13 passes: `gcode blast-radius <known_function>` returns expected transitive callers. behavior: "matrix row 13 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.15 — Matrix row 14 passes: `gcode search "<query>"` with graph-boost enabled returns ranked results with graph-boosted entries. behavior: "matrix row 14 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.16 — Matrix row 15 passes: browser memory page loads, 3D graph renders, dashboard shows "FalkorDB connected" pill (visual confirmation). behavior: "matrix row 15 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.17 — Matrix row 16 passes: daemon restart with stale `databases.neo4j.*` keys present logs the § 8.2 warning and deletes the keys. behavior: "matrix row 16 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.18 — Matrix row 17 passes: pre-seeded user-tuned `databases.falkordb.rrf_k=80` and `graph_min_score=0.7` survive `gobby uninstall --falkordb`; connection/auth keys (`host`, `port`, `requirepass`) plus `falkordb_password` in bootstrap are removed; `secrets.name = 'requirepass'` returns zero rows. behavior: "matrix row 17 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.19 — Matrix row 18 passes: seeded OLD Neo4j-era compose file followed by `gobby install` refreshes the compose file to the FalkorDB template; the Neo4j container is stopped; the FalkorDB container starts and `redis-cli -a <pw> PING` returns `PONG`. behavior: "matrix row 18 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.20 — Matrix row 19 passes: `databases.falkordb.requirepass` set via `/api/config` PUT and via `gobby-config set_config` both return masked (`********`) on round-trip; raw DB shows `$secret:requirepass` in `config_store` and the encrypted value in `secrets`. behavior: "matrix row 19 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.21 — Matrix row 20 passes: `rg -l 'neo4j|Neo4j|NEO4J' src/gobby/ web/src/ tests/` (Python) and `rg -l 'neo4j|Neo4j|NEO4J' crates/` (gobby-cli) yield only the documented allowlist entries (bootstrap migration helper, storage migration, hidden deprecation handlers in `install.py`, CHANGELOG, and the migration-fixture tests under `tests/cli/` and `tests/storage/`). behavior: "matrix row 20 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.22 — Matrix row 21 passes: chmod read-only `~/.gobby/bootstrap.yaml` after staging the install, then `gobby install --falkordb` returns `success: False` (NOT True-with-warning); the error message names `gobby uninstall --falkordb` as the cleanup verb; `compose_running: True` is set in the result dict. behavior: "matrix row 21 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.23 — Matrix row 22 passes: setting `databases.falkordb.requirepass` to a NEW value via `/api/config` PUT without restart yields `WRONGPASS`/`NOAUTH` on `redis-cli ... PING`; after `gobby restart`, the second PING returns `PONG`; both PUT responses (`/api/config` and `gobby-config set_config`) include `restart_required: true` plus a hint. behavior: "matrix row 22 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
+- 8.3.24 — Matrix row 23 passes: password charset validator round-trip — accepted password (`Pa$$w0rd!`) persists through `gobby install --falkordb-password`, the wizard `[p]` path, `/api/config` PUT, and `gobby-config set_config`; rejected samples (empty, whitespace, tab, control, non-ASCII) all surface the `ValueError` at the appropriate layer (CLI exit 1, wizard inline re-prompt, HTTP 422, MCP error) and DO NOT persist; with the accepted password installed, `redis-cli -a "<pw>" PING` returns `PONG` confirming the quoted-healthcheck change in § 3.2. behavior: "matrix row 23 passes against live FalkorDB" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`.
 
 ## P9 Phase 9: Documentation
 `kind: framing`

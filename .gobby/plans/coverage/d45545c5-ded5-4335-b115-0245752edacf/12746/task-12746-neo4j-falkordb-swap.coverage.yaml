@@ -1,11 +1,11 @@
 header:
   plan_id: task-12746-neo4j-falkordb-swap
-  plan_hash: 45e0ec3e09f00799f63728ca55518a8083f8a52352bb0dbe4a80d2ed62b08227
+  plan_hash: 275b0dd4aa654bdd29a23334e6dd6a242c520112c2fb9bf197ee1c2040661066
   root_task_ref: '12746'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-05-13T02:56:33Z'
+  generated_at: '2026-05-13T03:14:27Z'
   task_tree_source: db
-  task_tree_source_hash: 93c197fb23270bd380eea811275c14fd4ad086255dff49b76474e53b7494b7ef
+  task_tree_source_hash: 4da6dc23331a4fe5f71e4c9c880e0793154a4566ad6992d02b57b4786571e5a5
   evidence_summary: []
 rows:
 - section_id: '1.1'
@@ -40,6 +40,12 @@ rows:
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.3'
+  item_id: 1.3.3
   status: missing
   leaves: []
   deferral_target: null
@@ -226,6 +232,144 @@ rows:
   evidence: []
 - section_id: '8.3'
   item_id: 8.3.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.3
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.5
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.6
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.8
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.9
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.10
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.11
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.12
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.13
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.14
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.15
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.16
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.17
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.18
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.19
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.20
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.21
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.22
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.23
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '8.3'
+  item_id: 8.3.24
   status: missing
   leaves: []
   deferral_target: null
