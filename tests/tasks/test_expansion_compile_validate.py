@@ -81,6 +81,46 @@ Implement the first behavior.
     return path
 
 
+def _write_plan_with_manual_manifest_category(path: Path) -> Path:
+    path.write_text(
+        """> **Plan ID:** manual-manifest
+
+# Manual Manifest
+
+## P1: Verification
+`kind: framing`
+
+### 1.1 Run live verification [category: manual]
+`kind: deliverable`
+
+Target: `tests/live.md`
+
+Verify the live behavior.
+
+**Acceptance:**
+- 1.1.1 - Live verification passes. behavior: "live verification passes" in `tests/live.md`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Run live verification"
+  category: manual
+  task_type: task
+  depends_on: []
+  validation_criteria: '"live verification passes" in `tests/live.md`'
+  labels:
+    - "covers:manual-manifest:1.1:1.1.1"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "1.1"
+```
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_validate_plan_file_rejects_deliverables_without_phases(
     service: ExpansionService, tmp_path: Path
 ) -> None:
@@ -122,3 +162,15 @@ def test_validate_plan_file_returns_semantic_lint_errors(
     assert result["valid"] is False
     assert any("target-coverage" in error for error in result["errors"])
     assert result["semantic_lint"]["valid"] is False
+
+
+def test_validate_plan_file_rejects_manual_manifest_category(
+    service: ExpansionService, tmp_path: Path
+) -> None:
+    plan_path = _write_plan_with_manual_manifest_category(tmp_path / "manual.md")
+
+    result = service.validate_plan_file(plan_path)
+
+    assert result["valid"] is False
+    assert any("unsupported category 'manual'" in error for error in result["errors"])
+    assert any("automated leaf categories" in error for error in result["errors"])

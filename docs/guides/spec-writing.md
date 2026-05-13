@@ -157,7 +157,7 @@ does not resolve.
 
 ## Categories And TDD
 
-Every deliverable heading needs a `[category: X]` tag. Current categories are:
+Every deliverable heading needs a `[category: X]` tag. Expansion manifest categories are:
 
 | Category | TDD wrapper | Use for |
 | --- | --- | --- |
@@ -168,7 +168,6 @@ Every deliverable heading needs a `[category: X]` tag. Current categories are:
 | `test` | no | Standalone test infrastructure or regression suites |
 | `research` | no | Investigation with no code output |
 | `planning` | no | Design or architecture work |
-| `manual` | no | Manual verification |
 
 `code` and `config` deliverables may use TDD. Expansion emits the TEST, IMPL,
 and REF wrapper tasks for those categories. Do not add filler deliverables such
@@ -176,6 +175,8 @@ as "write tests for X" when they duplicate the wrapper.
 
 Standalone `category: test` deliverables are valid when they have their own
 target, acceptance criteria, and behavior-pinning or test-infrastructure scope.
+Use `test` for live/manual verification sections in expansion plans. The
+direct task API still accepts `manual`, but expansion manifests reject it.
 
 ## Coverage Records
 

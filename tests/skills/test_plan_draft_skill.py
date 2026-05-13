@@ -53,9 +53,11 @@ class TestPlanDraftContent:
 
     def test_lists_every_canonical_category(self, body: str) -> None:
         """Must match VALID_CATEGORIES exactly — silent drift breaks expansion."""
-        required = {"code", "config", "docs", "refactor", "test", "research", "planning", "manual"}
+        required = {"code", "config", "docs", "refactor", "test", "research", "planning"}
         for cat in required:
             assert f"`{cat}`" in body, f"Missing canonical category: {cat}"
+        assert "manual" in body
+        assert "outside expansion manifests" in body
 
     def test_refactor_category_documented(self, body: str) -> None:
         """Refactor was added as a canonical category in #12038 and the skill

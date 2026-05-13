@@ -214,6 +214,23 @@ def test_well_formed_manifest_parses_in_strict_mode(tmp_path: Path) -> None:
     assert entry.labels == ("covers:test-plan:A1:A1.1",)
 
 
+def test_manifest_rejects_manual_category(tmp_path: Path) -> None:
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=_MINIMAL_MANIFEST.replace("category: code", "category: manual").replace(
+            "tdd: true", "tdd: false"
+        ),
+    )
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode="expansion")
+
+    message = str(excinfo.value)
+    assert "unsupported category 'manual'" in message
+    assert "automated leaf categories" in message
+
+
 def test_plan_id_override_validates_covers_labels(tmp_path: Path) -> None:
     plan = _plan_with_manifest(
         tmp_path,

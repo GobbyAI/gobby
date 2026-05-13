@@ -8,7 +8,8 @@ description: |
     1. Start a background expansion run
     2. Wait for the run to complete
     3. Inspect the stored run result
-    4. Run deterministic validation on the compiled/applied output
+    4. Fail immediately when the run failed
+    5. Run deterministic validation on the compiled/applied output
 
   The expansion run itself owns compile/apply state. The task tree is the only
   state written back onto tasks.
@@ -56,13 +57,6 @@ steps:
       arguments:
         run_id: "${{ steps.start_run.output.run_id }}"
 
-  - id: validate_run
-    mcp:
-      server: gobby-tasks-ops
-      tool: validate_expansion_run
-      arguments:
-        run_id: "${{ steps.start_run.output.run_id }}"
-
   - id: fail_run
     condition: "${{ steps.wait_run.output.status != 'completed' }}"
     mcp:
@@ -70,6 +64,13 @@ steps:
       tool: fail_pipeline
       arguments:
         message: "Expansion run failed: ${{ steps.wait_run.output.error or steps.get_run.output.run.error or 'unknown error' }}"
+
+  - id: validate_run
+    mcp:
+      server: gobby-tasks-ops
+      tool: validate_expansion_run
+      arguments:
+        run_id: "${{ steps.start_run.output.run_id }}"
 
   - id: fail_validation
     condition: "${{ not steps.validate_run.output.compiled.valid or (steps.validate_run.output.applied and not steps.validate_run.output.applied.valid) }}"

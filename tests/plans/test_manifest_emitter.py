@@ -258,11 +258,11 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
         **Acceptance:**
         - 1.6.1 — file: `f.py`
 
-        ### 1.7 Manual work [category: manual]
+        ### 1.7 Planning work [category: planning]
         `kind: deliverable`
 
         **Acceptance:**
-        - 1.7.1 — behavior: verified manually
+        - 1.7.1 — behavior: planning complete
         """,
     )
 
@@ -286,7 +286,7 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
     assert by_section["1.4"].assigned_agent == "backend-developer"
     assert by_section["1.5"].assigned_agent == "researcher"
     assert by_section["1.6"].assigned_agent == "backend-developer"
-    assert by_section["1.7"].assigned_agent == "backend-developer"
+    assert by_section["1.7"].assigned_agent == "planner"
 
     for entry in document.manifest_entries:
         assert entry.task_type == "feature"

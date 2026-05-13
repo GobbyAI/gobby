@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -235,6 +236,16 @@ rules:
 
 class TestSyncBundledPipelines:
     """Tests for sync_bundled_pipelines edge cases."""
+
+    def test_expand_task_fails_run_before_validation(self) -> None:
+        path = Path("src/gobby/install/shared/workflows/pipelines/expand-task.yaml")
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        step_ids = [step["id"] for step in data["steps"]]
+
+        assert step_ids.index("fail_run") < step_ids.index("validate_run")
+        fail_run = next(step for step in data["steps"] if step["id"] == "fail_run")
+        assert fail_run["condition"] == "${{ steps.wait_run.output.status != 'completed' }}"
+        assert fail_run["mcp"]["tool"] == "fail_pipeline"
 
     def test_missing_path_returns_error(self, db: LocalDatabase) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines

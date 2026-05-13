@@ -114,7 +114,7 @@ Final body copied into the generated task description.
 
 ```yaml
 - title: "Bootstrap from manifest"
-  category: manual
+  category: test
   task_type: chore
   depends_on: []
   validation_criteria: "Bootstrap validation from manifest"
@@ -235,7 +235,7 @@ def test_entry_fields_preserved(
     assert "Bootstrap body copied into the generated task description." in bootstrap["description"]
     assert bootstrap["priority"] == 2
     assert bootstrap["task_type"] == "chore"
-    assert bootstrap["category"] == "manual"
+    assert bootstrap["category"] == "test"
     assert bootstrap["validation"] == (
         "Bootstrap validation from manifest\n"
         "Acceptance artifacts:\n"

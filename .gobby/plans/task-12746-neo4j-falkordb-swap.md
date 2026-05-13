@@ -1650,7 +1650,7 @@ Update all user-facing strings in this file: "Neo4j" → "FalkorDB" everywhere.
 
 **Launch.tsx summary edit — co-located here (R13-F4):**
 
-The Launch step's summary text references the same renamed state fields (`falkordb_installed`, `falkordb_password_set`) that this step writes, so the code edit lives here — NOT in 6.4 (which is `[manual]` for end-to-end verification only). Co-locating ensures both TypeScript sources are present BEFORE the bundle regenerates in 6.3; the previous draft sequenced the Launch.tsx edit after bundle regen, leaving the bundle stale relative to the final TS sources.
+The Launch step's summary text references the same renamed state fields (`falkordb_installed`, `falkordb_password_set`) that this step writes, so the code edit lives here — NOT in 6.4 (which is `[test]` for end-to-end verification only). Co-locating ensures both TypeScript sources are present BEFORE the bundle regenerates in 6.3; the previous draft sequenced the Launch.tsx edit after bundle regen, leaving the bundle stale relative to the final TS sources.
 
 Target: `web/src/setup/steps/Launch.tsx:211-212`
 
@@ -1692,7 +1692,7 @@ If `web/package.json` does not have a script that produces `src/gobby/install/sh
 
 - 6.3.1 — `setup.mjs` bundle regenerated to reflect the renamed schema and flags. file: `src/gobby/install/shared/setup/setup.mjs`.
 
-### 6.4 Verify wizard end-to-end [category: manual] (depends: 6.3)
+### 6.4 Verify wizard end-to-end [category: test] (depends: 6.3)
 
 `kind: deliverable`
 
@@ -2267,7 +2267,7 @@ def _check_stale_neo4j_config(db: LocalDatabase) -> None:
 
 - 8.2.1 — Daemon emits a startup stale-config warning when `databases.neo4j.*` keys remain in config_store after the migration. file: `src/gobby/runner.py`.
 
-### 8.3 Define cross-repo validation matrix and merge ordering [category: manual] (depends: 8.1, 8.2, Phase 5, 6.4, Phase 7)
+### 8.3 Define cross-repo validation matrix and merge ordering [category: test] (depends: 8.1, 8.2, Phase 5, 6.4, Phase 7)
 
 `kind: deliverable`
 
@@ -2683,7 +2683,7 @@ Sweep with `rg -l Neo4j ../gobby-cli` and update:
   tdd: true
   source_section: "6.3"
 - title: "Verify wizard end-to-end"
-  category: "manual"
+  category: "test"
   task_type: "feature"
   depends_on:
     - "6.3"
@@ -2764,7 +2764,7 @@ Sweep with `rg -l Neo4j ../gobby-cli` and update:
   tdd: true
   source_section: "8.2"
 - title: "Define cross-repo validation matrix and merge ordering"
-  category: "manual"
+  category: "test"
   task_type: "feature"
   depends_on:
     - "8.1"

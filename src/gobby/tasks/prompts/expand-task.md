@@ -13,7 +13,7 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
 | description | string | No | Detailed description including implementation notes |
 | priority | integer | No | 1=High, 2=Medium (default), 3=Low |
 | task_type | string | No | "task" (default), "bug", "feature", "epic" |
-| category | string | No | Task domain: "test", "code", "document", "research", "config", "manual", "unit", or "integration" |
+| category | string | No | Automated leaf domain: "code", "config", "docs", "planning", "refactor", "research", or "test" |
 | validation_criteria | string | No | How to verify this subtask is complete |
 | depends_on | array[int] | No | Indices (0-based) of subtasks this one depends on |
 | affected_files | array[string] | No | File paths this subtask will create or modify (relative to repo root) |
@@ -28,7 +28,7 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
       "title": "Create database schema",
       "description": "Define tables for users, sessions, and permissions",
       "priority": 1,
-      "category": "manual",
+      "category": "config",
       "affected_files": ["src/storage/migrations.py", "src/storage/schema.sql"],
       "validation_criteria": "Run migrations and verify tables exist"
     },
@@ -36,7 +36,7 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
       "title": "Implement data access layer",
       "description": "Create repository classes for CRUD operations",
       "depends_on": [0],
-      "category": "unit",
+      "category": "code",
       "affected_files": ["src/storage/users.py", "src/storage/sessions.py"],
       "parallel_group": "data-layer",
       "validation_criteria": "Unit tests for all repository methods pass"
@@ -45,7 +45,7 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
       "title": "Add API endpoints",
       "description": "REST endpoints for user management",
       "depends_on": [1],
-      "category": "integration",
+      "category": "test",
       "affected_files": ["src/api/users.py", "src/api/sessions.py"],
       "parallel_group": "api-endpoints",
       "validation_criteria": "Integration tests for all endpoints pass"

@@ -7,6 +7,7 @@ from typing import Literal
 
 from gobby.build.options import BuildOptions, retry_attempt_cap
 from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, Task
+from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES
 
 DEVELOPMENT_LEAF_CATEGORIES = frozenset({"code", "config", "docs", "refactor", "test"})
 LEAF_PRIMARY_STAGE_BY_CATEGORY = {
@@ -18,8 +19,10 @@ LEAF_PRIMARY_STAGE_BY_CATEGORY = {
     "research": "research",
     "planning": "planning",
 }
-AUTOMATED_LEAF_CATEGORIES = frozenset(LEAF_PRIMARY_STAGE_BY_CATEGORY)
 InputKind = Literal["plan_file", "epic", "leaf"]
+
+if AUTOMATED_LEAF_CATEGORIES != frozenset(LEAF_PRIMARY_STAGE_BY_CATEGORY):
+    raise RuntimeError("automated leaf category map drifted from shared category contract")
 
 _SKIPPABLE_STAGE_ORDER = (
     "plan_review",

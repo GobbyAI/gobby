@@ -8,9 +8,9 @@ from typing import Any
 
 from gobby.plans.parser import Kind, PlanParseError, parse_plan
 from gobby.plans.semantic_lint import lint_plan_document
+from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
-    AUTOMATED_LEAF_CATEGORIES,
     _clean_contract_section_title,
     _contract_phase_number,
 )
