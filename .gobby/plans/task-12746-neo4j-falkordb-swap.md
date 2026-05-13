@@ -2359,3 +2359,459 @@ Sweep with `rg -l Neo4j /Users/josh/Projects/gobby-cli` and update:
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Replace Neo4jConfig with FalkorConfig and add falkordb dep"
+  category: "config"
+  task_type: "feature"
+  depends_on: []
+  validation_criteria: "gobby.config.persistence.FalkorConfig"
+  labels:
+    - "covers:12746:1.1:1.1.1"
+    - "covers:12746:1.1:1.1.2"
+    - "covers:12746:1.1:1.1.3"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "1.1"
+- title: "Implement FalkorClient mirroring Neo4jClient surface"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+  validation_criteria: "gobby.memory.falkor_client.FalkorClient"
+  labels:
+    - "covers:12746:1.2:1.2.1"
+    - "covers:12746:1.2:1.2.2"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "1.2"
+- title: "Delete neo4j_client.py and rewrite remaining Neo4j-named imports"
+  category: "refactor"
+  task_type: "feature"
+  depends_on:
+    - "1.2"
+    - "2.1"
+    - "2.2"
+  validation_criteria: "src/gobby/memory/neo4j_client.py"
+  labels:
+    - "covers:12746:1.3:1.3.1"
+    - "covers:12746:1.3:1.3.2"
+    - "covers:12746:1.3:1.3.3"
+  assigned_agent: "backend-developer"
+  tdd: false
+  source_section: "1.3"
+- title: "Translate KnowledgeGraphService Cypher and wire MemoryManager"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.2"
+  validation_criteria: "gobby.memory.services.knowledge_graph.KnowledgeGraphService"
+  labels:
+    - "covers:12746:2.1:2.1.1"
+    - "covers:12746:2.1:2.1.2"
+    - "covers:12746:2.1:2.1.3"
+    - "covers:12746:2.1:2.1.4"
+    - "covers:12746:2.1:2.1.5"
+    - "covers:12746:2.1:2.1.6"
+    - "covers:12746:2.1:2.1.7"
+    - "covers:12746:2.1:2.1.8"
+    - "covers:12746:2.1:2.1.9"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "2.1"
+- title: "Translate CodeGraph Cypher and wire CodeGraph construction at runner_init"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.2"
+    - "2.1"
+  validation_criteria: "gobby.code_index.graph.CodeGraph"
+  labels:
+    - "covers:12746:2.2:2.2.1"
+    - "covers:12746:2.2:2.2.2"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "2.2"
+- title: "Implement FalkorDB installer (Docker-only)"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+  validation_criteria: "src/gobby/cli/installers/falkor.py"
+  labels:
+    - "covers:12746:3.1:3.1.1"
+    - "covers:12746:3.1:3.1.2"
+    - "covers:12746:3.1:3.1.3"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "3.1"
+- title: "Replace neo4j service block in docker-compose.services.yml"
+  category: "config"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+  validation_criteria: "src/gobby/data/docker-compose.services.yml"
+  labels:
+    - "covers:12746:3.2:3.2.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "3.2"
+- title: "Replace services.py status helpers with FalkorDB equivalents"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+  validation_criteria: "call `is_falkordb_installed(gobby_home=<tmp_home_with_no_bootstrap_yaml>)` against a tmp DB seeded with `databases.falkordb.host`+`port`; assert it returns True AND that the resolved DB path was `<tmp_home>/gobby-hub.db`, not the operator's production `~/.gobby/gobby-hub.db`"
+  labels:
+    - "covers:12746:3.3:3.3.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "3.3"
+- title: "Rename Neo4j CLI flags to FalkorDB and add service-targeting flag"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "3.1"
+    - "3.3"
+  validation_criteria: "src/gobby/cli/install.py"
+  labels:
+    - "covers:12746:3.4:3.4.1"
+    - "covers:12746:3.4:3.4.2"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "3.4"
+- title: "Rename bootstrap neo4j_password to falkordb_password end-to-end"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+    - "3.1"
+  validation_criteria: "gobby.config.bootstrap.BootstrapConfig.falkordb_password"
+  labels:
+    - "covers:12746:3.5:3.5.1"
+    - "covers:12746:3.5:3.5.2"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "3.5"
+- title: "Migrate config_store keys databases.neo4j.* \u2192 databases.falkordb.*"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+  validation_criteria: "src/gobby/storage/migrations.py"
+  labels:
+    - "covers:12746:3.6:3.6.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "3.6"
+- title: "Update admin _health.py to emit memory.falkordb status payload"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "2.1"
+    - "2.2"
+    - "3.3"
+  validation_criteria: "src/gobby/servers/routes/admin/_health.py"
+  labels:
+    - "covers:12746:4.1:4.1.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "4.1"
+- title: "Rename _neo4j_client references in memory routes"
+  category: "refactor"
+  task_type: "feature"
+  depends_on:
+    - "2.1"
+    - "2.2"
+  validation_criteria: "src/gobby/servers/routes/memory.py"
+  labels:
+    - "covers:12746:4.2:4.2.1"
+  assigned_agent: "backend-developer"
+  tdd: false
+  source_section: "4.2"
+- title: "Sweep daemon-wide for residual Neo4j references"
+  category: "refactor"
+  task_type: "feature"
+  depends_on:
+    - "1.3"
+    - "3.4"
+    - "3.5"
+    - "4.1"
+    - "4.2"
+    - "2.1"
+    - "2.2"
+    - "3.3"
+    - "3.6"
+  validation_criteria: "\"ripgrep `Neo4j|neo4j` over `src/gobby/` returns only the \u00a7 8.1 deprecation-handler block and \u00a7 3.5 / \u00a7 3.6 / \u00a7 8.2 migration helpers\" in `src/gobby/`"
+  labels:
+    - "covers:12746:4.3:4.3.1"
+  assigned_agent: "backend-developer"
+  tdd: false
+  source_section: "4.3"
+- title: "Teach config secret-detection that requirepass is a secret"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+  validation_criteria: "src/gobby/storage/config_store.py"
+  labels:
+    - "covers:12746:4.4:4.4.1"
+    - "covers:12746:4.4:4.4.2"
+    - "covers:12746:4.4:4.4.3"
+    - "covers:12746:4.4:4.4.4"
+    - "covers:12746:4.4:4.4.5"
+    - "covers:12746:4.4:4.4.6"
+    - "covers:12746:4.4:4.4.7"
+    - "covers:12746:4.4:4.4.8"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "4.4"
+- title: "Rename Neo4jStatus to FalkorStatus and update useMemory hook + tests"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "4.1"
+  validation_criteria: "web/src/hooks/useMemory.ts"
+  labels:
+    - "covers:12746:5.1:5.1.1"
+    - "covers:12746:5.1:5.1.2"
+  assigned_agent: "frontend-developer"
+  tdd: true
+  source_section: "5.1"
+- title: "Update useDashboard type and SystemHealthCard pill"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "4.1"
+  validation_criteria: "web/src/hooks/useDashboard.ts"
+  labels:
+    - "covers:12746:5.2:5.2.1"
+  assigned_agent: "frontend-developer"
+  tdd: true
+  source_section: "5.2"
+- title: "Update MemoryPage hook ref and KnowledgeGraph empty-state copy"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "5.1"
+  validation_criteria: "web/src/components/memory/MemoryPage.tsx"
+  labels:
+    - "covers:12746:5.3:5.3.1"
+  assigned_agent: "frontend-developer"
+  tdd: true
+  source_section: "5.3"
+- title: "Update setup state.ts schema fields with one-shot migration"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "3.4"
+  validation_criteria: "web/src/setup/utils/state.ts"
+  labels:
+    - "covers:12746:6.1:6.1.1"
+  assigned_agent: "frontend-developer"
+  tdd: true
+  source_section: "6.1"
+- title: "Update Services.tsx CLI flags (Docker-only)"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "6.1"
+  validation_criteria: "web/src/setup/steps/Services.tsx"
+  labels:
+    - "covers:12746:6.2:6.2.1"
+    - "covers:12746:6.2:6.2.2"
+    - "covers:12746:6.2:6.2.3"
+  assigned_agent: "frontend-developer"
+  tdd: true
+  source_section: "6.2"
+- title: "Regenerate the bundled setup.mjs artifact"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "6.2"
+  validation_criteria: "src/gobby/install/shared/setup/setup.mjs"
+  labels:
+    - "covers:12746:6.3:6.3.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "6.3"
+- title: "Verify wizard end-to-end"
+  category: "manual"
+  task_type: "feature"
+  depends_on:
+    - "6.3"
+  validation_criteria: "\"Ink setup wizard completes a fresh install end-to-end against FalkorDB\" in `web/src/setup/`"
+  labels:
+    - "covers:12746:6.4:6.4.1"
+  assigned_agent: "frontend-developer"
+  tdd: false
+  source_section: "6.4"
+- title: "Replace Neo4jConfig with FalkorConfig in gobby-cli config.rs"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "3.6"
+  validation_criteria: "`crates/gcode/src/config.rs`. (The crate is bin-only \u2014 `crates/gcode/Cargo.toml` declares `name = \"gobby-code\"` with a single `[[bin]] name = \"gcode\"` and `path = \"src/main.rs\"`; no `lib.rs` exists, so there is no `gobby_cli::*` library symbol path to bind acceptance to. The full Neo4j-side removal acceptance belongs in \u00a7 7.4, not here.)"
+  labels:
+    - "covers:12746:7.1:7.1.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "7.1"
+- title: "Pin FalkorClient API shape and result-conversion contract"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "7.1"
+  validation_criteria: "`crates/gcode/src/falkor.rs`. (Same bin-only crate caveat as 7.1.1 \u2014 `crates/gcode/` has no `lib.rs`; acceptance evidence is the file diff, not a library symbol path.)"
+  labels:
+    - "covers:12746:7.2:7.2.1"
+    - "covers:12746:7.2:7.2.2"
+    - "covers:12746:7.2:7.2.3"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "7.2"
+- title: "Port 8 read queries to FalkorClient"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "7.2"
+  validation_criteria: "crates/gcode/src/falkor.rs"
+  labels:
+    - "covers:12746:7.3:7.3.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "7.3"
+- title: "Update gobby-cli callsites + full Rust source sweep"
+  category: "refactor"
+  task_type: "feature"
+  depends_on:
+    - "7.3"
+  validation_criteria: "\"ripgrep `Neo4j|neo4j` over Rust source returns zero hits\" in `crates/`"
+  labels:
+    - "covers:12746:7.4:7.4.1"
+  assigned_agent: "backend-developer"
+  tdd: false
+  source_section: "7.4"
+- title: "Document CLI flag deprecation policy"
+  category: "docs"
+  task_type: "feature"
+  depends_on:
+    - "3.4"
+    - "4.3"
+  validation_criteria: "`CHANGELOG.md`. The Click handler implementation itself lives in `src/gobby/cli/install.py` and is owned by \u00a7 3.4 (R39-F1 \u2014 moved out of \u00a7 8.1 so \u00a7 3.4's test cases can reference handlers that exist in the same commit)"
+  labels:
+    - "covers:12746:8.1:8.1.1"
+  assigned_agent: "tech-writer"
+  tdd: false
+  source_section: "8.1"
+- title: "Add startup-time stale-config warning"
+  category: "code"
+  task_type: "feature"
+  depends_on:
+    - "3.6"
+    - "4.3"
+  validation_criteria: "src/gobby/runner.py"
+  labels:
+    - "covers:12746:8.2:8.2.1"
+  assigned_agent: "backend-developer"
+  tdd: true
+  source_section: "8.2"
+- title: "Define cross-repo validation matrix and merge ordering"
+  category: "manual"
+  task_type: "feature"
+  depends_on:
+    - "8.1"
+    - "8.2"
+    - "5.1"
+    - "5.2"
+    - "5.3"
+    - "6.4"
+    - "7.1"
+    - "7.2"
+    - "7.3"
+    - "7.4"
+  validation_criteria: "\"validation matrix and merge ordering documented\" in `.gobby/plans/task-12746-neo4j-falkordb-swap.md`"
+  labels:
+    - "covers:12746:8.3:8.3.1"
+    - "covers:12746:8.3:8.3.2"
+    - "covers:12746:8.3:8.3.3"
+    - "covers:12746:8.3:8.3.4"
+    - "covers:12746:8.3:8.3.5"
+    - "covers:12746:8.3:8.3.6"
+    - "covers:12746:8.3:8.3.7"
+    - "covers:12746:8.3:8.3.8"
+    - "covers:12746:8.3:8.3.9"
+    - "covers:12746:8.3:8.3.10"
+    - "covers:12746:8.3:8.3.11"
+    - "covers:12746:8.3:8.3.12"
+    - "covers:12746:8.3:8.3.13"
+    - "covers:12746:8.3:8.3.14"
+    - "covers:12746:8.3:8.3.15"
+    - "covers:12746:8.3:8.3.16"
+    - "covers:12746:8.3:8.3.17"
+    - "covers:12746:8.3:8.3.18"
+    - "covers:12746:8.3:8.3.19"
+    - "covers:12746:8.3:8.3.20"
+    - "covers:12746:8.3:8.3.21"
+    - "covers:12746:8.3:8.3.22"
+    - "covers:12746:8.3:8.3.23"
+    - "covers:12746:8.3:8.3.24"
+  assigned_agent: "backend-developer"
+  tdd: false
+  source_section: "8.3"
+- title: "Update Python repo documentation"
+  category: "docs"
+  task_type: "feature"
+  depends_on:
+    - "1.1"
+    - "1.2"
+    - "1.3"
+    - "2.1"
+    - "2.2"
+    - "3.1"
+    - "3.2"
+    - "3.3"
+    - "3.4"
+    - "3.5"
+    - "3.6"
+    - "4.1"
+    - "4.2"
+    - "4.3"
+    - "4.4"
+    - "5.1"
+    - "5.2"
+    - "5.3"
+    - "6.1"
+    - "6.2"
+    - "6.3"
+    - "6.4"
+    - "8.1"
+    - "8.2"
+    - "8.3"
+  validation_criteria: "README.md"
+  labels:
+    - "covers:12746:9.1:9.1.1"
+  assigned_agent: "tech-writer"
+  tdd: false
+  source_section: "9.1"
+- title: "Update Rust repo documentation"
+  category: "docs"
+  task_type: "feature"
+  depends_on:
+    - "7.1"
+    - "7.2"
+    - "7.3"
+    - "7.4"
+    - "8.1"
+    - "8.2"
+    - "8.3"
+  validation_criteria: "crates/gcode/README.md"
+  labels:
+    - "covers:12746:9.2:9.2.1"
+  assigned_agent: "tech-writer"
+  tdd: false
+  source_section: "9.2"
+```
