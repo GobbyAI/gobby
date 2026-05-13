@@ -86,8 +86,9 @@ Issues = "https://github.com/GobbyAI/gobby/issues"
 # (missing project.version in pyproject.toml). Force >=0.21.
 constraint-dependencies = [
     "tokenizers>=0.21",
-    # authlib <1.6.11 has GHSA-jj8c-mmj3-mmgv (transitive via fastmcp)
-    "authlib>=1.6.11",
+    # authlib <=1.6.11 has GHSA-r95x-qfjj-fjj2 (medium); <1.6.11 also had
+    # GHSA-jj8c-mmj3-mmgv. Transitive via fastmcp.
+    "authlib>=1.6.12",
     # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) - see override-dependencies below
     "torch>=2.8.0",
 ]

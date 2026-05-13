@@ -344,7 +344,12 @@ class TestUpdateTaskTool:
             },
         )
 
-        assert result == {"error": "task already has worktree artifact: /tmp/gobby-worktree"}
+        assert result == {
+            "error": (
+                "task already has a worktree artifact; clear existing build artifacts "
+                "before switching to clone isolation"
+            )
+        }
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
