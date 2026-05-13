@@ -608,7 +608,14 @@ def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> 
         store.set_secret("databases.falkordb.requirepass", password, secret_store, source="install")
 ```
 
-`install_falkordb` calls `_update_config(host=..., port=..., password=resolved.value, gobby_home=gobby_home)` (step 5 in the install sequence) — the same `gobby_home` that was already used to construct the `SecretStore` for the existing-secret read in step 2 of password resolution. `uninstall_falkordb(gobby_home=...)` mirrors the threading: its `ConfigStore.clear_secret(...)` and `DELETE FROM config_store WHERE key IN (...)` operate against the same gobby-home-derived DB.
+After the entry-point normalization (`home = gobby_home if gobby_home is not None else get_gobby_home()`), `install_falkordb` calls every internal helper with the normalized `home` value, NOT the original `gobby_home` parameter — so a future contributor cannot reintroduce a `None` value mid-chain. Concretely:
+
+- `resolved = _resolve_falkordb_password(password, gobby_home=home)` (step 2 of password resolution; the helper consumes `home` for the existing-secret read via the same `_resolve_falkordb_db_path(home)`).
+- `_update_config(host=..., port=..., password=resolved.value, gobby_home=home)` (step 5 of the install sequence).
+- `_write_bootstrap_password(resolved.value, home)` (step 6).
+- `is_falkordb_installed(gobby_home=home)` for any post-install status check the installer drives.
+
+`uninstall_falkordb` performs the same normalization at its entry point and threads `home` through `_resolve_falkordb_db_path(home)` → LocalDatabase → `ConfigStore.clear_secret(...)` → `DELETE FROM config_store WHERE key IN (...)` plus the `home / "bootstrap.yaml"` rewrite that removes `falkordb_password`. There is no callsite — public or internal — that passes the raw `gobby_home: Path | None` parameter forward; `None` is normalized exactly once at the public boundary.
 
 The `databases.falkordb.mode` key is **dropped** — there is only one mode (Docker), so no routing needed. `is_falkordb_installed` (3.3) keys off the presence of the host/port keys instead.
 
@@ -759,7 +766,7 @@ This task replaces those helpers in source; the test must move with them.
 
 **Acceptance:**
 
-- 3.3.1 — `is_falkordb_installed`, `is_falkordb_healthy`, and `get_falkordb_status` replace the `neo4j` equivalents. `is_falkordb_installed` accepts an optional `gobby_home: Path | None` and resolves the DB via `load_bootstrap(gobby_home / "bootstrap.yaml")` when the `db` argument is not supplied — no `_default_db_path()` helper is introduced. file: `src/gobby/cli/services.py`.
+- 3.3.1 — `is_falkordb_installed`, `is_falkordb_healthy`, and `get_falkordb_status` replace the `neo4j` equivalents. `is_falkordb_installed` accepts an optional `gobby_home: Path | None`; when `db` is not supplied, it normalizes via `home = gobby_home if gobby_home is not None else get_gobby_home()` and then calls `_resolve_falkordb_db_path(home)` (defined in `src/gobby/cli/installers/falkor.py`) which routes to `home / "gobby-hub.db"` when no `bootstrap.yaml` exists in `home` and to `Path(bootstrap.database_path).expanduser()` when it does. No `_default_db_path()` helper is introduced in `cli/services.py`. The no-bootstrap-yet branch must be covered by a focused test: call `is_falkordb_installed(gobby_home=<tmp_home_with_no_bootstrap_yaml>)` against a tmp DB seeded with `databases.falkordb.host`+`port`; assert it returns True AND that the resolved DB path was `<tmp_home>/gobby-hub.db`, not the operator's production `~/.gobby/gobby-hub.db`. file: `src/gobby/cli/services.py`.
 
 ### 3.4 Rename Neo4j CLI flags to FalkorDB and add service-targeting flag [category: code] (depends: 3.1, 3.3)
 `kind: deliverable`
@@ -898,12 +905,21 @@ if config.databases.neo4j.url:
 # `is_falkordb_enabled(config.databases)` always returns False after install,
 # and `gobby start` never appends the `falkordb` compose profile. Wire both stores
 # from the daemon's LocalDatabase before the predicate check.
-# R20-F1: there is no `_resolve_db_path` helper in cli/daemon.py. Resolve the
-# DB path from the already-loaded BootstrapConfig directly. `database_path` is
-# the canonical bootstrap field (load_bootstrap returns it from `gobby_home /
-# "bootstrap.yaml"` or the Pydantic default). expanduser() handles `~/.gobby/...`
-# values when `gobby_home` is the operator's home directory.
-db_path = Path(bootstrap.database_path).expanduser()
+# R20-F1 + R29-F1: `_services_start(gobby_home: Path)` (verified at
+# `src/gobby/cli/daemon.py:46`) receives `gobby_home` as a non-Optional Path
+# from its caller, so no normalization is needed here. Resolve the DB path
+# using the same rule the installer uses (`_resolve_falkordb_db_path(home)`
+# from § 3.1): if `gobby_home / "bootstrap.yaml"` exists, derive the DB
+# from `Path(bootstrap.database_path).expanduser()`; otherwise fall back
+# to `gobby_home / "gobby-hub.db"`. Do NOT call the bare `load_bootstrap()`
+# default — when the file is absent, live `load_bootstrap` returns
+# `BootstrapConfig()` whose default `database_path` resolves to the
+# operator's production `~/.gobby/gobby-hub.db`, which would silently
+# break test-fixture daemons started against a tmp `gobby_home`. Mirror
+# the installer's helper so `_services_start` and `install_falkordb`
+# agree on the DB location for a given home.
+from gobby.cli.installers.falkor import _resolve_falkordb_db_path
+db_path = _resolve_falkordb_db_path(gobby_home)
 db = LocalDatabase(db_path)
 config_store = ConfigStore(db)
 secret_store = SecretStore(db)
@@ -1138,7 +1154,7 @@ This rename happens here in source; the route test must move with it.
 ### 4.3 Sweep daemon-wide for residual Neo4j references [category: refactor] (depends: 1.3, 3.4, 3.5, 4.1, 4.2, Phase 2, 3.3, 3.6)
 `kind: deliverable`
 
-Targets: `src/gobby/runner_init/services.py`, `src/gobby/runner_lifecycle_subsystems.py` (live health-check + code-index start path — `_check_external_services` at line 69, `_start_code_index_tasks` at line 274), `src/gobby/runner_lifecycle_shutdown.py` (live shutdown path — `_close_managers_and_storage` at line 286), `src/gobby/code_index/sync_worker.py` (sync worker signature change for stale-graph-client handling), `src/gobby/runner_maintenance.py`, `src/gobby/cli/daemon.py`, `src/gobby/cli/memory.py`, `src/gobby/cli/pack.py` (live file with Neo4j-named Docker volume `gobby_neo4j_data` at line 47 and "Neo4j + Qdrant" help text at lines 151/232/239/386/397 — fully owned by this sweep, NOT audit-only), `src/gobby/utils/status.py`, `src/gobby/config/code_index.py`, `src/gobby/mcp_proxy/tools/memory.py`, `tests/runner_helpers.py`. Verify each; edit any that touches Neo4j. `tests/runner_helpers.py` is the R22-F4 conftest cascade target.
+Targets: `src/gobby/runner_init/services.py`, `src/gobby/runner_lifecycle_subsystems.py` (live health-check + code-index start path — `_check_external_services` at line 69, `_start_code_index_tasks` at line 274), `src/gobby/runner_lifecycle_shutdown.py` (live shutdown path — `_close_managers_and_storage` at line 286), `src/gobby/code_index/sync_worker.py` (sync worker signature change for stale-graph-client handling), `src/gobby/runner_maintenance.py`, `src/gobby/cli/daemon.py`, `src/gobby/cli/memory.py`, `src/gobby/cli/pack.py` (live file with Neo4j-named Docker volume `gobby_neo4j_data` at line 47 and "Neo4j + Qdrant" help text at lines 151/232/239/386/397 — fully owned by this sweep, NOT audit-only), `src/gobby/utils/status.py`, `src/gobby/config/code_index.py`, `src/gobby/mcp_proxy/tools/memory.py`, `tests/runner_helpers.py`, `tests/code_index/test_sync_worker.py` (R29-F2 vector-independence regression tests added in the sync-worker subsection below). Verify each; edit any that touches Neo4j. `tests/runner_helpers.py` is the R22-F4 conftest cascade target.
 
 These call sites still read `db_cfg.neo4j.*`, inject `GOBBY_NEO4J_PASSWORD` into subprocess env, key reports/payloads under `neo4j`, expose Neo4j-branded MCP tool descriptions, or print Neo4j-named status output. The earlier tasks (1.1, 2.1, 2.2, 3.3, 3.4, 3.6, 4.1, 4.2) only touched the core wiring — these surfaces are the long tail.
 
@@ -1160,7 +1176,24 @@ Two specific edits across the live lifecycle subsystem files (per the file-layou
 
 a. **Health-check failure path:** the periodic FalkorDB health check (currently named for Neo4j; rename per the sweep above) MUST, on unhealthy return, clear BOTH backend reference paths — call `runner.memory_manager.clear_graph_clients()` (the new method added in § 2.1 step 4; per R24-F2 + R28-F4 it nulls `_falkor_client`, `_kg_service`, `_search_service._kg_service`, AND `_indexing_service._kg_service` in a single shot because both downstream services hold their own KG reference at construction time — clearing only the manager-level attributes would leave the SearchService / IndexingService graph paths alive and the partial-degradation state would persist) AND call `runner.code_indexer.clear_graph_client()` (the new sync method added in § 2.2 — note `runner.code_indexer` IS the `CodeIndexContext` instance, R24-F1, NOT a wrapper with a `.context` property; using `runner.code_indexer.context.clear_graph_client()` would AttributeError at first health-check tick). This makes `/api/memories/...` and `/api/code-index/...` routes fall back to the "graph unavailable" path simultaneously, matching the user-visible single-backend semantics — partial degradation (memory works, code-index doesn't, or vice versa) is a confusing operator UX and a frequent source of false bug reports.
 b. **Shutdown ordering:** in the runner's shutdown sequence, await `runner.code_indexer.close_graph_client()` (the new async method added in § 2.2 — same `runner.code_indexer` direct attribute, no `.context` indirection per R24-F1) BEFORE calling `LocalDatabase.close()`. The MemoryManager already has its own `close()` plumbing; ensure both close paths fire even if one raises (use `try/except/finally` around the pair so one client's close failure does not strand the other connection open).
-c. **Sync worker reference (R25-F2 + R26-F2 — pinned to a single executable approach):** the live `sync_worker_loop` (`src/gobby/code_index/sync_worker.py`) is started with `graph=runner.code_indexer.graph` resolved at startup time and held as a local for the loop's lifetime. Calling `clear_graph_client()` only nulls `CodeIndexContext._graph` — the running loop still owns the stale `CodeGraph` reference and would keep writing to a dead FalkorDB client every pass. **The implementation:** change `sync_worker_loop`'s signature from `graph: CodeGraph` to `context: CodeIndexContext` and re-read `context.graph` at the top of EVERY iteration (binding to a local `graph = context.graph` immediately so the rest of the iteration sees a stable view; if `graph is None` the iteration short-circuits to a sleep-and-continue, leaving any pending sync rows queued for the next healthy state). Update the runner-start callsite that constructs the task to pass `context=runner.code_indexer` instead of `graph=runner.code_indexer.graph`. This naturally tracks `clear_graph_client()` without any additional coordination; the loop's degradation is automatic and matches the route-level "graph unavailable" path simultaneously. Add a regression test that clears the graph client mid-run, marks one file pending, drives a sync tick, and asserts the OLD `CodeGraph` test double's write methods were NOT called after the unhealthy tick. **(Rejected alternative, recorded for context only:** cancel/restart the sync worker on health-failure via `runner.code_index_sync_task.cancel()` plus re-spawn on recovery — rejected because it requires demoting the periodic health-check to startup-only, churns the asyncio task tree on every flap, and produces noisy logs. NOT executable plan content.)
+c. **Sync worker reference (R25-F2 + R26-F2 + R29-F2 — pinned to a single executable approach):** the live `sync_worker_loop` (`src/gobby/code_index/sync_worker.py`) is started with `graph=runner.code_indexer.graph` resolved at startup time and held as a local for the loop's lifetime. Calling `clear_graph_client()` only nulls `CodeIndexContext._graph` — the running loop still owns the stale `CodeGraph` reference and would keep writing to a dead FalkorDB client every pass.
+
+**The vector / graph independence contract (R29-F2 — load-bearing):** live `sync_worker_loop` (verified at `src/gobby/code_index/sync_worker.py:25-200`) processes TWO orthogonal sync paths per file — vectors (Qdrant) and graph (CodeGraph) — and the module docstring says "Each file's vector and graph sync are independent — one can succeed even if the other fails." A short-circuit on `graph is None` that sleeps-and-continues would STARVE the vector path during any health-flap, since vector sync has nothing to do with FalkorDB health. The replacement must preserve the independence: if the graph client is None for an iteration, the vector sync MUST still run for every file with `vectors_synced=0`, and only the graph-write portion of `_sync_pass` (the `await graph.sync_file(...)` and friends gated on `config.graph_enabled`) is skipped for that iteration.
+
+**The implementation:**
+
+- Change `sync_worker_loop`'s signature from `graph: CodeGraph | None` to `context: CodeIndexContext` and re-read `context.graph` at the top of EVERY iteration. Bind to a local `graph = context.graph` immediately so the rest of the iteration sees a stable view (no torn reads if a concurrent `clear_graph_client()` lands mid-iteration).
+- Thread that per-iteration `graph` local — INCLUDING when it is `None` — down through `_sync_pass(..., graph=graph, vector_store=vector_store, ...)`. The live `_sync_pass` already accepts `graph: CodeGraph | None` (line 92) and the live `_sync_file` already has independent branches for vector vs graph work (vector at line 167 gated on `config.embedding_enabled`, graph elsewhere gated on `config.graph_enabled` + `graph is not None`). Do NOT short-circuit the entire iteration when `graph is None`; let the existing per-file branches do their independent thing.
+- Update the runner-start callsite that constructs the task to pass `context=runner.code_indexer` instead of `graph=runner.code_indexer.graph`.
+
+Add TWO regression tests in `tests/code_index/test_sync_worker.py`:
+
+1. Clears the graph client mid-run, marks one file pending with `graph_synced=0 AND vectors_synced=0`, drives a sync tick, and asserts (a) the OLD `CodeGraph` test double's write methods were NOT called after the unhealthy tick, AND (b) `vector_store.upsert(...)` WAS called for that file AND `storage.mark_vectors_synced(file.id)` was invoked. Proves vector starvation does NOT happen during graph downtime.
+2. Clears the graph client mid-run, restores it on the next tick (the next iteration re-reads `context.graph` and sees the restored value), marks the same file pending again, drives a tick, and asserts the new `CodeGraph` write methods WERE called for the graph sync. Proves graph recovery picks up automatically without any worker restart.
+
+This naturally tracks `clear_graph_client()` without any additional coordination; the loop's degradation is per-path, not all-or-nothing, and matches the route-level "graph unavailable" path while keeping vector indexing live.
+
+**(Rejected alternative, recorded for context only:** cancel/restart the sync worker on health-failure via `runner.code_index_sync_task.cancel()` plus re-spawn on recovery — rejected because it requires demoting the periodic health-check to startup-only, churns the asyncio task tree on every flap, and produces noisy logs. NOT executable plan content.)
 
 **Tests (R21-F1 + R22-F4 + R23-F2) — owned by this task:**
 
