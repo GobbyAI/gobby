@@ -43,18 +43,14 @@ const TAB_CLOSE_CLS =
   'flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-[length:var(--text-base)] leading-none text-[var(--text-muted)] opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:bg-surface-tint-strong hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 
 const TOOLBAR_CLS =
-  'flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)]'
+  'flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)] [container-type:inline-size] [container-name:files-viewer]'
 const TOOLBAR_PATH_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]'
 const TOOLBAR_ACTIONS_CLS = 'flex shrink-0 items-center gap-1.5'
 
-const TOOLBAR_BTN_BASE_CLS =
-  'cursor-pointer rounded border border-[var(--border)] bg-transparent px-2 py-0.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
-const ICON_BTN_CLS =
-  'flex cursor-pointer items-center justify-center rounded border border-[var(--border)] bg-transparent px-1.5 py-0.5 text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
-const SAVE_BTN_CLS =
-  'cursor-pointer rounded border-0 bg-[var(--color-success-foreground)] px-2.5 py-0.5 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--color-success-foreground)_85%,var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-11'
-const DIFF_BTN_ACTIVE_CLS =
-  'border-[var(--color-warning-foreground)] bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]'
+const TOOLBAR_BTN_BASE_CLS = 'btn btn-accent btn-sm file-viewer-btn'
+const ICON_BTN_CLS = 'btn btn-accent btn-sm btn-icon file-viewer-btn'
+const SAVE_BTN_CLS = 'btn btn-accent btn-sm file-viewer-btn'
+const DIFF_BTN_ACTIVE_CLS = ''
 
 const VIEWER_CLS = 'flex flex-1 flex-col overflow-hidden'
 const CODE_VIEWER_CLS = 'min-h-0 flex-1 overflow-auto [&>div]:min-h-full'
@@ -279,30 +275,40 @@ export function FilesPage({
                 <button
                   className={cn(TOOLBAR_BTN_BASE_CLS, showDiff && DIFF_BTN_ACTIVE_CLS)}
                   onClick={handleShowDiff}
+                  aria-pressed={showDiff}
+                  aria-label="Diff"
+                  title="Diff"
                 >
-                  Diff
+                  <DiffIcon />
+                  <span className="file-viewer-btn__label">Diff</span>
                 </button>
               )}
               {activeFile.editing ? (
                 <>
-                  <button className={ICON_BTN_CLS} onClick={handleUndo} title="Undo (Cmd+Z)">
+                  <button className={ICON_BTN_CLS} onClick={handleUndo} title="Undo (Cmd+Z)" aria-label="Undo">
                     <UndoIcon />
                   </button>
-                  <button className={ICON_BTN_CLS} onClick={handleRedo} title="Redo (Cmd+Shift+Z)">
+                  <button className={ICON_BTN_CLS} onClick={handleRedo} title="Redo (Cmd+Shift+Z)" aria-label="Redo">
                     <RedoIcon />
                   </button>
                   <button
                     className={TOOLBAR_BTN_BASE_CLS}
                     onClick={handleCancel}
+                    aria-label="Cancel"
+                    title="Cancel"
                   >
-                    Cancel
+                    <XIcon />
+                    <span className="file-viewer-btn__label">Cancel</span>
                   </button>
                   <button
                     className={SAVE_BTN_CLS}
                     onClick={() => onSaveFile(activeFileIndex)}
                     disabled={activeFile.saving || !activeFile.dirty}
+                    aria-label={activeFile.saving ? 'Saving' : 'Save'}
+                    title={activeFile.saving ? 'Saving...' : 'Save'}
                   >
-                    {activeFile.saving ? 'Saving...' : 'Save'}
+                    <CheckIcon />
+                    <span className="file-viewer-btn__label">{activeFile.saving ? 'Saving...' : 'Save'}</span>
                   </button>
                 </>
               ) : (
@@ -312,8 +318,11 @@ export function FilesPage({
                     onToggleEditing(activeFileIndex)
                     setShowDiff(false)
                   }}
+                  aria-label="Edit"
+                  title="Edit"
                 >
-                  Edit
+                  <EditIcon />
+                  <span className="file-viewer-btn__label">Edit</span>
                 </button>
               )}
             </div>
@@ -617,6 +626,42 @@ function UndoIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="1 4 1 10 7 10" />
       <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+    </svg>
+  )
+}
+
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
+
+function XIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  )
+}
+
+function DiffIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="12" y1="3" x2="12" y2="21" />
+      <polyline points="8 7 4 11 8 15" />
+      <polyline points="16 9 20 13 16 17" />
     </svg>
   )
 }

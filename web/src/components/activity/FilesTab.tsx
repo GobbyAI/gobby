@@ -92,6 +92,32 @@ function FileIconSvg({ extension }: { extension: string }) {
   )
 }
 
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
+
+function XIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  )
+}
+
 export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout = 'stack' }: FilesTabProps) {
   const isMobile = useIsMobile()
   const useHorizontal = layout === 'responsive-split' && !isMobile
@@ -347,7 +373,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
         <div key={entry.path}>
           <div
             className={`files-tree-item${isSelected ? ' file-tree-entry--active' : ''}`}
-            style={{ paddingLeft: `${depth * 16 + 4}px` }}
+            style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
             onClick={() => toggleDir(entry.path)}
             onContextMenu={(e) => handleContextMenu(e, entry)}
           >
@@ -370,7 +396,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
           </div>
           {isExpanded && children?.map((c) => renderEntry(c, depth + 1))}
           {isExpanded && !children && (
-            <div className="files-tree-loading" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>Loading...</div>
+            <div className="files-tree-loading" style={{ paddingLeft: `calc(0.75rem + ${depth + 1} * 1rem)` }}>Loading...</div>
           )}
         </div>
       )
@@ -380,7 +406,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       <div key={entry.path}>
         <div
           className={`files-tree-item files-tree-file${isSelected ? ' file-tree-entry--active' : ''}`}
-          style={{ paddingLeft: `${depth * 16 + 4}px` }}
+          style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
           onClick={() => openFile(entry.path)}
           onContextMenu={(e) => handleContextMenu(e, entry)}
           draggable
@@ -461,11 +487,35 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             <div className="file-viewer-actions">
               {isEditing ? (
                 <>
-                  <button className="file-viewer-action file-viewer-action--save" onClick={handleSaveEdit}>Save</button>
-                  <button className="file-viewer-action" onClick={() => { setIsEditing(false); setEditContent(fileContent ?? '') }}>Cancel</button>
+                  <button
+                    className="btn btn-accent btn-sm file-viewer-btn"
+                    onClick={handleSaveEdit}
+                    aria-label="Save"
+                    title="Save"
+                  >
+                    <CheckIcon />
+                    <span className="file-viewer-btn__label">Save</span>
+                  </button>
+                  <button
+                    className="btn btn-accent btn-sm file-viewer-btn"
+                    onClick={() => { setIsEditing(false); setEditContent(fileContent ?? '') }}
+                    aria-label="Cancel"
+                    title="Cancel"
+                  >
+                    <XIcon />
+                    <span className="file-viewer-btn__label">Cancel</span>
+                  </button>
                 </>
               ) : (
-                <button className="file-viewer-action" onClick={() => { setIsEditing(true); setEditContent(fileContent ?? '') }}>Edit</button>
+                <button
+                  className="btn btn-accent btn-sm file-viewer-btn"
+                  onClick={() => { setIsEditing(true); setEditContent(fileContent ?? '') }}
+                  aria-label="Edit"
+                  title="Edit"
+                >
+                  <EditIcon />
+                  <span className="file-viewer-btn__label">Edit</span>
+                </button>
               )}
             </div>
           </div>
