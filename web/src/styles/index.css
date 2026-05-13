@@ -195,9 +195,13 @@
      2.75rem on pointer:coarse for parity with .btn-sm (44px touch floor). */
   --control-row-height-sm: 1.75rem;
 
-  /* Pane status-bar height — promoted from .activity-panel scope so chat-pane
-     surfaces (.agent-status-bar) outside the activity panel can match. */
-  --activity-panel-bar-height: 2.5rem;
+  /* Pane status-bar height — single source of truth for every status-bar
+     surface in the chat UI: .command-bar, .agent-status-bar, .voice-status-bar,
+     .activity-panel-tabs / -toolbar / -status-bar, .mobile-chat-drawer-header.
+     Held at 2.75rem so the touch-coarse and ≤768px branches never push some
+     bars above their desktop siblings. Do not redeclare on inner scopes
+     (.activity-panel etc.); the inheritance from :root is load-bearing. */
+  --activity-panel-bar-height: 2.75rem;
 }
 
 @media (pointer: coarse) {

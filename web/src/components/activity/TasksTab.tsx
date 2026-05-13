@@ -688,7 +688,7 @@ export const TasksTab = memo(function TasksTab({
         />
         <button
           type="button"
-          className="activity-filter-button"
+          className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by task state"
           aria-label="Filter tasks"
@@ -707,6 +707,7 @@ export const TasksTab = memo(function TasksTab({
           >
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
           </svg>
+          <span className="activity-panel-action-btn__label">Filter</span>
           {activeFilterCount > 0 && (
             <span className="activity-filter-badge">{activeFilterCount}</span>
           )}

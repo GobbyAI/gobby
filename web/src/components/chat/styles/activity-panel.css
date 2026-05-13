@@ -2,7 +2,9 @@
    Activity Panel
    ============================================ */
 .activity-panel {
-  --activity-panel-bar-height: 2.5rem;
+  /* --activity-panel-bar-height inherits from :root (styles/index.css);
+     redeclaring here shadows the root value and drifts activity-panel bars
+     out of sync with .command-bar / .agent-status-bar / .voice-status-bar. */
   --activity-panel-control-height: 2.25rem;
 
   display: flex;
@@ -283,31 +285,16 @@
   color: var(--text-primary);
 }
 
-.activity-panel-close {
+/* The mobile-overlay close affordance now wears the shared
+   .btn .btn-accent .btn-sm .activity-panel-action-btn family (see
+   ActivityPanel.tsx). The "Close" label collapses to icon-only below 480px
+   via the @container rule above. The slot wrapper pins it to the right
+   edge of the .activity-panel-tabs row. */
+.activity-panel-close-slot {
+  margin-left: auto;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
   flex-shrink: 0;
-  margin-left: auto;
-  font-size: calc(var(--font-size-base) * 0.9);
-  transition: color 0.1s;
-}
-
-.activity-panel-close:hover {
-  color: var(--text-primary);
-}
-
-@media (pointer: coarse) {
-  .activity-panel-close {
-    min-width: 2.75rem;
-    min-height: 2.75rem;
-  }
 }
 
 /* ============================================
