@@ -21,11 +21,16 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('uses one shared activity status-bar height and readable title size', () => {
+    const rootSource = readSource('src/styles/index.css')
     const activitySource = readSource('src/components/chat/styles/activity-panel.css')
     const taskSource = readSource('src/components/tasks/task-execution.css')
     const sessionsSource = readSource('src/components/activity/SessionsTab.tsx')
 
-    expect(activitySource).toContain('--activity-panel-bar-height: 2.5rem')
+    // Canonical token lives in :root (src/styles/index.css) so .command-bar,
+    // .agent-status-bar, .voice-status-bar, and the activity-panel bars all
+    // inherit the same height. Inner scopes must not redeclare it.
+    expect(rootSource).toContain('--activity-panel-bar-height: 2.75rem')
+    expect(activitySource).not.toMatch(/\.activity-panel\s*{[^}]*--activity-panel-bar-height:/)
     expect(activitySource).toMatch(
       /\.activity-panel-status-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height\)/,
     )
