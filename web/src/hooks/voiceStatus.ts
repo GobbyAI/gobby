@@ -30,9 +30,11 @@ export function parseVoiceStatus(
   const ttsConfigEnabled = Boolean(baseEnabled && data?.tts_enabled)
   const sttAvailable = Boolean(sttConfigEnabled && isSecureContext && data?.stt_available)
   const ttsAvailable = Boolean(ttsConfigEnabled && data?.tts_available)
-  const voiceAvailable = Boolean(sttAvailable || ttsAvailable)
-  const voiceReady = Boolean(voiceAvailable && data?.voice_ready)
-  const voiceLoading = Boolean(voiceAvailable && data?.voice_loading)
+  const availableVoiceTarget = Boolean(sttAvailable || ttsAvailable)
+  const configuredVoiceTarget = Boolean(sttConfigEnabled || ttsConfigEnabled)
+  const voiceLoading = Boolean(configuredVoiceTarget && data?.voice_loading)
+  const voiceAvailable = Boolean(availableVoiceTarget || voiceLoading)
+  const voiceReady = Boolean(availableVoiceTarget && data?.voice_ready)
   const warmupError =
     (data?.stt_warmup_error as string | null | undefined) ??
     (data?.tts_warmup_error as string | null | undefined) ??

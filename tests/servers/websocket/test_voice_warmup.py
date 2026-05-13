@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -41,9 +42,9 @@ class TestVoiceWarmup:
         mixin._get_stt_availability = MagicMock(return_value=(True, ""))
         mixin._get_tts_availability = MagicMock(return_value=(True, ""))
 
-        mixin.start_voice_warmup()
+        assert mixin.start_voice_warmup() is True
         first_task = mixin._voice_warmup_task
-        mixin.start_voice_warmup()
+        assert mixin.start_voice_warmup() is False
 
         assert first_task is not None
         assert mixin._voice_warmup_task is first_task
@@ -59,6 +60,43 @@ class TestVoiceWarmup:
         assert status["voice_ready"] is True
         assert status["voice_loading"] is False
         assert mixin._voice_warmup_task is None
+        assert mixin.start_voice_warmup() is False
+
+    @pytest.mark.asyncio
+    async def test_voice_prepare_logs_warmup_trigger_only_once(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+
+        async def warm_forever() -> None:
+            await wait_forever()
+
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock(side_effect=warm_forever)
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        with caplog.at_level(logging.INFO, logger="gobby.servers.websocket.voice"):
+            await mixin._handle_voice_prepare(
+                websocket,
+                {"conversation_id": "conv-1", "tts_enabled": True},
+            )
+            await mixin._handle_voice_prepare(
+                websocket,
+                {"conversation_id": "conv-1", "tts_enabled": True},
+            )
+
+        warmup_logs = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.INFO
+            and record.message == "Voice model warmup triggered by client"
+        ]
+        assert len(warmup_logs) == 1
+
+        await mixin.stop_voice_warmup()
 
     @pytest.mark.asyncio
     async def test_voice_mode_enable_starts_tts_warmup_only(self) -> None:

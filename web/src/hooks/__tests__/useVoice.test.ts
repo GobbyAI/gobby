@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useVoice } from '../useVoice'
+import { parseVoiceStatus } from '../voiceStatus'
+import { useVoiceStatus } from '../voice/useVoiceStatus'
 
 const voiceMocks = vi.hoisted(() => ({
   mockMicVADNew: vi.fn(),
@@ -210,6 +212,153 @@ describe('useVoice', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  const sentPayloads = () => wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw)) ?? []
+  const voicePreparePayloads = () => (
+    sentPayloads().filter((payload) => payload.type === 'voice_prepare')
+  )
+
+  it('preserves voice loading before a configured TTS provider is available', () => {
+    const parsed = parseVoiceStatus({
+      enabled: true,
+      stt_enabled: false,
+      tts_enabled: true,
+      stt_available: false,
+      tts_available: false,
+      voice_ready: false,
+      voice_loading: true,
+    }, true)
+
+    expect(parsed.ttsConfigEnabled).toBe(true)
+    expect(parsed.ttsAvailable).toBe(false)
+    expect(parsed.voiceAvailable).toBe(true)
+    expect(parsed.voiceLoading).toBe(true)
+  })
+
+  it('throttles same-target voice_prepare sends across rerender and remount', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const renderStatus = () => renderHook(() => useVoiceStatus({
+      wsRef: wsRef as any,
+      conversationId: 'conv-throttle',
+      socketConnected: true,
+      sttEnabled: true,
+      ttsEnabled: true,
+    }))
+
+    const first = renderStatus()
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    first.rerender()
+    expect(voicePreparePayloads()).toHaveLength(1)
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
+    })
+    const fetchCallsBeforeRemount = fetchMock.mock.calls.length
+
+    first.unmount()
+    renderStatus()
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(fetchCallsBeforeRemount)
+    })
+    expect(voicePreparePayloads()).toHaveLength(1)
+  })
+
+  it('sends voice_prepare immediately when requested voice targets change', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const { rerender } = renderHook(
+      ({ ttsEnabled }) => useVoiceStatus({
+        wsRef: wsRef as any,
+        conversationId: 'conv-target-change',
+        socketConnected: true,
+        sttEnabled: true,
+        ttsEnabled,
+      }),
+      { initialProps: { ttsEnabled: false } },
+    )
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    rerender({ ttsEnabled: true })
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(2)
+    })
+    expect(voicePreparePayloads()[1]).toEqual(expect.objectContaining({
+      conversation_id: 'conv-target-change',
+      stt_enabled: true,
+      tts_enabled: true,
+    }))
+  })
+
+  it('does not mark preparing messages without voice_loading as locally loading', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: false,
+        stt_enabled: false,
+        tts_enabled: false,
+        stt_available: false,
+        tts_available: false,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-preparing-no-loading',
+      0,
+      projectIdRef,
+      { sttEnabled: false, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalled()
+    })
+    expect(result.current.voiceLoading).toBe(false)
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'voice_status',
+        status: 'preparing',
+      })
+    })
+
+    expect(result.current.voiceLoading).toBe(false)
   })
 
   it('warms voice and resends TTS state when the socket reconnects', async () => {

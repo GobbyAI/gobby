@@ -345,11 +345,11 @@ class VoiceMixin:
         *,
         want_stt: bool | None = None,
         want_tts: bool | None = None,
-    ) -> None:
+    ) -> bool:
         """Begin best-effort background warmup for requested voice models."""
         voice_config = self._get_voice_config()
         if not voice_config or not voice_config.enabled:
-            return
+            return False
 
         warm_stt, warm_tts = self._resolve_voice_warmup_targets(
             voice_config,
@@ -367,16 +367,17 @@ class VoiceMixin:
             should_warm = True
 
         if not should_warm:
-            return
+            return False
 
         if self._voice_warmup_task is not None and not self._voice_warmup_task.done():
-            return
+            return False
 
         self._voice_warmup_task = asyncio.create_task(
             self._warm_voice_models(),
             name="voice-model-warmup",
         )
         self._voice_warmup_task.add_done_callback(self._on_voice_warmup_done)
+        return True
 
     async def stop_voice_warmup(self) -> None:
         """Cancel background voice warmup if it is still in progress."""
@@ -794,7 +795,7 @@ class VoiceMixin:
         want_tts = tts_enabled if isinstance(tts_enabled, bool) else None
         if want_tts is True:
             self._voice_enabled[conversation_id] = True
-        self.start_voice_warmup(want_stt=want_stt, want_tts=want_tts)
+        warmup_started = self.start_voice_warmup(want_stt=want_stt, want_tts=want_tts)
 
         await websocket.send(
             json.dumps(
@@ -806,7 +807,15 @@ class VoiceMixin:
                 }
             )
         )
-        logger.info("Voice model warmup triggered by client")
+        if warmup_started:
+            logger.info("Voice model warmup triggered by client")
+        else:
+            logger.debug(
+                "Voice prepare did not start warmup for %s (want_stt=%s, want_tts=%s)",
+                conversation_id[:8],
+                want_stt,
+                want_tts,
+            )
 
     async def _unload_voice_models(self) -> None:
         """Release voice models to reclaim memory.

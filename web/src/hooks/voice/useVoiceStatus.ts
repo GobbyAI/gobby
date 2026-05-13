@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { parseVoiceStatus, type RawVoiceStatus } from '../voiceStatus'
 
+const VOICE_PREPARE_RETRY_MS = 30_000
+const voicePrepareSentAt = new Map<string, number>()
+
+function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnabled: boolean) {
+  return `${conversationId}:${sttEnabled}:${ttsEnabled}`
+}
+
 interface VoiceStatusOptions {
   wsRef: RefObject<WebSocket | null>
   conversationId: string
@@ -36,7 +43,6 @@ export function useVoiceStatus({
 
   const statusPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pollCancelledRef = useRef(false)
-  const warmupKeyRef = useRef<string | null>(null)
 
   const applyVoiceStatus = useCallback((data: RawVoiceStatus | null) => {
     const parsed = parseVoiceStatus(data, window.isSecureContext)
@@ -45,10 +51,6 @@ export function useVoiceStatus({
     setVoiceReady(parsed.voiceReady)
     setVoiceLoading(parsed.voiceLoading)
     setStatusVoiceError(parsed.warmupError)
-
-    if (parsed.voiceReady) {
-      warmupKeyRef.current = null
-    }
   }, [])
 
   const markVoicePreparing = useCallback(() => {
@@ -101,18 +103,19 @@ export function useVoiceStatus({
   useEffect(() => {
     const wantsVoice = sttEnabled || ttsEnabled
     if (!wantsVoice) {
-      warmupKeyRef.current = null
       return
     }
-    if (!socketConnected || voiceReady || voiceLoading) return
+    if (!socketConnected || voiceReady) return
 
-    const warmupKey = `${conversationId}:${socketConnected}:${sttEnabled}:${ttsEnabled}`
-    if (warmupKeyRef.current === warmupKey) return
+    const warmupKey = getVoicePrepareKey(conversationId, sttEnabled, ttsEnabled)
+    const lastSentAt = voicePrepareSentAt.get(warmupKey)
+    const now = Date.now()
+    if (lastSentAt !== undefined && now - lastSentAt < VOICE_PREPARE_RETRY_MS) return
 
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
-    warmupKeyRef.current = warmupKey
+    voicePrepareSentAt.set(warmupKey, now)
     setVoiceLoading(true)
     ws.send(JSON.stringify({
       type: 'voice_prepare',
@@ -127,7 +130,6 @@ export function useVoiceStatus({
     startStatusPolling,
     sttEnabled,
     ttsEnabled,
-    voiceLoading,
     voiceReady,
     wsRef,
   ])

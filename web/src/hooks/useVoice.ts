@@ -153,7 +153,9 @@ export function useVoice(
         setIsTranscribing(true)
         clearTransientError()
       } else if (voiceStatus === 'preparing') {
-        markVoicePreparing()
+        if (data.voice_loading === true && data.voice_ready !== true) {
+          markVoicePreparing()
+        }
         clearTransientError()
         startStatusPolling()
       }
