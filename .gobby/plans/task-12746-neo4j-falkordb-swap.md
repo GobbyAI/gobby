@@ -735,17 +735,36 @@ def is_falkordb_installed(
            store.get("databases.falkordb.port") is not None
 
 async def is_falkordb_healthy(host: str | None, port: int | None, password: str | None) -> bool:
-    """PING the FalkorDB host/port; return True on PONG."""
+    """PING the FalkorDB host/port; return True on PONG.
+
+    Resource-safety contract (R34-F2): `client` MUST be closed on every exit path,
+    including the timeout / refused-connection / WRONGPASS / NOAUTH failure paths
+    that this helper is specifically meant to handle. § 4.1 routes the admin
+    status payload through `get_falkordb_status`, and § 4.3's health-failure
+    lifecycle path calls this helper every tick — a redis client/pool leak on
+    each unhealthy iteration would accumulate inside a long-running daemon.
+
+    The `try/finally` shape below guarantees `aclose()` runs even when `ping()`
+    raises. The inner `try/except` around `aclose()` suppresses any close error
+    so a misbehaving close path does not mask the original failure or leak the
+    underlying connection on the success path either.
+    """
     if not host or not port:
         return False
+    import redis.asyncio as redis
+    client: redis.Redis | None = None
     try:
-        import redis.asyncio as redis
         client = redis.Redis(host=host, port=port, password=password, socket_timeout=5)
         result = await client.ping()
-        await client.aclose()
         return bool(result)
     except Exception:
         return False
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
 async def get_falkordb_status(
     *, db: LocalDatabase | None = None,
@@ -2070,7 +2089,7 @@ These are the tests covered by § 8.3 row #4's expanded `tests/cli/` scope per R
 ### 8.2 Add startup-time stale-config warning [category: code] (depends: 3.6, 4.3)
 `kind: deliverable`
 
-Targets: `src/gobby/runner_init/services.py` (or wherever the daemon's startup health/sanity checks fire), `src/gobby/runner.py` (warning surface cited in acceptance)
+Targets: `src/gobby/runner_init/storage.py` (R34-F1 — `_check_stale_neo4j_config(runner.database)` is called from `init_storage_and_config` BEFORE the final `load_config` at line 89, so the migrated in-memory `runner.config` reflects the cleaned-up state by the time `_init_memory_stack` constructs `MemoryManager` / `CodeGraph`), `src/gobby/runner_init/services.py` (legacy target — `_check_stale_neo4j_config` is NOT called from here; preserved in Targets only for the body's references to surrounding services-init prose), `src/gobby/runner.py` (warning surface cited in acceptance)
 
 After the config_store migration in 3.6 has run, add a startup check that detects leftover Neo4j-shaped config and surfaces it. The migration in 3.6 deletes `databases.neo4j.*` keys, but defensive in-depth: if for any reason those keys are still present (e.g., user restored an old DB backup, ran an out-of-band tool), the daemon should warn.
 
@@ -2129,7 +2148,9 @@ def _check_stale_neo4j_config(db: LocalDatabase) -> None:
         )
 ```
 
-Call this from `runner_init/services.py`'s startup sequence, after the migration runner but before the memory manager initializes. The `SecretStore` parameter is intentionally absent — the orphan-safe cleanup runs in raw SQL against the `secrets` table directly, mirroring 3.6's migration-time pattern.
+**Call site — pinned to `init_storage_and_config` BEFORE the final `load_config` (R34-F1):** call `_check_stale_neo4j_config(runner.database)` inside `src/gobby/runner_init/storage.py::init_storage_and_config(...)` AFTER `runner.database = init_hub_database(runner.config)` runs the migration registry (which includes the § 3.6 one-shot migration) but BEFORE the final `runner.config = load_config(config_file=..., secret_resolver=runner.secret_store.get, config_store=runner.config_store)` call at `init_storage_and_config:89`. Placing the cleanup after the migration runner ensures the § 3.6 migration has already had its first-pass shot at the rows; placing it before the final `load_config` ensures the in-memory `runner.config` reflects the cleaned-up state for everything downstream (`_init_memory_stack`, `MemoryManager`, `CodeGraph`). Calling this AFTER `load_config` would leave the running daemon constructing services from the pre-cleanup config — the "preserve user tuning" guarantee would only take effect after the next restart. The `SecretStore` parameter is intentionally absent — the orphan-safe cleanup runs in raw SQL against the `secrets` table directly, mirroring 3.6's migration-time pattern. (Note: do NOT add a `runner.config = load_config(...)` reload after the cleanup either; placing the cleanup BEFORE the existing final `load_config` is sufficient and avoids a second config-load round-trip per startup.)
+
+**Sequencing regression test (R34-F1):** seed a DB with `databases.neo4j.rrf_k='80'` (legacy user-tuned) AND `databases.falkordb.host`/`port`/`requirepass` set (valid FalkorDB credentials). Drive `init_storage_and_config(runner, ...)` end-to-end and assert: (a) `runner.config.databases.falkordb.rrf_k == 80` (the migrated tunable is visible in the in-memory config BEFORE `_init_memory_stack` runs), AND (b) the `databases.neo4j.rrf_k` row is gone from `config_store`. Without this sequencing check, a regression that moves the cleanup back to AFTER `load_config` would silently restore the "two-restart problem" the warning was meant to close.
 
 **Regression test (R14-F1):** seed the DB with `databases.neo4j.auth` referencing `$secret:auth` AND a synthetic non-Neo4j key (e.g., `mock.test.auth`) ALSO holding JSON-encoded `'"$secret:auth"'`. Call `_check_stale_neo4j_config(db)` and assert: (a) `databases.neo4j.auth` row is gone, (b) the synthetic row is preserved, (c) `secrets.name = 'auth'` is preserved (orphan guard correctly detected the surviving reference). Mirrors the migration regression test from 3.6.
 
