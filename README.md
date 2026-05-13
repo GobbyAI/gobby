@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="logo.png" alt="Gobby" width="200" />
+    <img src="img/logo.png" alt="Gobby" width="200" />
     <h3 align="center">Gobby<br>Start with a task. Walk away. End with a PR.</h3>
 </p>
 
@@ -28,6 +28,15 @@ escalates instead of merging garbage.
 paying clients running production systems on it. The 0.4.x line was assembled
 through Gobby's own task, dispatch, review, and documentation flows — the
 receipts live in this repo's `.gobby/tasks.jsonl`.
+
+<p align="center">
+  <img src="img/web-chat.png" alt="Gobby web chat" width="49%" />
+  <img src="img/web-chat-with-tasks.png" alt="Gobby web chat with tasks panel" width="49%" />
+</p>
+<p align="center">
+  <img src="img/tasks.png" alt="Gobby tasks view" width="49%" />
+  <img src="img/rules.png" alt="Gobby rules view" width="49%" />
+</p>
 
 ---
 

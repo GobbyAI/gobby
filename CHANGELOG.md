@@ -39,9 +39,10 @@ voice/chat reliability, workflow UI polish, and release hardening since
 - Remove stale workflow-template install endpoints and clean up the Workflows UI
   around reports, rules, stages, and profiles (#14541).
 - Polish activity filters, session reference inputs, chat/status-bar sizing,
-  workflow header buttons, and icon-button accessibility labels, with
-  `jsx-a11y` linting enabled for the web app (#14308, #14521, #14522, #14526,
-  #14573, #14575, #14577).
+  workflow header buttons, icon-button accessibility labels, and unify the
+  FilesTab/FilesPage toolbar buttons and tree padding, with `jsx-a11y` linting
+  enabled for the web app (#14308, #14521, #14522, #14526, #14573, #14575,
+  #14577, #14580).
 - Remove Python suppression comments and clean actionable TODO debt across LLM,
   memory, chat, provider-model, and test surfaces (#14544, #14567).
 
@@ -51,11 +52,14 @@ voice/chat reliability, workflow UI polish, and release hardening since
   sessions live through hook/session-end flows (#14475, #14525, #14542).
 - Propagate voice project context, scope voice model warmup targets correctly,
   and harden voice/STT availability tests (#14524, #14527, #14577).
-- Prevent duplicate web chat streams and keep the Watching Transcript panel
-  pinned during live updates (#14523, #14528).
+- Prevent duplicate web chat streams, keep the Watching Transcript panel
+  pinned during live updates, and stabilize web chat events and scrolling
+  (#14523, #14528, #14579).
 - Resolve reports pytest failures and fold in follow-up CodeRabbit cleanup for
   build, delivery, profile, stage, memory, SQL, websocket, and workflow paths
   (#14540, #14542, #14546, #14571, #14572, #14574).
+- Fix an unbound-WS broadcast bug, drop stale isolation messages, and restore
+  `caplog` propagation in CI test runs (#14581).
 
 ### Security
 
