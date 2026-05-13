@@ -969,7 +969,10 @@ class TestUpdateTaskCommand:
         result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--isolation", "worktree"])
 
         assert result.exit_code != 0
-        assert "task already has clone artifact: /tmp/gobby-clone" in result.output
+        assert (
+            "task already has a clone artifact; clear existing build artifacts "
+            "before switching to worktree isolation"
+        ) in result.output
         mock_manager.update_task.assert_not_called()
 
 

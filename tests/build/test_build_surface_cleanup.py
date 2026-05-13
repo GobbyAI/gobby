@@ -30,9 +30,7 @@ def test_http_build_options_tracks_profile_and_unattended_explicitness() -> None
     assert default_opts.unattended is False
     assert default_opts.unattended_explicit is False
 
-    explicit_opts = _build_options(
-        BuildRequest(input_ref="#42", profile="submit", unattended=True)
-    )
+    explicit_opts = _build_options(BuildRequest(input_ref="#42", profile="submit", unattended=True))
     assert explicit_opts.profile == "submit"
     assert explicit_opts.profile_explicit is True
     assert explicit_opts.unattended is True

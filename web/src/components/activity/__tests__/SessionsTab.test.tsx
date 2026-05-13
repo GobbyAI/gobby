@@ -1,8 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 import { SessionsTab } from "../SessionsTab";
-import { createMockFetch, type MockFetchInstance } from "../../../test/mocks/fetch";
+import {
+  createMockFetch,
+  type MockFetchInstance,
+} from "../../../test/mocks/fetch";
 import type { GobbySession } from "../../../types/sessions";
 import type { SessionMessage } from "../../../hooks/useSessionDetail";
 
@@ -13,7 +22,9 @@ type SessionDetailMock = {
   transcriptStatus: { content_state: string } | null;
 };
 
-const mockUseSessionDetail = vi.fn<(sessionId?: string | null) => SessionDetailMock>(() => ({
+const mockUseSessionDetail = vi.fn<
+  (sessionId?: string | null) => SessionDetailMock
+>(() => ({
   session: null,
   messages: [],
   isLoading: false,
@@ -31,7 +42,8 @@ vi.mock("../../shared/SourceIcon", () => ({
 }));
 
 vi.mock("../../../hooks/useSessionDetail", () => ({
-  useSessionDetail: (sessionId?: string | null) => mockUseSessionDetail(sessionId),
+  useSessionDetail: (sessionId?: string | null) =>
+    mockUseSessionDetail(sessionId),
 }));
 
 vi.mock("../../chat/MessageItem", () => ({
@@ -114,6 +126,30 @@ const EXPIRED_SESSION = makeSession({
   seq_num: 203,
   updated_at: "2026-04-08T12:15:00Z",
   summary_markdown: "# Expired Summary",
+  terminal_context: null,
+});
+
+const MAIN_WEB_CHAT_SESSION = makeSession({
+  id: "main-web-1",
+  ref: "#210",
+  external_id: "main-web-ext-1",
+  source: "codex",
+  title: "Main Web Chat",
+  status: "active",
+  seq_num: 210,
+  session_type: "web_chat",
+  terminal_context: null,
+});
+
+const PARKED_WEB_CHAT_SESSION = makeSession({
+  id: "parked-web-1",
+  ref: "#211",
+  external_id: "parked-web-ext-1",
+  source: "codex",
+  title: "Parked Web Chat",
+  status: "active",
+  seq_num: 211,
+  session_type: "web_chat",
   terminal_context: null,
 });
 
@@ -213,9 +249,14 @@ function mockElementScrollIntoView() {
     scrollIntoView,
     restore() {
       if (originalDescriptor) {
-        Object.defineProperty(Element.prototype, "scrollIntoView", originalDescriptor);
+        Object.defineProperty(
+          Element.prototype,
+          "scrollIntoView",
+          originalDescriptor,
+        );
       } else {
-        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+        delete (Element.prototype as { scrollIntoView?: unknown })
+          .scrollIntoView;
       }
     },
   };
@@ -293,6 +334,74 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
   });
 
+  it("does not show the web chat currently rendered in the main chat", async () => {
+    render(
+      <SessionsTab
+        sessions={[MAIN_WEB_CHAT_SESSION, PARKED_WEB_CHAT_SESSION]}
+        chatSessionId="main-web-1"
+        focusSessionId="parked-web-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#211: Parked Web Chat")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("#210: Main Web Chat")).toBeNull();
+  });
+
+  it("returns a parked main web chat to the list after the main chat is cleared", async () => {
+    const onFocusHandled = vi.fn();
+    mockUseSessionDetail.mockImplementation((sessionId) => ({
+      session:
+        sessionId === "main-web-1" ? MAIN_WEB_CHAT_SESSION : PARKED_WEB_CHAT_SESSION,
+      messages: [
+        {
+          id: `msg-${sessionId ?? "none"}`,
+          role: "assistant",
+          content: `Transcript output for ${sessionId ?? "none"}`,
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    }));
+
+    const { rerender } = render(
+      <SessionsTab
+        sessions={[MAIN_WEB_CHAT_SESSION, PARKED_WEB_CHAT_SESSION]}
+        chatSessionId="main-web-1"
+        focusSessionId="parked-web-1"
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("#211: Parked Web Chat").length).toBeGreaterThan(0);
+      expect(
+        screen.getByText("Transcript output for parked-web-1"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("#210: Main Web Chat")).toBeNull();
+
+    rerender(
+      <SessionsTab
+        sessions={[MAIN_WEB_CHAT_SESSION, PARKED_WEB_CHAT_SESSION]}
+        chatSessionId={null}
+        focusSessionId="main-web-1"
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("#210: Main Web Chat").length).toBeGreaterThan(0);
+      expect(
+        screen.getByText("Transcript output for main-web-1"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getAllByText("#211: Parked Web Chat").length).toBeGreaterThan(0);
+  });
+
   it("renders the Live | Expired status filter as a SegmentedControl", async () => {
     render(<SessionsTab sessions={[LIVE_SESSION]} focusSessionId="live-1" />);
 
@@ -325,8 +434,12 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("#206: Running Agent Terminal")).toBeInTheDocument();
-      expect(screen.getByText("#207: Pending Agent Terminal")).toBeInTheDocument();
+      expect(
+        screen.getByText("#206: Running Agent Terminal"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("#207: Pending Agent Terminal"),
+      ).toBeInTheDocument();
     });
 
     expect(screen.queryByText("#208: Completed Agent Terminal")).toBeNull();
@@ -377,8 +490,12 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Transcript output")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Summary" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Resume" }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Swap" })).toBeInTheDocument();
     });
 
@@ -397,7 +514,9 @@ describe("SessionsTab", () => {
 
     fireEvent.click(summaryButton);
 
-    expect(screen.getByRole("button", { name: "Transcript" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Transcript" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
       "## Digest fallback",
     );
@@ -418,7 +537,10 @@ describe("SessionsTab", () => {
   it("resets summary mode when focus targets the selected parked session", async () => {
     const onFocusHandled = vi.fn();
     const { rerender } = render(
-      <SessionsTab sessions={[PAUSED_SESSION]} onFocusHandled={onFocusHandled} />,
+      <SessionsTab
+        sessions={[PAUSED_SESSION]}
+        onFocusHandled={onFocusHandled}
+      />,
     );
 
     await waitFor(() => {
@@ -439,7 +561,9 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Summary" }),
+      ).toBeInTheDocument();
       expect(screen.getByText("Transcript output")).toBeInTheDocument();
     });
     expect(onFocusHandled).toHaveBeenCalled();
@@ -463,23 +587,40 @@ describe("SessionsTab", () => {
         transcriptStatus: null,
       }));
 
-      render(
-        <SessionsTab
-          sessions={[LIVE_SESSION, PAUSED_SESSION]}
-        />,
-      );
+      render(<SessionsTab sessions={[LIVE_SESSION, PAUSED_SESSION]} />);
 
       await waitFor(() => {
-        expect(screen.getByText("Transcript output for paused-1")).toBeInTheDocument();
+        expect(
+          screen.getByText("Transcript output for paused-1"),
+        ).toBeInTheDocument();
         expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      });
+      expect(scrollIntoView).toHaveBeenLastCalledWith({
+        behavior: "auto",
+        block: "end",
+      });
+      expect(
+        screen
+          .getByText("Transcript output for paused-1")
+          .closest(".chat-scaled"),
+      ).toHaveStyle({
+        scrollBehavior: "auto",
+        overflowAnchor: "none",
+        overscrollBehavior: "contain",
       });
 
       fireEvent.click(screen.getByText("#201: Live Terminal"));
 
       await waitFor(() => {
-        expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+        expect(
+          screen.getByText("Transcript output for live-1"),
+        ).toBeInTheDocument();
       });
       expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      expect(scrollIntoView).toHaveBeenLastCalledWith({
+        behavior: "auto",
+        block: "end",
+      });
     } finally {
       restore();
     }
@@ -523,6 +664,10 @@ describe("SessionsTab", () => {
         expect(screen.getByText("abcdef")).toBeInTheDocument();
         expect(scrollIntoView).toHaveBeenCalledTimes(2);
       });
+      expect(scrollIntoView).toHaveBeenLastCalledWith({
+        behavior: "auto",
+        block: "end",
+      });
     } finally {
       restore();
     }
@@ -564,9 +709,7 @@ describe("SessionsTab", () => {
 
       scrollIntoView.mockClear();
       transcriptContent = "abcdef";
-      rerender(
-        <SessionsTab sessions={[PAUSED_SESSION]} />,
-      );
+      rerender(<SessionsTab sessions={[PAUSED_SESSION]} />);
 
       expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
         "# Session Summary",
@@ -590,7 +733,9 @@ describe("SessionsTab", () => {
       updated_at: "2026-04-08T12:25:00Z",
     });
 
-    render(<SessionsTab sessions={[highUsageSession]} focusSessionId="usage-1" />);
+    render(
+      <SessionsTab sessions={[highUsageSession]} focusSessionId="usage-1" />,
+    );
 
     await waitFor(() => {
       expect(screen.getByText("#205: High Usage Session")).toBeInTheDocument();
@@ -634,21 +779,24 @@ describe("SessionsTab", () => {
 
   it("shows an explicit empty state when summary and digest are both missing", async () => {
     mockUseSessionDetail.mockReturnValue({
-      session: { ...PAUSED_SESSION, summary_markdown: null, digest_markdown: null },
+      session: {
+        ...PAUSED_SESSION,
+        summary_markdown: null,
+        digest_markdown: null,
+      },
       messages: [],
       isLoading: false,
       transcriptStatus: { content_state: "missing" },
     });
 
     render(
-      <SessionsTab
-        sessions={[PAUSED_SESSION]}
-        focusSessionId="paused-1"
-      />,
+      <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Summary" }),
+      ).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Summary" }));

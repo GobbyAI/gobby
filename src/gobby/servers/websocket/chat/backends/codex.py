@@ -19,7 +19,7 @@ from gobby.adapters.codex_impl.item_normalization import (
     parse_mcp_arguments,
 )
 from gobby.agents.sandbox import CodexSandboxResolver, SandboxConfig
-from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk
+from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
     _PLAN_FILE_PATTERN,
@@ -43,6 +43,16 @@ from gobby.servers.websocket.chat.backends.base import (
     _error_message,
     _extract_text,
 )
+from gobby.servers.websocket.chat.backends.codex_events import (
+    codex_context_window_from_record,
+    codex_record_from_notification,
+    codex_tool_event_data,
+    codex_tool_event_data_from_record,
+    codex_usage_from_parsed_message,
+    normalize_codex_usage,
+    prefer_codex_usage,
+)
+from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.config_store import ConfigStore
 
@@ -246,6 +256,30 @@ class CodexManagedChatSession(
                 return assistant_text
             await asyncio.sleep(self._transcript_retry_delay_seconds)
         return ""
+
+    async def _get_transcript_records_since(
+        self,
+        offset: int,
+    ) -> list[ParsedMessage | ParsedToolEvent]:
+        if not self._transcript_path:
+            return []
+
+        def _read_records() -> list[ParsedMessage | ParsedToolEvent]:
+            try:
+                with open(self._transcript_path or "", encoding="utf-8") as handle:
+                    handle.seek(offset)
+                    parser = CodexTranscriptParser(session_id=self._thread_id)
+                    return parser.parse_lines(handle.readlines())
+            except OSError:
+                return []
+
+        records: list[ParsedMessage | ParsedToolEvent] = []
+        for _ in range(self._transcript_retry_attempts):
+            records = await asyncio.to_thread(_read_records)
+            if records:
+                return records
+            await asyncio.sleep(self._transcript_retry_delay_seconds)
+        return records
 
 
 class CodexWebChatBackend:
@@ -575,8 +609,70 @@ class CodexWebChatBackend:
         event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
         turn_completed = asyncio.Event()
         saw_text_output = False
+        tool_calls_count = 0
+        started_tool_call_ids: set[str] = set()
+        completed_tool_call_ids: set[str] = set()
+        latest_transcript_usage: dict[str, int | None] | None = None
+        latest_transcript_context_window: int | None = None
         transcript_offset = await session._get_transcript_offset()
         session._reset_before_tool_state()
+
+        def _remember_record_usage(record: ParsedMessage | ParsedToolEvent) -> None:
+            nonlocal latest_transcript_context_window, latest_transcript_usage
+            if not isinstance(record, ParsedMessage):
+                return
+            usage = codex_usage_from_parsed_message(record)
+            if usage is not None:
+                latest_transcript_usage = usage
+            context_window = codex_context_window_from_record(record)
+            if context_window is not None:
+                latest_transcript_context_window = context_window
+
+        def _start_tool_event(tool_event_data: dict[str, Any]) -> ToolCallEvent | None:
+            nonlocal tool_calls_count
+            tool_call_id = str(tool_event_data["tool_call_id"])
+            if not tool_call_id or tool_call_id in started_tool_call_ids:
+                return None
+            started_tool_call_ids.add(tool_call_id)
+            tool_calls_count += 1
+            return ToolCallEvent(
+                tool_call_id=tool_call_id,
+                tool_name=str(tool_event_data["tool_name"]),
+                server_name=str(tool_event_data["server_name"]),
+                arguments=tool_event_data["arguments"],
+            )
+
+        def _complete_tool_events(tool_event_data: dict[str, Any]) -> list[ChatEvent]:
+            tool_call_id = str(tool_event_data["tool_call_id"])
+            if not tool_call_id or tool_call_id in completed_tool_call_ids:
+                return []
+            completed_tool_call_ids.add(tool_call_id)
+
+            events: list[ChatEvent] = []
+            start_event = _start_tool_event(tool_event_data)
+            if start_event is not None:
+                events.append(start_event)
+            events.append(
+                ToolResultEvent(
+                    tool_call_id=tool_call_id,
+                    success=bool(tool_event_data["success"]),
+                    result=tool_event_data["result"],
+                    error=tool_event_data["error"],
+                )
+            )
+            return events
+
+        def _events_from_transcript_record(
+            record: ParsedMessage | ParsedToolEvent,
+        ) -> list[ChatEvent]:
+            _remember_record_usage(record)
+            tool_event_data = codex_tool_event_data_from_record(record)
+            if tool_event_data is None:
+                return []
+            if tool_event_data["phase"] == "begin":
+                start_event = _start_tool_event(tool_event_data)
+                return [start_event] if start_event is not None else []
+            return _complete_tool_events(tool_event_data)
 
         def _matches(params: dict[str, Any]) -> bool:
             thread_id = params.get("threadId")
@@ -612,6 +708,8 @@ class CodexWebChatBackend:
             "item/agentMessage/delta",
             "item/started",
             "item/completed",
+            "response_item",
+            "event_msg",
         ]
         for method in event_methods:
             self._client.add_notification_handler(method, _enqueue)
@@ -640,16 +738,35 @@ class CodexWebChatBackend:
                     continue
 
                 if method == "item/completed":
-                    post_tool_payload = build_post_tool_lifecycle_payload(
-                        params,
-                        tool_name_map=CodexAdapter.TOOL_MAP,
-                    )
-                    if post_tool_payload is not None:
-                        tool_name, tool_input, tool_response = post_tool_payload
-                        await session._apply_post_tool_lifecycle(
-                            tool_name,
-                            tool_input,
-                            tool_response,
+                    tool_event_data = codex_tool_event_data(params)
+                    if tool_event_data is not None:
+                        tool_call_id = str(tool_event_data["tool_call_id"])
+                        if tool_call_id in completed_tool_call_ids:
+                            continue
+                        completed_tool_call_ids.add(tool_call_id)
+
+                        post_tool_payload = build_post_tool_lifecycle_payload(
+                            params,
+                            tool_name_map=CodexAdapter.TOOL_MAP,
+                        )
+                        if post_tool_payload is not None:
+                            tool_name, tool_input, tool_response = post_tool_payload
+                            await session._apply_post_tool_lifecycle(
+                                tool_name,
+                                tool_input,
+                                tool_response,
+                            )
+
+                        if tool_call_id not in started_tool_call_ids:
+                            start_event = _start_tool_event(tool_event_data)
+                            if start_event is not None:
+                                yield start_event
+
+                        yield ToolResultEvent(
+                            tool_call_id=tool_call_id,
+                            success=bool(tool_event_data["success"]),
+                            result=tool_event_data["result"],
+                            error=tool_event_data["error"],
                         )
                     continue
 
@@ -665,6 +782,7 @@ class CodexWebChatBackend:
                     continue
 
                 if method == "item/started":
+                    tool_event_data = codex_tool_event_data(params)
                     pre_tool_payload = build_pre_tool_lifecycle_payload(
                         params,
                         tool_name_map=CodexAdapter.TOOL_MAP,
@@ -676,12 +794,24 @@ class CodexWebChatBackend:
                             tool_name,
                             tool_input,
                         )
+                    if tool_event_data is not None:
+                        start_event = _start_tool_event(tool_event_data)
+                        if start_event is not None:
+                            yield start_event
+                    continue
+
+                if method in {"response_item", "event_msg"}:
+                    record = codex_record_from_notification(method, params)
+                    if record is None:
+                        continue
+                    for event in _events_from_transcript_record(record):
+                        yield event
                     continue
 
                 if method == "thread/closed":
                     session._turn_id = None
                     yield DoneEvent(
-                        tool_calls_count=0,
+                        tool_calls_count=tool_calls_count,
                         context_window=session._resolve_context_window(),
                     )
                     turn_completed.set()
@@ -691,19 +821,45 @@ class CodexWebChatBackend:
                     usage = params.get("usage", {})
                     if not isinstance(usage, dict):
                         usage = {}
+                    transcript_records = await session._get_transcript_records_since(
+                        transcript_offset
+                    )
+                    transcript_assistant_text: list[str] = []
+                    for record in transcript_records:
+                        for event in _events_from_transcript_record(record):
+                            yield event
+                        if (
+                            isinstance(record, ParsedMessage)
+                            and record.role == "assistant"
+                            and record.content.strip()
+                        ):
+                            transcript_assistant_text.append(record.content.strip())
+
+                    normalized_usage = prefer_codex_usage(
+                        normalize_codex_usage(usage),
+                        latest_transcript_usage,
+                    )
                     session._turn_id = None
                     if not saw_text_output:
-                        fallback_text = await session._get_transcript_assistant_text_since(
-                            transcript_offset
-                        )
+                        fallback_text = "\n\n".join(transcript_assistant_text)
+                        if not fallback_text:
+                            fallback_text = await session._get_transcript_assistant_text_since(
+                                transcript_offset
+                            )
                         if fallback_text:
                             yield TextChunk(content=fallback_text)
 
+                    context_window = (
+                        latest_transcript_context_window or session._resolve_context_window()
+                    )
                     yield DoneEvent(
-                        tool_calls_count=0,
-                        input_tokens=int(usage.get("input_tokens", 0)),
-                        output_tokens=int(usage.get("output_tokens", 0)),
-                        context_window=session._resolve_context_window(),
+                        tool_calls_count=tool_calls_count,
+                        input_tokens=normalized_usage["input_tokens"],
+                        output_tokens=normalized_usage["output_tokens"],
+                        cache_read_input_tokens=normalized_usage["cache_read_input_tokens"],
+                        cache_creation_input_tokens=normalized_usage["cache_creation_input_tokens"],
+                        total_input_tokens=normalized_usage["total_input_tokens"],
+                        context_window=context_window,
                         sdk_session_id=session.sdk_session_id,
                     )
                     turn_completed.set()

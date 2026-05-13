@@ -144,14 +144,17 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     return () => document.removeEventListener("mousedown", handleMouseDown);
   }, [showFilterPopover]);
 
-  useEffect(() => {
-    const allowed = new Set(
-      sourceOptionsForTab(activeTab).map((opt) => opt.value),
-    );
-    if (!allowed.has(sourceFilter)) {
-      setSourceFilter("installed");
-    }
-  }, [activeTab, sourceFilter]);
+  // Adjust state during render rather than in an effect — when activeTab
+  // changes to a tab that doesn't expose the current sourceFilter option,
+  // reset to "installed" synchronously so the dependent tabs render with a
+  // valid filter on the same paint.
+  const allowedSourceFilters = useMemo(
+    () => new Set(sourceOptionsForTab(activeTab).map((opt) => opt.value)),
+    [activeTab],
+  );
+  if (!allowedSourceFilters.has(sourceFilter)) {
+    setSourceFilter("installed");
+  }
 
   // Badge count
   const activeFilterCount = useMemo(() => {

@@ -61,6 +61,8 @@
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   gap: 0.5rem;
+  container-type: inline-size;
+  container-name: files-viewer;
 }
 
 .file-viewer-path {
@@ -79,32 +81,23 @@
   flex-shrink: 0;
 }
 
-.file-viewer-action {
-  padding: 0.125rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 0.25rem;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: calc(var(--font-size-base) * 0.7);
-  cursor: pointer;
-  transition:
-    color 0.1s,
-    background-color 0.1s,
-    border-color 0.1s;
+/* Toolbar buttons keep flex-shrink off (.btn default) so they don't squeeze.
+   The label hides below 360px so the toolbar stays single-row even when the
+   activity panel is collapsed to its mobile minimum. */
+.file-viewer-btn {
+  flex-shrink: 0;
 }
 
-.file-viewer-action:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
+@container files-viewer (max-width: 360px) {
+  .file-viewer-btn__label {
+    display: none;
+  }
 }
 
-.file-viewer-action--save {
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-  color: var(--accent);
-}
-
-.file-viewer-action--save:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+@media (max-width: 480px) {
+  .file-viewer-btn__label {
+    display: none;
+  }
 }
 
 .files-code-viewer {

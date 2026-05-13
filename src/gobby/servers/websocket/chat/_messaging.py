@@ -357,7 +357,10 @@ class ChatMessagingMixin:
             any_sent = False
             for ws, meta in list(self.clients.items()):
                 cid = meta.get("conversation_id") if meta else None
-                if cid is not None and cid != conversation_id:
+                # Scope frames to clients explicitly bound to this conversation;
+                # clients that haven't joined a conversation (cid is None) must
+                # not receive other conversations' streams.
+                if cid != conversation_id:
                     continue
                 try:
                     await ws.send(encoded)

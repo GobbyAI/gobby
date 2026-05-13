@@ -1513,6 +1513,28 @@ class TestCodexTranscriptParser:
         assert msg.usage.cache_creation_tokens == 0
         assert msg.usage.cache_read_tokens == 0
 
+    def test_token_count_reads_nested_last_token_usage(self, parser) -> None:
+        line = self._event_msg(
+            "token_count",
+            info={
+                "last_token_usage": {
+                    "input_tokens": 26_435,
+                    "cached_input_tokens": 25_984,
+                    "output_tokens": 10,
+                    "reasoning_output_tokens": 2,
+                },
+                "model_context_window": 258_400,
+            },
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert msg.usage is not None
+        assert msg.usage.input_tokens == 451
+        assert msg.usage.cache_read_tokens == 25_984
+        assert msg.usage.output_tokens == 12
+
 
 class TestGeminiTranscriptParser:
     """Tests for Gemini transcript parser."""

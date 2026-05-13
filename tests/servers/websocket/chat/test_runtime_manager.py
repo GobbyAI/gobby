@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -317,6 +318,35 @@ class TestQwenBackend:
         assert isinstance(events[-1], DoneEvent)
         assert events[-1].context_window == 262_144
 
+    def test_managed_session_translates_structured_tool_events(self) -> None:
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
+
+        tool_call = session._translate_event(
+            StreamEvent(
+                event_type="tool_call",
+                data={
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": "/tmp/example.py"},
+                    "call_id": "call-1",
+                },
+            )
+        )
+        tool_result = session._translate_event(
+            StreamEvent(
+                event_type="tool_result",
+                data={"call_id": "call-1", "success": True, "result": "ok"},
+            )
+        )
+
+        assert isinstance(tool_call, ToolCallEvent)
+        assert tool_call.tool_call_id == "call-1"
+        assert tool_call.tool_name == "Write"
+        assert tool_call.arguments == {"file_path": "/tmp/example.py"}
+        assert isinstance(tool_result, ToolResultEvent)
+        assert tool_result.tool_call_id == "call-1"
+        assert tool_result.success is True
+        assert tool_result.result == "ok"
+
     @pytest.mark.asyncio
     async def test_attach_session_warms_local_openai_models(self) -> None:
         client = MagicMock()
@@ -351,6 +381,50 @@ class TestQwenBackend:
         )
         assert client.create_session.await_count == 1
         assert client.create_session.await_args is not None
+
+
+async def _collect_codex_backend_events(
+    notifications: list[tuple[str, dict[str, Any]]],
+    *,
+    transcript_path: Path | None = None,
+    transcript_lines: list[str] | None = None,
+) -> tuple[list[Any], CodexManagedChatSession]:
+    handlers: dict[str, list[Any]] = {}
+
+    def add_handler(method: str, handler: Any) -> None:
+        handlers.setdefault(method, []).append(handler)
+
+    async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        if transcript_path is not None and transcript_lines is not None:
+            transcript_path.write_text("\n".join(transcript_lines) + "\n", encoding="utf-8")
+        for method, params in notifications:
+            for handler in handlers.get(method, []):
+                handler(method, params)
+        return SimpleNamespace(id="turn-1")
+
+    client = MagicMock()
+    client.is_connected = True
+    client.start = AsyncMock()
+    client.stop = AsyncMock()
+    client.add_notification_handler = MagicMock(side_effect=add_handler)
+    client.remove_notification_handler = MagicMock()
+    client.start_turn = AsyncMock(side_effect=start_turn)
+
+    backend = CodexWebChatBackend(client=client)
+    await backend.start()
+
+    session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+    session._connected = True
+    session._thread_id = "thread-1"
+    if transcript_path is not None:
+        transcript_path.write_text("", encoding="utf-8")
+        session._transcript_path = str(transcript_path)
+    else:
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+
+    events = [event async for event in backend.send_message(session, "hello")]
+    return events, session
 
 
 class TestCodexBackend:
@@ -481,6 +555,352 @@ class TestCodexBackend:
         )
         assert isinstance(events[-1], DoneEvent)
         assert events[-1].context_window == 200_000
+
+    @pytest.mark.asyncio
+    async def test_send_message_emits_tool_call_event_for_started_item(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/started",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "list_tasks",
+                                "arguments": '{"status":"open"}',
+                            },
+                        },
+                    },
+                ),
+                (
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                ),
+            ]
+        )
+
+        tool_calls = [event for event in events if isinstance(event, ToolCallEvent)]
+
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_call_id == "item-mcp-1"
+        assert tool_calls[0].tool_name == "mcp__gobby-tasks__list_tasks"
+        assert tool_calls[0].server_name == "gobby-tasks"
+        assert tool_calls[0].arguments == {"status": "open"}
+        assert isinstance(events[-1], DoneEvent)
+        assert events[-1].tool_calls_count == 1
+
+    @pytest.mark.asyncio
+    async def test_send_message_emits_tool_result_event_for_completed_item(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/started",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "get_task",
+                                "arguments": '{"task_id":"#42"}',
+                            },
+                        },
+                    },
+                ),
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "get_task",
+                                "arguments": '{"task_id":"#42"}',
+                            },
+                            "result": {"id": "#42", "title": "Fix chat"},
+                        },
+                    },
+                ),
+                (
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                ),
+            ]
+        )
+
+        tool_results = [event for event in events if isinstance(event, ToolResultEvent)]
+
+        assert len(tool_results) == 1
+        assert tool_results[0].tool_call_id == "item-mcp-1"
+        assert tool_results[0].success is True
+        assert tool_results[0].result == {"id": "#42", "title": "Fix chat"}
+        assert isinstance(events[-1], DoneEvent)
+        assert events[-1].tool_calls_count == 1
+
+    @pytest.mark.asyncio
+    async def test_send_message_emits_fallback_tool_call_for_completed_item(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "close_task",
+                                "arguments": '{"task_id":"#42"}',
+                            },
+                            "result": {"success": True},
+                        },
+                    },
+                ),
+                (
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                ),
+            ]
+        )
+
+        assert [type(event) for event in events] == [ToolCallEvent, ToolResultEvent, DoneEvent]
+        assert events[0].tool_call_id == "item-mcp-1"
+        assert events[1].tool_call_id == "item-mcp-1"
+        assert events[1].result == {"success": True}
+        assert events[2].tool_calls_count == 1
+
+    @pytest.mark.asyncio
+    async def test_send_message_normalizes_camel_and_snake_case_usage(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {
+                            "inputTokens": 5,
+                            "output_tokens": 7,
+                            "cacheReadInputTokens": 11,
+                            "cache_creation_input_tokens": 13,
+                        },
+                    },
+                ),
+            ]
+        )
+
+        done = events[-1]
+
+        assert isinstance(done, DoneEvent)
+        assert done.input_tokens == 5
+        assert done.output_tokens == 7
+        assert done.cache_read_input_tokens == 11
+        assert done.cache_creation_input_tokens == 13
+        assert done.total_input_tokens == 29
+
+    @pytest.mark.asyncio
+    async def test_send_message_emits_tool_events_from_codex_response_items(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "response_item",
+                    {
+                        "type": "function_call",
+                        "name": "call_tool",
+                        "arguments": json.dumps(
+                            {
+                                "server_name": "gobby-tasks",
+                                "tool_name": "get_task",
+                                "arguments": {"task_id": "#42"},
+                            }
+                        ),
+                        "call_id": "call-1",
+                    },
+                ),
+                (
+                    "response_item",
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call-1",
+                        "output": json.dumps({"success": True}),
+                    },
+                ),
+                (
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                ),
+            ]
+        )
+
+        tool_call = next(event for event in events if isinstance(event, ToolCallEvent))
+        tool_result = next(event for event in events if isinstance(event, ToolResultEvent))
+
+        assert tool_call.tool_call_id == "call-1"
+        assert tool_call.tool_name == "call_tool"
+        assert tool_call.server_name == "gobby-tasks"
+        assert tool_call.arguments["tool_name"] == "get_task"
+        assert tool_result.tool_call_id == "call-1"
+        assert tool_result.result == {"success": True}
+        assert events[-1].tool_calls_count == 1
+
+    @pytest.mark.asyncio
+    async def test_send_message_uses_token_count_event_for_done_usage(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "event_msg",
+                    {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": 26_435,
+                                "cached_input_tokens": 25_984,
+                                "output_tokens": 10,
+                                "reasoning_output_tokens": 2,
+                            },
+                            "model_context_window": 258_400,
+                        },
+                    },
+                ),
+                (
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    },
+                ),
+            ]
+        )
+
+        done = events[-1]
+
+        assert isinstance(done, DoneEvent)
+        assert done.input_tokens == 451
+        assert done.cache_read_input_tokens == 25_984
+        assert done.output_tokens == 12
+        assert done.total_input_tokens == 26_435
+        assert done.context_window == 258_400
+
+    @pytest.mark.asyncio
+    async def test_send_message_recovers_tool_and_usage_from_codex_transcript(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        transcript_path = tmp_path / "codex.jsonl"
+        transcript_lines = [
+            json.dumps(
+                {
+                    "timestamp": "2026-05-13T18:26:09.726Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "call_tool",
+                        "arguments": json.dumps(
+                            {
+                                "server_name": "gobby-tasks",
+                                "tool_name": "get_task",
+                                "arguments": {"task_id": "#14579"},
+                            }
+                        ),
+                        "call_id": "call-1",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-05-13T18:26:10.077Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "mcp_tool_call_end",
+                        "call_id": "call-1",
+                        "invocation": {
+                            "server": "gobby",
+                            "tool": "call_tool",
+                            "arguments": {
+                                "server_name": "gobby-tasks",
+                                "tool_name": "get_task",
+                                "arguments": {"task_id": "#14579"},
+                            },
+                        },
+                        "result": {"Ok": {"structuredContent": {"success": True}}},
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-05-13T18:26:13.962Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": 128_050,
+                                "cached_input_tokens": 108_416,
+                                "output_tokens": 214,
+                                "reasoning_output_tokens": 82,
+                            },
+                            "model_context_window": 258_400,
+                        },
+                    },
+                }
+            ),
+        ]
+
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    },
+                ),
+            ],
+            transcript_path=transcript_path,
+            transcript_lines=transcript_lines,
+        )
+
+        tool_calls = [event for event in events if isinstance(event, ToolCallEvent)]
+        tool_results = [event for event in events if isinstance(event, ToolResultEvent)]
+        done = events[-1]
+
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_call_id == "call-1"
+        assert tool_calls[0].tool_name == "call_tool"
+        assert len(tool_results) == 1
+        assert tool_results[0].tool_call_id == "call-1"
+        assert isinstance(done, DoneEvent)
+        assert done.tool_calls_count == 1
+        assert done.input_tokens == 19_634
+        assert done.cache_read_input_tokens == 108_416
+        assert done.output_tokens == 296
+        assert done.total_input_tokens == 128_050
+        assert done.context_window == 258_400
 
     @pytest.mark.asyncio
     async def test_interrupt_uses_thread_and_turn_identity(self) -> None:
