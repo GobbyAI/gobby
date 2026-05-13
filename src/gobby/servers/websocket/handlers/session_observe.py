@@ -161,9 +161,13 @@ def _resolve_fallback_inject_context(source_session: Any, requested_mode: str) -
 
     summary_markdown = _as_str(getattr(source_session, "summary_markdown", None))
     digest_markdown = _as_str(getattr(source_session, "digest_markdown", None))
+    if summary_markdown and not summary_markdown.strip():
+        summary_markdown = None
+    if digest_markdown and not digest_markdown.strip():
+        digest_markdown = None
 
     if requested_mode == "summary":
-        return summary_markdown
+        return summary_markdown or digest_markdown
     if requested_mode == "digest":
         return digest_markdown
 

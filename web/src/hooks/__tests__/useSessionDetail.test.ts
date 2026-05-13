@@ -32,7 +32,7 @@ describe('useSessionDetail', () => {
 
   it('falls back to chat messages for parked web chats without transcript-backed history', async () => {
     await loadModule()
-    mockFetch.mockJsonResponse('/api/sessions/sess-web', {
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-web$/, {
       session: {
         id: 'sess-web',
         external_id: 'chat-ext-1',
@@ -157,7 +157,7 @@ describe('useSessionDetail', () => {
 
   it('upserts rendered session_message websocket events by message id', async () => {
     await loadModule()
-    mockFetch.mockJsonResponse('/api/sessions/sess-cli', {
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-cli$/, {
       session: {
         id: 'sess-cli',
         external_id: 'cli-ext-1',
@@ -201,6 +201,123 @@ describe('useSessionDetail', () => {
     expect(result.current.messages).toHaveLength(1)
     expect(result.current.messages[0].content).toBe('Updated output')
     expect(result.current.totalMessages).toBe(1)
+  })
+
+  it('refreshes selected session metadata after matching session events', async () => {
+    await loadModule()
+
+    let sessionFetchCount = 0
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-cli$/.test(url)) {
+        sessionFetchCount += 1
+        const digest = sessionFetchCount === 1 ? null : '## Updated digest'
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-cli',
+              external_id: 'cli-ext-1',
+              session_type: 'terminal',
+              status: sessionFetchCount === 1 ? 'active' : 'expired',
+              summary_markdown: null,
+              digest_markdown: digest,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (url.includes('/api/sessions/sess-cli/messages?limit=10000&offset=0')) {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-1',
+                role: 'assistant',
+                content: 'Initial output',
+                timestamp: '2026-04-09T00:00:00Z',
+              },
+            ],
+            total_count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.session?.digest_markdown).toBeNull()
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-cli',
+      })
+    })
+
+    await waitFor(() => {
+      expect(result.current.session?.digest_markdown).toBe('## Updated digest')
+      expect(result.current.session?.status).toBe('expired')
+    })
+  })
+
+  it('clears selected session metadata after a matching delete event', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-cli$/, {
+      session: {
+        id: 'sess-cli',
+        external_id: 'cli-ext-1',
+        session_type: 'terminal',
+        status: 'active',
+      },
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-cli/messages?limit=10000&offset=0', {
+      messages: [
+        {
+          id: 'sess-msg-1',
+          role: 'assistant',
+          content: 'Initial output',
+          timestamp: '2026-04-09T00:00:00Z',
+        },
+      ],
+      total_count: 1,
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.session?.id).toBe('sess-cli')
+    await waitFor(() => expect(result.current.messages).toHaveLength(1))
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_deleted',
+        session_id: 'sess-cli',
+      })
+    })
+
+    expect(result.current.session).toBeNull()
+    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.totalMessages).toBe(0)
   })
 
   it('polls chat-backed web chats for live updates', async () => {

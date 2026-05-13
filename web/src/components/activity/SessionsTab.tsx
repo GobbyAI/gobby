@@ -63,6 +63,24 @@ const STATUS_MODE_OPTIONS = [
   { value: "expired" as const, label: "Expired" },
 ] as const;
 
+function resolveSessionSummaryMarkdown(
+  ...sessions: Array<
+    Pick<GobbySession, "summary_markdown" | "digest_markdown"> | null | undefined
+  >
+): string | null {
+  for (const session of sessions) {
+    if (session?.summary_markdown?.trim()) {
+      return session.summary_markdown;
+    }
+  }
+  for (const session of sessions) {
+    if (session?.digest_markdown?.trim()) {
+      return session.digest_markdown;
+    }
+  }
+  return null;
+}
+
 interface SessionsTabProps {
   sessions?: GobbySession[];
   isLoadingSessions?: boolean;
@@ -477,8 +495,10 @@ export const SessionsTab = memo(function SessionsTab({
     return "No messages yet";
   }, [transcriptStatus]);
 
-  const summaryMarkdown =
-    selectedSession?.summary_markdown ?? selectedSession?.digest_markdown ?? null;
+  const summaryMarkdown = resolveSessionSummaryMarkdown(
+    selectedSessionDetail,
+    selectedCatalogSession,
+  );
   const selectedSessionStatus = selectedSession?.status ?? selectedEntry?.status ?? null;
   const transcriptUnavailable =
     transcriptStatus?.content_state === "missing" ||
@@ -486,7 +506,7 @@ export const SessionsTab = memo(function SessionsTab({
   const hideResumeAndSwap =
     selectedSessionStatus === "expired" && transcriptUnavailable;
   const showSummaryButton =
-    selectedEntry != null && (!hideResumeAndSwap || Boolean(summaryMarkdown));
+    selectedEntry != null && (Boolean(summaryMarkdown) || contentMode === "summary");
   const showResumeButton =
     selectedEntry?.type === "session" &&
     selectedSessionId != null &&

@@ -12,9 +12,19 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.servers.websocket.handlers.session_observe import _resolve_fallback_inject_context
 from gobby.sessions.terminal_kill import kill_terminal_session
 
 pytestmark = pytest.mark.unit
+
+
+def test_summary_fallback_context_uses_digest_when_summary_missing() -> None:
+    """Explicit summary fallback should use digest markdown when summary is absent."""
+    source_session = MagicMock()
+    source_session.summary_markdown = "   "
+    source_session.digest_markdown = "## Digest fallback"
+
+    assert _resolve_fallback_inject_context(source_session, "summary") == "## Digest fallback"
 
 
 class TestKillTerminalSession:

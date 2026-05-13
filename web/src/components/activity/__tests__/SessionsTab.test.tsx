@@ -419,6 +419,83 @@ describe("SessionsTab", () => {
     expect(liveRadio).toHaveClass("bg-accent/15");
   });
 
+  it("renders digest fallback for a live session with no summary", async () => {
+    mockUseSessionDetail.mockReturnValue({
+      session: {
+        ...LIVE_SESSION,
+        summary_markdown: null,
+        digest_markdown: "## Live digest fallback",
+      },
+      messages: [
+        {
+          id: "msg-live",
+          role: "assistant",
+          content: "Live transcript output",
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    });
+
+    render(
+      <SessionsTab
+        sessions={[LIVE_SESSION]}
+        focusSessionId="live-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Live transcript output")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
+      "## Live digest fallback",
+    );
+  });
+
+  it("shows Summary when digest exists in catalog metadata before detail refresh", async () => {
+    const catalogSession = makeSession({
+      ...LIVE_SESSION,
+      digest_markdown: "## Catalog digest fallback",
+    });
+    mockUseSessionDetail.mockReturnValue({
+      session: {
+        ...LIVE_SESSION,
+        summary_markdown: null,
+        digest_markdown: null,
+      },
+      messages: [
+        {
+          id: "msg-live",
+          role: "assistant",
+          content: "Live transcript output",
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    });
+
+    render(
+      <SessionsTab
+        sessions={[catalogSession]}
+        focusSessionId="live-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
+      "## Catalog digest fallback",
+    );
+  });
+
   it("shows active/paused agent sessions in Live but excludes terminal agent statuses", async () => {
     render(
       <SessionsTab
@@ -464,7 +541,7 @@ describe("SessionsTab", () => {
     mockUseSessionDetail.mockReturnValue({
       session: {
         ...PAUSED_SESSION,
-        summary_markdown: null,
+        summary_markdown: "   ",
         digest_markdown: "## Digest fallback",
       },
       messages: [
@@ -481,7 +558,13 @@ describe("SessionsTab", () => {
 
     render(
       <SessionsTab
-        sessions={[PAUSED_SESSION]}
+        sessions={[
+          {
+            ...PAUSED_SESSION,
+            summary_markdown: "   ",
+            digest_markdown: null,
+          },
+        ]}
         focusSessionId="paused-1"
         onResumeSession={onResumeSession}
         onSwapSession={onSwapSession}
@@ -745,9 +828,13 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("1.2K / 3.4K")).toBeNull();
   });
 
-  it("hides resume and swap for expired sessions without a transcript but keeps summary when available", async () => {
+  it("hides resume and swap for expired sessions without a transcript but keeps digest summary fallback when available", async () => {
     mockUseSessionDetail.mockReturnValue({
-      session: EXPIRED_SESSION,
+      session: {
+        ...EXPIRED_SESSION,
+        summary_markdown: "   ",
+        digest_markdown: "## Expired digest fallback",
+      },
       messages: [],
       isLoading: false,
       transcriptStatus: { content_state: "missing" },
@@ -755,7 +842,13 @@ describe("SessionsTab", () => {
 
     render(
       <SessionsTab
-        sessions={[EXPIRED_SESSION]}
+        sessions={[
+          {
+            ...EXPIRED_SESSION,
+            summary_markdown: "   ",
+            digest_markdown: null,
+          },
+        ]}
         onResumeSession={vi.fn()}
         onSwapSession={vi.fn()}
       />,
@@ -773,23 +866,24 @@ describe("SessionsTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Summary" }));
     expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
-      "# Expired Summary",
+      "## Expired digest fallback",
     );
   });
 
-  it("shows an explicit empty state when summary and digest are both missing", async () => {
-    mockUseSessionDetail.mockReturnValue({
-      session: {
-        ...PAUSED_SESSION,
-        summary_markdown: null,
-        digest_markdown: null,
-      },
+  it("shows an explicit empty state only when summary mode loses both summary and digest", async () => {
+    let detailSession: GobbySession = {
+      ...PAUSED_SESSION,
+      summary_markdown: "# Initial summary",
+      digest_markdown: null,
+    };
+    mockUseSessionDetail.mockImplementation(() => ({
+      session: detailSession,
       messages: [],
       isLoading: false,
       transcriptStatus: { content_state: "missing" },
-    });
+    }));
 
-    render(
+    const { rerender } = render(
       <SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />,
     );
 
@@ -800,7 +894,27 @@ describe("SessionsTab", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByTestId("summary-markdown")).toHaveTextContent(
+      "# Initial summary",
+    );
+
+    detailSession = {
+      ...PAUSED_SESSION,
+      summary_markdown: "   ",
+      digest_markdown: "\n\t",
+    };
+    const emptyCatalogSession = {
+      ...PAUSED_SESSION,
+      summary_markdown: "   ",
+      digest_markdown: "\n\t",
+    };
+    rerender(
+      <SessionsTab sessions={[emptyCatalogSession]} focusSessionId="paused-1" />,
+    );
+
     expect(screen.getByText("No summary available")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Summary" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Transcript" })).toBeInTheDocument();
   });
 
   it("restores a session in the list when expire fails", async () => {

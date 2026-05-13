@@ -38,6 +38,17 @@ function getBaseUrl(): string {
 
 const CHAT_MESSAGES_POLL_MS = 2000
 
+async function fetchSessionMetadata(sessionId: string): Promise<GobbySession | null> {
+  const baseUrl = getBaseUrl()
+  const sessionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
+  if (!sessionRes.ok) {
+    console.warn(`Session fetch returned ${sessionRes.status}`)
+    return null
+  }
+  const data = await sessionRes.json()
+  return (data.session || null) as GobbySession | null
+}
+
 function mapRenderedRecordToSessionMessage(message: Record<string, unknown>): SessionMessage {
   return {
     id: String(message.id ?? message.message_index ?? `hist-${Math.random()}`),
@@ -88,6 +99,11 @@ export function useSessionDetail(sessionId: string | null) {
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const messageSourceRef = useRef<'session' | 'chat' | null>(null)
+  const sessionIdRef = useRef(sessionId)
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
 
   // Fetch session detail and all messages
   useEffect(() => {
@@ -100,19 +116,18 @@ export function useSessionDetail(sessionId: string | null) {
       return
     }
 
+    const activeSessionId = sessionId
     let cancelled = false
     setIsLoading(true)
 
     async function fetchDetail() {
       const baseUrl = getBaseUrl()
       try {
-        const sessionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
+        const sessionData = await fetchSessionMetadata(activeSessionId)
 
         if (cancelled) return
 
-        if (sessionRes.ok) {
-          const data = await sessionRes.json()
-          const sessionData = data.session || null
+        if (sessionData) {
           setSession(sessionData)
           setTranscriptStatus(null)
 
@@ -122,7 +137,7 @@ export function useSessionDetail(sessionId: string | null) {
             ok: boolean
           }> => {
             const messagesRes = await fetch(
-              `${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`,
+              `${baseUrl}/api/sessions/${activeSessionId}/messages?limit=10000&offset=0`,
             )
             if (!messagesRes.ok) {
               console.warn(`Messages fetch returned ${messagesRes.status}`)
@@ -144,10 +159,7 @@ export function useSessionDetail(sessionId: string | null) {
             totalCount: number
             ok: boolean
           }> => {
-            if (!sessionId) {
-              return { mapped: [], totalCount: 0, ok: false }
-            }
-            const chatRes = await fetch(`${baseUrl}/api/chat/${sessionId}/messages`)
+            const chatRes = await fetch(`${baseUrl}/api/chat/${activeSessionId}/messages`)
             if (!chatRes.ok) {
               console.warn(`Web chat messages fetch returned ${chatRes.status}`)
               return { mapped: [], totalCount: 0, ok: false }
@@ -164,7 +176,9 @@ export function useSessionDetail(sessionId: string | null) {
           }
 
           const loadTranscriptStatus = async (): Promise<TranscriptStatus | null> => {
-            const statusRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/transcript/status`)
+            const statusRes = await fetch(
+              `${baseUrl}/api/sessions/${activeSessionId}/transcript/status`,
+            )
             if (!statusRes.ok) {
               console.warn(`Transcript status fetch returned ${statusRes.status}`)
               return null
@@ -209,8 +223,6 @@ export function useSessionDetail(sessionId: string | null) {
               setTranscriptStatus(nextTranscriptStatus)
             }
           }
-        } else {
-          console.warn(`Session fetch returned ${sessionRes.status}`)
         }
       } catch (e) {
         console.error('Failed to fetch session detail:', e)
@@ -233,12 +245,6 @@ export function useSessionDetail(sessionId: string | null) {
       cancelled = true
       cleanup?.()
     }
-  }, [sessionId])
-
-  // Track current sessionId in a ref for the WebSocket handler
-  const sessionIdRef = useRef(sessionId)
-  useEffect(() => {
-    sessionIdRef.current = sessionId
   }, [sessionId])
 
   // Subscribe to real-time session_message events via WebSocket
@@ -301,6 +307,35 @@ export function useSessionDetail(sessionId: string | null) {
         : prev,
     )
   }, []))
+
+  const refreshSelectedSessionMetadata = useCallback(async (updatedSessionId: string) => {
+    try {
+      const refreshed = await fetchSessionMetadata(updatedSessionId)
+      if (sessionIdRef.current !== updatedSessionId || !refreshed) return
+      setSession(refreshed)
+    } catch (e) {
+      console.error('Failed to refresh session metadata:', e)
+    }
+  }, [])
+
+  useWebSocketEvent('session_event', useCallback((data: Record<string, unknown>) => {
+    const event = typeof data.event === 'string' ? data.event : null
+    const updatedSessionId = typeof data.session_id === 'string' ? data.session_id : null
+    if (!updatedSessionId || updatedSessionId !== sessionIdRef.current) return
+
+    if (event === 'session_deleted') {
+      setSession(null)
+      setMessages([])
+      setTranscriptStatus(null)
+      setTotalMessages(0)
+      messageSourceRef.current = null
+      return
+    }
+
+    if (event === 'session_updated' || event === 'session_expired') {
+      void refreshSelectedSessionMetadata(updatedSessionId)
+    }
+  }, [refreshSelectedSessionMetadata]))
 
   const hasMore = false
 

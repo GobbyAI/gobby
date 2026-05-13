@@ -199,7 +199,10 @@ class _FieldUpdateMixin:
                 """,
                 (digest_markdown, now, session_id),
             )
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_session_change("session_updated", session_id)
+        return updated
 
     def update_last_turn_markdown(
         self: _ManagerState, session_id: str, last_turn_markdown: str
