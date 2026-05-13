@@ -277,7 +277,7 @@ This task depends on Phase 2 because `KnowledgeGraphService` and `CodeGraph` sti
 ### 2.1 Translate KnowledgeGraphService Cypher and wire MemoryManager [category: code] (depends: 1.2)
 `kind: deliverable`
 
-Targets: `src/gobby/memory/services/knowledge_graph.py`, `src/gobby/memory/manager.py`, `src/gobby/memory/services/search.py` (clear_graph_clients touches `_search_service._kg_service` — R28-F4), `src/gobby/memory/services/indexing.py` (clear_graph_clients touches `_indexing_service._kg_service` — R28-F4), `src/gobby/runner_init/services.py` (the actual call site that constructs `MemoryManager` with the Neo4j-shaped kwargs), `runner_init/services.py` (bare path cited in body), `neo4j_client.py` (transport reference cited in body), `tests/memory/test_falkor_client.py`, `tests/memory/test_manager.py` (clear_graph_clients unit test — R28-F4)
+Targets: `src/gobby/memory/services/knowledge_graph.py`, `src/gobby/memory/falkor_client.py` (R39-F2 — schema/vector helpers own the dialect-table row 1-3 acceptance items), `src/gobby/memory/manager.py`, `src/gobby/memory/services/search.py` (clear_graph_clients touches `_search_service._kg_service` — R28-F4), `src/gobby/memory/services/indexing.py` (clear_graph_clients touches `_indexing_service._kg_service` — R28-F4), `src/gobby/runner_init/services.py` (the actual call site that constructs `MemoryManager` with the Neo4j-shaped kwargs), `runner_init/services.py` (bare path cited in body), `neo4j_client.py` (transport reference cited in body), `tests/memory/test_falkor_client.py`, `tests/memory/test_manager.py` (clear_graph_clients unit test — R28-F4)
 
 Apply these dialect translations to every Cypher string in `src/gobby/memory/services/knowledge_graph.py` and `src/gobby/memory/falkor_client.py`'s schema/vector helpers:
 
@@ -390,6 +390,13 @@ These updates run as part of this task — the `neo4j_*` kwargs and `_neo4j_clie
 
 - 2.1.1 — `KnowledgeGraphService` Cypher dialect is FalkorDB-compatible. symbol: `gobby.memory.services.knowledge_graph.KnowledgeGraphService`.
 - 2.1.2 — `MemoryManager` constructs `KnowledgeGraphService` against `FalkorClient`. symbol: `gobby.memory.manager.MemoryManager`.
+- 2.1.3 — Dialect-table row 1 (R39-F2): `CREATE CONSTRAINT ... IS UNIQUE` is replaced by the two-step `ensure_supporting_index(label, prop)` + `GRAPH.CONSTRAINT CREATE` Redis-command flow with `db.constraints()` polling to `OPERATIONAL` (30s timeout). file: `src/gobby/memory/falkor_client.py`.
+- 2.1.4 — Dialect-table row 2: `CREATE INDEX ... IF NOT EXISTS` rewritten to `CREATE INDEX ... ON (...)` with "already indexed" error catch. file: `src/gobby/memory/falkor_client.py`.
+- 2.1.5 — Dialect-table row 3: vector-index DDL rewritten to `CREATE VECTOR INDEX FOR (n:Label) ON (n.embedding) OPTIONS {dimension: $dim, similarityFunction: 'cosine'}` with no 1536 default. file: `src/gobby/memory/falkor_client.py`.
+- 2.1.6 — Dialect-table row 4: `db.create.setNodeVectorProperty(...)` procedure call replaced by inline `SET n.embedding = vecf32($emb)`. file: `src/gobby/memory/services/knowledge_graph.py`.
+- 2.1.7 — Dialect-table row 5: vector-query `CALL db.idx.vector.queryNodes('Label', 'embedding', $k, vecf32($emb)) YIELD node, score` (label + property signature, not index name). file: `src/gobby/memory/services/knowledge_graph.py`.
+- 2.1.8 — Dialect-table row 6: every `datetime()` call site rewritten to `timestamp()` (Unix epoch ms); downstream readers updated to handle integers. file: `src/gobby/memory/services/knowledge_graph.py`.
+- 2.1.9 — Dialect-table row 7: `rg "apoc\."` against the daemon Python source returns zero hits AFTER this task closes (sweep verification — current code already has zero `apoc.*` references, but the row is owned here so a future code reintroduction does not silently bypass the FalkorDB-compat contract). behavior: "no `apoc.*` Cypher fragments remain in daemon source" in `src/gobby/`.
 
 ### 2.2 Translate CodeGraph Cypher and wire CodeGraph construction at runner_init [category: code] (depends: 1.2, 2.1)
 `kind: deliverable`
@@ -872,13 +879,29 @@ Both edits land in this task's diff. Running them in this order (export removal 
 **Tests owned by this task (R21-F1):**
 
 - `tests/cli/installers/test_neo4j_installer.py` (NOT `test_neo4j.py` — R21-F1 corrected the prior filename) → rename to `tests/cli/installers/test_falkordb_installer.py`. Update assertions for the new install steps (Docker check, compose refresh + `--profile falkordb up`, `redis-cli -a $PW PING` health check with `-T`, `_update_config` atomicity per R19-F5, `_write_bootstrap_password` step-6 failure semantics per R11-F2 + R20 testing). Cover the three `password_source` paths from R13-F3 (`generated`, `provided`, `reused`).
-- `tests/cli/test_cli_neo4j.py` → rename to `tests/cli/test_cli_falkordb.py`. Update the Click-flag assertions for the new flag surface (`--falkordb`, `--falkordb-password`, `--no-ext-services`, `gobby uninstall --falkordb`). Also assert that the hidden `--neo4j-password` and `--neo4j` flags raise `click.UsageError` with the migration message from § 8.1 (R20-F4 — these literal flag-name strings live in source by design and are allowlisted in § 8.3 row #20).
+- `tests/cli/test_cli_neo4j.py` → rename to `tests/cli/test_cli_falkordb.py`. Update the Click-flag assertions for the new flag surface (`--falkordb`, `--falkordb-password`, `--no-ext-services`, `gobby uninstall --falkordb`). Also assert that the hidden `--neo4j-password` and `--neo4j` flags raise `click.UsageError` with the migration message from the deprecation block below (R20-F4 — these literal flag-name strings live in source by design and are allowlisted in § 8.3 row #20).
 
 Without these renames, § 4.3's residual `rg` sweep AND § 8.3 row #4's pytest run both fail on the still-present Neo4j-named test files.
+
+**Hidden deprecation handlers (R39-F1 — implementation moved into this task from former § 8.1):** as part of the same `install.py` / `_install_prompts.py` edits, REGISTER `--neo4j-password` on `install` and `--neo4j` on `uninstall` as `click.option(... hidden=True)` whose handler immediately raises `click.UsageError` with the migration message:
+
+```
+Error: --neo4j / --neo4j-password has been removed in 0.4.0.
+
+The knowledge graph backend has been replaced with FalkorDB.
+- Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
+- Uninstall: gobby uninstall --falkordb
+- Migration notes: see CHANGELOG.md for the full upgrade path.
+```
+
+Implementation lives here (NOT in § 8.1, which is now policy-only) so the `test_cli_falkordb.py` and `test_install_coverage.py` test cases that owned-by-this-task assertions reference handlers that exist in the same commit. § 8.1 still owns the policy decision and CHANGELOG cross-reference, but no longer ships the Click handler code itself.
+
+The hidden registration is required for the `gobby install --neo4j-password foo` → `click.UsageError` shape: without `click.option(... hidden=True)` Click would emit its built-in `Error: No such option: --neo4j-password` message instead, which does not name the FalkorDB equivalents and is the wrong user experience. The `hidden=True` flag keeps the deprecated names out of `--help` while still routing the call into the custom handler.
 
 **Acceptance:**
 
 - 3.4.1 — CLI flags renamed `--neo4j-*` → `--falkordb-*` with a service-targeting flag added. file: `src/gobby/cli/install.py`.
+- 3.4.2 — Hidden `--neo4j-password` / `--neo4j` Click options registered with handlers that raise `click.UsageError` carrying the migration message; tests assert the migration message text and exit status. file: `src/gobby/cli/install.py`.
 
 ### 3.5 Rename bootstrap neo4j_password to falkordb_password end-to-end [category: code] (depends: 1.1, 3.1)
 `kind: deliverable`
@@ -2088,18 +2111,16 @@ Both must exit 0. If either fails, a `mod neo4j;`, `use crate::neo4j;`, or `neo4
 
 **Goal**: Define the operational dance for landing both repos atomically — merge ordering, validation matrix, CLI flag deprecation policy, runtime warnings for users on upgrade.
 
-### 8.1 Decide CLI flag deprecation policy and add hard-fail messaging [category: code] (depends: 3.4, 4.3)
+### 8.1 Document CLI flag deprecation policy [category: docs] (depends: 3.4, 4.3)
 `kind: deliverable`
 
-Targets: `src/gobby/cli/install.py` (the install/uninstall commands modified in 3.4 — also houses the hidden deprecated `--neo4j-password` / `--neo4j` Click options whose handlers raise the migration error)
+Targets: `CHANGELOG.md` (0.4.0 upgrade-notes section that documents the removed flags), `src/gobby/cli/install.py` (audit-only — verify the § 3.4 hidden-handler implementation matches the policy stated below; this section does NOT modify install.py code per R39-F1), `test_cli_falkordb.py` (audit-only cross-reference — § 3.4 owns this test file's deprecation-handler assertions; bare name cited in body), `test_install_coverage.py` (audit-only cross-reference — § 3.4 owns this file too; bare name cited in body)
 
-**Decision: do not preserve `--neo4j-password` (install) or `--neo4j` (uninstall) as aliases.** Hard-fail with a clear migration error. Aliases obscure the cutover, leave dead code paths, and create confusion when users see both flags work but only one matches the running service.
+**Policy decision: do not preserve `--neo4j-password` (install) or `--neo4j` (uninstall) as aliases.** Hard-fail with a clear migration error. Aliases obscure the cutover, leave dead code paths, and create confusion when users see both flags work but only one matches the running service.
 
-The actual deprecated surfaces (per 3.4):
-- `gobby install --neo4j-password <value>` — was a Click option on `install`
-- `gobby uninstall --neo4j` — was a Click flag on `uninstall`
+The hidden Click-option handlers that implement this policy live in `src/gobby/cli/install.py` and are OWNED BY § 3.4 (see § 3.4's "Hidden deprecation handlers" subsection — R39-F1 moved the implementation there so § 3.4's test_cli_falkordb.py and test_install_coverage.py cases reference handlers that exist in the same commit). This section is policy + CHANGELOG documentation; it does not ship code.
 
-When a user passes either, fail fast with:
+When a user passes either deprecated flag, the § 3.4 handler emits:
 
 ```
 Error: --neo4j / --neo4j-password has been removed in 0.4.0.
@@ -2110,9 +2131,17 @@ The knowledge graph backend has been replaced with FalkorDB.
 - Migration notes: see CHANGELOG.md for the full upgrade path.
 ```
 
-Implement by registering `--neo4j-password` on `install` and `--neo4j` on `uninstall` as `click.option(... hidden=True)` whose handler immediately raises `click.UsageError` with the message above. This way `--help` does not advertise them, but typo-tolerant users (and anyone running an old script) get a real explanation instead of "no such option".
+The actual deprecated surfaces (verified live in § 3.4's edit set):
+- `gobby install --neo4j-password <value>` — was a Click option on `install`
+- `gobby uninstall --neo4j` — was a Click flag on `uninstall`
 
-**Residual-sweep allowlist (R20-F4 cross-reference):** the literal `neo4j` strings introduced by these hidden hard-fail handlers are required (Click must register the old option names to produce the migration error). § 8.3 row #20's `rg` sweep allowlist therefore explicitly includes `src/gobby/cli/install.py`'s deprecation handlers — these refs are intentional, not stale. § 4.3's daemon-wide sweep also skips this file's deprecation block for the same reason.
+**CHANGELOG entry — required (this section's deliverable):** add an upgrade-notes block to `CHANGELOG.md`'s 0.4.0 section that:
+1. Names both removed flags verbatim (`--neo4j-password`, `--neo4j`).
+2. Includes the exact replacement verbs (`gobby install [--falkordb-password <pw>]`, `gobby install --falkordb`, `gobby uninstall --falkordb`).
+3. Explains the hard-fail rationale (aliases obscure the cutover; no silent backward compatibility).
+4. Cross-references the FalkorDB migration notes elsewhere in the changelog.
+
+**Residual-sweep allowlist (R20-F4 cross-reference):** the literal `neo4j` strings that § 3.4's hidden hard-fail handlers introduce are required (Click must register the old option names to produce the migration error). § 8.3 row #20's `rg` sweep allowlist therefore explicitly includes `src/gobby/cli/install.py`'s deprecation handlers — these refs are intentional, not stale. § 4.3's daemon-wide sweep also skips this file's deprecation block for the same reason.
 
 **Tests (R21-F1 + R22-F4) — owned by this task:**
 
@@ -2126,7 +2155,7 @@ These are the tests covered by § 8.3 row #4's expanded `tests/cli/` scope per R
 
 **Acceptance:**
 
-- 8.1.1 — Old `--neo4j-*` CLI flags hard-fail with explicit deprecation messaging pointing at the FalkorDB equivalents. file: `src/gobby/cli/install.py`.
+- 8.1.1 — CHANGELOG.md 0.4.0 upgrade-notes block documents the hard-fail deprecation of `--neo4j-password` (install) and `--neo4j` (uninstall), names the FalkorDB replacement verbs (`gobby install [--falkordb-password <pw>]`, `gobby install --falkordb`, `gobby uninstall --falkordb`), and cross-references the FalkorDB migration notes. file: `CHANGELOG.md`. The Click handler implementation itself lives in `src/gobby/cli/install.py` and is owned by § 3.4 (R39-F1 — moved out of § 8.1 so § 3.4's test cases can reference handlers that exist in the same commit).
 
 ### 8.2 Add startup-time stale-config warning [category: code] (depends: 3.6, 4.3)
 `kind: deliverable`

@@ -1,11 +1,11 @@
 header:
   plan_id: task-12746-neo4j-falkordb-swap
-  plan_hash: c55e3ee2e63e84eab94c847a3eef8738387f2294e77bbf9e002b36692c43d359
+  plan_hash: fb00b73f0232858febf07335b077646ed1e4f2b319caccfbde95ee5c17098879
   root_task_ref: '12746'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-05-13T06:17:38Z'
+  generated_at: '2026-05-13T06:32:02Z'
   task_tree_source: db
-  task_tree_source_hash: 12f05f7dfc2d3730ee0aea0ec5e1bdfa6165c06c06c5509e0e8cfee001e448c8
+  task_tree_source_hash: cf2de22100479d66452901f3b82af35169a1a43fe38c67f4121fd490151a728d
   evidence_summary: []
 rows:
 - section_id: '1.1'
@@ -68,6 +68,48 @@ rows:
   leaves: []
   deferral_target: null
   evidence: []
+- section_id: '2.1'
+  item_id: 2.1.3
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
+  item_id: 2.1.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
+  item_id: 2.1.5
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
+  item_id: 2.1.6
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
+  item_id: 2.1.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
+  item_id: 2.1.8
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
+  item_id: 2.1.9
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
 - section_id: '2.2'
   item_id: 2.2.1
   status: missing
@@ -112,6 +154,12 @@ rows:
   evidence: []
 - section_id: '3.4'
   item_id: 3.4.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '3.4'
+  item_id: 3.4.2
   status: missing
   leaves: []
   deferral_target: null
