@@ -71,6 +71,15 @@
   --color-review-bg: oklch(28% 0.08 200);
   --color-review-soft: oklch(72% 0.14 200 / 0.12);
 
+  /* Chart series tokens — see lib/chartSeries.ts for the paired dash patterns.
+     Lightness descends across the series so grayscale order is stable. */
+  --chart-series-1: var(--accent);
+  --chart-series-2: var(--color-info);
+  --chart-series-3: var(--color-warning-foreground);
+  --chart-series-4: var(--color-error);
+  --chart-series-5: oklch(72% 0.12 200);
+  --chart-series-6: oklch(68% 0.14 30);
+
   --user-bg: oklch(22% 0.06 125);
   --assistant-bg: oklch(19% 0.006 125);
   --system-bg: oklch(22% 0.05 350);
@@ -264,6 +273,15 @@
   --color-review: oklch(48% 0.16 200);
   --color-review-bg: oklch(94% 0.05 200);
   --color-review-soft: oklch(48% 0.16 200 / 0.10);
+
+  /* Chart series tokens — light theme variants. Lightness lowered to clear
+     WCAG 2.2 AA against --bg-primary; dash patterns live in lib/chartSeries.ts. */
+  --chart-series-1: var(--accent);
+  --chart-series-2: var(--color-info);
+  --chart-series-3: var(--color-warning-foreground);
+  --chart-series-4: var(--color-error);
+  --chart-series-5: oklch(42% 0.13 200);
+  --chart-series-6: oklch(48% 0.16 30);
 
   --user-bg: oklch(95% 0.05 125);
   --assistant-bg: oklch(96% 0.004 125);
