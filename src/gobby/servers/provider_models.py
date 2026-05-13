@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.acp_client import ACPClient
-from gobby.agents.trust import pre_approve_directory
+from gobby.agents.trust import authorize_model_discovery_trust
 from gobby.config.app import deep_merge
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 
@@ -209,8 +209,17 @@ def _gobby_home() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".gobby"
 
 
-def _model_discovery_cwd() -> Path:
-    cwd = _gobby_home() / _MODEL_DISCOVERY_CWD_NAME
+def _model_discovery_cwd(provider: str) -> Path:
+    provider_dir = provider.strip().lower()
+    if (
+        not provider_dir
+        or provider_dir in {".", ".."}
+        or "/" in provider_dir
+        or "\\" in provider_dir
+    ):
+        raise ValueError(f"Invalid provider model-discovery directory: {provider!r}")
+
+    cwd = _gobby_home() / _MODEL_DISCOVERY_CWD_NAME / provider_dir
     cwd.mkdir(parents=True, exist_ok=True)
     return cwd.resolve()
 
@@ -745,10 +754,8 @@ class ProviderModelCatalog:
         if not shutil.which(client_cls.cli_name):
             raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-        cwd = _model_discovery_cwd()
-        # Tracked by gobby-#14568: replace this temporary process-wide pre-approval
-        # with provider-scoped model-discovery authorization.
-        pre_approve_directory(client_cls.cli_name, cwd)
+        cwd = _model_discovery_cwd(client_cls.cli_name)
+        authorize_model_discovery_trust(client_cls.cli_name, cwd)
         client = client_cls(
             cwd=os.fspath(cwd),
             purpose="model-discovery",

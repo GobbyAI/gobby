@@ -8,8 +8,11 @@ import tomllib
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
+import pytest
+
 from gobby.agents.trust import (
     _encode_claude_project_path,
+    authorize_model_discovery_trust,
     pre_approve_directory,
     seed_gobby_home_trust,
 )
@@ -222,6 +225,87 @@ class TestPreApproveQwen:
         trusted = json.loads((tmp_path / ".qwen" / "trustedFolders.json").read_text())
         assert projects["projects"][gobby_home] == ".gobby"
         assert trusted[gobby_home] == "TRUST_PARENT"
+
+
+class TestModelDiscoveryTrust:
+    def test_gemini_authorization_writes_only_gemini_stores(self, tmp_path: Path) -> None:
+        discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "gemini").resolve()
+        discovery_cwd.mkdir(parents=True)
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            result = authorize_model_discovery_trust("gemini", discovery_cwd)
+
+        assert result.success is True
+        assert result.skipped is False
+        projects_file = tmp_path / ".gemini" / "projects.json"
+        trust_file = tmp_path / ".gemini" / "trustedFolders.json"
+        projects = json.loads(projects_file.read_text())
+        trusted = json.loads(trust_file.read_text())
+        assert projects["projects"] == {os.fspath(discovery_cwd): "gemini"}
+        assert trusted == {os.fspath(discovery_cwd): "TRUST_PARENT"}
+        assert not (tmp_path / ".qwen").exists()
+        assert not (tmp_path / ".claude").exists()
+        assert not (tmp_path / ".codex").exists()
+
+    def test_qwen_authorization_writes_only_qwen_stores(self, tmp_path: Path) -> None:
+        discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "qwen").resolve()
+        discovery_cwd.mkdir(parents=True)
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            result = authorize_model_discovery_trust("qwen", discovery_cwd)
+
+        assert result.success is True
+        assert result.skipped is False
+        projects_file = tmp_path / ".qwen" / "projects.json"
+        trust_file = tmp_path / ".qwen" / "trustedFolders.json"
+        projects = json.loads(projects_file.read_text())
+        trusted = json.loads(trust_file.read_text())
+        assert projects["projects"] == {os.fspath(discovery_cwd): "qwen"}
+        assert trusted == {os.fspath(discovery_cwd): "TRUST_PARENT"}
+        assert not (tmp_path / ".gemini").exists()
+        assert not (tmp_path / ".claude").exists()
+        assert not (tmp_path / ".codex").exists()
+
+    def test_folder_trust_disabled_skips_trusted_folders_write(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        gemini_home = tmp_path / ".gemini"
+        gemini_home.mkdir()
+        settings_file = gemini_home / "settings.json"
+        settings_file.write_text(json.dumps({"security": {"folderTrust": False}}))
+        discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "gemini").resolve()
+        discovery_cwd.mkdir(parents=True)
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            result = authorize_model_discovery_trust("gemini", discovery_cwd)
+
+        assert result.success is True
+        assert result.skipped is False
+        assert (gemini_home / "projects.json").exists()
+        assert not (gemini_home / "trustedFolders.json").exists()
+        assert any(
+            entry["store"] == "trusted_folders" and entry["status"] == "skipped"
+            for entry in result.entries
+        )
+
+    @pytest.mark.parametrize("cli", ["claude", "codex", "droid", "unknown"])
+    def test_unsupported_cli_skips_without_writes(self, cli: str, tmp_path: Path) -> None:
+        discovery_cwd = tmp_path / "gobby-home" / "provider-model-discovery" / cli
+
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+            result = authorize_model_discovery_trust(cli, discovery_cwd)
+
+        assert result.success is True
+        assert result.skipped is True
+        assert result.reason == f"Unsupported CLI for model discovery trust: {cli}"
+        assert not result.entries
+        assert not result.files_written
+        assert not (tmp_path / ".claude").exists()
+        assert not (tmp_path / ".codex").exists()
+        assert not (tmp_path / ".droid").exists()
+        assert not (tmp_path / ".gemini").exists()
+        assert not (tmp_path / ".qwen").exists()
 
 
 class TestCodexNoop:

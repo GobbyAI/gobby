@@ -141,6 +141,22 @@ def seed_gobby_home_trust(cli: str, gobby_home: PathValue | None = None) -> dict
     return seed_cli_trust(cli, home, respect_folder_trust_setting=True).as_dict()
 
 
+def authorize_model_discovery_trust(cli: str, directory: PathValue) -> TrustSeedResult:
+    """Authorize provider-owned ACP model discovery paths.
+
+    Model discovery only needs Gemini-compatible trust stores. Runtime workspace
+    trust stays on ``pre_approve_directory`` so these authorization paths remain
+    separate.
+    """
+    if cli not in _GEMINI_COMPATIBLE_CLIS:
+        result = TrustSeedResult(cli=cli, paths=_trust_path_strings(directory))
+        result.skipped = True
+        result.reason = f"Unsupported CLI for model discovery trust: {cli}"
+        return result
+
+    return seed_cli_trust(cli, directory, respect_folder_trust_setting=True)
+
+
 def seed_cli_trust(
     cli: str,
     directory: PathValue,

@@ -310,7 +310,7 @@ class TestProviderModelCatalog:
         client_cls = MagicMock(return_value=client)
         client_cls.cli_name = "gemini"
         gobby_home = temp_dir / "gobby-home"
-        expected_cwd = (gobby_home / "provider-model-discovery").resolve()
+        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
 
         def record_trust(_cli: str, _cwd: Path) -> None:
             order.append("trust")
@@ -319,9 +319,10 @@ class TestProviderModelCatalog:
             patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
             patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
             patch(
-                "gobby.servers.provider_models.pre_approve_directory",
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
                 side_effect=record_trust,
-            ) as pre_approve,
+            ) as authorize_trust,
+            patch("gobby.agents.trust.pre_approve_directory") as pre_approve,
         ):
             models = await catalog._discover_acp_models(client_cls=client_cls)
 
@@ -331,7 +332,8 @@ class TestProviderModelCatalog:
         assert Path(kwargs["cwd"]) == expected_cwd
         assert Path(kwargs["cwd"]).is_absolute()
         assert kwargs["request_timeout"] > 30.0
-        pre_approve.assert_called_once_with("gemini", expected_cwd)
+        authorize_trust.assert_called_once_with("gemini", expected_cwd)
+        pre_approve.assert_not_called()
         assert order == ["trust", "start"]
         assert client_cls.call_count == 1
         assert client_cls.call_args is not None
