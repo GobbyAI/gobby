@@ -217,6 +217,66 @@ def test_missing_agent_type_restored_before_rules(
     assert "is_spawned_agent" in variables
 
 
+def test_reconciliation_refreshes_stale_active_rule_names(
+    db: LocalDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="default",
+        workflow_type="agent",
+        source="test",
+        definition_json=json.dumps(
+            {
+                "name": "default",
+                "workflows": {"rule_selectors": {"include": ["tag:default"], "exclude": []}},
+            }
+        ),
+    )
+    manager.create(
+        name="new-default-rule",
+        workflow_type="rule",
+        source="test",
+        tags=["default"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "matched", "value": True}],
+            }
+        ),
+    )
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": ["stale-rule"],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    result = reconcile_session_activation(
+        _event(HookEventType.BEFORE_AGENT, session_id, tmp_path),
+        handlers,
+    )
+
+    variables = _variables(db, session_id)
+    assert result.changed is True
+    assert variables["_active_rule_names"] == ["new-default-rule"]
+
+
 def test_spawned_step_agent_restores_workflow_variable_and_instance(
     db: LocalDatabase,
     session_manager: SessionManager,

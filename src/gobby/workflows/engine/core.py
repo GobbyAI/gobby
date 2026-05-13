@@ -5,6 +5,7 @@ Effect types: block, set_variable, inject_context, mcp_call, observe,
 rewrite_input, load_skill.
 """
 
+import json
 import logging
 import re
 import time
@@ -26,6 +27,7 @@ from gobby.storage.workflow_definitions import (
 )
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
+    AgentDefinitionBody,
     RuleDefinitionBody,
     RuleEffect,
     RuleTriggerEvent,
@@ -33,6 +35,7 @@ from gobby.workflows.definitions import (
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.enforcement import EnforcementMixin
 from gobby.workflows.engine.templating import TemplatingMixin
+from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
@@ -901,9 +904,30 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
     ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
-        """Filter rules based on resolved selectors (if any) stored in session variables."""
+        """Filter rules using the current agent definition, falling back to session metadata."""
+        agent = self._load_active_agent_definition(variables.get("_agent_type"))
+        if agent is not None:
+            return [(row, body) for row, body in rules if rule_matches_agent(agent, row)]
+
         active_names = variables.get("_active_rule_names")
         if active_names is None:
             return rules  # no filter — current behavior preserved
         active_set = set(active_names)
         return [(row, body) for row, body in rules if row.name in active_set]
+
+    def _load_active_agent_definition(self, agent_type: Any) -> AgentDefinitionBody | None:
+        if not isinstance(agent_type, str) or not agent_type:
+            return None
+
+        row = self.definition_manager.get_by_name(agent_type)
+        if row is None or row.workflow_type != "agent" or not row.definition_json:
+            return None
+
+        try:
+            data = json.loads(row.definition_json)
+            if isinstance(data, dict):
+                data.setdefault("name", row.name)
+            return AgentDefinitionBody.model_validate(data)
+        except Exception as exc:
+            logger.debug("Failed to parse active agent definition %s: %s", agent_type, exc)
+            return None

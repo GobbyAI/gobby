@@ -141,6 +141,10 @@ def _reconcile_session_activation(
             missing.extend(step_missing)
 
     updates = _fallback_agent_updates(variables, session)
+    active_rule_updates = _active_rule_name_updates(db, variables, session)
+    if active_rule_updates:
+        updates.update(active_rule_updates)
+        missing.append("_active_rule_names")
     missing.extend(_missing_baseline_keys(variables))
     updates.update(_baseline_updates(event, variables, log))
     updates.update(_step_completion_updates(variables))
@@ -218,6 +222,53 @@ def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str
         "is_spawned_agent": spawned,
     }
     return {key: value for key, value in defaults.items() if key not in variables}
+
+
+def _active_rule_name_updates(db: Any, variables: dict[str, Any], session: Any) -> dict[str, Any]:
+    agent_name = variables.get("_agent_type")
+    if not isinstance(agent_name, str) or not agent_name:
+        return {}
+
+    active_rules = _resolve_active_rule_names(
+        db,
+        agent_name,
+        getattr(session, "project_id", None),
+    )
+    if active_rules is None:
+        return {}
+
+    current = variables.get("_active_rule_names")
+    if isinstance(current, list) and set(current) == active_rules:
+        return {}
+
+    return {"_active_rule_names": sorted(active_rules)}
+
+
+def _resolve_active_rule_names(
+    db: Any,
+    agent_name: str,
+    project_id: str | None,
+) -> set[str] | None:
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.workflows.definitions import AgentDefinitionBody
+    from gobby.workflows.selectors import resolve_rules_for_agent
+
+    manager = LocalWorkflowDefinitionManager(db)
+    row = manager.get_by_name(agent_name, project_id=project_id)
+    if row is None or row.workflow_type != "agent" or not row.definition_json:
+        return None
+
+    try:
+        data = json.loads(row.definition_json)
+        if isinstance(data, dict):
+            data.setdefault("name", row.name)
+        agent = AgentDefinitionBody.model_validate(data)
+    except Exception as exc:
+        logger.debug("Failed to refresh active rules for agent %s: %s", agent_name, exc)
+        return None
+
+    rules = manager.list_all(project_id=project_id, workflow_type="rule", enabled=True)
+    return resolve_rules_for_agent(agent, rules)
 
 
 def _baseline_updates(

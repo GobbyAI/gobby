@@ -15,16 +15,19 @@ rules:
         len(variables.get('claimed_tasks', {})) > 1
         or task_type_in(variables.get('claimed_tasks'), 'epic')
       )
+      and variables.get('_auto_compact_after_task_close_queued_for') != str(tool_input.get('task_id') or event.session_id)
     effects:
       - type: mcp_call
-        when: "event.metadata.get('session_type') == 'web_chat'"
         server: gobby-sessions
         tool: compact_self
         arguments:
           session_id: "{{ event.session_id }}"
         background: true
+      - type: set_variable
+        variable: _auto_compact_after_task_close_queued_for
+        value: "str(tool_input.get('task_id') or event.session_id)"
       - type: inject_context
-        when: "event.metadata.get('session_type') != 'web_chat'"
+        when: "event.metadata.get('compact_call_queue_failed') is True"
         template: |
           You closed a task, but this session still has multiple claimed tasks or a claimed epic.
           Call `gobby-sessions:compact_self` for this session before continuing.

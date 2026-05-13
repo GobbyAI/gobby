@@ -14,13 +14,16 @@ Verifies context handoff rules sync correctly and have proper structure:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -320,25 +323,30 @@ class TestAutoCompactAfterTaskClose:
 
         assert body.event.value == "after_tool"
         effects = body.resolved_effects
-        assert len(effects) == 2
+        assert len(effects) == 3
 
-        web_chat_calls = [effect for effect in effects if effect.type == "mcp_call"]
-        terminal_nudges = [effect for effect in effects if effect.type == "inject_context"]
-        assert len(web_chat_calls) == 1
-        assert len(terminal_nudges) == 1
+        compact_calls = [effect for effect in effects if effect.type == "mcp_call"]
+        dedupe_sets = [
+            effect
+            for effect in effects
+            if effect.type == "set_variable"
+            and effect.variable == "_auto_compact_after_task_close_queued_for"
+        ]
+        fallback_nudges = [effect for effect in effects if effect.type == "inject_context"]
+        assert len(compact_calls) == 1
+        assert len(dedupe_sets) == 1
+        assert len(fallback_nudges) == 1
 
-        web_chat_call = web_chat_calls[0]
-        assert web_chat_call.server == "gobby-sessions"
-        assert web_chat_call.tool == "compact_self"
-        assert web_chat_call.background is True
-        assert "session_type" in (web_chat_call.when or "")
-        assert "web_chat" in (web_chat_call.when or "")
+        compact_call = compact_calls[0]
+        assert compact_call.server == "gobby-sessions"
+        assert compact_call.tool == "compact_self"
+        assert compact_call.background is True
+        assert compact_call.when is None
 
-        terminal_nudge = terminal_nudges[0]
-        assert "session_type" in (terminal_nudge.when or "")
-        assert "web_chat" in (terminal_nudge.when or "")
-        assert terminal_nudge.template is not None
-        assert "compact_self" in terminal_nudge.template
+        fallback_nudge = fallback_nudges[0]
+        assert "compact_call_queue_failed" in (fallback_nudge.when or "")
+        assert fallback_nudge.template is not None
+        assert "compact_self" in fallback_nudge.template
 
     def test_condition_references_close_task_and_helpers(self, db, manager) -> None:
         _sync_bundled(db)
@@ -352,3 +360,52 @@ class TestAutoCompactAfterTaskClose:
         assert "tool_call_succeeded()" in body.when
         assert "task_type_in" in body.when
         assert "claimed_tasks" in body.when
+        assert "_auto_compact_after_task_close_queued_for" in body.when
+
+    @pytest.mark.asyncio
+    async def test_terminal_close_task_queues_compact_self_once(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            "claimed_tasks": {
+                "task-a": {"task_type": "task"},
+                "task-b": {"task_type": "task"},
+            }
+        }
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="session-1",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {"task_id": "#123", "commit_sha": "abc123"},
+                },
+                "tool_output": {"success": True},
+            },
+            metadata={"session_type": "terminal"},
+        )
+
+        response = await engine.evaluate(event, session_id="session-1", variables=variables)
+
+        compact_calls = [
+            call
+            for call in response.metadata.get("mcp_calls", [])
+            if call["server"] == "gobby-sessions" and call["tool"] == "compact_self"
+        ]
+        assert len(compact_calls) == 1
+        assert compact_calls[0]["background"] is True
+        assert response.context is None
+        assert variables["_auto_compact_after_task_close_queued_for"] == "#123"
+
+        second_response = await engine.evaluate(event, session_id="session-1", variables=variables)
+
+        second_compact_calls = [
+            call
+            for call in second_response.metadata.get("mcp_calls", [])
+            if call["server"] == "gobby-sessions" and call["tool"] == "compact_self"
+        ]
+        assert second_compact_calls == []

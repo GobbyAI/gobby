@@ -13,6 +13,7 @@ from gobby.workflows.selectors import (
     _match_rule,
     _match_skill,
     parse_selector,
+    rule_matches_agent,
     resolve_rules_for_agent,
     resolve_skills_for_agent,
     resolve_variables_for_agent,
@@ -351,6 +352,33 @@ def test_resolve_rules_tag_exclude_sync() -> None:
     assert "require-task-before-edit" in result
     assert "block-git-push" in result
     assert "some-excluded-rule" not in result
+
+
+def test_rule_matches_agent_applies_explicit_include_and_selector_exclude() -> None:
+    agent = MagicMock()
+    agent.workflows.rules = ["explicit-rule"]
+    agent.workflows.rule_selectors = MagicMock()
+    agent.workflows.rule_selectors.include = ["tag:default"]
+    agent.workflows.rule_selectors.exclude = ["tag:sync"]
+
+    explicit = MagicMock()
+    explicit.name = "explicit-rule"
+    explicit.tags = []
+    explicit.definition_json = None
+
+    selected = MagicMock()
+    selected.name = "selected-rule"
+    selected.tags = ["default"]
+    selected.definition_json = None
+
+    excluded = MagicMock()
+    excluded.name = "excluded-rule"
+    excluded.tags = ["default", "sync"]
+    excluded.definition_json = None
+
+    assert rule_matches_agent(agent, explicit) is True
+    assert rule_matches_agent(agent, selected) is True
+    assert rule_matches_agent(agent, excluded) is False
 
 
 def test_resolve_variables_with_exclude() -> None:
