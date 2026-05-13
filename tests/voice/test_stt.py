@@ -63,14 +63,21 @@ def _mock_info(duration: float = 2.5) -> MagicMock:
 class TestIsAvailable:
     def test_available_when_faster_whisper_installed(self) -> None:
         stt = _make_stt()
-        with patch.dict("sys.modules", {"faster_whisper": MagicMock()}):
+        # Patch find_spec at the use site so the test is decoupled from
+        # sys.modules and importlib's __spec__ validation (a bare MagicMock
+        # in sys.modules has no __spec__ on modern Python and raises).
+        with patch(
+            "gobby.voice.stt.importlib.util.find_spec",
+            return_value=object(),
+        ):
             assert stt.is_available is True
 
     def test_not_available_when_faster_whisper_missing(self) -> None:
         stt = _make_stt()
-        # Temporarily remove faster_whisper from sys.modules and force ImportError
-        with patch.dict("sys.modules", {"faster_whisper": None}):
-            # When sys.modules[key] is None, import raises ImportError
+        with patch(
+            "gobby.voice.stt.importlib.util.find_spec",
+            return_value=None,
+        ):
             assert stt.is_available is False
 
 
