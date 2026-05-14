@@ -93,7 +93,7 @@ def _insert_agent(
         name=name,
         definition_json=body.model_dump_json(),
         workflow_type="agent",
-        source="test",
+        source="custom",
     )
     return row.id
 
@@ -1212,7 +1212,7 @@ class TestConsecutiveToolBlocks:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "block"
-        assert "5 times consecutively" in response.reason
+        assert response.reason is not None and "5 times consecutively" in response.reason
         assert "STOP retrying" in response.reason
         # Rule should NOT have been evaluated — no side effect
         assert variables.get("rule_ran") is None
@@ -1565,7 +1565,7 @@ class TestToolBlockPendingScopeAware:
         await engine.evaluate(fail_event, session_id="sess-1", variables=variables)
         assert variables["tool_block_pending"] is True
         # edit_write_pending should NOT be cleared by a failed edit
-        assert variables["edit_write_pending"] is True
+        assert variables.get("edit_write_pending") is True
 
         # Read succeeds (sibling cancelled call) — edit_write_pending still True
         success_event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
@@ -1714,7 +1714,7 @@ class TestEditWritePending:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "block"
-        assert "edit-write-recovery" in response.reason
+        assert response.reason is not None and "edit-write-recovery" in response.reason
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_stop_allowed_after_success(
@@ -2319,7 +2319,7 @@ class TestUnmappedEventType:
         # Use a custom event type that's not mapped
         event = _make_event(HookEventType.BEFORE_TOOL)
         # Manually set to an unmapped type
-        event.event_type = "custom_unmapped_type"
+        event.event_type = "custom_unmapped_type"  # type: ignore[assignment]
         response = await engine.evaluate(event, session_id="sess-1", variables={})
         assert response.decision == "allow"
 

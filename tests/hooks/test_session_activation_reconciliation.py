@@ -51,7 +51,7 @@ def session_manager(db: LocalDatabase) -> SessionManager:
 
 @pytest.fixture
 def handlers(session_manager: SessionManager) -> EventHandlers:
-    return EventHandlers(session_manager=session_manager)
+    return EventHandlers(session_manager=session_manager)  # type: ignore[arg-type]
 
 
 def _event(event_type: HookEventType, session_id: str, tmp_path) -> HookEvent:
@@ -92,7 +92,7 @@ def _create_worker_agent(db: LocalDatabase) -> None:
     manager.create(
         name="worker",
         workflow_type="agent",
-        source="test",
+        source="custom",
         definition_json=json.dumps(
             {
                 "name": "worker",
@@ -229,7 +229,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     manager.create(
         name="default",
         workflow_type="agent",
-        source="test",
+        source="custom",
         definition_json=json.dumps(
             {
                 "name": "default",
@@ -240,7 +240,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     manager.create(
         name="new-default-rule",
         workflow_type="rule",
-        source="test",
+        source="custom",
         tags=["default"],
         definition_json=json.dumps(
             {

@@ -25,6 +25,48 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task[Any]] = set()
 
 
+def _external_server_is_unhealthy(mcp_manager: Any, server_name: str) -> bool:
+    health_map = getattr(mcp_manager, "health", None)
+    if not isinstance(health_map, dict):
+        return False
+    health = health_map.get(server_name)
+    if health is None:
+        return False
+    health_state = getattr(health, "health", None)
+    return getattr(health_state, "value", health_state) == "unhealthy"
+
+
+def _cached_tool_briefs(config: Any) -> list[dict[str, Any]]:
+    raw_tools = getattr(config, "tools", None)
+    if not isinstance(raw_tools, list):
+        return []
+
+    tools: list[dict[str, Any]] = []
+    for tool in raw_tools:
+        if isinstance(tool, dict):
+            name = tool.get("name")
+            brief = tool.get("brief", tool.get("description", "")) or ""
+        else:
+            name = getattr(tool, "name", None)
+            brief = getattr(tool, "brief", None) or getattr(tool, "description", "") or ""
+        if name:
+            tools.append({"name": str(name), "brief": str(brief)[:100]})
+    return tools
+
+
+def _tool_briefs_from_list_tools_result(tools_result: Any) -> list[dict[str, Any]]:
+    tools_list = []
+    for tool in tools_result.tools:
+        desc = getattr(tool, "description", "") or ""
+        tools_list.append(
+            {
+                "name": tool.name,
+                "brief": desc[:100],
+            }
+        )
+    return tools_list
+
+
 async def list_all_mcp_tools(
     server_filter: str | None = None,
     include_metrics: bool = False,
@@ -72,23 +114,29 @@ async def list_all_mcp_tools(
                 if server_config and not server_config.enabled:
                     tools_by_server[server_filter] = []
                 else:
-                    try:
-                        # Use ensure_connected for lazy loading
-                        session = await server.mcp_manager.ensure_connected(server_filter)
-                        tools_result = await session.list_tools()
-                        tools_list = []
-                        for t in tools_result.tools:
-                            desc = getattr(t, "description", "") or ""
-                            tools_list.append(
-                                {
-                                    "name": t.name,
-                                    "brief": desc[:100],
-                                }
+                    cached_tools = _cached_tool_briefs(server_config)
+                    if (
+                        server_config
+                        and _external_server_is_unhealthy(server.mcp_manager, server_filter)
+                        and cached_tools
+                    ):
+                        tools_by_server[server_filter] = cached_tools
+                    else:
+                        try:
+                            # Use ensure_connected for lazy loading
+                            session = await server.mcp_manager.ensure_connected(server_filter)
+                            tools_result = await session.list_tools()
+                            tools_by_server[server_filter] = _tool_briefs_from_list_tools_result(
+                                tools_result
                             )
-                        tools_by_server[server_filter] = tools_list
-                    except Exception as e:
-                        logger.warning(f"Failed to list tools from {server_filter}: {e}")
-                        tools_by_server[server_filter] = []
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to list tools from %s (%s): %r",
+                                server_filter,
+                                type(e).__name__,
+                                e,
+                            )
+                            tools_by_server[server_filter] = []
         else:
             # Get tools from all servers
             # Internal servers
@@ -100,21 +148,27 @@ async def list_all_mcp_tools(
             if server.mcp_manager:
                 for config in server.mcp_manager.server_configs:
                     if config.enabled:
+                        cached_tools = _cached_tool_briefs(config)
+                        if (
+                            _external_server_is_unhealthy(server.mcp_manager, config.name)
+                            and cached_tools
+                        ):
+                            tools_by_server[config.name] = cached_tools
+                            continue
+
                         try:
                             session = await server.mcp_manager.ensure_connected(config.name)
                             tools_result = await session.list_tools()
-                            tools_list = []
-                            for t in tools_result.tools:
-                                desc = getattr(t, "description", "") or ""
-                                tools_list.append(
-                                    {
-                                        "name": t.name,
-                                        "brief": desc[:100],
-                                    }
-                                )
-                            tools_by_server[config.name] = tools_list
+                            tools_by_server[config.name] = _tool_briefs_from_list_tools_result(
+                                tools_result
+                            )
                         except Exception as e:
-                            logger.warning(f"Failed to list tools from {config.name}: {e}")
+                            logger.warning(
+                                "Failed to list tools from %s (%s): %r",
+                                config.name,
+                                type(e).__name__,
+                                e,
+                            )
                             tools_by_server[config.name] = []
 
         # Enrich with metrics if requested

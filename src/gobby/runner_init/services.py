@@ -119,6 +119,7 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
                 vector_store=ci_vector_store,
                 graph=ci_graph if ci_config.graph_enabled else None,
                 config=ci_config,
+                run_db=runner.db_executor.run,
             )
 
             logger.info("Code indexer initialized")

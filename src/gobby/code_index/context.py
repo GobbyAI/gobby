@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.code_index.graph import CodeGraph
@@ -33,11 +34,13 @@ class CodeIndexContext:
         vector_store: Any | None = None,
         graph: CodeGraph | None = None,
         config: CodeIndexConfig | None = None,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
         self._graph = graph
         self._config = config or CodeIndexConfig()
+        self._run_db = run_db
 
     @property
     def storage(self) -> CodeIndexStorage:
@@ -55,9 +58,15 @@ class CodeIndexContext:
     def config(self) -> CodeIndexConfig:
         return self._config
 
+    async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run code-index SQLite work on the daemon DB executor when available."""
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
+
     async def invalidate(self, project_id: str) -> None:
         """Clear all index data for a project."""
-        await asyncio.to_thread(self._storage.delete_project_index, project_id)
+        await self.run_db(self._storage.delete_project_index, project_id)
 
         if self._graph is not None:
             await self._graph.clear_project(project_id)
@@ -77,7 +86,7 @@ class CodeIndexContext:
             return {"success": False, "error": "Code graph not available", "project_id": project_id}
 
         try:
-            files_marked = await asyncio.to_thread(
+            files_marked = await self.run_db(
                 self._storage.reset_graph_sync_for_project,
                 project_id,
             )
@@ -98,13 +107,13 @@ class CodeIndexContext:
 
         from gobby.code_index.sync_worker import _sync_graph
 
-        files = await asyncio.to_thread(self._storage.list_files, project_id)
+        files = await self.run_db(self._storage.list_files, project_id)
         if limit > 0:
             files = files[:limit]
 
         try:
             await self._graph.clear_project(project_id)
-            await asyncio.to_thread(self._storage.reset_graph_sync_for_project, project_id)
+            await self.run_db(self._storage.reset_graph_sync_for_project, project_id)
         except Exception as e:
             logger.warning(f"Failed to prepare code graph rebuild for {project_id}: {e}")
             return {"success": False, "error": str(e), "project_id": project_id}
@@ -113,10 +122,10 @@ class CodeIndexContext:
         errors: list[str] = []
 
         for file in files:
-            await asyncio.to_thread(self._storage.mark_graph_sync_attempted, file.id)
+            await self.run_db(self._storage.mark_graph_sync_attempted, file.id)
             try:
-                await _sync_graph(self._storage, self._graph, project_id, file)
-                await asyncio.to_thread(self._storage.mark_graph_synced, file.id)
+                await _sync_graph(self._storage, self._graph, project_id, file, run_db=self.run_db)
+                await self.run_db(self._storage.mark_graph_synced, file.id)
                 synced += 1
             except Exception as e:
                 logger.warning(f"Code graph rebuild failed for {file.file_path}: {e}")

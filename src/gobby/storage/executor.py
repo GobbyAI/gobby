@@ -65,7 +65,7 @@ class DatabaseExecutor:
 
         call = functools.partial(self._execute, func, *args, **kwargs)
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._executor, call)
+        return await loop.run_in_executor(self._executor, call)  # type: ignore[misc]
 
     def _execute(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         with self._lock:

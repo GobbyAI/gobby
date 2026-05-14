@@ -246,7 +246,7 @@ Deletion of `src/gobby/memory/neo4j_client.py` is owned exclusively by §1.3 and
 
 **Tests (R21-F1) — owned by this task:**
 
-- `tests/memory/test_neo4j_client.py` → rename to `tests/memory/test_falkor_client.py`. Rewrite assertions that reach into Neo4j HTTP transport details (auth header shape, /db/<db>/query/v2 endpoint, etc.) to target the FalkorDB redis-asyncio path; preserve coverage of every public method on the FalkorClient surface added here.
+- `tests/memory/test_neo4j_client.py` → rename to `tests/memory/test_falkor_client.py`. Rewrite assertions that reach into Neo4j HTTP transport details (auth header shape, /db/`<db>`/query/v2 endpoint, etc.) to target the FalkorDB redis-asyncio path; preserve coverage of every public method on the FalkorClient surface added here.
 - `tests/memory/test_neo4j_write_methods.py` → rename to `tests/memory/test_falkor_write_methods.py`. Update the asserted Cypher strings to FalkorDB dialect per § 2.1's translation table (e.g. `timestamp()` instead of `datetime()`, `vecf32(...)` instead of `db.create.setNodeVectorProperty`).
 - `tests/memory/test_neo4j_vector_search.py` → rename to `tests/memory/test_falkor_vector_search.py`. Update the vector-index DDL assertions to `CREATE VECTOR INDEX FOR ... OPTIONS {dimension, similarityFunction}` and `db.idx.vector.queryNodes(label, prop, k, vecf32(emb))` (NOT `db.index.vector.queryNodes(idx_name, k, emb)`).
 
@@ -290,7 +290,7 @@ Targets: `src/gobby/memory/services/knowledge_graph.py`, `src/gobby/memory/falko
 Apply these dialect translations to every Cypher string in `src/gobby/memory/services/knowledge_graph.py` and `src/gobby/memory/falkor_client.py`'s schema/vector helpers:
 
 | Neo4j construct | FalkorDB equivalent |
-|---|---|
+| --- | --- |
 | `CREATE CONSTRAINT name IF NOT EXISTS FOR (n:Label) REQUIRE n.prop IS UNIQUE` | **Two-step required:** (1) `ensure_supporting_index(label, prop)` first — FalkorDB constraints require a backing exact-match index. (2) `GRAPH.CONSTRAINT CREATE <graph_name> UNIQUE NODE Label PROPERTIES 1 prop` as a Redis command (not via `query()`). (3) **Poll `db.constraints()` until status is `OPERATIONAL`** with a 30s timeout. Status sequence: `PENDING` → `UNDER CONSTRUCTION` → `OPERATIONAL` (or `FAILED` if pre-existing data violates uniqueness). Swallow "constraint already exists" only when the polled status is `OPERATIONAL`; raise on `FAILED`. |
 | `CREATE INDEX name IF NOT EXISTS FOR (n:Label) ON (n.a, n.b)` | `CREATE INDEX FOR (n:Label) ON (n.a, n.b)` (no `IF NOT EXISTS`; catch "already indexed" errors) |
 | `CREATE VECTOR INDEX name IF NOT EXISTS FOR (n:Label) ON (n.embedding) OPTIONS {indexConfig: {…}}` | `CREATE VECTOR INDEX FOR (n:Label) ON (n.embedding) OPTIONS {dimension: $dim, similarityFunction: 'cosine'}` |
@@ -334,6 +334,7 @@ Every runtime gate in the daemon — `runner_init/services.py`'s `MemoryManager`
 `is_falkordb_installed()` (3.3) remains a separate, narrower function (did the installer ever write host/port keys?) for the specific question of whether `gobby status` should display install state — it intentionally returns True for an installed-but-unconfigured edge case so the operator sees the difference between not-installed and installed-but-credentials-missing.
 
 The two predicates and where each is used:
+
 - `is_falkordb_enabled(databases)` — runtime construction gate, imported from `gobby.config.persistence` (the daemon must NOT instantiate FalkorClient unless this is true). Argument is a `DatabasesConfig`, not a top-level config object.
 - `is_falkordb_installed(db)` — status-payload-only (did the installer run?), drives `installed=true/false` in `gobby status` and `/api/admin/status`.
 
@@ -550,10 +551,10 @@ The current `install_neo4j` at `src/gobby/cli/installers/neo4j.py:153-165` write
 The FalkorDB installer must NOT inherit that pattern. Failure semantics for each ordered step:
 
 - **Steps 1-4 (Docker check, compose refresh, `compose up`, health check):** if any fails, neither persistence write happens — the resolved password lives only in memory and is discarded. The user retries `gobby install --falkordb` from scratch; password resolution starts over (existing config_store secret is still empty, generates a fresh value if no flag passed). This avoids the half-installed-with-credentials state where a future install picks up a stale secret pointing to a service that never came up.
-- **Step 5 (`_update_config`):** if this fails (e.g., disk full mid-encrypt), the running container is left up but `_write_bootstrap_password` does NOT execute. The install returns `{"success": False, "error": "Failed to persist FalkorDB credentials to config_store; run `gobby uninstall --falkordb` to clean up the running container, then retry."}`. The operator must run uninstall (which is now safe because steps 5-6 wrote nothing) before retrying.
+- **Step 5 (`_update_config`):** if this fails (e.g., disk full mid-encrypt), the running container is left up but `_write_bootstrap_password` does NOT execute. The install returns `{"success": False, "error": "Failed to persist FalkorDB credentials to config_store; run 'gobby uninstall --falkordb' to clean up the running container, then retry."}`. The operator must run uninstall (which is now safe because steps 5-6 wrote nothing) before retrying.
 - **Step 6 (`_write_bootstrap_password`):** if this fails after step 5 succeeded, the install MUST NOT report success — that is the split-brain. Two acceptable behaviors; pick exactly one:
-    - **(A) Fail loudly with cleanup instruction** (recommended; matches step 5 semantics): return `{"success": False, "error": "FalkorDB is running and credentials are persisted to config_store, but the bootstrap.yaml write failed. Run `gobby uninstall --falkordb` to roll back the container + config_store, then retry.", "compose_running": True}`. Operator runs uninstall + retry. The `compose_running: True` flag is for the wizard/CLI to surface the "container is up but uninstall is required" state clearly.
-    - **(B) Self-roll-back:** call `ConfigStore.clear_secret("databases.falkordb.requirepass", secret_store)` AND `subprocess.run(["docker", "compose", "-f", str(compose_file), "--profile", "falkordb", "down"], ...)` to undo step 5 + step 3. Then return failure with a clean retry path.
+  - **(A) Fail loudly with cleanup instruction** (recommended; matches step 5 semantics): return `{"success": False, "error": "FalkorDB is running and credentials are persisted to config_store, but the bootstrap.yaml write failed. Run 'gobby uninstall --falkordb' to roll back the container + config_store, then retry.", "compose_running": True}`. Operator runs uninstall + retry. The `compose_running: True` flag is for the wizard/CLI to surface the "container is up but uninstall is required" state clearly.
+  - **(B) Self-roll-back:** call `ConfigStore.clear_secret("databases.falkordb.requirepass", secret_store)` AND `subprocess.run(["docker", "compose", "-f", str(compose_file), "--profile", "falkordb", "down"], ...)` to undo step 5 + step 3. Then return failure with a clean retry path.
 
 Pick (A) for 0.4.0 — the rollback in (B) introduces another failure surface (the cleanup itself can fail) and the UX is the same operator action either way (retry after `gobby uninstall --falkordb`). Document the choice inline in the installer so a future contributor doesn't quietly switch to a `bootstrap_ok` warning pattern.
 
@@ -1035,7 +1036,7 @@ The helper writes back to `bootstrap.yaml` under the key `falkordb_password`. It
 - 3.5.1 — `BootstrapConfig.falkordb_password` replaces `neo4j_password`. symbol: `gobby.config.bootstrap.BootstrapConfig.falkordb_password`.
 - 3.5.2 — `is_falkordb_enabled(config.databases)` is wired through the daemon's loaded ConfigStore + SecretStore in `cli/daemon.py`. file: `src/gobby/cli/daemon.py`.
 
-### 3.6 Migrate config_store keys databases.neo4j.* → databases.falkordb.* [category: code] (depends: 1.1)
+### 3.6 Migrate config_store keys `databases.neo4j.*` → `databases.falkordb.*` [category: code] (depends: 1.1)
 
 `kind: deliverable`
 
@@ -1310,9 +1311,9 @@ Rewrite EVERY config MCP read/write surface so they auto-detect secret keys — 
 - `get_config(key)` — when `is_secret_key_name(key)` is True, return the masked sentinel (`********` or whatever string the existing `is_secret=True` path returns) instead of the raw `flat[key]` value. This closes the secret-leak surface on the read side that exists today even for keys with `is_secret=True` persisted entries.
 - `get_config_section(prefix)` (R35-F1 — live tool at `src/gobby/mcp_proxy/tools/config.py:84`) — before returning the nested section from `_flat_config()`, walk the flat key set and mask every entry whose fully-qualified dotted key satisfies `is_secret_key_name(key)`. Otherwise `gobby-config get_config_section databases.falkordb` would expose the resolved `requirepass` in plaintext even after the single-key `get_config` path is masked.
 - `set_config_batch(entries)` (R35-F1 + R36-F2 — live tool at `src/gobby/mcp_proxy/tools/config.py:184` whose body calls `config_store.set_many(flat_updates, source="mcp")` and is documented as atomically persisting multiple keys) — the batch path MUST honor the same secret contract as `set_config` AND preserve the live atomic-persistence guarantee. Two acceptable shapes; pick the SPLIT-IN-TRANSACTION shape:
-    - **Split secret vs non-secret entries, persist inside one transaction:** before the persistence step, partition `flat_updates` into `secret_updates` (where `is_secret_key_name(key)` is True or the entry's explicit `is_secret` flag is True) and `plain_updates`. For each entry in `secret_updates`, run `validate_falkordb_password(str(value))` if the key is `databases.falkordb.requirepass`; on validation failure, abort the WHOLE batch (do not partially persist) and return the validator's error. Wrap BOTH writes in one outer `with db.transaction():` block — call `ConfigStore.set_secret(...)` per secret key and `config_store.set_many(plain_updates, source="mcp")` for the plain set, all inside the same transaction (R36-F2). Without the outer transaction, a write failure between the per-key `set_secret` calls and the `set_many` call (e.g., disk full mid-encrypt, SQLite contention, or a write that violates a future CHECK constraint) would leave a partial mixed-batch persisted — breaking the live atomic contract the operator depends on. If any persisted secret key matches the restart-required set (`databases.falkordb.requirepass`), include `requires_restart: True` and the restart hint in the response.
-    - **(Rejected alternative, recorded for context only:** explicitly reject batches containing secret keys with a clear error directing callers to `set_config`. NOT executable plan content because it makes the batch tool less useful for legitimate mixed updates that include a password change.)
-    - **Transaction regression test (R36-F2):** drive a mixed `[rrf_k=80, requirepass=<valid>]` batch through `set_config_batch` with a fixture that forces `config_store.set_many(...)` to raise mid-batch (e.g., a monkeypatched method that succeeds during the secret-write step then raises on `set_many`). Assert: (a) the request returns failure, (b) `SELECT value FROM config_store WHERE key='databases.falkordb.rrf_k'` is unchanged from its prior state (no partial plain write), (c) `SELECT value FROM config_store WHERE key='databases.falkordb.requirepass'` is unchanged AND `SELECT * FROM secrets WHERE name='requirepass'` is unchanged (no partial secret write). The outer transaction must roll back BOTH legs.
+  - **Split secret vs non-secret entries, persist inside one transaction:** before the persistence step, partition `flat_updates` into `secret_updates` (where `is_secret_key_name(key)` is True or the entry's explicit `is_secret` flag is True) and `plain_updates`. For each entry in `secret_updates`, run `validate_falkordb_password(str(value))` if the key is `databases.falkordb.requirepass`; on validation failure, abort the WHOLE batch (do not partially persist) and return the validator's error. Wrap BOTH writes in one outer `with db.transaction():` block — call `ConfigStore.set_secret(...)` per secret key and `config_store.set_many(plain_updates, source="mcp")` for the plain set, all inside the same transaction (R36-F2). Without the outer transaction, a write failure between the per-key `set_secret` calls and the `set_many` call (e.g., disk full mid-encrypt, SQLite contention, or a write that violates a future CHECK constraint) would leave a partial mixed-batch persisted — breaking the live atomic contract the operator depends on. If any persisted secret key matches the restart-required set (`databases.falkordb.requirepass`), include `requires_restart: True` and the restart hint in the response.
+  - **(Rejected alternative, recorded for context only:** explicitly reject batches containing secret keys with a clear error directing callers to `set_config`. NOT executable plan content because it makes the batch tool less useful for legitimate mixed updates that include a password change.)
+  - **Transaction regression test (R36-F2):** drive a mixed `[rrf_k=80, requirepass=<valid>]` batch through `set_config_batch` with a fixture that forces `config_store.set_many(...)` to raise mid-batch (e.g., a monkeypatched method that succeeds during the secret-write step then raises on `set_many`). Assert: (a) the request returns failure, (b) `SELECT value FROM config_store WHERE key='databases.falkordb.rrf_k'` is unchanged from its prior state (no partial plain write), (c) `SELECT value FROM config_store WHERE key='databases.falkordb.requirepass'` is unchanged AND `SELECT * FROM secrets WHERE name='requirepass'` is unchanged (no partial secret write). The outer transaction must roll back BOTH legs.
 
 Without Step B covering ALL four tools, `_SECRET_SUFFIXES` alone covers the `/api/config/values` route path (which already consults `is_secret_key_name` via the `_SECRETS_MAP` flow in `src/gobby/servers/routes/configuration.py`) but leaves the MCP read-section + batch-write surfaces leaky. All four surfaces are explicitly in scope for §8.3 rows 19, 22, 23, so all four must close.
 
@@ -2106,6 +2107,7 @@ Run these four removals in this order, then proceed with the per-file rewrites b
 In `crates/gcode/src/main.rs`, REMOVE `mod neo4j;` (R17-F4 — `mod falkor;` was already added in § 7.2 alongside `mod neo4j;` for compile verification; do NOT add a second `mod falkor;` here or you'll get a duplicate-mod compile error). After this edit, `main.rs` declares `mod falkor;` only. Also sweep this file's CLI help text, banner strings, and any user-facing `--help` output for `neo4j|Neo4j|NEO4J` and rewrite to `FalkorDB` — the binary's help output ships to operators.
 
 In `crates/gcode/src/search/graph_boost.rs`:
+
 - `use crate::neo4j;` → `use crate::falkor;`
 - `with_neo4j` → `with_falkor` everywhere
 - `&Context` parameters on `graph_boost` and `graph_expand` stay `&Context` (no mutability cascade — see 7.2)
@@ -2169,10 +2171,12 @@ The knowledge graph backend has been replaced with FalkorDB.
 ```
 
 The actual deprecated surfaces (verified live in § 3.4's edit set):
+
 - `gobby install --neo4j-password <value>` — was a Click option on `install`
 - `gobby uninstall --neo4j` — was a Click flag on `uninstall`
 
 **CHANGELOG entry — required (this section's deliverable):** add an upgrade-notes block to `CHANGELOG.md`'s 0.4.0 section that:
+
 1. Names both removed flags verbatim (`--neo4j-password`, `--neo4j`).
 2. Includes the exact replacement verbs (`gobby install [--falkordb-password <pw>]`, `gobby install --falkordb`, `gobby uninstall --falkordb`).
 3. Explains the hard-fail rationale (aliases obscure the cutover; no silent backward compatibility).
@@ -2288,7 +2292,7 @@ Targets: `CHANGELOG.md` (the validation matrix is documented in the Python repo'
 **Validation matrix** (must all pass against a single live Docker FalkorDB instance — 0.4.0 ships Docker-only per 3.1):
 
 | # | Check | Pass criterion |
-|---|---|---|
+| --- | --- | --- |
 | 1 | `gobby install` from clean `~/.gobby` (FalkorDB auto-installs alongside Qdrant per 3.4) | Exits 0; `docker compose -f ~/.gobby/services/docker-compose.yml ps` shows the `falkordb` profile healthy; FalkorDB Browser at `http://localhost:13000` loads; `gobby status` reports FalkorDB healthy |
 | 2 | `gobby install --falkordb` (service-targeting only) from clean `~/.gobby` | Exits 0; only the FalkorDB container is started (no CLI hooks/git/embedding/voice run); `docker compose -f ~/.gobby/services/docker-compose.yml ps` shows the falkordb profile healthy |
 | 3 | `gobby install --neo4j-password foo` AND `gobby uninstall --neo4j` (deprecated flags) | Both hard-fail with the migration message from 8.1 |
