@@ -89,7 +89,7 @@ export function ResumeSessionModal({
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-2xl h-[70vh] p-0 overflow-hidden flex flex-col">
         <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)" }}>
-          <Heading level={2} style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>
+          <Heading level={2} variant="modal">
             Resume Session
           </Heading>
           <p style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted)" }}>

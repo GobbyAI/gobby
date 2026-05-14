@@ -16,9 +16,14 @@ export function chartSeriesAt(index: number): ChartSeriesEntry {
   return chartSeries[index % chartSeries.length]
 }
 
+export const CHART_SERIES_MEMORY = chartSeriesAt(0)
+export const CHART_SERIES_HTTP_LATENCY = chartSeriesAt(1)
+export const CHART_SERIES_CPU = chartSeriesAt(2)
+export const CHART_SERIES_MCP_LATENCY = chartSeriesAt(4)
+
 export const metricChartSeries = {
-  memory: chartSeriesAt(0),
-  httpLatency: chartSeriesAt(1),
-  cpu: chartSeriesAt(2),
-  mcpLatency: chartSeriesAt(4),
+  memory: CHART_SERIES_MEMORY,
+  httpLatency: CHART_SERIES_HTTP_LATENCY,
+  cpu: CHART_SERIES_CPU,
+  mcpLatency: CHART_SERIES_MCP_LATENCY,
 } as const

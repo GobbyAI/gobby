@@ -239,7 +239,12 @@ class TestSyncBundledPipelines:
 
     @pytest.mark.integration
     def test_expand_task_fails_run_before_validation(self) -> None:
-        """Keep fail_run before validate_run in the bundled expand-task pipeline."""
+        """Fail failed runs before validation and gate validation to completed runs.
+
+        The expand-task pipeline must fail on wait_run status first, only run
+        validate_expansion_run when wait_run completed, and keep both steps wired
+        to the expected MCP tools.
+        """
         path = Path("src/gobby/install/shared/workflows/pipelines/expand-task.yaml")
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         step_ids = [step["id"] for step in data["steps"]]
@@ -248,6 +253,9 @@ class TestSyncBundledPipelines:
         fail_run = next(step for step in data["steps"] if step["id"] == "fail_run")
         assert fail_run["condition"] == "${{ steps.wait_run.output.status != 'completed' }}"
         assert fail_run["mcp"]["tool"] == "fail_pipeline"
+        validate_run = next(step for step in data["steps"] if step["id"] == "validate_run")
+        assert validate_run["condition"] == "${{ steps.wait_run.output.status == 'completed' }}"
+        assert validate_run["mcp"]["tool"] == "validate_expansion_run"
 
     def test_missing_path_returns_error(self, db: LocalDatabase) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines

@@ -6,16 +6,21 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.maintenance import _run_maintenance, _update_symbol_summaries
 from gobby.code_index.models import IndexedProject
 
 pytestmark = pytest.mark.unit
+
+T = TypeVar("T")
 
 
 @pytest.mark.asyncio
@@ -42,10 +47,12 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     vector_store = SimpleNamespace(delete_collection=AsyncMock())
     run_db_calls: list[str] = []
 
-    async def run_db(func, *args, **kwargs):  # type: ignore[no-untyped-def]
-        run_db_calls.append(
-            getattr(func, "__name__", None) or getattr(func, "_mock_name", repr(func))
-        )
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        func_name = getattr(func, "__name__", None)
+        if not isinstance(func_name, str):
+            mock_name = getattr(func, "_mock_name", None)
+            func_name = mock_name if isinstance(mock_name, str) else repr(func)
+        run_db_calls.append(func_name)
         return func(*args, **kwargs)
 
     context = SimpleNamespace(
@@ -60,7 +67,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec") as create_proc,
     ):
-        await _run_maintenance(context)
+        await _run_maintenance(cast(CodeIndexContext, context))
 
     storage.delete_project_index.assert_called_once_with("proj-missing")
     graph.clear_project.assert_awaited_once_with("proj-missing")
@@ -93,7 +100,7 @@ async def test_summary_updates_are_concurrency_limited() -> None:
     )
     results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
 
-    await _update_symbol_summaries(context, results)
+    await _update_symbol_summaries(cast(CodeIndexContext, context), results)
 
     assert max_active <= 4
 
@@ -108,7 +115,7 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
         if symbol_id == "sym-bad":
             raise RuntimeError("write failed")
 
-    async def run_db(func, *args, **kwargs):  # type: ignore[no-untyped-def]
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         return func(*args, **kwargs)
 
     context = SimpleNamespace(
@@ -118,7 +125,7 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
         await _update_symbol_summaries(
-            context,
+            cast(CodeIndexContext, context),
             {"sym-ok": "ok", "sym-bad": "bad", "sym-later": "later"},
         )
 

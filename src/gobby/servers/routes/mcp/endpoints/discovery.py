@@ -9,10 +9,13 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 from fastapi import Depends, HTTPException, Request
+from mcp.types import ListToolsResult
 
+from gobby.mcp_proxy.models import HealthState, MCPConnectionHealth
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 
 if TYPE_CHECKING:
@@ -25,39 +28,71 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task[Any]] = set()
 
 
-def _external_server_is_unhealthy(mcp_manager: Any, server_name: str) -> bool:
-    health_map = getattr(mcp_manager, "health", None)
-    if not isinstance(health_map, dict):
-        return False
-    health = health_map.get(server_name)
-    if health is None:
-        return False
-    health_state = getattr(health, "health", None)
-    return getattr(health_state, "value", health_state) == "unhealthy"
+class HealthAwareMCPManager(Protocol):
+    @property
+    def health(self) -> Mapping[str, MCPConnectionHealth]:
+        ...
 
 
-def _cached_tool_briefs(config: Any) -> list[dict[str, Any]]:
-    raw_tools = getattr(config, "tools", None)
+class CachedToolDict(TypedDict, total=False):
+    name: object
+    brief: object
+    description: object
+
+
+class CachedToolObject(Protocol):
+    name: object
+
+
+class CachedToolsConfig(Protocol):
+    @property
+    def tools(
+        self,
+    ) -> Sequence[CachedToolDict | Mapping[str, object] | CachedToolObject] | None:
+        ...
+
+
+class ToolBrief(TypedDict):
+    name: str
+    brief: str
+
+
+def _object_attr(value: object, attr: str) -> object | None:
+    return cast(object | None, getattr(value, attr, None))
+
+
+def _external_server_is_unhealthy(mcp_manager: HealthAwareMCPManager, server_name: str) -> bool:
+    health = mcp_manager.health.get(server_name)
+    return health is not None and health.health == HealthState.UNHEALTHY
+
+
+def _response_tool_briefs(tool_briefs: list[ToolBrief]) -> list[dict[str, Any]]:
+    return cast(list[dict[str, Any]], tool_briefs)
+
+
+def _cached_tool_briefs(config: CachedToolsConfig) -> list[ToolBrief]:
+    raw_tools = config.tools
     if not isinstance(raw_tools, list):
         return []
 
-    tools: list[dict[str, Any]] = []
+    tools: list[ToolBrief] = []
     for tool in raw_tools:
-        if isinstance(tool, dict):
+        if isinstance(tool, Mapping):
             name = tool.get("name")
-            brief = tool.get("brief", tool.get("description", "")) or ""
+            brief = tool.get("brief") or tool.get("description") or ""
         else:
-            name = getattr(tool, "name", None)
-            brief = getattr(tool, "brief", None) or getattr(tool, "description", "") or ""
+            name = _object_attr(tool, "name")
+            brief = _object_attr(tool, "brief") or _object_attr(tool, "description") or ""
         if name:
             tools.append({"name": str(name), "brief": str(brief)[:100]})
     return tools
 
 
-def _tool_briefs_from_list_tools_result(tools_result: Any) -> list[dict[str, Any]]:
-    tools_list = []
+def _tool_briefs_from_list_tools_result(tools_result: ListToolsResult) -> list[ToolBrief]:
+    tools_list: list[ToolBrief] = []
     for tool in tools_result.tools:
-        desc = getattr(tool, "description", "") or ""
+        raw_description = _object_attr(tool, "description")
+        desc = str(raw_description) if raw_description else ""
         tools_list.append(
             {
                 "name": tool.name,
@@ -114,20 +149,20 @@ async def list_all_mcp_tools(
                 if server_config and not server_config.enabled:
                     tools_by_server[server_filter] = []
                 else:
-                    cached_tools = _cached_tool_briefs(server_config)
+                    cached_tools = _cached_tool_briefs(server_config) if server_config else []
                     if (
                         server_config
                         and _external_server_is_unhealthy(server.mcp_manager, server_filter)
                         and cached_tools
                     ):
-                        tools_by_server[server_filter] = cached_tools
+                        tools_by_server[server_filter] = _response_tool_briefs(cached_tools)
                     else:
                         try:
                             # Use ensure_connected for lazy loading
                             session = await server.mcp_manager.ensure_connected(server_filter)
                             tools_result = await session.list_tools()
-                            tools_by_server[server_filter] = _tool_briefs_from_list_tools_result(
-                                tools_result
+                            tools_by_server[server_filter] = _response_tool_briefs(
+                                _tool_briefs_from_list_tools_result(tools_result)
                             )
                         except Exception as e:
                             logger.warning(
@@ -153,14 +188,14 @@ async def list_all_mcp_tools(
                             _external_server_is_unhealthy(server.mcp_manager, config.name)
                             and cached_tools
                         ):
-                            tools_by_server[config.name] = cached_tools
+                            tools_by_server[config.name] = _response_tool_briefs(cached_tools)
                             continue
 
                         try:
                             session = await server.mcp_manager.ensure_connected(config.name)
                             tools_result = await session.list_tools()
-                            tools_by_server[config.name] = _tool_briefs_from_list_tools_result(
-                                tools_result
+                            tools_by_server[config.name] = _response_tool_briefs(
+                                _tool_briefs_from_list_tools_result(tools_result)
                             )
                         except Exception as e:
                             logger.warning(

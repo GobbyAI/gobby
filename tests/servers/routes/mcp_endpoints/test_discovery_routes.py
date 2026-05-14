@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.mcp_proxy.models import ConnectionState, HealthState, MCPConnectionHealth
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
 
@@ -156,7 +156,7 @@ class TestMCPDiscoveryRoutes:
         assert data["success"] is True
         assert data["tools"]["ext-server"] == []
         assert "RuntimeError" in caplog.text
-        assert "RuntimeError('Connection refused')" in caplog.text
+        assert "Connection refused" in caplog.text
 
     def test_list_tools_with_server_filter_external_unhealthy_cached_tools(
         self, client: TestClient, mock_server: MagicMock
@@ -173,7 +173,11 @@ class TestMCPDiscoveryRoutes:
         ]
         mock_server.mcp_manager._configs = {"ext-server": config}
         mock_server.mcp_manager.health = {
-            "ext-server": SimpleNamespace(health="unhealthy"),
+            "ext-server": MCPConnectionHealth(
+                name="ext-server",
+                state=ConnectionState.FAILED,
+                health=HealthState.UNHEALTHY,
+            ),
         }
         mock_server.mcp_manager.ensure_connected = AsyncMock()
 
@@ -270,7 +274,11 @@ class TestMCPDiscoveryRoutes:
         mock_server.mcp_manager = MagicMock()
         mock_server.mcp_manager.server_configs = [ext_config]
         mock_server.mcp_manager.health = {
-            "cached-server": SimpleNamespace(health="unhealthy"),
+            "cached-server": MCPConnectionHealth(
+                name="cached-server",
+                state=ConnectionState.FAILED,
+                health=HealthState.UNHEALTHY,
+            ),
         }
         mock_server.mcp_manager.ensure_connected = AsyncMock()
 

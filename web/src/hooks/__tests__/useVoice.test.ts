@@ -323,6 +323,47 @@ describe('useVoice', () => {
     }))
   })
 
+  it('sends voice_prepare immediately when conversationId changes', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    const { rerender } = renderHook(
+      ({ conversationId }) => useVoiceStatus({
+        wsRef: wsRef as any,
+        conversationId,
+        socketConnected: true,
+        sttEnabled: true,
+        ttsEnabled: true,
+      }),
+      { initialProps: { conversationId: 'conv-first' } },
+    )
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    rerender({ conversationId: 'conv-second' })
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(2)
+    })
+    expect(voicePreparePayloads()[1]).toEqual(expect.objectContaining({
+      conversation_id: 'conv-second',
+      stt_enabled: true,
+      tts_enabled: true,
+    }))
+  })
+
   it('does not mark preparing messages without voice_loading as locally loading', async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,

@@ -7,7 +7,17 @@ export interface DonutArcRender<T extends DonutSegmentInput> {
   pathD: string
 }
 
-const FULL_CIRCLE_THRESHOLD = 359.999
+const FULL_CIRCLE_EPSILON_DEG = 0.000001
+
+function clampSweepDeg(sweep: number): number {
+  return Math.min(Math.max(sweep, 0), 360)
+}
+
+function assertValidSegmentValue(value: number, index: number): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid donut segment value at index ${index}: expected finite non-negative number`)
+  }
+}
 
 export function describeArcPath(
   cx: number,
@@ -20,9 +30,9 @@ export function describeArcPath(
     const rad = ((angleDeg - 90) * Math.PI) / 180
     return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }
   }
-  const sweep = endAngleDeg - startAngleDeg
+  const sweep = clampSweepDeg(endAngleDeg - startAngleDeg)
   // SVG arcs cannot represent a closed full circle as one segment.
-  if (sweep >= FULL_CIRCLE_THRESHOLD) {
+  if (360 - sweep <= FULL_CIRCLE_EPSILON_DEG) {
     const start = polar(startAngleDeg)
     const mid = polar(startAngleDeg + 180)
     return [
@@ -32,7 +42,7 @@ export function describeArcPath(
     ].join(' ')
   }
   const start = polar(startAngleDeg)
-  const end = polar(endAngleDeg)
+  const end = polar(startAngleDeg + sweep)
   const largeArcFlag = sweep > 180 ? '1' : '0'
   return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`
 }
@@ -43,6 +53,9 @@ export function donutArcs<T extends DonutSegmentInput>(
   cy: number,
   r: number,
 ): DonutArcRender<T>[] {
+  segments.forEach((segment, index) => {
+    assertValidSegmentValue(segment.value, index)
+  })
   const total = segments.reduce((sum, s) => sum + s.value, 0)
   if (total <= 0) return []
   let cursorDeg = 0

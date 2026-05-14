@@ -224,7 +224,12 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     project_id: str,
     tmp_path,
 ) -> None:
-    """Refresh active rule names from live agent selectors during reconciliation."""
+    """Refresh stale active rule names from the installed agent definition.
+
+    Reconciliation must replace the session's cached `_active_rule_names` when the
+    agent selector now resolves a different rule set, so stale rules stop firing
+    after bundled/custom workflow changes.
+    """
     session_id = _register_session(session_manager, project_id, tmp_path)
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(

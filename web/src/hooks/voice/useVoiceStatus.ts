@@ -3,6 +3,7 @@ import type { RefObject } from 'react'
 import { parseVoiceStatus, type RawVoiceStatus } from '../voiceStatus'
 
 const VOICE_PREPARE_RETRY_MS = 30_000
+const VOICE_PREPARE_CACHE_MAX_ENTRIES = 128
 const voicePrepareSentAt = new Map<string, number>()
 
 function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnabled: boolean) {
@@ -14,6 +15,12 @@ function pruneVoicePrepareSentAt(now: number) {
     if (now - sentAt >= VOICE_PREPARE_RETRY_MS) {
       voicePrepareSentAt.delete(key)
     }
+  }
+
+  while (voicePrepareSentAt.size > VOICE_PREPARE_CACHE_MAX_ENTRIES) {
+    const oldestKey = voicePrepareSentAt.keys().next().value
+    if (oldestKey === undefined) return
+    voicePrepareSentAt.delete(oldestKey)
   }
 }
 
@@ -124,7 +131,9 @@ export function useVoiceStatus({
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
+    voicePrepareSentAt.delete(warmupKey)
     voicePrepareSentAt.set(warmupKey, now)
+    pruneVoicePrepareSentAt(now)
     setVoiceLoading(true)
     ws.send(JSON.stringify({
       type: 'voice_prepare',

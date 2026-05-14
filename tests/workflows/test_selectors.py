@@ -355,7 +355,7 @@ def test_resolve_rules_tag_exclude_sync() -> None:
 
 
 def test_rule_matches_agent_applies_explicit_include_and_selector_exclude() -> None:
-    """Apply explicit rule includes before selector include and exclude filters."""
+    """Explicit rules bypass selector includes, selected rules match includes, excludes win."""
     agent = MagicMock()
     agent.workflows.rules = ["explicit-rule"]
     agent.workflows.rule_selectors = MagicMock()

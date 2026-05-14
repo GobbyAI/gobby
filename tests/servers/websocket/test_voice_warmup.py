@@ -35,6 +35,7 @@ class DummyVoiceMixin(VoiceMixin):
 class TestVoiceWarmup:
     @pytest.mark.asyncio
     async def test_start_voice_warmup_is_single_flight(self) -> None:
+        """Warmup is single-flight and logs one trigger while the task is in flight."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 
         mock_stt = MagicMock()
@@ -146,6 +147,7 @@ class TestVoiceWarmup:
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """Repeated prepare frames share the in-flight warmup and emit one trigger log."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
 
         async def warm_forever() -> None:

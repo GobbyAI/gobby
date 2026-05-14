@@ -188,6 +188,7 @@ class TestWebChatLifecycle:
         assert captured[0].metadata["session_type"] == "web_chat"
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_after_tool_close_task_with_remaining_epic_queues_compact_self(
         self,
         temp_db,
