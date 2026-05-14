@@ -581,9 +581,7 @@ class TestMigrateLegacyMcpConfig:
         assert new.read_text() == '{"servers": []}'
         assert (new.stat().st_mode & 0o777) == 0o600
 
-    def test_fallback_failure_returns_false_and_leaves_legacy(
-        self, tmp_path, caplog
-    ) -> None:
+    def test_fallback_failure_returns_false_and_leaves_legacy(self, tmp_path, caplog) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
         legacy.write_text('{"servers": []}')
@@ -600,20 +598,22 @@ class TestMigrateLegacyMcpConfig:
         assert "Failed to move legacy MCP config" in caplog.text
         assert "Failed to copy legacy MCP config" in caplog.text
 
-    def test_unlink_failure_after_replace_fallback_returns_false_and_logs_path(
+    def test_successful_copy_with_unlink_failure_returns_false_and_leaves_both_files(
         self, tmp_path, caplog
     ) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
-        legacy.write_text('{"servers": []}')
+        migrated_content = '{"servers": []}'
+        legacy.write_text(migrated_content)
 
         caplog.set_level("WARNING", logger="gobby.config.mcp")
         with (
             patch.object(Path, "replace", side_effect=OSError("cross-device link")),
-            patch.object(Path, "unlink", side_effect=OSError("permission denied")),
+            patch.object(Path, "unlink", side_effect=OSError("unlink failed")),
         ):
             assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
 
-        assert legacy.exists()
-        assert new.read_text() == '{"servers": []}'
+        assert legacy.read_text() == migrated_content
+        assert new.read_text() == migrated_content
         assert "failed to remove legacy file" in caplog.text
+        assert "unlink failed" in caplog.text

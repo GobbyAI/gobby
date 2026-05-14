@@ -27,6 +27,15 @@ def test_summary_fallback_context_uses_digest_when_summary_missing() -> None:
     assert _resolve_fallback_inject_context(source_session, "summary") == "## Digest fallback"
 
 
+def test_summary_fallback_context_ignores_whitespace_summary_and_digest() -> None:
+    """Explicit summary fallback should ignore whitespace-only summary and digest markdown."""
+    source_session = MagicMock()
+    source_session.summary_markdown = "   "
+    source_session.digest_markdown = "\n\t "
+
+    assert _resolve_fallback_inject_context(source_session, "summary") is None
+
+
 class TestKillTerminalSession:
     """Tests for the kill_terminal_session helper."""
 

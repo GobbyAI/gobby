@@ -353,12 +353,18 @@ class TestUiDev:
         (web_dir / "package.json").write_text("{}")
         mock_find.return_value = web_dir
         mock_run.return_value = MagicMock(returncode=0)
-        result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
+        config = MagicMock()
+        result = runner.invoke(ui, ["dev"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Starting dev server" in result.output
         call_args = mock_find.call_args
         assert call_args is not None
-        config = call_args.kwargs["config"] if "config" in call_args.kwargs else call_args.args[0]
+        if "config" in call_args.kwargs:
+            passed_config = call_args.kwargs["config"]
+        else:
+            assert call_args.args, "find_web_dir was called without a config argument"
+            passed_config = call_args.args[0]
+        assert passed_config is config
         mock_find.assert_called_with(config, require_source=True)
 
     @patch("gobby.cli.ui.find_web_dir", return_value=None)

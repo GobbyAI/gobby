@@ -114,21 +114,23 @@ class TestWebChatSessionRegistry:
 
 
 class _LifecycleHost(ChatLifecycleMixin):
+    """Lightweight ChatLifecycleMixin harness capturing HookEvents and MCP call payloads."""
+
     def __init__(self) -> None:
         self.clients: dict[Any, dict[str, Any]] = {}
-        self._chat_sessions: dict[str, Any] = {}
+        self._chat_sessions: dict[str, MagicMock] = {}
         self._active_chat_tasks: dict[str, asyncio.Task[None]] = {}
         self._pending_modes: dict[str, str] = {}
         self._pending_worktree_paths: dict[str, str] = {}
         self._pending_agents: dict[str, str] = {}
         self._pending_projects: dict[str, str] = {}
-        self.workflow_handler: Any = None
-        self.event_handlers: Any = None
-        self.webhook_dispatcher: Any = None
-        self.hook_broadcaster: Any = None
-        self.inter_session_msg_manager: Any = None
-        self.mcp_manager: Any = None
-        self.internal_manager: Any = None
+        self.workflow_handler: WorkflowHookHandler | MagicMock | None = None
+        self.event_handlers: MagicMock | None = None
+        self.webhook_dispatcher: MagicMock | None = None
+        self.hook_broadcaster: MagicMock | None = None
+        self.inter_session_msg_manager: MagicMock | None = None
+        self.mcp_manager: MagicMock | None = None
+        self.internal_manager: MagicMock | None = None
         self.captured_events: list[HookEvent] = []
         self.captured_mcp_calls: list[dict[str, Any]] = []
 
@@ -153,6 +155,15 @@ def _web_chat_session(
     db_session_id: str = "db-id",
     project_id: str | None = "project-id",
 ) -> MagicMock:
+    """Create a mocked web chat session for tests.
+
+    Args:
+        db_session_id: Database session ID to expose, defaulting to "db-id".
+        project_id: Project ID to attach, defaulting to "project-id"; may be None.
+
+    Returns:
+        MagicMock with db_session_id, seq_num, project_path, project_id, and provider.
+    """
     session = MagicMock()
     session.db_session_id = db_session_id
     session.seq_num = 42
@@ -165,6 +176,7 @@ def _web_chat_session(
 class TestWebChatLifecycle:
     @pytest.mark.asyncio
     async def test_fire_lifecycle_adds_web_chat_session_type_metadata(self) -> None:
+        """Firing lifecycle for a web chat session adds session_type "web_chat" metadata."""
         host = _LifecycleHost()
         host._chat_sessions["conv-1"] = _web_chat_session()
 
@@ -194,6 +206,12 @@ class TestWebChatLifecycle:
         temp_db,
         sample_project,
     ) -> None:
+        """Closing one claimed task while another epic remains queues compact_self for "db-id".
+
+        The setup wires task/session managers, a _web_chat_session, WorkflowHookHandler,
+        RuleEngine, and _LifecycleHost before firing the AFTER_TOOL close_task hook.
+        Expected outcome: one gobby-sessions compact_self MCP call for session_id "db-id".
+        """
         sync_bundled_rules(temp_db, get_bundled_rules_path())
 
         task_manager = LocalTaskManager(temp_db)

@@ -14,8 +14,21 @@ describe('describeArcPath', () => {
 
   it('clamps negative sweeps to a zero-length arc', () => {
     const pathD = describeArcPath(0, 0, 10, 0, -90)
+    const arc = pathD.match(
+      /^M ([\d.eE+-]+) ([\d.eE+-]+) A ([\d.eE+-]+) ([\d.eE+-]+) 0 ([01]) ([01]) ([\d.eE+-]+) ([\d.eE+-]+)$/,
+    )
 
-    expect(pathD).toBe('M 6.123233995736766e-16 -10 A 10 10 0 0 1 6.123233995736766e-16 -10')
+    if (!arc) throw new Error(`Unexpected arc path: ${pathD}`)
+    const [, moveX, moveY, radiusX, radiusY, largeArcFlag, sweepFlag, endX, endY] = arc
+
+    expect(Number(radiusX)).toBeCloseTo(10)
+    expect(Number(radiusY)).toBeCloseTo(10)
+    expect(largeArcFlag).toBe('0')
+    expect(sweepFlag).toBe('1')
+    expect(Number(moveX)).toBeCloseTo(0)
+    expect(Number(moveY)).toBeCloseTo(-10)
+    expect(Number(endX)).toBeCloseTo(Number(moveX))
+    expect(Number(endY)).toBeCloseTo(Number(moveY))
   })
 })
 

@@ -102,11 +102,13 @@ def migrate_legacy_mcp_config(
         new.chmod(0o600)
     except OSError as chmod_exc:
         logger.warning(
-            "Migrated MCP config %s -> %s but failed to set permissions on %s: %s",
+            "Migrated MCP config %s -> %s but failed to set permissions on %s: %s. "
+            "Verify and fix permissions on %s before using it.",
             legacy,
             new,
             new,
             chmod_exc,
+            new,
         )
         return False
 

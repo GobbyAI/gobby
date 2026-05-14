@@ -38,6 +38,13 @@ def _as_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def normalize_optional_markdown(value: str | None) -> str | None:
+    """Return original markdown text unless it is missing or whitespace-only."""
+    if not value or not value.strip():
+        return None
+    return value
+
+
 def _as_int(value: Any, default: int | None = None) -> int | None:
     """Return a JSON-safe int or the provided default."""
     return value if isinstance(value, int) and not isinstance(value, bool) else default
@@ -159,12 +166,12 @@ def _resolve_fallback_inject_context(source_session: Any, requested_mode: str) -
     if requested_mode == "none" or not source_session:
         return None
 
-    summary_markdown = _as_str(getattr(source_session, "summary_markdown", None))
-    digest_markdown = _as_str(getattr(source_session, "digest_markdown", None))
-    if summary_markdown and not summary_markdown.strip():
-        summary_markdown = None
-    if digest_markdown and not digest_markdown.strip():
-        digest_markdown = None
+    summary_markdown = normalize_optional_markdown(
+        _as_str(getattr(source_session, "summary_markdown", None))
+    )
+    digest_markdown = normalize_optional_markdown(
+        _as_str(getattr(source_session, "digest_markdown", None))
+    )
 
     if requested_mode == "summary":
         return summary_markdown or digest_markdown

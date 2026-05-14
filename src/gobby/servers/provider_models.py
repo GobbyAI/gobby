@@ -209,7 +209,7 @@ def _gobby_home() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".gobby"
 
 
-def _model_discovery_cwd(provider: str) -> Path:
+async def _model_discovery_cwd(provider: str) -> Path:
     provider_dir = provider.strip().lower()
     if (
         not provider_dir
@@ -220,7 +220,7 @@ def _model_discovery_cwd(provider: str) -> Path:
         raise ValueError(f"Invalid provider model-discovery directory: {provider!r}")
 
     cwd = _gobby_home() / _MODEL_DISCOVERY_CWD_NAME / provider_dir
-    cwd.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=True)
     return cwd.resolve()
 
 
@@ -754,7 +754,7 @@ class ProviderModelCatalog:
         if not shutil.which(client_cls.cli_name):
             raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-        cwd = _model_discovery_cwd(client_cls.cli_name)
+        cwd = await _model_discovery_cwd(client_cls.cli_name)
         await authorize_model_discovery_trust(client_cls.cli_name, cwd)
         client = client_cls(
             cwd=os.fspath(cwd),

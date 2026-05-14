@@ -9,7 +9,8 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from collections.abc import Sequence as ABCSequence
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 from fastapi import Depends, HTTPException, Request
@@ -30,8 +31,7 @@ _background_tasks: set[asyncio.Task[Any]] = set()
 
 class HealthAwareMCPManager(Protocol):
     @property
-    def health(self) -> Mapping[str, MCPConnectionHealth]:
-        ...
+    def health(self) -> Mapping[str, MCPConnectionHealth]: ...
 
 
 class CachedToolDict(TypedDict, total=False):
@@ -48,8 +48,7 @@ class CachedToolsConfig(Protocol):
     @property
     def tools(
         self,
-    ) -> Sequence[CachedToolDict | Mapping[str, object] | CachedToolObject] | None:
-        ...
+    ) -> ABCSequence[CachedToolDict | Mapping[str, object] | CachedToolObject] | None: ...
 
 
 class ToolBrief(TypedDict):
@@ -58,7 +57,7 @@ class ToolBrief(TypedDict):
 
 
 def _object_attr(value: object, attr: str) -> object | None:
-    return cast(object | None, getattr(value, attr, None))
+    return getattr(value, attr, None)
 
 
 def _external_server_is_unhealthy(mcp_manager: HealthAwareMCPManager, server_name: str) -> bool:
@@ -72,7 +71,7 @@ def _response_tool_briefs(tool_briefs: list[ToolBrief]) -> list[dict[str, Any]]:
 
 def _cached_tool_briefs(config: CachedToolsConfig) -> list[ToolBrief]:
     raw_tools = config.tools
-    if not isinstance(raw_tools, list):
+    if not isinstance(raw_tools, ABCSequence):
         return []
 
     tools: list[ToolBrief] = []
@@ -149,11 +148,15 @@ async def list_all_mcp_tools(
                 if server_config and not server_config.enabled:
                     tools_by_server[server_filter] = []
                 else:
-                    cached_tools = _cached_tool_briefs(server_config) if server_config else []
+                    # This three-way AND is a health-aware cached-tool fallback: only
+                    # when server_config exists, _external_server_is_unhealthy(
+                    # server.mcp_manager, server_filter) is true, and cached_tools
+                    # is non-empty do we populate tools_by_server[server_filter] via
+                    # _response_tool_briefs(cached_tools).
                     if (
                         server_config
                         and _external_server_is_unhealthy(server.mcp_manager, server_filter)
-                        and cached_tools
+                        and (cached_tools := _cached_tool_briefs(server_config))
                     ):
                         tools_by_server[server_filter] = _response_tool_briefs(cached_tools)
                     else:
@@ -183,10 +186,8 @@ async def list_all_mcp_tools(
             if server.mcp_manager:
                 for config in server.mcp_manager.server_configs:
                     if config.enabled:
-                        cached_tools = _cached_tool_briefs(config)
-                        if (
-                            _external_server_is_unhealthy(server.mcp_manager, config.name)
-                            and cached_tools
+                        if _external_server_is_unhealthy(server.mcp_manager, config.name) and (
+                            cached_tools := _cached_tool_briefs(config)
                         ):
                             tools_by_server[config.name] = _response_tool_briefs(cached_tools)
                             continue

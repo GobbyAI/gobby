@@ -168,9 +168,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
         config.enabled = True
-        config.tools = [
-            {"name": "cached_tool", "description": "Cached tool description"},
-        ]
+        config.tools = ({"name": "cached_tool", "description": "Cached tool description"},)
         mock_server.mcp_manager._configs = {"ext-server": config}
         mock_server.mcp_manager.health = {
             "ext-server": MCPConnectionHealth(

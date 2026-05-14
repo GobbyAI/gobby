@@ -53,10 +53,10 @@ def resolve_rules_for_agent(
 
     active = set(explicit)
     for rule in all_rules:
-        if rule_matches_agent(agent, rule):
-            active.add(rule.name)
-        elif rule.name in active and _rule_excluded_by_agent(agent, rule):
+        if _rule_excluded_by_agent(agent, rule):
             active.discard(rule.name)
+        elif rule_matches_agent(agent, rule):
+            active.add(rule.name)
     return active
 
 
