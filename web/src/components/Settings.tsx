@@ -62,8 +62,8 @@ export function Settings({
             </div>
           </div>
 
-          <div className="setting-item">
-            <label>Theme</label>
+          <div className="setting-item" role="group" aria-label="Theme">
+            <span>Theme</span>
             <div className="theme-selector">
               {(['dark', 'light', 'system'] as const).map((t) => (
                 <button
@@ -77,8 +77,8 @@ export function Settings({
             </div>
           </div>
 
-          <div className="setting-item">
-            <label>Default Mode</label>
+          <div className="setting-item" role="group" aria-label="Default Mode">
+            <span>Default Mode</span>
             <div className="theme-selector">
               {CHAT_MODES.map((m) => (
                 <button
@@ -93,8 +93,8 @@ export function Settings({
             </div>
           </div>
 
-          <div className="setting-item">
-            <label>After Approved Plan</label>
+          <div className="setting-item" role="group" aria-label="After Approved Plan">
+            <span>After Approved Plan</span>
             <div className="theme-selector">
               {CHAT_MODES.filter((m) => m.id === 'normal' || m.id === 'bypass').map((m) => (
                 <button

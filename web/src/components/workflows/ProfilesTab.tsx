@@ -384,39 +384,47 @@ function ProfileEditor({
         <h2 className={WORKFLOWS_CARD_NAME_CLS}>{creating ? "New Profile" : draft.name}</h2>
       </div>
       {error && <div className="mb-2 text-sm text-[var(--color-error)]">{error}</div>}
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Name</label>
-      <input
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.name}
-        disabled={!creating}
-        onChange={(e) => setField("name", e.target.value)}
-      />
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Label</label>
-      <input
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.display_label}
-        onChange={(e) => setField("display_label", e.target.value)}
-      />
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Description</label>
-      <textarea
-        className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
-        value={draft.description}
-        onChange={(e) => setField("description", e.target.value)}
-      />
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Skip Stages</label>
-      <input
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.skip_stages.join(",")}
-        onChange={(e) =>
-          setField(
-            "skip_stages",
-            e.target.value
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean),
-          )
-        }
-      />
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Name</span>
+        <input
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.name}
+          disabled={!creating}
+          onChange={(e) => setField("name", e.target.value)}
+        />
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Label</span>
+        <input
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.display_label}
+          onChange={(e) => setField("display_label", e.target.value)}
+        />
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Description</span>
+        <textarea
+          className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
+          value={draft.description}
+          onChange={(e) => setField("description", e.target.value)}
+        />
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Skip Stages</span>
+        <input
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.skip_stages.join(",")}
+          onChange={(e) =>
+            setField(
+              "skip_stages",
+              e.target.value
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            )
+          }
+        />
+      </label>
       {stageLoadError && (
         <div className="mt-1 text-xs text-[var(--color-error)]">{stageLoadError}</div>
       )}
@@ -425,31 +433,37 @@ function ProfileEditor({
           Unknown: {unknownSkipStages.join(", ")}
         </div>
       )}
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Isolation</label>
-      <select
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.isolation}
-        onChange={(e) => setField("isolation", e.target.value as Isolation)}
-      >
-        <option value="none">none</option>
-        <option value="worktree">worktree</option>
-        <option value="clone">clone</option>
-      </select>
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Delivery Mode</label>
-      <select
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.delivery_mode}
-        onChange={(e) => setField("delivery_mode", e.target.value as DeliveryMode)}
-      >
-        <option value="auto">auto</option>
-        <option value="pull_request">pull_request</option>
-      </select>
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Delivery Target Repo</label>
-      <input
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.delivery_target_repo ?? ""}
-        onChange={(e) => setField("delivery_target_repo", e.target.value || null)}
-      />
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Isolation</span>
+        <select
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.isolation}
+          onChange={(e) => setField("isolation", e.target.value as Isolation)}
+        >
+          <option value="none">none</option>
+          <option value="worktree">worktree</option>
+          <option value="clone">clone</option>
+        </select>
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Delivery Mode</span>
+        <select
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.delivery_mode}
+          onChange={(e) => setField("delivery_mode", e.target.value as DeliveryMode)}
+        >
+          <option value="auto">auto</option>
+          <option value="pull_request">pull_request</option>
+        </select>
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Delivery Target Repo</span>
+        <input
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.delivery_target_repo ?? ""}
+          onChange={(e) => setField("delivery_target_repo", e.target.value || null)}
+        />
+      </label>
       <div className="mt-3 flex gap-3">
         <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
           <input

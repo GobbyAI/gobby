@@ -384,8 +384,8 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
         </div>
       )}
 
-      <div className={META_CLS}>
-        <label className={LABEL_CLS}>Description</label>
+      <label className={META_CLS}>
+        <span className={LABEL_CLS}>Description</span>
         <textarea
           className={DESCRIPTION_CLS}
           value={description}
@@ -393,7 +393,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
           placeholder="Pipeline description..."
           rows={2}
         />
-      </div>
+      </label>
 
       <div className={cn(STEPS_CLS, inSidebar && STEPS_SIDEBAR_CLS)}>
         <div className={SECTION_HEADER_CLS}>
@@ -457,18 +457,18 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
                     </button>
                   </div>
 
-                  <div className={FIELD_CLS}>
-                    <label className={FIELD_LABEL_CLS}>Step ID</label>
+                  <label className={FIELD_CLS}>
+                    <span className={FIELD_LABEL_CLS}>Step ID</span>
                     <input
                       type="text"
                       className={FIELD_INPUT_CLS}
                       value={step.id}
                       onChange={(e) => updateStep(idx, { id: e.target.value })}
                     />
-                  </div>
+                  </label>
 
-                  <div className={FIELD_CLS}>
-                    <label className={FIELD_LABEL_CLS}>Type</label>
+                  <label className={FIELD_CLS}>
+                    <span className={FIELD_LABEL_CLS}>Type</span>
                     <select
                       className={FIELD_SELECT_CLS}
                       value={type}
@@ -478,7 +478,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
                         <option key={t.value} value={t.value}>{t.label}</option>
                       ))}
                     </select>
-                  </div>
+                  </label>
 
                   {type === 'exec' && (
                     <ExecFields step={step} onChange={(u) => updateStep(idx, u)} />
@@ -515,8 +515,8 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
 
 function ExecFields({ step, onChange }: { step: PipelineStep; onChange: (u: Partial<PipelineStep>) => void }) {
   return (
-    <div className={FIELD_CLS}>
-      <label className={FIELD_LABEL_CLS}>Command</label>
+    <label className={FIELD_CLS}>
+      <span className={FIELD_LABEL_CLS}>Command</span>
       <textarea
         className={FIELD_TEXTAREA_MONO_CLS}
         value={(step.exec as string) ?? ''}
@@ -524,14 +524,14 @@ function ExecFields({ step, onChange }: { step: PipelineStep; onChange: (u: Part
         placeholder="shell command"
         rows={3}
       />
-    </div>
+    </label>
   )
 }
 
 function PromptFields({ step, onChange }: { step: PipelineStep; onChange: (u: Partial<PipelineStep>) => void }) {
   return (
-    <div className={FIELD_CLS}>
-      <label className={FIELD_LABEL_CLS}>Prompt</label>
+    <label className={FIELD_CLS}>
+      <span className={FIELD_LABEL_CLS}>Prompt</span>
       <textarea
         className={FIELD_TEXTAREA_CLS}
         value={(step.prompt as string) ?? ''}
@@ -539,7 +539,7 @@ function PromptFields({ step, onChange }: { step: PipelineStep; onChange: (u: Pa
         placeholder="LLM prompt text"
         rows={4}
       />
-    </div>
+    </label>
   )
 }
 
@@ -561,26 +561,26 @@ function McpFields({ step, onChange }: { step: PipelineStep; onChange: (u: Parti
 
   return (
     <>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Server</label>
+      <label className={FIELD_CLS}>
+        <span className={FIELD_LABEL_CLS}>Server</span>
         <input
           type="text"
           className={FIELD_INPUT_CLS}
           value={(mcp.server as string) ?? ''}
           onChange={(e) => setMcpField('server', e.target.value)}
         />
-      </div>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Tool</label>
+      </label>
+      <label className={FIELD_CLS}>
+        <span className={FIELD_LABEL_CLS}>Tool</span>
         <input
           type="text"
           className={FIELD_INPUT_CLS}
           value={(mcp.tool as string) ?? ''}
           onChange={(e) => setMcpField('tool', e.target.value)}
         />
-      </div>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Arguments</label>
+      </label>
+      <div className={FIELD_CLS} role="group" aria-label="Arguments">
+        <span className={FIELD_LABEL_CLS}>Arguments</span>
         <KeyValueEditor pairs={argPairs} onChange={setArgs} />
       </div>
     </>
@@ -613,12 +613,12 @@ function InvokePipelineFields({ step, onChange }: { step: PipelineStep; onChange
 
   return (
     <>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Pipeline Name</label>
+      <label className={FIELD_CLS}>
+        <span className={FIELD_LABEL_CLS}>Pipeline Name</span>
         <input type="text" className={FIELD_INPUT_CLS} value={name} onChange={(e) => setName(e.target.value)} placeholder="pipeline-name" />
-      </div>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Arguments</label>
+      </label>
+      <div className={FIELD_CLS} role="group" aria-label="Arguments">
+        <span className={FIELD_LABEL_CLS}>Arguments</span>
         <KeyValueEditor pairs={argPairs} onChange={setArgs} />
       </div>
     </>
@@ -643,17 +643,17 @@ function ActivateWorkflowFields({ step, onChange }: { step: PipelineStep; onChan
 
   return (
     <>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Workflow Name</label>
+      <label className={FIELD_CLS}>
+        <span className={FIELD_LABEL_CLS}>Workflow Name</span>
         <input
           type="text"
           className={FIELD_INPUT_CLS}
           value={(aw.name as string) ?? ''}
           onChange={(e) => setAwField('name', e.target.value)}
         />
-      </div>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Session ID</label>
+      </label>
+      <label className={FIELD_CLS}>
+        <span className={FIELD_LABEL_CLS}>Session ID</span>
         <input
           type="text"
           className={FIELD_INPUT_CLS}
@@ -661,9 +661,9 @@ function ActivateWorkflowFields({ step, onChange }: { step: PipelineStep; onChan
           onChange={(e) => setAwField('session_id', e.target.value)}
           placeholder="Optional"
         />
-      </div>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Variables</label>
+      </label>
+      <div className={FIELD_CLS} role="group" aria-label="Variables">
+        <span className={FIELD_LABEL_CLS}>Variables</span>
         <KeyValueEditor pairs={varPairs} onChange={setVars} />
       </div>
     </>
@@ -687,8 +687,8 @@ function CommonFields({
 
   return (
     <div className={COMMON_CLS}>
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Condition</label>
+      <label className={FIELD_CLS}>
+        <span className={FIELD_LABEL_CLS}>Condition</span>
         <input
           type="text"
           className={FIELD_INPUT_CLS}
@@ -699,10 +699,10 @@ function CommonFields({
           }}
           placeholder="e.g. inputs.mode == 'deploy'"
         />
-      </div>
+      </label>
 
-      <div className={FIELD_CLS}>
-        <label className={FIELD_LABEL_CLS}>Input</label>
+      <label className={FIELD_CLS}>
+        <span className={FIELD_LABEL_CLS}>Input</span>
         <input
           type="text"
           className={FIELD_INPUT_CLS}
@@ -710,11 +710,11 @@ function CommonFields({
           onChange={(e) => onChange({ input: e.target.value || undefined })}
           placeholder="e.g. $prev_step.output"
         />
-      </div>
+      </label>
 
       {type === 'prompt' && (
-        <div className={FIELD_CLS}>
-          <label className={FIELD_LABEL_CLS}>Tools</label>
+        <label className={FIELD_CLS}>
+          <span className={FIELD_LABEL_CLS}>Tools</span>
           <input
             type="text"
             className={FIELD_INPUT_CLS}
@@ -725,7 +725,7 @@ function CommonFields({
             }}
             placeholder="Comma-separated tool list"
           />
-        </div>
+        </label>
       )}
 
       <div className={FIELD_CLS}>
@@ -747,8 +747,8 @@ function CommonFields({
 
       {!!approval?.required && (
         <>
-          <div className={FIELD_CLS}>
-            <label className={FIELD_LABEL_CLS}>Approval Message</label>
+          <label className={FIELD_CLS}>
+            <span className={FIELD_LABEL_CLS}>Approval Message</span>
             <input
               type="text"
               className={FIELD_INPUT_CLS}
@@ -758,9 +758,9 @@ function CommonFields({
               }
               placeholder="Approval prompt message"
             />
-          </div>
-          <div className={FIELD_CLS}>
-            <label className={FIELD_LABEL_CLS}>Timeout (seconds)</label>
+          </label>
+          <label className={FIELD_CLS}>
+            <span className={FIELD_LABEL_CLS}>Timeout (seconds)</span>
             <input
               type="number"
               className={FIELD_INPUT_CLS}
@@ -770,7 +770,7 @@ function CommonFields({
               }
               min={0}
             />
-          </div>
+          </label>
         </>
       )}
     </div>

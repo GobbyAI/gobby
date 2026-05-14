@@ -99,8 +99,8 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
           </div>
         )}
 
-        <div className={FIELD_WRAP_CLS}>
-          <label className={FIELD_LABEL_CLS}>Content</label>
+        <label className={FIELD_WRAP_CLS}>
+          <span className={FIELD_LABEL_CLS}>Content</span>
           <textarea
             className={`${FIELD_INPUT_CLS} box-border w-full resize-y`}
             value={content}
@@ -109,11 +109,11 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
             rows={4}
             autoFocus
           />
-        </div>
+        </label>
 
         <div className="flex gap-3">
-          <div className={`${FIELD_WRAP_CLS} flex-1`}>
-            <label className={FIELD_LABEL_CLS}>Type</label>
+          <label className={`${FIELD_WRAP_CLS} flex-1`}>
+            <span className={FIELD_LABEL_CLS}>Type</span>
             <select
               className={FIELD_INPUT_CLS}
               value={memoryType}
@@ -125,7 +125,7 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
           <div className={`${FIELD_WRAP_CLS} flex-1`}>
             <label className={FIELD_LABEL_CLS} htmlFor="memory-importance-slider">
@@ -144,8 +144,8 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
           </div>
         </div>
 
-        <div className={FIELD_WRAP_CLS}>
-          <label className={FIELD_LABEL_CLS}>Tags</label>
+        <div className={FIELD_WRAP_CLS} role="group" aria-label="Tags">
+          <span className={FIELD_LABEL_CLS}>Tags</span>
           <div className="flex min-h-[2rem] flex-wrap items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-1.5">
             {tags.map((tag) => (
               <span

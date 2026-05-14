@@ -338,10 +338,10 @@ export function SessionInteractionModal({
         ) : mode === "command" ? (
           <div className="mt-3 flex flex-col gap-3">
             {/* Server dropdown */}
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">
+            <label>
+              <span className="block text-sm font-medium text-foreground mb-1">
                 Server
-              </label>
+              </span>
               <select
                 className="flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 value={selectedServer}
@@ -356,14 +356,14 @@ export function SessionInteractionModal({
                     </option>
                   ))}
               </select>
-            </div>
+            </label>
 
             {/* Tool dropdown */}
             {selectedServer && (
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">
+              <label>
+                <span className="block text-sm font-medium text-foreground mb-1">
                   Tool
-                </label>
+                </span>
                 <select
                   className="flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   value={selectedTool}
@@ -376,7 +376,7 @@ export function SessionInteractionModal({
                     </option>
                   ))}
                 </select>
-              </div>
+              </label>
             )}
 
             {/* Schema loading */}
@@ -388,10 +388,10 @@ export function SessionInteractionModal({
 
             {/* Dynamic args form */}
             {toolSchema && !schemaLoading && (
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              <div role="group" aria-label="Arguments">
+                <span className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                   Arguments
-                </label>
+                </span>
                 <ToolArgumentForm
                   schema={toolSchema.inputSchema}
                   values={formValues}

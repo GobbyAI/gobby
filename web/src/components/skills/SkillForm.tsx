@@ -112,8 +112,8 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
         <form onSubmit={handleSubmit} className={BODY_CLS}>
           <div className={TOP_CLS}>
             <div className={FIELDS_CLS}>
-              <div className={ROW_CLS}>
-                <label className={LABEL_CLS}>Name</label>
+              <label className={ROW_CLS}>
+                <span className={LABEL_CLS}>Name</span>
                 <input
                   className={INPUT_CLS}
                   value={name}
@@ -122,10 +122,10 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                   required
                   disabled={!!skill}
                 />
-              </div>
+              </label>
 
-              <div className={ROW_CLS}>
-                <label className={LABEL_CLS}>Description</label>
+              <label className={ROW_CLS}>
+                <span className={LABEL_CLS}>Description</span>
                 <input
                   className={INPUT_CLS}
                   value={description}
@@ -133,51 +133,51 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                   placeholder="What this skill does"
                   required
                 />
-              </div>
+              </label>
 
               <div className={ROW_GROUP_CLS}>
-                <div className={`${ROW_CLS} ${ROW_HALF_CLS}`}>
-                  <label className={LABEL_CLS}>Version</label>
+                <label className={`${ROW_CLS} ${ROW_HALF_CLS}`}>
+                  <span className={LABEL_CLS}>Version</span>
                   <input
                     className={INPUT_CLS}
                     value={version}
                     onChange={e => setVersion(e.target.value)}
                     placeholder="1.0.0"
                   />
-                </div>
-                <div className={`${ROW_CLS} ${ROW_HALF_CLS}`}>
-                  <label className={LABEL_CLS}>License</label>
+                </label>
+                <label className={`${ROW_CLS} ${ROW_HALF_CLS}`}>
+                  <span className={LABEL_CLS}>License</span>
                   <input
                     className={INPUT_CLS}
                     value={license}
                     onChange={e => setLicense(e.target.value)}
                     placeholder="MIT"
                   />
-                </div>
+                </label>
               </div>
 
-              <div className={ROW_CLS}>
-                <label className={LABEL_CLS}>Compatibility</label>
+              <label className={ROW_CLS}>
+                <span className={LABEL_CLS}>Compatibility</span>
                 <input
                   className={INPUT_CLS}
                   value={compatibility}
                   onChange={e => setCompatibility(e.target.value)}
                   placeholder="Claude Code, Gemini CLI"
                 />
-              </div>
+              </label>
 
-              <div className={ROW_CLS}>
-                <label className={LABEL_CLS}>Allowed Tools (comma-separated)</label>
+              <label className={ROW_CLS}>
+                <span className={LABEL_CLS}>Allowed Tools (comma-separated)</span>
                 <input
                   className={INPUT_CLS}
                   value={allowedToolsStr}
                   onChange={e => setAllowedToolsStr(e.target.value)}
                   placeholder="Edit, Write, Bash"
                 />
-              </div>
+              </label>
 
-              <div className={ROW_CLS}>
-                <label className={LABEL_CLS}>Injection Format</label>
+              <label className={ROW_CLS}>
+                <span className={LABEL_CLS}>Injection Format</span>
                 <select
                   className={SELECT_CLS}
                   value={injectionFormat}
@@ -187,7 +187,7 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                   <option value="full">Full</option>
                   <option value="content">Content Only</option>
                 </select>
-              </div>
+              </label>
 
               <div className={CHECKBOXES_CLS}>
                 <label className={CHECKBOX_CLS}>
@@ -203,8 +203,8 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
           </div>
 
           <div className={EDITOR_CONTAINER_CLS}>
-            <div className={EDITOR_PANE_CLS}>
-              <label className={LABEL_CLS}>Content (Markdown)</label>
+            <label className={EDITOR_PANE_CLS}>
+              <span className={LABEL_CLS}>Content (Markdown)</span>
               <textarea
                 className={TEXTAREA_CLS}
                 value={content}
@@ -212,9 +212,9 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                 placeholder="# Skill Instructions&#10;&#10;Write your skill content here..."
                 spellCheck={false}
               />
-            </div>
+            </label>
             <div className={PREVIEW_PANE_CLS}>
-              <label className={LABEL_CLS}>Preview</label>
+              <span className={LABEL_CLS}>Preview</span>
               <div className={PREVIEW_CONTENT_CLS}>
                 <MemoizedMarkdown content={content || '*No content yet*'} id="skill-form-preview" />
               </div>

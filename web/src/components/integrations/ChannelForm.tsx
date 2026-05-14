@@ -232,8 +232,8 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
           {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
           {/* Name field */}
-          <div className={FORM_FIELD_CLS}>
-            <label className={FORM_LABEL_CLS}>Name</label>
+          <label className={FORM_FIELD_CLS}>
+            <span className={FORM_LABEL_CLS}>Name</span>
             <input
               className={FORM_INPUT_CLS}
               value={name}
@@ -242,12 +242,12 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
               disabled={mode === 'edit'}
               autoFocus={mode === 'add'}
             />
-          </div>
+          </label>
 
           {/* Type display (edit mode) */}
           {mode === 'edit' && selectedType && (
             <div className={FORM_FIELD_CLS}>
-              <label className={FORM_LABEL_CLS}>Type</label>
+              <span className={FORM_LABEL_CLS}>Type</span>
               <div className={FORM_STATIC_CLS}>{CHANNEL_DISPLAY_NAMES[selectedType]}</div>
             </div>
           )}

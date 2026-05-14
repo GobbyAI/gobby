@@ -278,8 +278,8 @@ export function LaunchAgentDialog({
             {taskTitle}
           </div>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Agent Definition</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Agent Definition</span>
             <select
               className={SELECT_CLS}
               value={agentName}
@@ -292,10 +292,10 @@ export function LaunchAgentDialog({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Isolation</label>
+          <div className={FIELD_CLS} role="group" aria-label="Isolation">
+            <span className={LABEL_CLS}>Isolation</span>
             <div className={RADIO_GROUP_CLS}>
               {([['none', 'None'], ['worktree', 'Worktree'], ['clone', 'Clone']] as const).map(([val, label]) => (
                 <label
@@ -315,8 +315,8 @@ export function LaunchAgentDialog({
             </div>
           </div>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Model Override</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Model Override</span>
             <select
               className={SELECT_CLS}
               value={model}
@@ -329,10 +329,10 @@ export function LaunchAgentDialog({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Reasoning</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Reasoning</span>
             <select
               className={SELECT_CLS}
               value={reasoningEffort}
@@ -351,7 +351,7 @@ export function LaunchAgentDialog({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
           <label className={CHECKBOX_CLS}>
             <input
@@ -370,7 +370,7 @@ export function LaunchAgentDialog({
           )}
 
           <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Model Provider</label>
+            <span className={LABEL_CLS}>Model Provider</span>
             <div className={TASK_CONTEXT_CLS}>{effectiveProvider}</div>
           </div>
 
@@ -558,8 +558,8 @@ export function BatchLaunchAgentDialog({
         </div>
 
         <div className={BODY_CLS}>
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Tasks</label>
+          <div className={FIELD_CLS} role="group" aria-label="Tasks">
+            <span className={LABEL_CLS}>Tasks</span>
             <div className={TASK_LIST_CLS}>
               {tasks.map(t => (
                 <label
@@ -577,8 +577,8 @@ export function BatchLaunchAgentDialog({
             </div>
           </div>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Agent Definition</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Agent Definition</span>
             <select className={SELECT_CLS} value={agentName} onChange={e => setAgentName(e.target.value)}>
               {definitions.length === 0 && <option value="default">default</option>}
               {definitions.map(d => (
@@ -587,10 +587,10 @@ export function BatchLaunchAgentDialog({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Isolation</label>
+          <div className={FIELD_CLS} role="group" aria-label="Isolation">
+            <span className={LABEL_CLS}>Isolation</span>
             <div className={RADIO_GROUP_CLS}>
               {([['none', 'None'], ['worktree', 'Worktree'], ['clone', 'Clone']] as const).map(([val, label]) => (
                 <label
@@ -604,8 +604,8 @@ export function BatchLaunchAgentDialog({
             </div>
           </div>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Model Override</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Model Override</span>
             <select className={SELECT_CLS} value={model} onChange={e => setModel(e.target.value)}>
               <option value="">Default</option>
               {modelOptions.map(option => (
@@ -614,10 +614,10 @@ export function BatchLaunchAgentDialog({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Reasoning</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Reasoning</span>
             <select
               className={SELECT_CLS}
               value={reasoningEffort}
@@ -636,7 +636,7 @@ export function BatchLaunchAgentDialog({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
           <label className={CHECKBOX_CLS}>
             <input

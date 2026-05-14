@@ -588,7 +588,10 @@ function FilterPopover({
         <div
           className={`${WORKFLOWS_FILTER_POPOVER_SECTION_CLS} ${WORKFLOWS_FILTER_POPOVER_SECTION_BOTTOM_CLS}`}
         >
-          <label
+          <button
+            type="button"
+            role="switch"
+            aria-checked={hideGobby}
             className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
             onClick={() => onHideGobbyChange(!hideGobby)}
           >
@@ -600,9 +603,12 @@ function FilterPopover({
               />
             </div>
             <span>Hide Built-in</span>
-          </label>
+          </button>
           {sourceFilter === "templates" && (
-            <label
+            <button
+              type="button"
+              role="switch"
+              aria-checked={hideInstalled}
               className={WORKFLOWS_FILTER_POPOVER_CHECKBOX_CLS}
               onClick={() => onHideInstalledChange(!hideInstalled)}
             >
@@ -614,7 +620,7 @@ function FilterPopover({
                 />
               </div>
               <span>Hide Installed</span>
-            </label>
+            </button>
           )}
         </div>
       )}

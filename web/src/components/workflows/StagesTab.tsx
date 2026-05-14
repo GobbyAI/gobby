@@ -319,34 +319,42 @@ function StageEditor({
         <h2 className={WORKFLOWS_CARD_NAME_CLS}>{draft.name}</h2>
       </div>
       {error && <div className="mb-2 text-sm text-[var(--color-error)]">{error}</div>}
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Label</label>
-      <input
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.display_label}
-        onChange={(e) => setField("display_label", e.target.value)}
-      />
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Category</label>
-      <select
-        className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-        value={draft.category}
-        onChange={(e) => setField("category", e.target.value)}
-      >
-        {CATEGORY_OPTIONS.map((category) => (
-          <option key={category}>{category}</option>
-        ))}
-      </select>
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Description</label>
-      <textarea
-        className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
-        value={draft.description}
-        onChange={(e) => setField("description", e.target.value)}
-      />
-      <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Dispatch Inputs JSON</label>
-      <textarea
-        className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
-        value={draft.dispatch_inputs_json ?? ""}
-        onChange={(e) => setField("dispatch_inputs_json", e.target.value || null)}
-      />
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Label</span>
+        <input
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.display_label}
+          onChange={(e) => setField("display_label", e.target.value)}
+        />
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Category</span>
+        <select
+          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+          value={draft.category}
+          onChange={(e) => setField("category", e.target.value)}
+        >
+          {CATEGORY_OPTIONS.map((category) => (
+            <option key={category}>{category}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Description</span>
+        <textarea
+          className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
+          value={draft.description}
+          onChange={(e) => setField("description", e.target.value)}
+        />
+      </label>
+      <label>
+        <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Dispatch Inputs JSON</span>
+        <textarea
+          className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
+          value={draft.dispatch_inputs_json ?? ""}
+          onChange={(e) => setField("dispatch_inputs_json", e.target.value || null)}
+        />
+      </label>
       <div className={WORKFLOWS_CARD_FOOTER_CLS}>
         <button type="button" className={WORKFLOWS_MODAL_SUBMIT_CLS} onClick={save}>
           Save
@@ -369,18 +377,22 @@ function StageEditor({
         )}
       </div>
       <div className="mt-4 border-t border-border pt-3">
-        <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Task Type</label>
-        <input
-          className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
-          value={taskType}
-          onChange={(e) => setTaskType(e.target.value)}
-        />
-        <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Defaults</label>
-        <textarea
-          className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
-          value={defaults}
-          onChange={(e) => setDefaults(e.target.value)}
-        />
+        <label>
+          <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Task Type</span>
+          <input
+            className={WORKFLOWS_MODAL_FIELD_INPUT_CLS}
+            value={taskType}
+            onChange={(e) => setTaskType(e.target.value)}
+          />
+        </label>
+        <label>
+          <span className={WORKFLOWS_MODAL_FIELD_LABEL_CLS}>Defaults</span>
+          <textarea
+            className={WORKFLOWS_MODAL_FIELD_TEXTAREA_CLS}
+            value={defaults}
+            onChange={(e) => setDefaults(e.target.value)}
+          />
+        </label>
         <button type="button" className={WORKFLOWS_MODAL_SUBMIT_CLS} onClick={saveDefaults}>
           Save Defaults
         </button>

@@ -54,7 +54,7 @@ const TITLE_CLS = 'text-[length:calc(var(--font-size-base)*1.05)] font-semibold'
 
 const FORM_CLS = 'flex flex-col gap-3 px-5 py-4'
 const FIELD_CLS = 'flex flex-col gap-1'
-const ROW_CLS = 'flex gap-3 [&>div]:flex-1'
+const ROW_CLS = 'flex gap-3 [&>*]:flex-1'
 const LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] font-medium text-[var(--text-muted)]'
 const REQUIRED_CLS = 'text-[var(--color-error)]'
 const INPUT_CLS =
@@ -160,10 +160,10 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
         </div>
 
         <form className={FORM_CLS} onSubmit={handleSubmit}>
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>
               Title <span className={REQUIRED_CLS}>*</span>
-            </label>
+            </span>
             <input
               type="text"
               className={INPUT_CLS}
@@ -173,11 +173,11 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
               autoFocus
               required
             />
-          </div>
+          </label>
 
           <div className={ROW_CLS}>
-            <div className={FIELD_CLS}>
-              <label className={LABEL_CLS}>Type</label>
+            <label className={FIELD_CLS}>
+              <span className={LABEL_CLS}>Type</span>
               <select
                 className={INPUT_CLS}
                 value={taskType}
@@ -187,9 +187,9 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
-            </div>
-            <div className={FIELD_CLS}>
-              <label className={LABEL_CLS}>Priority</label>
+            </label>
+            <label className={FIELD_CLS}>
+              <span className={LABEL_CLS}>Priority</span>
               <select
                 className={INPUT_CLS}
                 value={priority}
@@ -199,11 +199,11 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
                   <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
-            </div>
+            </label>
           </div>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Parent Task</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Parent Task</span>
             <select
               className={INPUT_CLS}
               value={parentTaskId}
@@ -214,10 +214,10 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
                 <option key={t.id} value={t.id}>{t.ref} - {t.title}</option>
               ))}
             </select>
-          </div>
+          </label>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Description</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Description</span>
             <textarea
               className={TEXTAREA_CLS}
               value={description}
@@ -225,10 +225,10 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
               placeholder="Detailed description..."
               rows={4}
             />
-          </div>
+          </label>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Labels</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Labels</span>
             <input
               type="text"
               className={INPUT_CLS}
@@ -236,10 +236,10 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
               onChange={e => setLabelsInput(e.target.value)}
               placeholder="Comma-separated labels..."
             />
-          </div>
+          </label>
 
-          <div className={FIELD_CLS}>
-            <label className={LABEL_CLS}>Validation Criteria</label>
+          <label className={FIELD_CLS}>
+            <span className={LABEL_CLS}>Validation Criteria</span>
             <textarea
               className={TEXTAREA_CLS}
               value={validationCriteria}
@@ -247,7 +247,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
               placeholder="How to verify this task is complete..."
               rows={2}
             />
-          </div>
+          </label>
 
           <div className={ACTIONS_CLS}>
             <button

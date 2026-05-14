@@ -88,8 +88,8 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
         {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
         <div className={FORM_ROW_CLS}>
-          <div className={FORM_GROUP_CLS}>
-            <label className={FORM_LABEL_CLS}>Name</label>
+          <label className={FORM_GROUP_CLS}>
+            <span className={FORM_LABEL_CLS}>Name</span>
             <input
               className={FORM_INPUT_CLS}
               value={name}
@@ -97,50 +97,50 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
               placeholder="my-server"
               autoFocus
             />
-          </div>
-          <div className={FORM_GROUP_CLS}>
-            <label className={FORM_LABEL_CLS}>Transport</label>
+          </label>
+          <label className={FORM_GROUP_CLS}>
+            <span className={FORM_LABEL_CLS}>Transport</span>
             <select className={FORM_INPUT_CLS} value={transport} onChange={e => setTransport(e.target.value)}>
               <option value="http">HTTP</option>
               <option value="stdio">Stdio</option>
               <option value="websocket">WebSocket</option>
               <option value="sse">SSE</option>
             </select>
-          </div>
+          </label>
         </div>
 
         {needsUrl && (
-          <div className={FORM_GROUP_CLS}>
-            <label className={FORM_LABEL_CLS}>URL</label>
+          <label className={FORM_GROUP_CLS}>
+            <span className={FORM_LABEL_CLS}>URL</span>
             <input
               className={FORM_INPUT_CLS}
               value={url}
               onChange={e => setUrl(e.target.value)}
               placeholder="http://localhost:8080"
             />
-          </div>
+          </label>
         )}
 
         {needsCommand && (
           <>
-            <div className={FORM_GROUP_CLS}>
-              <label className={FORM_LABEL_CLS}>Command</label>
+            <label className={FORM_GROUP_CLS}>
+              <span className={FORM_LABEL_CLS}>Command</span>
               <input
                 className={FORM_INPUT_CLS}
                 value={command}
                 onChange={e => setCommand(e.target.value)}
                 placeholder="npx"
               />
-            </div>
-            <div className={FORM_GROUP_CLS}>
-              <label className={FORM_LABEL_CLS}>Arguments (space-separated)</label>
+            </label>
+            <label className={FORM_GROUP_CLS}>
+              <span className={FORM_LABEL_CLS}>Arguments (space-separated)</span>
               <input
                 className={FORM_INPUT_CLS}
                 value={args}
                 onChange={e => setArgs(e.target.value)}
                 placeholder="-y @modelcontextprotocol/server-x"
               />
-            </div>
+            </label>
           </>
         )}
 

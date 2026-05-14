@@ -72,7 +72,8 @@
   margin-bottom: 2rem;
 }
 
-.setting-item label {
+.setting-item label,
+.setting-item > span {
   display: block;
   margin-bottom: 0.75rem;
   font-weight: 500;

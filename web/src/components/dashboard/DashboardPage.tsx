@@ -43,14 +43,14 @@ export function DashboardPage() {
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between md:justify-end">
           <div className={dashboardToolbarControlsClass}>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
               <button
                 role="switch"
                 aria-checked={showAllProjects}
                 aria-label="Show all projects"
                 onClick={() => setShowAllProjects(!showAllProjects)}
                 className={cn(
-                  'relative inline-flex h-4 w-7 shrink-0 rounded-full border border-border transition-colors',
+                  'relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-border transition-colors',
                   showAllProjects ? 'bg-accent' : 'bg-muted',
                 )}
               >
@@ -62,7 +62,7 @@ export function DashboardPage() {
                 />
               </button>
               All Projects
-            </label>
+            </div>
             <TimeRangePills value={timeRange} onChange={setTimeRange} />
           </div>
           {lastUpdated && (

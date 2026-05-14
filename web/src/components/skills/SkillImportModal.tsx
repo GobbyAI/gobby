@@ -76,8 +76,9 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
         </div>
 
         <div className={BODY_CLS}>
-          <label className={LABEL_CLS}>Source URL or Path</label>
+          <label className={LABEL_CLS} htmlFor="skill-import-source">Source URL or Path</label>
           <input
+            id="skill-import-source"
             className={INPUT_CLS}
             value={source}
             onChange={e => setSource(e.target.value)}
