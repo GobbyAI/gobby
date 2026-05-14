@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
+import { Heading } from '../shared/Heading'
 
 const SUMMARY_CLS = 'max-w-[800px]'
 const GRID_CLS = 'flex max-w-[900px] flex-col gap-5'
@@ -175,7 +176,7 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
 
         {taskStats && activeStatuses.length > 0 && (
           <div className={SECTION_CLS}>
-            <h3 className={HEADING_CLS}>Task Breakdown</h3>
+            <Heading level={3} className={HEADING_CLS}>Task Breakdown</Heading>
             <div className={TASK_BAR_CLS}>
               {activeStatuses.map(status => {
                 const count = taskStats[status] || 0
@@ -206,7 +207,7 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
 
         <div className={TWO_COL_CLS}>
           <div className={SECTION_CLS}>
-            <h3 className={HEADING_CLS}>Details</h3>
+            <Heading level={3} className={HEADING_CLS}>Details</Heading>
             <dl className={DL_CLS}>
               <dt className={DT_CLS}>Name</dt>
               <dd className={DD_CLS}>{project.display_name}</dd>
@@ -223,7 +224,7 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
           </div>
 
           <div className={SECTION_CLS}>
-            <h3 className={HEADING_CLS}>Integrations</h3>
+            <Heading level={3} className={HEADING_CLS}>Integrations</Heading>
             <dl className={DL_CLS}>
               <dt className={DT_CLS}>GitHub</dt>
               <dd className={DD_CLS}>

@@ -19,6 +19,7 @@ import { PermissionOverrides } from './PermissionOverrides'
 import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
 import { inputFocusCls } from '../shared/focusStyles'
+import { Heading, HeadingProvider } from '../shared/Heading'
 import {
   TASK_MODAL_BACKDROP_BASE_CLS,
   TASK_MODAL_CLOSE_BTN_CLS,
@@ -208,7 +209,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
         {isLoading ? (
           <div className={LOADING_CLS}>Loading...</div>
         ) : task ? (
-          <>
+          <HeadingProvider level={2}>
             <div className={HEADER_CLS}>
               <div className={HEADER_TOP_CLS}>
                 <span className={REF_CLS}>{task.ref}</span>
@@ -271,7 +272,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             </div>
 
             <div className={SECTION_CLS}>
-              <h3 className={SECTION_TITLE_CLS}>Timeline</h3>
+              <Heading level={3} className={SECTION_TITLE_CLS}>Timeline</Heading>
               <ReasoningTimeline
                 task={task}
                 onIntervene={(_phaseKey, action) => {
@@ -299,28 +300,28 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Actions</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Actions</Heading>
                 <ActionFeed sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Session</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Session</Heading>
                 <SessionViewer sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Capabilities</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Capabilities</Heading>
                 <CapabilityScope sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {blockerIds.length > 0 && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Blocked By</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Blocked By</Heading>
                 <div className={DEP_LIST_CLS}>
                   {blockerIds.map(id => (
                     <button key={id} className={DEP_ITEM_CLS} onClick={() => onSelectTask(id)}>
@@ -333,7 +334,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {blockingIds.length > 0 && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Blocks</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Blocks</Heading>
                 <div className={DEP_LIST_CLS}>
                   {blockingIds.map(id => (
                     <button key={id} className={DEP_ITEM_CLS} onClick={() => onSelectTask(id)}>
@@ -346,9 +347,9 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {subtasks.length > 0 && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>
+                <Heading level={3} className={SECTION_TITLE_CLS}>
                   Subtasks ({closedCount}/{subtasks.length})
-                </h3>
+                </Heading>
                 <div className={PROGRESS_CLS}>
                   <div className={PROGRESS_BAR_CLS}>
                     <div className={PROGRESS_FILL_CLS} style={{ width: `${progressPct}%` }} />
@@ -369,13 +370,13 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
 
             {task.description && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Description</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Description</Heading>
                 <div className={DESCRIPTION_CLS}>{task.description}</div>
               </div>
             )}
 
             <div className={SECTION_CLS}>
-              <h3 className={SECTION_TITLE_CLS}>Comments</h3>
+              <Heading level={3} className={SECTION_TITLE_CLS}>Comments</Heading>
               <TaskComments taskId={task.id} />
             </div>
 
@@ -384,24 +385,24 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             )}
 
             <div className={SECTION_CLS}>
-              <h3 className={SECTION_TITLE_CLS}>Results</h3>
+              <Heading level={3} className={SECTION_TITLE_CLS}>Results</Heading>
               <TaskResults task={task} />
             </div>
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Usage</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Usage</Heading>
                 <TokenTracker sessionId={task.created_in_session_id} />
               </div>
             )}
 
             {task.created_in_session_id && (
               <div className={SECTION_CLS}>
-                <h3 className={SECTION_TITLE_CLS}>Memories</h3>
+                <Heading level={3} className={SECTION_TITLE_CLS}>Memories</Heading>
                 <TaskMemories sessionId={task.created_in_session_id} />
               </div>
             )}
-          </>
+          </HeadingProvider>
         ) : null}
       </aside>
     </>
@@ -430,7 +431,7 @@ function ValidationSection({ task }: { task: GobbyTaskDetail }) {
 
   return (
     <div className={SECTION_CLS}>
-      <h3 className={SECTION_TITLE_CLS}>Validation</h3>
+      <Heading level={3} className={SECTION_TITLE_CLS}>Validation</Heading>
 
       <div className={VALIDATION_STATUS_CLS}>
         <span

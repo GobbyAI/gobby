@@ -3,6 +3,7 @@ import { SidebarPanel } from '../shared/SidebarPanel'
 import type { SpanRecord } from '../../hooks/useTraces'
 import { parseLLMAttributes, formatTokenCount } from './llm-utils'
 import { cn } from '../../lib/utils'
+import { Heading } from '../shared/Heading'
 
 interface TraceDetailProps {
   isOpen: boolean
@@ -49,12 +50,12 @@ function LLMSummary({ span }: { span: SpanRecord }) {
   if (showRaw) {
     return (
       <div>
-        <h3 className={SECTION_HEADING_CLS}>
+        <Heading level={3} className={SECTION_HEADING_CLS}>
           <span>Raw Attributes</span>
           <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowRaw(false)}>
             Show LLM view
           </button>
-        </h3>
+        </Heading>
         <table className={TABLE_CLS}>
           <tbody>
             {Object.entries(attributes).map(([key, value]) => (
@@ -72,12 +73,12 @@ function LLMSummary({ span }: { span: SpanRecord }) {
   return (
     <>
       <div>
-        <h3 className={SECTION_HEADING_CLS}>
+        <Heading level={3} className={SECTION_HEADING_CLS}>
           <span>LLM Call</span>
           <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowRaw(true)}>
             Show raw
           </button>
-        </h3>
+        </Heading>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <span className="text-[length:var(--text-sm)] text-[var(--text-secondary)]">Provider</span>
@@ -111,12 +112,12 @@ function LLMSummary({ span }: { span: SpanRecord }) {
 
       {llm.prompt && (
         <div>
-          <h3 className={SECTION_HEADING_CLS}>
+          <Heading level={3} className={SECTION_HEADING_CLS}>
             <span>Prompt</span>
             <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowPrompt(!showPrompt)}>
               {showPrompt ? 'Collapse' : 'Expand'}
             </button>
-          </h3>
+          </Heading>
           {showPrompt && (
             <div className="max-h-[300px] overflow-y-auto whitespace-pre-wrap rounded border border-[color-mix(in_srgb,var(--color-info)_30%,var(--border))] bg-[color-mix(in_srgb,var(--color-info)_8%,var(--bg-tertiary))] p-3 font-mono text-[length:var(--text-sm)]">
               {llm.prompt}
@@ -127,12 +128,12 @@ function LLMSummary({ span }: { span: SpanRecord }) {
 
       {llm.completion && (
         <div>
-          <h3 className={SECTION_HEADING_CLS}>
+          <Heading level={3} className={SECTION_HEADING_CLS}>
             <span>Completion</span>
             <button type="button" className={TOGGLE_BUTTON_CLS} onClick={() => setShowCompletion(!showCompletion)}>
               {showCompletion ? 'Collapse' : 'Expand'}
             </button>
-          </h3>
+          </Heading>
           {showCompletion && (
             <div className="max-h-[300px] overflow-y-auto whitespace-pre-wrap rounded border border-[color-mix(in_srgb,var(--color-warning-foreground)_30%,var(--border))] bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,var(--bg-tertiary))] p-3 font-mono text-[length:var(--text-sm)]">
               {llm.completion}
@@ -178,7 +179,7 @@ export function TraceDetail({ isOpen, onClose, span }: TraceDetailProps) {
     <SidebarPanel isOpen={isOpen} onClose={onClose} title={`Span: ${span.name}`}>
       <div className="flex flex-col gap-6 p-4">
         <div>
-          <h3 className={cn(SECTION_HEADING_CLS, 'justify-start')}>Overview</h3>
+          <Heading level={3} className={cn(SECTION_HEADING_CLS, "justify-start")}>Overview</Heading>
           <table className={TABLE_CLS}>
             <tbody>
               <tr className={TR_CLS}><th className={TH_CLS}>Name</th><td className={TD_CLS}>{span.name}</td></tr>
@@ -196,7 +197,7 @@ export function TraceDetail({ isOpen, onClose, span }: TraceDetailProps) {
         ) : (
           Object.keys(attributes).length > 0 && (
             <div>
-              <h3 className={cn(SECTION_HEADING_CLS, 'justify-start')}>Attributes</h3>
+              <Heading level={3} className={cn(SECTION_HEADING_CLS, "justify-start")}>Attributes</Heading>
               <table className={TABLE_CLS}>
                 <tbody>
                   {Object.entries(attributes).map(([key, value]) => (
@@ -213,7 +214,7 @@ export function TraceDetail({ isOpen, onClose, span }: TraceDetailProps) {
 
         {events.length > 0 && (
           <div>
-            <h3 className={cn(SECTION_HEADING_CLS, 'justify-start')}>Events</h3>
+            <Heading level={3} className={cn(SECTION_HEADING_CLS, "justify-start")}>Events</Heading>
             <div className="flex flex-col gap-3">
               {events.map((event, index) => {
                 const eventAttrs = event.attributes || {}

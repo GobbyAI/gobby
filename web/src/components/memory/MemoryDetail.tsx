@@ -3,6 +3,7 @@ import type { GobbyMemory } from '../../hooks/useMemory'
 import { formatRelativeTime, typeLabel } from '../../utils/formatTime'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { cn } from '../../lib/utils'
+import { Heading } from '../shared/Heading'
 
 interface MemoryDetailProps {
   memory: GobbyMemory | null
@@ -50,7 +51,7 @@ export function MemoryDetail({ memory, onEdit, onDelete, onClose }: MemoryDetail
         {memory && (
           <div className="flex flex-1 flex-col gap-3 px-5 py-4">
             <div className="flex items-center justify-between">
-              <h3 className="m-0 text-[length:var(--text-lg)] text-[var(--text-primary)]">Memory Detail</h3>
+              <Heading level={3} className="m-0 text-[length:var(--text-lg)] text-[var(--text-primary)]">Memory Detail</Heading>
               <button
                 type="button"
                 className="flex h-8 w-8 cursor-pointer items-center justify-center border-0 bg-transparent p-1 text-[length:var(--text-2xl)] leading-none text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11"

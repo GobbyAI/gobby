@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
 import { cn } from '../../lib/utils'
+import { Heading } from '../shared/Heading'
 
 const SETTINGS_CLS = 'flex max-w-[600px] flex-col gap-6'
 const SECTION_CLS = 'rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4'
@@ -97,7 +98,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
   return (
     <div className={SETTINGS_CLS}>
       <div className={SECTION_CLS}>
-        <h3 className={HEADING_CLS}>Integrations</h3>
+        <Heading level={3} className={HEADING_CLS}>Integrations</Heading>
 
         <label className={LABEL_CLS}>
           GitHub URL
@@ -161,7 +162,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
 
       {project.repo_path && (
         <div className={SECTION_CLS}>
-          <h3 className={HEADING_CLS}>Tool Approvals</h3>
+          <Heading level={3} className={HEADING_CLS}>Tool Approvals</Heading>
           <p className={DESC_CLS}>
             Project-scoped auto-allow rules live in <code>.gobby/project.json</code>.
           </p>
@@ -211,7 +212,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
 
       {!isProtected && (
         <div className={cn(SECTION_CLS, SECTION_DANGER_CLS)}>
-          <h3 className={HEADING_CLS}>Danger Zone</h3>
+          <Heading level={3} className={HEADING_CLS}>Danger Zone</Heading>
           <p className={DESC_CLS}>
             Deleting a project removes it from the list. Sessions and tasks remain in the database.
           </p>
