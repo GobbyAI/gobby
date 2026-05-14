@@ -34,6 +34,7 @@
   --surface-tint-subtle: oklch(100% 0 0 / 0.03);
   --surface-tint: oklch(100% 0 0 / 0.05);
   --surface-tint-strong: oklch(100% 0 0 / 0.10);
+  --bg-deep: oklch(8% 0.005 125);
   --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.15);
   --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.3);
   --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.35);
@@ -237,6 +238,7 @@
   --surface-scrim: oklch(0% 0 0 / 0.45);
   --surface-scrim-opaque: oklch(0% 0 0 / 0.85);
   --surface-tint-subtle: oklch(0% 0 0 / 0.03);
+  --bg-deep: oklch(96% 0.005 125);
   --surface-tint: oklch(0% 0 0 / 0.05);
   --surface-tint-strong: oklch(0% 0 0 / 0.08);
   --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.08);
