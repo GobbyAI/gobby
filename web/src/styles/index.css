@@ -28,6 +28,7 @@
   --text-muted: oklch(62% 0.005 125);
 
   --border: oklch(28% 0.008 125);
+  --border-soft: color-mix(in srgb, oklch(28% 0.008 125) 55%, transparent);
 
   --surface-scrim: oklch(0% 0 0 / 0.7);
   --surface-scrim-opaque: oklch(0% 0 0 / 0.92);
@@ -236,6 +237,7 @@
   --text-muted: oklch(51% 0.005 125);
 
   --border: oklch(86% 0.008 125);
+  --border-soft: color-mix(in srgb, oklch(86% 0.008 125) 55%, transparent);
 
   --surface-scrim: oklch(0% 0 0 / 0.45);
   --surface-scrim-opaque: oklch(0% 0 0 / 0.85);
