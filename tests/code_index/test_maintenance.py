@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -39,11 +40,20 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     }
     graph = SimpleNamespace(clear_project=AsyncMock())
     vector_store = SimpleNamespace(delete_collection=AsyncMock())
+    run_db_calls: list[str] = []
+
+    async def run_db(func, *args, **kwargs):  # type: ignore[no-untyped-def]
+        run_db_calls.append(
+            getattr(func, "__name__", None) or getattr(func, "_mock_name", repr(func))
+        )
+        return func(*args, **kwargs)
+
     context = SimpleNamespace(
         storage=storage,
         graph=graph,
         vector_store=vector_store,
         config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
+        run_db=run_db,
     )
 
     with (
@@ -56,6 +66,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     graph.clear_project.assert_awaited_once_with("proj-missing")
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-missing")
     create_proc.assert_not_called()
+    assert run_db_calls == ["list_indexed_projects", "delete_project_index"]
 
 
 @pytest.mark.asyncio
@@ -76,7 +87,10 @@ async def test_summary_updates_are_concurrency_limited() -> None:
             with lock:
                 active -= 1
 
-    context = SimpleNamespace(storage=SimpleNamespace(update_symbol_summary=update_symbol_summary))
+    context = SimpleNamespace(
+        storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
+        run_db=asyncio.to_thread,
+    )
     results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
 
     await _update_symbol_summaries(context, results)
@@ -94,7 +108,13 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
         if symbol_id == "sym-bad":
             raise RuntimeError("write failed")
 
-    context = SimpleNamespace(storage=SimpleNamespace(update_symbol_summary=update_symbol_summary))
+    async def run_db(func, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return func(*args, **kwargs)
+
+    context = SimpleNamespace(
+        storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
+        run_db=run_db,
+    )
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
         await _update_symbol_summaries(

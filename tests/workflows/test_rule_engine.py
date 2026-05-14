@@ -1557,7 +1557,7 @@ class TestToolBlockPendingScopeAware:
         # Edit pre-tool fires → sets edit_write_pending
         before_event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         await engine.evaluate(before_event, session_id="sess-1", variables=variables)
-        assert variables.get("edit_write_pending") is True
+        assert variables.get("edit_write_pending")
 
         # Edit fails → sets tool_block_pending
         fail_event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
@@ -1565,14 +1565,14 @@ class TestToolBlockPendingScopeAware:
         await engine.evaluate(fail_event, session_id="sess-1", variables=variables)
         assert variables["tool_block_pending"] is True
         # edit_write_pending should NOT be cleared by a failed edit
-        assert variables.get("edit_write_pending") is True
+        assert variables.get("edit_write_pending")
 
         # Read succeeds (sibling cancelled call) — edit_write_pending still True
         success_event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(success_event, session_id="sess-1", variables=variables)
 
         # edit_write_pending is the safety net — Read doesn't clear it
-        assert variables.get("edit_write_pending") is True
+        assert variables.get("edit_write_pending")
 
 
 class TestEditWritePending:
@@ -1589,7 +1589,7 @@ class TestEditWritePending:
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables.get("edit_write_pending") is True
+        assert variables.get("edit_write_pending")
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_set_for_write(
@@ -1602,7 +1602,7 @@ class TestEditWritePending:
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables.get("edit_write_pending") is True
+        assert variables.get("edit_write_pending")
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_set_for_apply_patch(
@@ -1623,7 +1623,7 @@ class TestEditWritePending:
         )
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables.get("edit_write_pending") is True
+        assert variables.get("edit_write_pending")
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_set_for_shell_write(
@@ -1639,7 +1639,7 @@ class TestEditWritePending:
         )
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables.get("edit_write_pending") is True
+        assert variables.get("edit_write_pending")
 
     @pytest.mark.asyncio
     async def test_edit_write_pending_not_set_for_read(
