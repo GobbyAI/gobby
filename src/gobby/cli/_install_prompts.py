@@ -619,9 +619,14 @@ def _run_embedding_install(
                 ).strip()
                 if dim_input:
                     try:
-                        dim_override = int(dim_input)
+                        parsed_dim = int(dim_input)
                     except ValueError:
                         click.echo(f"  Invalid dim '{dim_input}'; will auto-detect")
+                    else:
+                        if parsed_dim <= 0:
+                            click.echo(f"  Invalid dim '{dim_input}'; will auto-detect")
+                        else:
+                            dim_override = parsed_dim
             except (click.Abort, EOFError):
                 click.echo("")
                 click.echo("Skipping custom overrides — using provider defaults.")

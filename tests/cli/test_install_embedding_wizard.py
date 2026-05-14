@@ -363,3 +363,38 @@ class TestRunEmbeddingInstallOverrides:
         kwargs = installer.call_args.kwargs
         assert kwargs["dim_override"] is None
         assert kwargs["model_override"] == "text-embedding-qwen3-embedding-4b"
+
+    @pytest.mark.parametrize("dim_input", ["0", "-1"])
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
+    def test_interactive_customize_rejects_non_positive_dim(
+        self,
+        mock_lms: MagicMock,
+        mock_ollama: MagicMock,
+        dim_input: str,
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "lmstudio",
+                "model": "text-embedding-qwen3-embedding-4b",
+                "dim": 2560,
+                "api_base": "http://192.168.1.10:1234/v1",
+                "health_check": True,
+            }
+        )
+        runner = CliRunner()
+
+        @click.command()
+        def cmd() -> None:
+            results: dict = {}
+            _run_embedding_install(installer, results, no_interactive=False)
+
+        user_input = (
+            f"1\ny\nhttp://192.168.1.10:1234/v1\ntext-embedding-qwen3-embedding-4b\n{dim_input}\n"
+        )
+        result = runner.invoke(cmd, input=user_input)
+
+        assert result.exit_code == 0
+        assert f"Invalid dim '{dim_input}'; will auto-detect" in result.output
+        assert installer.call_args.kwargs["dim_override"] is None

@@ -164,9 +164,34 @@ def test_find_web_dir_accepts_install_mode_dist_only(tmp_path: Path) -> None:
 
     config = MagicMock()
     config.ui.web_dir = str(pkg_web)
+    config.ui.mode = "production"
 
     result = find_web_dir(config)
     assert result == pkg_web
+
+
+def test_find_web_dir_dev_mode_rejects_dist_only(tmp_path: Path) -> None:
+    """Dev mode needs package.json because callers will run npm commands."""
+    import gobby
+    from gobby.cli.utils import find_web_dir
+
+    pkg_web = tmp_path / "web"
+    (pkg_web / "dist").mkdir(parents=True)
+    (pkg_web / "dist" / "index.html").write_text("<html></html>")
+    fake_pkg = tmp_path / "fake-pkg" / "__init__.py"
+    fake_pkg.parent.mkdir(parents=True)
+    fake_pkg.write_text("")
+
+    config = MagicMock()
+    config.ui.web_dir = str(pkg_web)
+    config.ui.mode = "dev"
+
+    with (
+        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path.parent),
+        patch.object(gobby, "__file__", str(fake_pkg)),
+    ):
+        result = find_web_dir(config)
+    assert result is None
 
 
 def test_find_web_dir_require_source_rejects_dist_only(tmp_path: Path) -> None:
