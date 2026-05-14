@@ -64,6 +64,8 @@
   --color-error-soft: oklch(72% 0.20 350 / 0.12);
   --text-on-error: oklch(15% 0 0);
 
+  --color-stopped: oklch(60% 0.04 30);
+
   --color-success: oklch(25% 0.05 125);
   --color-success-foreground: oklch(82% 0.10 125);
   --color-success-soft: oklch(82% 0.10 125 / 0.12);
@@ -268,6 +270,8 @@
   --color-error: oklch(52% 0.22 350);
   --color-error-soft: oklch(52% 0.22 350 / 0.10);
   --text-on-error: oklch(99% 0 0);
+
+  --color-stopped: oklch(45% 0.06 30);
 
   --color-success: oklch(95% 0.04 125);
   --color-success-foreground: oklch(48% 0.10 125);

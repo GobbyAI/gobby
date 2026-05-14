@@ -717,8 +717,10 @@ export const SessionsTab = memo(function SessionsTab({
                       entry.status === "active"
                         ? "success"
                         : entry.status === "expired"
-                          ? "disabled"
-                          : "warning"
+                          ? "stopped"
+                          : entry.status === "paused"
+                            ? "paused"
+                            : "warning"
                     }
                     pulse={entry.status === "active"}
                     label={`Session ${entry.status}`}

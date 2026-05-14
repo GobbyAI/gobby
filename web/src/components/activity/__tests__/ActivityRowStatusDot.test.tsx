@@ -10,6 +10,8 @@ const KINDS: StatusKind[] = [
   'info',
   'warning',
   'error',
+  'paused',
+  'stopped',
   'disabled',
 ]
 
@@ -18,6 +20,8 @@ const TOKENS: Record<StatusKind, string> = {
   info: 'var(--color-info)',
   warning: 'var(--color-warning-foreground)',
   error: 'var(--color-error)',
+  paused: 'var(--text-secondary)',
+  stopped: 'var(--color-stopped)',
   disabled: 'var(--text-muted)',
 }
 
@@ -29,6 +33,8 @@ const ICON_CLASS: Record<StatusKind, string> = {
   info: 'lucide-circle-dot',
   warning: 'lucide-triangle-alert',
   error: 'lucide-circle-x',
+  paused: 'lucide-pause',
+  stopped: 'lucide-octagon',
   disabled: 'lucide-minus',
 }
 
@@ -143,6 +149,14 @@ describe('ActivityRowStatusDot — grayscale(1) structural snapshot', () => {
     expect(grayscaleSnapshot('error')).toMatchInlineSnapshot(
       `"<div style="filter: grayscale(1);"><span class="activity-row-status-dot" style="color: var(--color-error);" data-kind="error" aria-label="error" role="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-x" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></svg></span></div>"`,
     )
+  })
+
+  it('produces a distinct, stable structure for paused', () => {
+    expect(grayscaleSnapshot('paused')).toMatchInlineSnapshot(`"<div style="filter: grayscale(1);"><span class="activity-row-status-dot" style="color: var(--text-secondary);" data-kind="paused" aria-label="paused" role="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pause" aria-hidden="true" focusable="false"><rect x="14" y="3" width="5" height="18" rx="1"></rect><rect x="5" y="3" width="5" height="18" rx="1"></rect></svg></span></div>"`)
+  })
+
+  it('produces a distinct, stable structure for stopped', () => {
+    expect(grayscaleSnapshot('stopped')).toMatchInlineSnapshot(`"<div style="filter: grayscale(1);"><span class="activity-row-status-dot" style="color: var(--color-stopped);" data-kind="stopped" aria-label="stopped" role="img"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-octagon" aria-hidden="true" focusable="false"><path d="M2.586 16.726A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2h6.624a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586z"></path></svg></span></div>"`)
   })
 
   it('produces a distinct, stable structure for disabled', () => {
