@@ -439,6 +439,27 @@ class TestBuildTurnAndDigest:
 
         assert result["success"] is True
         assert result["turn_number"] == 1
+        assert result["title"] == "Test"
+
+    @pytest.mark.asyncio
+    async def test_digest_contract_error_returns_failure(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_session_manager: MagicMock,
+    ) -> None:
+        """Digest contract errors from the pipeline surface as tool failures."""
+        with patch(
+            "gobby.mcp_proxy.tools.memory._build_turn_and_digest",
+            new_callable=AsyncMock,
+            return_value={"error": "memory.turn_record returned invalid JSON contract"},
+        ):
+            registry = create_memory_registry(
+                mock_memory_manager, session_manager=mock_session_manager
+            )
+            result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
+
+        assert result["success"] is False
+        assert "invalid JSON contract" in result["error"]
 
     @pytest.mark.asyncio
     async def test_returns_none_skipped(
