@@ -4,10 +4,10 @@ import type { ProjectWithStats } from '../../hooks/useProjects'
 const SUMMARY_CLS = 'max-w-[800px]'
 const GRID_CLS = 'flex max-w-[900px] flex-col gap-5'
 const STATS_ROW_CLS =
-  'grid gap-4 gap-x-6 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4 [grid-template-columns:repeat(auto-fit,minmax(80px,1fr))]'
-const STAT_CLS = 'flex flex-col items-center gap-1'
-const STAT_VALUE_CLS = 'font-[inherit] text-[length:var(--text-2xl)] font-semibold text-[var(--accent)]'
-const STAT_LABEL_CLS = 'text-[length:var(--text-xs)] uppercase text-[var(--text-muted)]'
+  'flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4'
+const STAT_CLS = 'flex items-baseline gap-2 text-[length:var(--text-base)]'
+const STAT_LABEL_CLS = 'text-[var(--text-muted)]'
+const STAT_VALUE_CLS = 'font-semibold text-[var(--text-primary)] [font-variant-numeric:tabular-nums]'
 
 const SECTION_CLS = 'rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4'
 const HEADING_CLS = 'm-0 mb-3 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
@@ -152,24 +152,24 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
       <div className={GRID_CLS}>
         <div className={STATS_ROW_CLS}>
           <div className={STAT_CLS}>
-            <span className={STAT_VALUE_CLS}>{project.session_count}</span>
             <span className={STAT_LABEL_CLS}>Sessions</span>
+            <span className={STAT_VALUE_CLS}>{project.session_count}</span>
           </div>
           <div className={STAT_CLS}>
-            <span className={STAT_VALUE_CLS}>{project.open_task_count}</span>
             <span className={STAT_LABEL_CLS}>Open Tasks</span>
+            <span className={STAT_VALUE_CLS}>{project.open_task_count}</span>
           </div>
           <div className={STAT_CLS}>
-            <span className={STAT_VALUE_CLS}>{taskTotal}</span>
             <span className={STAT_LABEL_CLS}>Total Tasks</span>
+            <span className={STAT_VALUE_CLS}>{taskTotal}</span>
           </div>
           <div className={STAT_CLS}>
+            <span className={STAT_LABEL_CLS}>Last Activity</span>
             <span className={STAT_VALUE_CLS}>
               {project.last_activity_at
                 ? new Date(project.last_activity_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                 : '—'}
             </span>
-            <span className={STAT_LABEL_CLS}>Last Activity</span>
           </div>
         </div>
 
