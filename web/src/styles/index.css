@@ -30,6 +30,7 @@
   --border: oklch(28% 0.008 125);
 
   --surface-scrim: oklch(0% 0 0 / 0.7);
+  --surface-scrim-opaque: oklch(0% 0 0 / 0.92);
   --surface-tint-subtle: oklch(100% 0 0 / 0.03);
   --surface-tint: oklch(100% 0 0 / 0.05);
   --surface-tint-strong: oklch(100% 0 0 / 0.10);
@@ -234,6 +235,7 @@
   --border: oklch(86% 0.008 125);
 
   --surface-scrim: oklch(0% 0 0 / 0.45);
+  --surface-scrim-opaque: oklch(0% 0 0 / 0.85);
   --surface-tint-subtle: oklch(0% 0 0 / 0.03);
   --surface-tint: oklch(0% 0 0 / 0.05);
   --surface-tint-strong: oklch(0% 0 0 / 0.08);

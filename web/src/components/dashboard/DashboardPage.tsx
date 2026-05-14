@@ -56,7 +56,7 @@ export function DashboardPage() {
               >
                 <span
                   className={cn(
-                    'pointer-events-none block h-3 w-3 rounded-full bg-white shadow-sm transition-transform',
+                    'pointer-events-none block h-3 w-3 rounded-full bg-[var(--bg-primary)] shadow-sm transition-transform',
                     showAllProjects ? 'translate-x-3' : 'translate-x-0',
                   )}
                 />

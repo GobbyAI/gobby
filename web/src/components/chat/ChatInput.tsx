@@ -658,7 +658,7 @@ export function ChatInput({
                 <button
                   type="button"
                   aria-label={`Remove ${qf.file.name}`}
-                  className="absolute top-0 right-0 bg-black/60 rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
+                  className="absolute top-0 right-0 bg-[var(--surface-scrim)] rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
                   onClick={() => removeFile(qf.id)}
                 >
                   &times;

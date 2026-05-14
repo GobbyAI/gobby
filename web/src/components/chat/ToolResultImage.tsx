@@ -110,7 +110,7 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-black/90 p-3 sm:p-6">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[var(--surface-scrim-opaque)] p-3 sm:p-6">
             <img
               src={src}
               alt="Full-size tool result image"
