@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -114,18 +115,26 @@ def test_stage_ui_runs_npm_commands_with_timeout(
 
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
-    calls: list[tuple[list[str], Path, bool, int]] = []
+    calls: list[tuple[list[str], Path, bool, bool, bool, int]] = []
 
-    def fake_run(command: list[str], *, cwd: Path, check: bool, timeout: int) -> None:
-        calls.append((command, cwd, check, timeout))
+    def fake_run(
+        command: list[str],
+        *,
+        cwd: Path,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+    ) -> None:
+        calls.append((command, cwd, check, capture_output, text, timeout))
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
 
     backend._stage_ui()
 
     assert calls == [
-        (["npm", "ci"], web, True, 600),
-        (["npm", "run", "build"], web, True, 600),
+        (["npm", "ci"], web, True, True, True, 600),
+        (["npm", "run", "build"], web, True, True, True, 600),
     ]
 
 
@@ -143,7 +152,15 @@ def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
 
-    def fake_run(command: list[str], *, cwd: Path, check: bool, timeout: int) -> None:
+    def fake_run(
+        command: list[str],
+        *,
+        cwd: Path,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+    ) -> None:
         raise backend.subprocess.TimeoutExpired(cmd=command, timeout=timeout)
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
@@ -155,6 +172,59 @@ def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
     assert "npm ci" in message
     assert str(web) in message
     assert "600" in message
+
+
+@pytest.mark.parametrize(
+    ("failed_command", "expected_command"),
+    [
+        (["npm", "ci"], "npm ci"),
+        (["npm", "run", "build"], "npm run build"),
+    ],
+)
+def test_stage_ui_npm_failure_raises_output_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_command: list[str],
+    expected_command: str,
+) -> None:
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    web = repo_root / "web"
+    web.mkdir()
+    (web / "package.json").write_text("{}")
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
+
+    def fake_run(
+        command: list[str],
+        *,
+        cwd: Path,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: int,
+    ) -> None:
+        if command == failed_command:
+            raise subprocess.CalledProcessError(
+                returncode=17,
+                cmd=command,
+                output="out text",
+                stderr="err text",
+            )
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._stage_ui()
+
+    message = str(exc_info.value)
+    assert expected_command in message
+    assert "return code 17" in message
+    assert "stdout:\nout text" in message
+    assert "stderr:\nerr text" in message
 
 
 def test_build_wheel_accepts_wheel_with_ui_index(

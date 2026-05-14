@@ -8,6 +8,7 @@ import pytest
 
 from gobby.search.embeddings import (
     _CACHE_TTL,
+    EmbeddingGenerationError,
     _cache,
     _cache_key,
     clear_cache,
@@ -93,15 +94,34 @@ async def test_openai_client_closed_after_success() -> None:
 
 @pytest.mark.asyncio
 async def test_openai_client_closed_after_failure() -> None:
-    """The embeddings client should be closed when a fetch raises."""
+    """The embeddings client should be closed when an unexpected fetch error propagates."""
     mock_client = AsyncMock()
     mock_client.embeddings.create.side_effect = ValueError("boom")
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        pytest.raises(RuntimeError, match="Embedding generation failed: boom"),
+        pytest.raises(ValueError, match="boom"),
     ):
         await generate_embedding("close-failure", model="close-failure-model")
+
+    mock_client.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_empty_provider_response_raises_embedding_generation_error() -> None:
+    """Empty provider responses should be classified as expected provider failures."""
+    mock_client = AsyncMock()
+
+    class FakeResponse:
+        data: list[object] = []
+
+    mock_client.embeddings.create.return_value = FakeResponse()
+
+    with (
+        patch("openai.AsyncOpenAI", return_value=mock_client),
+        pytest.raises(EmbeddingGenerationError, match="empty result"),
+    ):
+        await generate_embedding("empty", model="empty-model")
 
     mock_client.close.assert_awaited_once()
 

@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli._detectors import _is_lmstudio_available, _is_ollama_available
-from gobby.cli._install_prompts import _run_embedding_install
+from gobby.cli._install_prompts import _infer_embedding_provider_from_url, _run_embedding_install
 
 pytestmark = [pytest.mark.unit]
 
@@ -61,6 +61,17 @@ class TestDetectors:
 
 class TestRunEmbeddingInstallNoInteractive:
     """Test auto-selection in non-interactive mode."""
+
+    @pytest.mark.parametrize(
+        ("api_base", "provider"),
+        [
+            ("http://lan:1234/v1", "lmstudio"),
+            ("http://custom-host:11434/v1", "ollama"),
+            ("https://embeddings.example.test/v1", "openai-compatible"),
+        ],
+    )
+    def test_custom_url_provider_inference(self, api_base: str, provider: str) -> None:
+        assert _infer_embedding_provider_from_url(api_base) == provider
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
@@ -187,6 +198,71 @@ class TestRunEmbeddingInstallNoInteractive:
             api_base_override="http://custom-host:11434/v1",
             dim_override=768,
         )
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_custom_unknown_url_infers_openai_compatible(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "openai-compatible",
+                "model": "vendor-embed",
+                "dim": 1024,
+                "api_base": "https://embeddings.example.test/v1",
+                "health_check": True,
+            }
+        )
+        results: dict = {}
+
+        provider = _run_embedding_install(
+            installer,
+            results,
+            no_interactive=True,
+            api_base_override="https://embeddings.example.test/v1",
+            model_override="vendor-embed",
+            dim_override=1024,
+        )
+
+        assert provider == "openai-compatible"
+        installer.assert_called_once_with(
+            provider="openai-compatible",
+            openai_api_key=None,
+            model_override="vendor-embed",
+            api_base_override="https://embeddings.example.test/v1",
+            dim_override=1024,
+        )
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_custom_url_explicit_provider_override_wins(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "lmstudio",
+                "model": "text-embedding-qwen3-embedding-4b",
+                "dim": 2560,
+                "api_base": "http://lan:9999/v1",
+                "health_check": True,
+            }
+        )
+        results: dict = {}
+
+        provider = _run_embedding_install(
+            installer,
+            results,
+            no_interactive=True,
+            api_base_override="http://lan:9999/v1",
+            model_override="text-embedding-qwen3-embedding-4b",
+            dim_override=2560,
+            provider_override="lmstudio",
+        )
+
+        assert provider == "lmstudio"
+        assert installer.call_args.kwargs["provider"] == "lmstudio"
 
 
 class TestRunEmbeddingInstallInteractive:

@@ -53,24 +53,33 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_WEB_SRC = _REPO_ROOT / "web"
-_DIST_SRC = _WEB_SRC / "dist"
-_WHEEL_DEST = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
-_WHEEL_UI_INDEX = "gobby/ui/web/dist/index.html"
-_NPM_BUILD_TIMEOUT_SECONDS = 600
+_REPO_ROOT: Path = Path(__file__).resolve().parent.parent
+_WEB_SRC: Path = _REPO_ROOT / "web"
+_DIST_SRC: Path = _WEB_SRC / "dist"
+_WHEEL_DEST: Path = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
+_WHEEL_UI_INDEX: str = "gobby/ui/web/dist/index.html"
+_NPM_BUILD_TIMEOUT_SECONDS: int = 600
 
 
 def _run_npm_command(command: list[str]) -> None:
+    command_text = " ".join(command)
     try:
         subprocess.run(  # nosec B603 B607
             command,
             cwd=_WEB_SRC,
             check=True,
+            capture_output=True,
+            text=True,
             timeout=_NPM_BUILD_TIMEOUT_SECONDS,
         )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Failed running {command_text!r} in {_WEB_SRC} "
+            f"(return code {exc.returncode})\n"
+            f"stdout:\n{exc.stdout or ''}\n"
+            f"stderr:\n{exc.stderr or ''}"
+        ) from exc
     except subprocess.TimeoutExpired as exc:
-        command_text = " ".join(command)
         raise RuntimeError(
             f"Timed out running {command_text!r} in {_WEB_SRC} "
             f"after {_NPM_BUILD_TIMEOUT_SECONDS} seconds"

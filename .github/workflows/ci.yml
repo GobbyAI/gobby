@@ -255,3 +255,9 @@ jobs:
           if 'gobby/ui/web/dist/index.html' not in names:
               raise FileNotFoundError('Wheel missing gobby/ui/web/dist/index.html')
           "
+
+      - name: Smoke installed wheel UI
+        run: |
+          wheel="$(ls dist/gobby-*.whl | head -n 1)"
+          GOBBY_TEST_PROTECT=1 GOBBY_RUN_WHEEL_UI_SMOKE=1 GOBBY_WHEEL_PATH="$wheel" \
+            uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v

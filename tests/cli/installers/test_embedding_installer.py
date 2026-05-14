@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.cli.installers.embedding import (
     _PROVIDER_CONFIG,
+    _probe_embedding_dim,
     _setup_lmstudio,
     _setup_ollama,
     install_embedding,
 )
+from gobby.search.embeddings import EmbeddingGenerationError
 
 pytestmark = [pytest.mark.unit]
 
@@ -38,6 +40,12 @@ class TestProviderConfig:
         assert cfg["api_base"] is None
         assert cfg["dim"] == 1536
 
+    def test_openai_compatible_config(self) -> None:
+        cfg = _PROVIDER_CONFIG["openai-compatible"]
+        assert cfg["model"] == "text-embedding-3-small"
+        assert cfg["api_base"] is None
+        assert cfg["dim"] == 0
+
     def test_none_config_exists(self) -> None:
         assert "none" in _PROVIDER_CONFIG
 
@@ -54,6 +62,11 @@ class TestInstallEmbedding:
         result = install_embedding(provider="openai", openai_api_key=None)
         assert result["success"] is False
         assert "API key" in result["error"]
+
+    def test_openai_compatible_without_url_returns_error(self) -> None:
+        result = install_embedding(provider="openai-compatible")
+        assert result["success"] is False
+        assert "--embedding-url" in result["error"]
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     def test_none_provider_persists_and_succeeds(self, mock_persist: MagicMock) -> None:
@@ -227,6 +240,64 @@ class TestInstallEmbeddingOverrides:
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    def test_provider_default_model_probe_failure_falls_back_to_default_dim(
+        self,
+        mock_setup: MagicMock,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            api_base_override="http://192.168.1.10:1234/v1",
+        )
+
+        assert result["success"] is True
+        assert result["dim"] == 768
+        mock_setup.assert_not_called()
+        mock_probe.assert_called_once()
+        assert mock_health.call_args.kwargs["expected_dim"] == 768
+        assert mock_persist.call_args.kwargs["dim"] == 768
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=1536)
+    def test_openai_compatible_custom_url_uses_probe(
+        self,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="openai-compatible",
+            api_base_override="https://embeddings.example.test/v1",
+        )
+
+        assert result["success"] is True
+        assert result["provider"] == "openai-compatible"
+        assert result["model"] == "text-embedding-3-small"
+        assert result["dim"] == 1536
+        mock_probe.assert_called_once()
+        assert mock_health.call_args.kwargs["api_base"] == "https://embeddings.example.test/v1"
+        assert mock_persist.call_args.kwargs["provider"] == "openai-compatible"
+
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
+    def test_openai_compatible_probe_failure_requires_explicit_dim(
+        self, mock_probe: MagicMock
+    ) -> None:
+        result = install_embedding(
+            provider="openai-compatible",
+            api_base_override="https://embeddings.example.test/v1",
+        )
+
+        assert result["success"] is False
+        assert "Could not probe embedding dim" in result["error"]
+        assert "--embedding-dim" in result["error"]
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
     @patch("gobby.cli.installers.embedding._probe_embedding_dim")
     @patch("gobby.cli.installers.embedding._setup_lmstudio", return_value={"success": True})
     def test_defaults_preserved_when_no_overrides(
@@ -245,6 +316,35 @@ class TestInstallEmbeddingOverrides:
         mock_probe.assert_not_called()
         # Setup IS called when running on the bundled defaults.
         mock_setup.assert_called_once()
+
+
+class TestProbeEmbeddingDim:
+    """Dim probe error boundaries."""
+
+    def test_expected_embedding_failure_returns_none(self) -> None:
+        mock_generate = AsyncMock(side_effect=EmbeddingGenerationError("offline"))
+
+        with patch("gobby.search.embeddings.generate_embedding", mock_generate):
+            assert _probe_embedding_dim(model="m", api_base="http://localhost:1234/v1") is None
+
+    def test_unexpected_probe_exception_propagates(self) -> None:
+        mock_generate = AsyncMock(side_effect=ValueError("bug"))
+
+        with (
+            patch("gobby.search.embeddings.generate_embedding", mock_generate),
+            pytest.raises(ValueError, match="bug"),
+        ):
+            _probe_embedding_dim(model="m", api_base="http://localhost:1234/v1")
+
+    @pytest.mark.asyncio
+    async def test_running_event_loop_returns_none_without_creating_probe(self) -> None:
+        mock_generate = AsyncMock()
+
+        with patch("gobby.search.embeddings.generate_embedding", mock_generate):
+            result = _probe_embedding_dim(model="m", api_base="http://localhost:1234/v1")
+
+        assert result is None
+        mock_generate.assert_not_called()
 
 
 class TestSetupLMStudio:
@@ -565,11 +665,11 @@ class TestHealthCheck:
         mock_run.return_value = True
         assert _health_check_embedding("model", "http://x/v1") is True
 
-    @patch("gobby.cli.installers.embedding.asyncio.run")
-    def test_returns_false_on_runtime_error(self, mock_run: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_returns_false_in_running_event_loop(self) -> None:
         from gobby.cli.installers.embedding import _health_check_embedding
 
-        mock_run.side_effect = RuntimeError(
-            "asyncio.run() cannot be called from a running event loop"
-        )
-        assert _health_check_embedding("model", "http://x/v1") is False
+        mock_generate = AsyncMock()
+        with patch("gobby.search.embeddings.generate_embedding", mock_generate):
+            assert _health_check_embedding("model", "http://x/v1") is False
+        mock_generate.assert_not_called()

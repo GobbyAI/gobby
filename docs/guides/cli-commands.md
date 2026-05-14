@@ -140,10 +140,11 @@ gobby uninstall [OPTIONS]
 
 `gobby install` supports `--claude`, `--gemini`, `--codex`, `--droid`,
 `--qwen`, `--hooks`, `--git-hooks`, `--all`, `--no-ext-services`,
-`--neo4j-password`, `--project`, `--voice`, `--no-interactive`, and
-`-C, --path PATH`. `gobby uninstall` supports `--claude`, `--gemini`,
-`--codex`, `--droid`, `--qwen`, `--all`, `--neo4j`, `--volumes`, `--project`,
-and `-C, --path PATH`.
+`--neo4j-password`, `--project`, `--voice`, `--embedding-url`,
+`--embedding-provider`, `--embedding-model`, `--embedding-dim`,
+`--no-interactive`, and `-C, --path PATH`. `gobby uninstall` supports
+`--claude`, `--gemini`, `--codex`, `--droid`, `--qwen`, `--all`, `--neo4j`,
+`--volumes`, `--project`, and `-C, --path PATH`.
 
 ### `gobby mcp-server`
 

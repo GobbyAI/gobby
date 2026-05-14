@@ -209,6 +209,7 @@ class TestInstallCommand:
         assert "--droid" in result.output
         assert "--hooks" in result.output
         assert "--all" in result.output
+        assert "--embedding-provider" in result.output
 
     @pytest.mark.parametrize("embedding_dim", ["0", "-1"])
     def test_install_rejects_non_positive_embedding_dim(

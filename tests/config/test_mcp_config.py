@@ -557,6 +557,18 @@ class TestMigrateLegacyMcpConfig:
         assert new.parent.exists()
         assert new.read_text() == '{"servers": []}'
 
+    def test_migrated_corrupted_legacy_json_raises_on_readback(self, tmp_path) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text("not valid json {")
+
+        assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is True
+
+        assert not legacy.exists()
+        manager = MCPConfigManager(str(new))
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            manager._read_config()
+
     def test_replace_failure_falls_back_to_copy_and_unlink(self, tmp_path) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
@@ -569,11 +581,14 @@ class TestMigrateLegacyMcpConfig:
         assert new.read_text() == '{"servers": []}'
         assert (new.stat().st_mode & 0o777) == 0o600
 
-    def test_fallback_failure_returns_false_and_leaves_legacy(self, tmp_path) -> None:
+    def test_fallback_failure_returns_false_and_leaves_legacy(
+        self, tmp_path, caplog
+    ) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
         legacy.write_text('{"servers": []}')
 
+        caplog.set_level("WARNING", logger="gobby.config.mcp")
         with (
             patch.object(Path, "replace", side_effect=OSError("cross-device link")),
             patch("gobby.config.mcp.shutil.copy2", side_effect=OSError("copy failed")),
@@ -582,3 +597,23 @@ class TestMigrateLegacyMcpConfig:
 
         assert legacy.read_text() == '{"servers": []}'
         assert not new.exists()
+        assert "Failed to move legacy MCP config" in caplog.text
+        assert "Failed to copy legacy MCP config" in caplog.text
+
+    def test_unlink_failure_after_replace_fallback_returns_false_and_logs_path(
+        self, tmp_path, caplog
+    ) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text('{"servers": []}')
+
+        caplog.set_level("WARNING", logger="gobby.config.mcp")
+        with (
+            patch.object(Path, "replace", side_effect=OSError("cross-device link")),
+            patch.object(Path, "unlink", side_effect=OSError("permission denied")),
+        ):
+            assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
+
+        assert legacy.exists()
+        assert new.read_text() == '{"servers": []}'
+        assert "failed to remove legacy file" in caplog.text

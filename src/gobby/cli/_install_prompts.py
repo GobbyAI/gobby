@@ -9,6 +9,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import click
 
@@ -21,7 +22,15 @@ logger = logging.getLogger(__name__)
 
 def _infer_embedding_provider_from_url(api_base: str) -> str:
     """Infer the compatible local provider path for a custom OpenAI-style endpoint."""
-    return "ollama" if ":11434" in api_base else "lmstudio"
+    try:
+        port = urlparse(api_base).port
+    except ValueError:
+        port = None
+    if port == 11434:
+        return "ollama"
+    if port == 1234:
+        return "lmstudio"
+    return "openai-compatible"
 
 
 @contextmanager
@@ -459,6 +468,7 @@ def _run_embedding_install(
     api_base_override: str | None = None,
     model_override: str | None = None,
     dim_override: int | None = None,
+    provider_override: str | None = None,
 ) -> str:
     """Interactive embedding provider setup.
 
@@ -474,9 +484,11 @@ def _run_embedding_install(
         model_override: Override the provider's default model id.
         dim_override: Override the embedding dim. Triggers a probe when omitted
             and either ``api_base_override`` or ``model_override`` is set.
+        provider_override: Explicit compatibility mode for custom endpoints.
 
     Returns:
-        The provider name chosen: "lmstudio" | "ollama" | "openai" | "none"
+        The provider name chosen: "lmstudio" | "ollama" |
+            "openai-compatible" | "openai" | "none"
     """
     from ._detectors import _is_lmstudio_available, _is_ollama_available
 
@@ -502,9 +514,15 @@ def _run_embedding_install(
         # No local providers; default to "none" to avoid unexpected cloud calls
         default_idx = len(options)  # points at "none"
 
-    if api_base_override is not None:
+    if provider_override is not None:
+        provider = provider_override
+        if api_base_override is not None:
+            click.echo(f"Using custom embedding endpoint ({provider}): {api_base_override}")
+        else:
+            click.echo(f"Using embedding provider override: {provider}")
+    elif api_base_override is not None:
         provider = _infer_embedding_provider_from_url(api_base_override)
-        click.echo(f"Using custom embedding endpoint ({provider}-compatible): {api_base_override}")
+        click.echo(f"Using custom embedding endpoint ({provider}): {api_base_override}")
     elif no_interactive:
         # Auto-select best available local provider; skip if none
         if lmstudio_ok:

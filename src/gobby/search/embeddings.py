@@ -48,6 +48,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
+class EmbeddingGenerationError(RuntimeError):
+    """Raised for expected provider-side embedding generation failures."""
+
+
 # Default retry settings for rate-limited requests
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_BASE_DELAY = 1.0  # seconds
@@ -172,7 +177,7 @@ async def generate_embeddings(
         list if the input texts list is empty.
 
     Raises:
-        RuntimeError: If embedding generation fails
+        EmbeddingGenerationError: If embedding provider generation fails
     """
     if not texts:
         return []
@@ -323,6 +328,32 @@ def _get_api_error_message(error: Exception) -> str:
     return str(error)
 
 
+def _validate_embedding_response(
+    embeddings: list[list[float]],
+    *,
+    requested_count: int,
+    model: str,
+    api_base: str | None,
+) -> None:
+    """Validate provider response shape before cache population."""
+    if not embeddings:
+        raise EmbeddingGenerationError(
+            f"Embedding API returned empty result for model={model}, api_base={api_base}"
+        )
+    if len(embeddings) != requested_count:
+        raise EmbeddingGenerationError(
+            "Embedding API returned an unexpected number of results: "
+            f"model={model}, api_base={api_base}, expected={requested_count}, "
+            f"actual={len(embeddings)}"
+        )
+    for index, embedding in enumerate(embeddings):
+        if not embedding:
+            raise EmbeddingGenerationError(
+                "Embedding API returned an empty vector: "
+                f"model={model}, api_base={api_base}, index={index}"
+            )
+
+
 def _is_ollama_endpoint(api_base: str | None) -> bool:
     """Check if api_base points to an Ollama endpoint (port 11434)."""
     if not api_base:
@@ -342,6 +373,12 @@ async def _retry_embeddings_after_reload(
     """Retry a single embeddings request after the local model is reloaded."""
     response = await client.embeddings.create(model=model, input=texts)
     embeddings = [item.embedding for item in response.data]
+    _validate_embedding_response(
+        embeddings,
+        requested_count=len(texts),
+        model=model,
+        api_base=api_base,
+    )
     _validate_embeddings_dim(
         embeddings,
         expected_dim=expected_dim,
@@ -387,6 +424,7 @@ async def _fetch_embeddings(
     """Raw API call to generate embeddings (no caching)."""
     from openai import (
         APIConnectionError,
+        APIError,
         AsyncOpenAI,
         AuthenticationError,
         BadRequestError,
@@ -404,6 +442,12 @@ async def _fetch_embeddings(
             try:
                 response = await client.embeddings.create(model=model, input=texts)
                 embeddings: list[list[float]] = [item.embedding for item in response.data]
+                _validate_embedding_response(
+                    embeddings,
+                    requested_count=len(texts),
+                    model=model,
+                    api_base=api_base,
+                )
                 _validate_embeddings_dim(
                     embeddings,
                     expected_dim=expected_dim,
@@ -414,13 +458,13 @@ async def _fetch_embeddings(
                 return embeddings
             except AuthenticationError as e:
                 logger.error(f"Embedding authentication failed: {e}")
-                raise RuntimeError(f"Authentication failed: {e}") from e
-            except (APIConnectionError, httpx.ConnectError) as e:
+                raise EmbeddingGenerationError(f"Authentication failed: {e}") from e
+            except (APIConnectionError, httpx.HTTPError) as e:
                 from gobby.cli.services import _is_lm_studio_endpoint
 
                 if not api_base or not _is_lm_studio_endpoint(api_base):
                     logger.error(f"Failed to generate embeddings: {e}")
-                    raise RuntimeError(f"Embedding generation failed: {e}") from e
+                    raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
 
                 recovered = await _try_recover_local_lm_studio_service(
                     model=model,
@@ -429,7 +473,7 @@ async def _fetch_embeddings(
                     expected_dim=expected_dim,
                 )
                 if not recovered:
-                    raise RuntimeError(f"Embedding generation failed: {e}") from e
+                    raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 try:
                     return await _retry_embeddings_after_reload(
                         client,
@@ -440,21 +484,21 @@ async def _fetch_embeddings(
                     )
                 except RuntimeError:
                     raise
-                except Exception as retry_err:
-                    raise RuntimeError(
+                except (APIError, httpx.HTTPError) as retry_err:
+                    raise EmbeddingGenerationError(
                         f"Embedding failed after LM Studio recovery: {retry_err}"
                     ) from retry_err
             except NotFoundError as e:
                 error_message = _get_api_error_message(e).lower()
                 if "try pulling it first" not in error_message or not _is_ollama_endpoint(api_base):
                     logger.error(f"Embedding model not found: {e}")
-                    raise RuntimeError(f"Model not found: {e}") from e
+                    raise EmbeddingGenerationError(f"Model not found: {e}") from e
                 assert (
                     api_base is not None
                 )  # guaranteed: _is_ollama_endpoint(api_base) was True above
                 reloaded = await _try_reload_model(model, api_base)
                 if not reloaded:
-                    raise RuntimeError(f"Model not found: {e}") from e
+                    raise EmbeddingGenerationError(f"Model not found: {e}") from e
                 try:
                     return await _retry_embeddings_after_reload(
                         client,
@@ -465,19 +509,19 @@ async def _fetch_embeddings(
                     )
                 except RuntimeError:
                     raise
-                except Exception as retry_err:
-                    raise RuntimeError(
+                except (APIError, httpx.HTTPError) as retry_err:
+                    raise EmbeddingGenerationError(
                         f"Embedding failed after model reload: {retry_err}"
                     ) from retry_err
             except BadRequestError as e:
                 error_message = _get_api_error_message(e).lower()
                 if "no models loaded" not in error_message or not api_base:
                     logger.error(f"Failed to generate embeddings: {e}")
-                    raise RuntimeError(f"Embedding generation failed: {e}") from e
+                    raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 # Model was evicted from local inference server — try to reload
                 reloaded = await _try_reload_model(model, api_base)
                 if not reloaded:
-                    raise RuntimeError(f"Embedding generation failed: {e}") from e
+                    raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 try:
                     return await _retry_embeddings_after_reload(
                         client,
@@ -488,8 +532,8 @@ async def _fetch_embeddings(
                     )
                 except RuntimeError:
                     raise
-                except Exception as retry_err:
-                    raise RuntimeError(
+                except (APIError, httpx.HTTPError) as retry_err:
+                    raise EmbeddingGenerationError(
                         f"Embedding failed after model reload: {retry_err}"
                     ) from retry_err
             except RateLimitError as e:
@@ -505,12 +549,12 @@ async def _fetch_embeddings(
                 await asyncio.sleep(delay)
             except RuntimeError:
                 raise
-            except Exception as e:
+            except APIError as e:
                 logger.error(f"Failed to generate embeddings: {e}")
-                raise RuntimeError(f"Embedding generation failed: {e}") from e
+                raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
 
         logger.error(f"Rate limit exceeded after {max_retries + 1} attempts: {last_error}")
-        raise RuntimeError(
+        raise EmbeddingGenerationError(
             f"Rate limit exceeded after {max_retries + 1} attempts: {last_error}"
         ) from last_error
     finally:
@@ -545,7 +589,7 @@ async def generate_embedding(
         Embedding vector as list of floats
 
     Raises:
-        RuntimeError: If embedding generation fails
+        EmbeddingGenerationError: If embedding provider generation fails
     """
     embeddings = await generate_embeddings(
         texts=[text],
@@ -558,7 +602,7 @@ async def generate_embedding(
         expected_dim=expected_dim,
     )
     if not embeddings:
-        raise RuntimeError(
+        raise EmbeddingGenerationError(
             f"Embedding API returned empty result for model={model}, "
             f"api_base={api_base}, api_key={'[set]' if api_key else '[not set]'}"
         )
