@@ -185,11 +185,11 @@
   --code-gutter-text: oklch(45% 0.005 125);
   --code-active-line-bg: oklch(18% 0.005 125);
 
-  --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+  --font-mono: "JetBrains Mono Variable", "SF Mono", "Fira Code", monospace;
   --gobby-logo-image: url("/logo.png");
   /* stylelint-disable value-keyword-case */
   --font-sans:
-    "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   /* stylelint-enable value-keyword-case */
   --sidebar-width: 260px;
