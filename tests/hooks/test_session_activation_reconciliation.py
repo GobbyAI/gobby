@@ -224,6 +224,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     project_id: str,
     tmp_path,
 ) -> None:
+    """Refresh active rule names from live agent selectors during reconciliation."""
     session_id = _register_session(session_manager, project_id, tmp_path)
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(

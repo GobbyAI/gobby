@@ -2455,6 +2455,7 @@ class TestLiveActiveRuleSelection:
     async def test_stale_active_rule_names_do_not_hide_new_default_rule(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
+        """Resolve default rules from live selectors even when session names are stale."""
         _insert_agent(manager, "default", include=["tag:default"])
         _insert_rule(
             manager,
@@ -2481,6 +2482,7 @@ class TestLiveActiveRuleSelection:
     async def test_non_default_agent_excludes_rules_outside_live_selectors(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
+        """Exclude default-only rules when the current live agent selector differs."""
         _insert_agent(manager, "backend-developer", include=["tag:worker-safety"])
         _insert_rule(
             manager,
@@ -2517,6 +2519,7 @@ class TestLiveActiveRuleSelection:
     async def test_active_rule_names_remain_fallback_when_agent_cannot_resolve(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
+        """Fall back to stored active rule names when the live agent is missing."""
         _insert_rule(
             manager,
             "allowed-by-fallback",

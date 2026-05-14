@@ -15,6 +15,7 @@ Each CLI has a different trust mechanism:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -141,7 +142,7 @@ def seed_gobby_home_trust(cli: str, gobby_home: PathValue | None = None) -> dict
     return seed_cli_trust(cli, home, respect_folder_trust_setting=True).as_dict()
 
 
-def authorize_model_discovery_trust(cli: str, directory: PathValue) -> TrustSeedResult:
+async def authorize_model_discovery_trust(cli: str, directory: PathValue) -> TrustSeedResult:
     """Authorize provider-owned ACP model discovery paths.
 
     Model discovery only needs Gemini-compatible trust stores. Runtime workspace
@@ -154,7 +155,12 @@ def authorize_model_discovery_trust(cli: str, directory: PathValue) -> TrustSeed
         result.reason = f"Unsupported CLI for model discovery trust: {cli}"
         return result
 
-    return seed_cli_trust(cli, directory, respect_folder_trust_setting=True)
+    return await asyncio.to_thread(
+        seed_cli_trust,
+        cli,
+        directory,
+        respect_folder_trust_setting=True,
+    )
 
 
 def seed_cli_trust(

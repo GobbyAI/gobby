@@ -7,6 +7,8 @@ export interface DonutArcRender<T extends DonutSegmentInput> {
   pathD: string
 }
 
+const FULL_CIRCLE_THRESHOLD = 359.999
+
 export function describeArcPath(
   cx: number,
   cy: number,
@@ -19,7 +21,8 @@ export function describeArcPath(
     return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }
   }
   const sweep = endAngleDeg - startAngleDeg
-  if (sweep >= 359.999) {
+  // SVG arcs cannot represent a closed full circle as one segment.
+  if (sweep >= FULL_CIRCLE_THRESHOLD) {
     const start = polar(startAngleDeg)
     const mid = polar(startAngleDeg + 180)
     return [

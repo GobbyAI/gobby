@@ -37,6 +37,8 @@ function getBaseUrl(): string {
 }
 
 const CHAT_MESSAGES_POLL_MS = 2000
+const SESSION_METADATA_UNAVAILABLE_MESSAGE =
+  'Session metadata is unavailable. It may have expired or been deleted.'
 
 async function fetchSessionMetadata(sessionId: string): Promise<GobbySession | null> {
   const baseUrl = getBaseUrl()
@@ -96,6 +98,7 @@ export function useSessionDetail(sessionId: string | null) {
   const [session, setSession] = useState<GobbySession | null>(null)
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const messageSourceRef = useRef<'session' | 'chat' | null>(null)
@@ -111,6 +114,7 @@ export function useSessionDetail(sessionId: string | null) {
       setSession(null)
       setMessages([])
       setTranscriptStatus(null)
+      setSessionError(null)
       setTotalMessages(0)
       messageSourceRef.current = null
       return
@@ -119,6 +123,7 @@ export function useSessionDetail(sessionId: string | null) {
     const activeSessionId = sessionId
     let cancelled = false
     setIsLoading(true)
+    setSessionError(null)
 
     async function fetchDetail() {
       const baseUrl = getBaseUrl()
@@ -129,6 +134,7 @@ export function useSessionDetail(sessionId: string | null) {
 
         if (sessionData) {
           setSession(sessionData)
+          setSessionError(null)
           setTranscriptStatus(null)
 
           const loadRenderedMessages = async (): Promise<{
@@ -223,9 +229,24 @@ export function useSessionDetail(sessionId: string | null) {
               setTranscriptStatus(nextTranscriptStatus)
             }
           }
+        } else {
+          setSession(null)
+          setMessages([])
+          setTranscriptStatus(null)
+          setSessionError(SESSION_METADATA_UNAVAILABLE_MESSAGE)
+          setTotalMessages(0)
+          messageSourceRef.current = null
         }
       } catch (e) {
         console.error('Failed to fetch session detail:', e)
+        if (!cancelled) {
+          setSession(null)
+          setMessages([])
+          setTranscriptStatus(null)
+          setSessionError('Failed to load session detail')
+          setTotalMessages(0)
+          messageSourceRef.current = null
+        }
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -311,10 +332,23 @@ export function useSessionDetail(sessionId: string | null) {
   const refreshSelectedSessionMetadata = useCallback(async (updatedSessionId: string) => {
     try {
       const refreshed = await fetchSessionMetadata(updatedSessionId)
-      if (sessionIdRef.current !== updatedSessionId || !refreshed) return
+      if (sessionIdRef.current !== updatedSessionId) return
+      if (!refreshed) {
+        setSession(null)
+        setMessages([])
+        setTranscriptStatus(null)
+        setSessionError(SESSION_METADATA_UNAVAILABLE_MESSAGE)
+        setTotalMessages(0)
+        messageSourceRef.current = null
+        return
+      }
+      setSessionError(null)
       setSession(refreshed)
     } catch (e) {
       console.error('Failed to refresh session metadata:', e)
+      if (sessionIdRef.current === updatedSessionId) {
+        setSessionError('Failed to refresh session metadata')
+      }
     }
   }, [])
 
@@ -327,6 +361,7 @@ export function useSessionDetail(sessionId: string | null) {
       setSession(null)
       setMessages([])
       setTranscriptStatus(null)
+      setSessionError(null)
       setTotalMessages(0)
       messageSourceRef.current = null
       return
@@ -373,6 +408,7 @@ export function useSessionDetail(sessionId: string | null) {
 
   return {
     session,
+    sessionError,
     messages,
     transcriptStatus,
     isLoading,

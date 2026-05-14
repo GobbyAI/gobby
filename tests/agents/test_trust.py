@@ -228,12 +228,13 @@ class TestPreApproveQwen:
 
 
 class TestModelDiscoveryTrust:
-    def test_gemini_authorization_writes_only_gemini_stores(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_gemini_authorization_writes_only_gemini_stores(self, tmp_path: Path) -> None:
         discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "gemini").resolve()
         discovery_cwd.mkdir(parents=True)
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = authorize_model_discovery_trust("gemini", discovery_cwd)
+            result = await authorize_model_discovery_trust("gemini", discovery_cwd)
 
         assert result.success is True
         assert result.skipped is False
@@ -247,12 +248,13 @@ class TestModelDiscoveryTrust:
         assert not (tmp_path / ".claude").exists()
         assert not (tmp_path / ".codex").exists()
 
-    def test_qwen_authorization_writes_only_qwen_stores(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_qwen_authorization_writes_only_qwen_stores(self, tmp_path: Path) -> None:
         discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "qwen").resolve()
         discovery_cwd.mkdir(parents=True)
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = authorize_model_discovery_trust("qwen", discovery_cwd)
+            result = await authorize_model_discovery_trust("qwen", discovery_cwd)
 
         assert result.success is True
         assert result.skipped is False
@@ -266,7 +268,8 @@ class TestModelDiscoveryTrust:
         assert not (tmp_path / ".claude").exists()
         assert not (tmp_path / ".codex").exists()
 
-    def test_folder_trust_disabled_skips_trusted_folders_write(
+    @pytest.mark.asyncio
+    async def test_folder_trust_disabled_skips_trusted_folders_write(
         self,
         tmp_path: Path,
     ) -> None:
@@ -278,7 +281,7 @@ class TestModelDiscoveryTrust:
         discovery_cwd.mkdir(parents=True)
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = authorize_model_discovery_trust("gemini", discovery_cwd)
+            result = await authorize_model_discovery_trust("gemini", discovery_cwd)
 
         assert result.success is True
         assert result.skipped is False
@@ -290,11 +293,12 @@ class TestModelDiscoveryTrust:
         )
 
     @pytest.mark.parametrize("cli", ["claude", "codex", "droid", "unknown"])
-    def test_unsupported_cli_skips_without_writes(self, cli: str, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_unsupported_cli_skips_without_writes(self, cli: str, tmp_path: Path) -> None:
         discovery_cwd = tmp_path / "gobby-home" / "provider-model-discovery" / cli
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = authorize_model_discovery_trust(cli, discovery_cwd)
+            result = await authorize_model_discovery_trust(cli, discovery_cwd)
 
         assert result.success is True
         assert result.skipped is True

@@ -12,7 +12,7 @@ import {
   Legend,
 } from 'recharts'
 import { useMetricSnapshots, type MetricSnapshot } from '../../hooks/useMetrics'
-import { chartSeries } from '../../lib/chartSeries'
+import { metricChartSeries } from '../../lib/chartSeries'
 import { DashboardCard } from './DashboardCard'
 import {
   dashboardChartCellClass,
@@ -184,8 +184,8 @@ export function MetricsChartsCard({ hours }: Props) {
                     <Tooltip
                       contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
-                    <Line yAxisId="mem" type="monotone" dataKey="memoryMb" name="Memory (MB)" stroke={chartSeries[0].stroke} strokeDasharray={chartSeries[0].dash} dot={false} />
-                    <Line yAxisId="cpu" type="monotone" dataKey="cpuPercent" name="CPU (%)" stroke={chartSeries[2].stroke} strokeDasharray={chartSeries[2].dash} dot={false} />
+                    <Line yAxisId="mem" type="monotone" dataKey="memoryMb" name="Memory (MB)" stroke={metricChartSeries.memory.stroke} strokeDasharray={metricChartSeries.memory.dash} dot={false} />
+                    <Line yAxisId="cpu" type="monotone" dataKey="cpuPercent" name="CPU (%)" stroke={metricChartSeries.cpu.stroke} strokeDasharray={metricChartSeries.cpu.dash} dot={false} />
                     <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -204,8 +204,8 @@ export function MetricsChartsCard({ hours }: Props) {
                     <Tooltip
                       contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
-                    <Line type="monotone" dataKey="httpLatencyMs" name="HTTP" stroke={chartSeries[1].stroke} strokeDasharray={chartSeries[1].dash} dot={false} />
-                    <Line type="monotone" dataKey="mcpLatencyMs" name="MCP" stroke={chartSeries[4].stroke} strokeDasharray={chartSeries[4].dash} dot={false} />
+                    <Line type="monotone" dataKey="httpLatencyMs" name="HTTP" stroke={metricChartSeries.httpLatency.stroke} strokeDasharray={metricChartSeries.httpLatency.dash} dot={false} />
+                    <Line type="monotone" dataKey="mcpLatencyMs" name="MCP" stroke={metricChartSeries.mcpLatency.stroke} strokeDasharray={metricChartSeries.mcpLatency.dash} dot={false} />
                     <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                   </LineChart>
                 </ResponsiveContainer>

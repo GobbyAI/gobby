@@ -13,10 +13,10 @@ from gobby.workflows.selectors import (
     _match_rule,
     _match_skill,
     parse_selector,
-    rule_matches_agent,
     resolve_rules_for_agent,
     resolve_skills_for_agent,
     resolve_variables_for_agent,
+    rule_matches_agent,
 )
 
 pytestmark = pytest.mark.unit
@@ -355,6 +355,7 @@ def test_resolve_rules_tag_exclude_sync() -> None:
 
 
 def test_rule_matches_agent_applies_explicit_include_and_selector_exclude() -> None:
+    """Apply explicit rule includes before selector include and exclude filters."""
     agent = MagicMock()
     agent.workflows.rules = ["explicit-rule"]
     agent.workflows.rule_selectors = MagicMock()

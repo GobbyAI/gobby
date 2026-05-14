@@ -312,7 +312,7 @@ class TestProviderModelCatalog:
         gobby_home = temp_dir / "gobby-home"
         expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
 
-        def record_trust(_cli: str, _cwd: Path) -> None:
+        async def record_trust(_cli: str, _cwd: Path) -> None:
             order.append("trust")
 
         with (
@@ -320,7 +320,7 @@ class TestProviderModelCatalog:
             patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
             patch(
                 "gobby.servers.provider_models.authorize_model_discovery_trust",
-                side_effect=record_trust,
+                new=AsyncMock(side_effect=record_trust),
             ) as authorize_trust,
             patch("gobby.agents.trust.pre_approve_directory") as pre_approve,
         ):
@@ -332,7 +332,7 @@ class TestProviderModelCatalog:
         assert Path(kwargs["cwd"]) == expected_cwd
         assert Path(kwargs["cwd"]).is_absolute()
         assert kwargs["request_timeout"] > 30.0
-        authorize_trust.assert_called_once_with("gemini", expected_cwd)
+        authorize_trust.assert_awaited_once_with("gemini", expected_cwd)
         pre_approve.assert_not_called()
         assert order == ["trust", "start"]
         assert client_cls.call_count == 1

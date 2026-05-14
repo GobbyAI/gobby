@@ -237,7 +237,9 @@ rules:
 class TestSyncBundledPipelines:
     """Tests for sync_bundled_pipelines edge cases."""
 
+    @pytest.mark.integration
     def test_expand_task_fails_run_before_validation(self) -> None:
+        """Keep fail_run before validate_run in the bundled expand-task pipeline."""
         path = Path("src/gobby/install/shared/workflows/pipelines/expand-task.yaml")
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         step_ids = [step["id"] for step in data["steps"]]

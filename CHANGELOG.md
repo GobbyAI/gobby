@@ -8,6 +8,35 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4]
+
+A patch release focused on provider model discovery reliability, web session
+detail error handling, voice warmup cleanup, and follow-up review hardening
+since `0.4.3`.
+
+### Changed
+
+- Run Gemini/Qwen model-discovery trust seeding off the event loop while
+  preserving unsupported-CLI no-op behavior (#14671).
+- Replace raw dashboard metric chart-series indexes with named series mapping
+  and normalize heading levels before rendering heading tags (#14671).
+
+### Fixed
+
+- Surface selected-session metadata refresh failures in the Sessions tab and
+  clear stale detail state when a selected session can no longer be loaded
+  (#14671).
+- Bound voice warmup throttling cache growth by pruning expired warmup entries
+  before reuse (#14671).
+- Polish canvas checkbox accent/focus styling, deterministic web-chat session
+  registry test paths, workflow marker coverage, and donut full-circle arc
+  naming (#14671).
+
+### Release
+
+- Add changelog metadata for the already-bumped `0.4.4` package version
+  (#14671).
+
 ## [0.4.3]
 
 A patch release focused on build-profile delivery, build isolation controls,

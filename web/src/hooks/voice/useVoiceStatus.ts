@@ -9,6 +9,14 @@ function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnab
   return `${conversationId}:${sttEnabled}:${ttsEnabled}`
 }
 
+function pruneVoicePrepareSentAt(now: number) {
+  for (const [key, sentAt] of voicePrepareSentAt) {
+    if (now - sentAt >= VOICE_PREPARE_RETRY_MS) {
+      voicePrepareSentAt.delete(key)
+    }
+  }
+}
+
 interface VoiceStatusOptions {
   wsRef: RefObject<WebSocket | null>
   conversationId: string
@@ -108,8 +116,9 @@ export function useVoiceStatus({
     if (!socketConnected || voiceReady) return
 
     const warmupKey = getVoicePrepareKey(conversationId, sttEnabled, ttsEnabled)
-    const lastSentAt = voicePrepareSentAt.get(warmupKey)
     const now = Date.now()
+    pruneVoicePrepareSentAt(now)
+    const lastSentAt = voicePrepareSentAt.get(warmupKey)
     if (lastSentAt !== undefined && now - lastSentAt < VOICE_PREPARE_RETRY_MS) return
 
     const ws = wsRef.current

@@ -277,6 +277,90 @@ describe('useSessionDetail', () => {
     })
   })
 
+  it('shows an error and clears stale detail when selected session refresh disappears', async () => {
+    await loadModule()
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let sessionFetchCount = 0
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-cli$/.test(url)) {
+        sessionFetchCount += 1
+        if (sessionFetchCount > 1) {
+          return new Response(JSON.stringify({ detail: 'missing' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-cli',
+              external_id: 'cli-ext-1',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (url.includes('/api/sessions/sess-cli/messages?limit=10000&offset=0')) {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-1',
+                role: 'assistant',
+                content: 'Initial output',
+                timestamp: '2026-04-09T00:00:00Z',
+              },
+            ],
+            total_count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.session?.id).toBe('sess-cli')
+    expect(result.current.messages).toHaveLength(1)
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-cli',
+      })
+    })
+
+    await waitFor(() => {
+      expect(result.current.sessionError).toBe(
+        'Session metadata is unavailable. It may have expired or been deleted.',
+      )
+      expect(result.current.session).toBeNull()
+      expect(result.current.messages).toHaveLength(0)
+      expect(result.current.totalMessages).toBe(0)
+    })
+    expect(warnSpy).toHaveBeenCalledWith('Session fetch returned 404')
+  })
+
   it('clears selected session metadata after a matching delete event', async () => {
     await loadModule()
     mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-cli$/, {

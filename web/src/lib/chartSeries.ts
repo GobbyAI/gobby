@@ -15,3 +15,10 @@ export const chartSeries: readonly ChartSeriesEntry[] = [
 export function chartSeriesAt(index: number): ChartSeriesEntry {
   return chartSeries[index % chartSeries.length]
 }
+
+export const metricChartSeries = {
+  memory: chartSeriesAt(0),
+  httpLatency: chartSeriesAt(1),
+  cpu: chartSeriesAt(2),
+  mcpLatency: chartSeriesAt(4),
+} as const

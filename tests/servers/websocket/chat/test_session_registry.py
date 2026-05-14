@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -157,7 +156,7 @@ def _web_chat_session(
     session = MagicMock()
     session.db_session_id = db_session_id
     session.seq_num = 42
-    session.project_path = str(Path.cwd())
+    session.project_path = "/tmp/test-project"
     session.project_id = project_id
     session.provider = "claude"
     return session

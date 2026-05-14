@@ -463,6 +463,7 @@ export const SessionsTab = memo(function SessionsTab({
 
   const {
     session: selectedSessionDetail,
+    sessionError,
     messages,
     isLoading: isLoadingDetail,
     transcriptStatus,
@@ -840,6 +841,15 @@ export const SessionsTab = memo(function SessionsTab({
               )}
             </div>
           </div>
+
+          {sessionError && (
+            <div
+              role="alert"
+              className="border-b border-border px-3 py-2 text-sm text-[var(--color-error)]"
+            >
+              {sessionError}
+            </div>
+          )}
 
           <ArtifactContext.Provider value={noopArtifactCtx}>
             {contentMode === "summary" ? (
