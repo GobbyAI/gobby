@@ -22,7 +22,7 @@ export const A2UICheckBox: React.FC<A2UIComponentProps> = ({ componentId, def, d
         checked={checked}
         onChange={handleChange}
         disabled={completed || def.disabled}
-        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+        className="h-4 w-4 rounded border-[var(--border)] text-primary focus:ring-primary"
       />
       {label && (
         <label
