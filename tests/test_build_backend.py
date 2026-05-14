@@ -101,6 +101,62 @@ def test_stage_ui_reuses_pre_staged_when_no_web(
     assert (staged_dir / "index.html").read_text() == "pre-staged"
 
 
+def test_stage_ui_runs_npm_commands_with_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    web = repo_root / "web"
+    web.mkdir()
+    (web / "package.json").write_text("{}")
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
+    calls: list[tuple[list[str], Path, bool, int]] = []
+
+    def fake_run(command: list[str], *, cwd: Path, check: bool, timeout: int) -> None:
+        calls.append((command, cwd, check, timeout))
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+
+    backend._stage_ui()
+
+    assert calls == [
+        (["npm", "ci"], web, True, 600),
+        (["npm", "run", "build"], web, True, 600),
+    ]
+
+
+def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    web = repo_root / "web"
+    web.mkdir()
+    (web / "package.json").write_text("{}")
+
+    backend = _load_backend(repo_root)
+    monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
+
+    def fake_run(command: list[str], *, cwd: Path, check: bool, timeout: int) -> None:
+        raise backend.subprocess.TimeoutExpired(cmd=command, timeout=timeout)
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._stage_ui()
+
+    message = str(exc_info.value)
+    assert "npm ci" in message
+    assert str(web) in message
+    assert "600" in message
+
+
 def test_build_wheel_accepts_wheel_with_ui_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

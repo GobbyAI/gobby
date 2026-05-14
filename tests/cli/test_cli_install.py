@@ -210,6 +210,16 @@ class TestInstallCommand:
         assert "--hooks" in result.output
         assert "--all" in result.output
 
+    @pytest.mark.parametrize("embedding_dim", ["0", "-1"])
+    def test_install_rejects_non_positive_embedding_dim(
+        self, runner: CliRunner, embedding_dim: str
+    ) -> None:
+        """--embedding-dim must be rejected by Click before install orchestration runs."""
+        result = runner.invoke(cli, ["install", "--embedding-dim", embedding_dim])
+
+        assert result.exit_code == 2
+        assert "Invalid value for '--embedding-dim'" in result.output
+
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")

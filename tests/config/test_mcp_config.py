@@ -527,6 +527,7 @@ class TestMigrateLegacyMcpConfig:
 
         assert not legacy.exists()
         assert new.read_text() == '{"servers": []}'
+        assert (new.stat().st_mode & 0o777) == 0o600
 
     def test_no_op_when_legacy_missing(self, tmp_path) -> None:
         legacy = tmp_path / ".mcp.json"
@@ -555,3 +556,29 @@ class TestMigrateLegacyMcpConfig:
 
         assert new.parent.exists()
         assert new.read_text() == '{"servers": []}'
+
+    def test_replace_failure_falls_back_to_copy_and_unlink(self, tmp_path) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text('{"servers": []}')
+
+        with patch.object(Path, "replace", side_effect=OSError("cross-device link")):
+            assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is True
+
+        assert not legacy.exists()
+        assert new.read_text() == '{"servers": []}'
+        assert (new.stat().st_mode & 0o777) == 0o600
+
+    def test_fallback_failure_returns_false_and_leaves_legacy(self, tmp_path) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text('{"servers": []}')
+
+        with (
+            patch.object(Path, "replace", side_effect=OSError("cross-device link")),
+            patch("gobby.config.mcp.shutil.copy2", side_effect=OSError("copy failed")),
+        ):
+            assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
+
+        assert legacy.read_text() == '{"servers": []}'
+        assert not new.exists()

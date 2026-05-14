@@ -164,7 +164,7 @@ __all__ = [
 @click.option(
     "--embedding-dim",
     "embedding_dim",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Override the embedding dimension. Omit to auto-detect via /v1/embeddings probe.",
 )

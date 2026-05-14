@@ -12,6 +12,7 @@ with Claude Code's project-level ``.mcp.json`` schema (Claude Code's
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -60,8 +61,55 @@ def migrate_legacy_mcp_config(
         )
         return False
 
-    new.parent.mkdir(parents=True, exist_ok=True)
-    legacy.replace(new)
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.warning("Failed to create MCP config directory %s: %s", new.parent, exc)
+        return False
+
+    try:
+        legacy.replace(new)
+    except OSError as replace_exc:
+        logger.warning(
+            "Failed to move legacy MCP config %s -> %s with replace (%s); "
+            "attempting copy/unlink fallback.",
+            legacy,
+            new,
+            replace_exc,
+        )
+        try:
+            shutil.copy2(legacy, new)
+        except OSError as copy_exc:
+            logger.warning(
+                "Failed to copy legacy MCP config %s -> %s: %s",
+                legacy,
+                new,
+                copy_exc,
+            )
+            return False
+        try:
+            legacy.unlink()
+        except OSError as unlink_exc:
+            logger.warning(
+                "Copied legacy MCP config %s -> %s but failed to remove legacy file: %s",
+                legacy,
+                new,
+                unlink_exc,
+            )
+            return False
+
+    try:
+        new.chmod(0o600)
+    except OSError as chmod_exc:
+        logger.warning(
+            "Migrated MCP config %s -> %s but failed to set permissions on %s: %s",
+            legacy,
+            new,
+            new,
+            chmod_exc,
+        )
+        return False
+
     logger.info("Migrated MCP config %s -> %s", legacy, new)
     return True
 

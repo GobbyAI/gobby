@@ -58,6 +58,23 @@ _WEB_SRC = _REPO_ROOT / "web"
 _DIST_SRC = _WEB_SRC / "dist"
 _WHEEL_DEST = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
 _WHEEL_UI_INDEX = "gobby/ui/web/dist/index.html"
+_NPM_BUILD_TIMEOUT_SECONDS = 600
+
+
+def _run_npm_command(command: list[str]) -> None:
+    try:
+        subprocess.run(  # nosec B603 B607
+            command,
+            cwd=_WEB_SRC,
+            check=True,
+            timeout=_NPM_BUILD_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        command_text = " ".join(command)
+        raise RuntimeError(
+            f"Timed out running {command_text!r} in {_WEB_SRC} "
+            f"after {_NPM_BUILD_TIMEOUT_SECONDS} seconds"
+        ) from exc
 
 
 def _stage_ui() -> None:
@@ -70,8 +87,8 @@ def _stage_ui() -> None:
 
     if have_source and have_npm:
         logger.info("Building web UI in %s", _WEB_SRC)
-        subprocess.run(["npm", "ci"], cwd=_WEB_SRC, check=True)  # nosec B603 B607
-        subprocess.run(["npm", "run", "build"], cwd=_WEB_SRC, check=True)  # nosec B603 B607
+        _run_npm_command(["npm", "ci"])
+        _run_npm_command(["npm", "run", "build"])
 
     if not _DIST_SRC.exists():
         if _WHEEL_DEST.exists():
