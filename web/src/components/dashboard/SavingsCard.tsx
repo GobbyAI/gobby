@@ -1,15 +1,11 @@
 import { useSavings } from '../../hooks/useSavings'
 import { useUsage } from '../../hooks/useUsage'
-import { cn } from '../../lib/utils'
 import { DashboardCard } from './DashboardCard'
 import {
-  dashboardBigStatClass,
   dashboardBreakdownClass,
   dashboardBreakdownLabelClass,
   dashboardBreakdownRowClass,
   dashboardBreakdownValueClass,
-  dashboardEfficiencyClass,
-  dashboardMetaTextClass,
   dashboardSingleStatGridClass,
   dashboardStatClass,
   dashboardStatLabelClass,
@@ -50,17 +46,12 @@ export function SavingsCard({ hours, projectId }: Props) {
 
   return (
     <DashboardCard title="Savings">
-      <div className={cn(dashboardBigStatClass, 'text-success-foreground')}>
-        {formatTokens(tokensSaved)}
-      </div>
-      <div className={dashboardMetaTextClass}>
-          Tokens Saved
-          {efficiencyPct > 0 && (
-            <span className={cn('ml-2', dashboardEfficiencyClass(efficiencyPct))}>
-              {efficiencyPct}% efficiency
-            </span>
-          )}
-      </div>
+      <p className="mb-3 text-[length:var(--text-base)] leading-snug text-foreground">
+        Saved <strong className="font-semibold">{formatTokens(tokensSaved)}</strong> tokens
+        {efficiencyPct > 0 && (
+          <span className="text-muted-foreground"> — {efficiencyPct}% efficient.</span>
+        )}
+      </p>
       <div className={dashboardSingleStatGridClass}>
         <div className={dashboardStatClass}>
           <span className={dashboardStatValueClass}>{data?.total_events ?? 0}</span>

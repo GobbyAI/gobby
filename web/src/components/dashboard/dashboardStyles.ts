@@ -54,12 +54,6 @@ export const dashboardStatValueClass =
 export const dashboardStatLabelClass =
   'mt-0.5 text-[11px] text-muted-foreground'
 
-export const dashboardBigStatClass =
-  'mb-2 text-[28px] font-semibold leading-none text-foreground'
-
-export const dashboardMetaTextClass =
-  'mb-3 text-[11px] text-muted-foreground'
-
 export const dashboardBreakdownClass =
   'mt-3 flex flex-col gap-1 border-t border-border pt-2.5'
 
