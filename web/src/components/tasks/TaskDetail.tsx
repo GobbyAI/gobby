@@ -225,7 +225,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
                   ← Parent task
                 </button>
               )}
-              <h2 id="task-detail-title" className={TITLE_CLS}>{task.title}</h2>
+              <Heading level={2} id="task-detail-title" className={TITLE_CLS}>{task.title}</Heading>
               <div className={BADGES_CLS}>
                 <TaskStateBadges task={task} />
                 <PriorityBadge priority={task.priority} />

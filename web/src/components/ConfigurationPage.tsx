@@ -78,6 +78,7 @@ import {
 import { SchemaField, SchemaSection } from './ConfigurationPage.SchemaField'
 import { SecretsTab } from './ConfigurationPage.SecretsTab'
 import { TemplateTab } from './ConfigurationPage.TemplateTab'
+import { Heading } from './shared/Heading'
 
 type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
 
@@ -654,7 +655,7 @@ function VariablesTab() {
   return (
     <div className={SECRETS_CLS}>
       <div className={SECRETS_HEADER_CLS}>
-        <h3 className={SECRETS_HEADER_H3_CLS}>Variable Defaults</h3>
+        <Heading level={3} className={SECRETS_HEADER_H3_CLS}>Variable Defaults</Heading>
         <button type="button"
           className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)}
           onClick={() => {
@@ -868,7 +869,7 @@ export function ConfigurationPage() {
 
   return (
     <div className={PAGE_CLS}>
-      <h1 className="sr-only">Configuration</h1>
+      <Heading level={1} className="sr-only">Configuration</Heading>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
           <div ref={tabsRef} className={TABS_CLS} style={{ boxShadow: tabsBoxShadow }}>

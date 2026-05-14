@@ -1,4 +1,5 @@
 import { lazy, type ReactElement } from "react";
+import { Heading } from '../shared/Heading'
 
 export const MemoryPage = lazy(() =>
   import("../memory/MemoryPage").then((m) => ({
@@ -63,7 +64,7 @@ export function ComingSoonPage({ title }: { title: string }): ReactElement {
   return (
     <main className="coming-soon-page">
       <div className="coming-soon-content">
-        <h2>{title}</h2>
+        <Heading level={2}>{title}</Heading>
         <p>Coming Soon</p>
       </div>
     </main>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { GobbyMemory } from '../../hooks/useMemory'
 import { inputFocusCls } from '../shared/focusStyles'
+import { Heading } from '../shared/Heading'
 
 interface MemoryFormProps {
   memory: GobbyMemory | null
@@ -80,9 +81,9 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h2 id="memory-form-title" className="m-0 text-[length:var(--text-xl)] text-[var(--text-primary)]">
+          <Heading level={2} id="memory-form-title" className="m-0 text-[length:var(--text-xl)] text-[var(--text-primary)]">
             {isEdit ? 'Edit Memory' : 'Create Memory'}
-          </h2>
+          </Heading>
           <button
             type="button"
             className="flex h-8 w-8 cursor-pointer items-center justify-center border-0 bg-transparent p-1 text-[length:var(--text-2xl)] leading-none text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11"

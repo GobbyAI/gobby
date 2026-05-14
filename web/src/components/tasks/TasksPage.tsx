@@ -23,6 +23,7 @@ import {
   type TaskDisplayState,
 } from '../../lib/taskState'
 import { inputFocusCls } from '../shared/focusStyles'
+import { Heading } from '../shared/Heading'
 
 // =============================================================================
 // Tailwind class constants
@@ -453,7 +454,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     <main className={PAGE_CLS}>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h1 className={TITLE_CLS}>Tasks</h1>
+          <Heading level={1} className={TITLE_CLS}>Tasks</Heading>
           <div className={GROUP_TABS_CLS}>
             <button className={cn(GROUP_TAB_CLS, groupBy === 'all' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('all')}>All Tasks</button>
             <button className={cn(GROUP_TAB_CLS, groupBy === 'agent' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('agent')}>By Agent</button>

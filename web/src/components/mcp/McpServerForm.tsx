@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
+import { Heading } from '../shared/Heading'
 
 const MODAL_OVERLAY_CLS =
   'fixed inset-0 z-[1000] flex items-center justify-center bg-[var(--surface-scrim)]'
@@ -83,7 +84,7 @@ export function McpAddServerModal({ onAdd, onClose }: McpAddServerModalProps) {
   return (
     <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
       <form ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="mcp-add-server-title" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h2 id="mcp-add-server-title" className={MODAL_TITLE_CLS}>Add MCP Server</h2>
+        <Heading level={2} id="mcp-add-server-title" className={MODAL_TITLE_CLS}>Add MCP Server</Heading>
 
         {error && <div className={FORM_ERROR_CLS}>{error}</div>}
 
@@ -209,7 +210,7 @@ export function McpImportModal({ onImport, onClose }: McpImportModalProps) {
   return (
     <div className={MODAL_OVERLAY_CLS} onClick={onClose}>
       <form ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="mcp-import-server-title" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <h2 id="mcp-import-server-title" className={MODAL_TITLE_CLS}>Import MCP Server</h2>
+        <Heading level={2} id="mcp-import-server-title" className={MODAL_TITLE_CLS}>Import MCP Server</Heading>
 
         <div className={IMPORT_TABS_CLS}>
           <button

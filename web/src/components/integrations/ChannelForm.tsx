@@ -22,6 +22,7 @@ import {
   FORM_CHANGE_BTN_CLS,
   EMPTY_CARD_CLS,
 } from './styles'
+import { Heading } from '../shared/Heading'
 
 const FORM_TYPE_GRID_CLS =
   'grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]'
@@ -188,7 +189,7 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
           onClick={e => e.stopPropagation()}
         >
           <div className={MODAL_HEADER_CLS}>
-            <h2 id="channel-type-title" className={MODAL_HEADER_TITLE_CLS}>Add Integration</h2>
+            <Heading level={2} id="channel-type-title" className={MODAL_HEADER_TITLE_CLS}>Add Integration</Heading>
             <button type="button" className={MODAL_CLOSE_CLS} onClick={onClose} aria-label="Close">&times;</button>
           </div>
           <div className={MODAL_BODY_CLS}>
@@ -224,7 +225,7 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
         onSubmit={handleSubmit}
       >
         <div className={MODAL_HEADER_CLS}>
-          <h2 id="channel-form-title" className={MODAL_HEADER_TITLE_CLS}>{mode === 'add' ? 'Add' : 'Edit'} {selectedType ? CHANNEL_DISPLAY_NAMES[selectedType] : ''} Channel</h2>
+          <Heading level={2} id="channel-form-title" className={MODAL_HEADER_TITLE_CLS}>{mode === 'add' ? 'Add' : 'Edit'} {selectedType ? CHANNEL_DISPLAY_NAMES[selectedType] : ''} Channel</Heading>
           <button type="button" className={MODAL_CLOSE_CLS} onClick={onClose} aria-label="Close">&times;</button>
         </div>
 

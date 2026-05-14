@@ -67,6 +67,7 @@ import {
   TYPE_BADGE_BASE_CLS,
 } from "./ReportsPage.styles";
 import "./reports-page.css";
+import { Heading } from '../shared/Heading'
 
 export function ReportsPage({
   projectId,
@@ -295,7 +296,7 @@ export function ReportsPage({
     <main className={PAGE_CLS}>
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h1 className={TITLE_CLS}>Reports</h1>
+          <Heading level={1} className={TITLE_CLS}>Reports</Heading>
           <SegmentedControl<SubTab>
             value={subTab}
             onChange={setSubTab}

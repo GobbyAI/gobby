@@ -8,6 +8,7 @@ import {
   TASK_MODAL_CLOSE_BTN_CLS,
   TASK_MODAL_HEADER_CLS,
 } from './taskModalStyles'
+import { Heading } from '../shared/Heading'
 
 export interface TaskCreateDefaults {
   taskType?: string
@@ -147,7 +148,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
         onClick={e => e.stopPropagation()}
       >
         <div className={TASK_MODAL_HEADER_CLS}>
-          <h2 id="task-create-form-title" className={TITLE_CLS}>{defaults?.title ? 'Clone Task' : 'New Task'}</h2>
+          <Heading level={2} id="task-create-form-title" className={TITLE_CLS}>{defaults?.title ? 'Clone Task' : 'New Task'}</Heading>
           <button
             type="button"
             className={TASK_MODAL_CLOSE_BTN_CLS}

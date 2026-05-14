@@ -9,6 +9,7 @@ import {
   getReasoningOptionsForModel,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
+import { Heading } from '../shared/Heading'
 
 interface LaunchAgentDialogProps {
   isOpen: boolean
@@ -237,7 +238,7 @@ export function LaunchAgentDialog({
           onClick={e => e.stopPropagation()}
         >
           <div className={HEADER_CLS}>
-            <h2 id="launch-agent-result-title" className={TITLE_CLS}>Agent Launched</h2>
+            <Heading level={2} id="launch-agent-result-title" className={TITLE_CLS}>Agent Launched</Heading>
             <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
           </div>
           <div className={SUCCESS_CLS}>
@@ -267,9 +268,9 @@ export function LaunchAgentDialog({
         onClick={e => e.stopPropagation()}
       >
         <div className={HEADER_CLS}>
-          <h2 id="launch-agent-title" className={TITLE_CLS}>
+          <Heading level={2} id="launch-agent-title" className={TITLE_CLS}>
             <RocketIcon /> Launch Agent
-          </h2>
+          </Heading>
           <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
         </div>
 
@@ -521,7 +522,7 @@ export function BatchLaunchAgentDialog({
           onClick={e => e.stopPropagation()}
         >
           <div className={HEADER_CLS}>
-            <h2 id="batch-launch-result-title" className={TITLE_CLS}>Batch Launch Complete</h2>
+            <Heading level={2} id="batch-launch-result-title" className={TITLE_CLS}>Batch Launch Complete</Heading>
             <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
           </div>
           <div className={SUCCESS_CLS}>
@@ -551,9 +552,9 @@ export function BatchLaunchAgentDialog({
         onClick={e => e.stopPropagation()}
       >
         <div className={HEADER_CLS}>
-          <h2 id="batch-launch-title" className={TITLE_CLS}>
+          <Heading level={2} id="batch-launch-title" className={TITLE_CLS}>
             <RocketIcon /> Launch Agents ({activeCount} task{activeCount !== 1 ? 's' : ''})
-          </h2>
+          </Heading>
           <button className={CLOSE_CLS} onClick={onClose} aria-label="Close"><CloseIcon /></button>
         </div>
 

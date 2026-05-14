@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import type { GitCommit, DiffResult } from '../../hooks/useSourceControl'
 import { DiffViewer } from './DiffViewer'
+import { Heading } from '../shared/Heading'
 
 interface Props {
   branchName: string
@@ -60,7 +61,7 @@ export function BranchDetail({ branchName, currentBranch, fetchCommits, fetchDif
   return (
     <div className="sc-detail-panel">
       <div className="sc-detail-panel__header">
-        <h3 className="sc-detail-panel__title">{branchName}</h3>
+        <Heading level={3} className="sc-detail-panel__title">{branchName}</Heading>
         <button className="sc-detail-panel__close" onClick={onClose} aria-label="Close">
           &times;
         </button>
@@ -83,7 +84,7 @@ export function BranchDetail({ branchName, currentBranch, fetchCommits, fetchDif
       )}
 
       <div className="sc-detail-panel__body">
-        <h4 className="sc-detail-panel__subtitle">Recent Commits</h4>
+        <Heading level={4} className="sc-detail-panel__subtitle">Recent Commits</Heading>
         {loading ? (
           <p className="sc-text-muted">Loading...</p>
         ) : error ? (

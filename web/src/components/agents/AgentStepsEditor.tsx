@@ -34,6 +34,7 @@ import {
   STEP_TRANSITION_TO_CLS,
   STEP_TRANSITION_WHEN_CLS,
 } from './agents-styles'
+import { Heading } from '../shared/Heading'
 
 // ---------------------------------------------------------------------------
 // Types (mirrors WorkflowStep / WorkflowTransition from definitions.py)
@@ -150,7 +151,7 @@ function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (
 
   return (
     <div className={STEP_SECTION_CLS}>
-      <h5 className={STEP_SECTION_LABEL_CLS}>Tool Gating</h5>
+      <Heading level={5} className={STEP_SECTION_LABEL_CLS}>Tool Gating</Heading>
 
       {/* Allowed Tools */}
       <div className={STEP_FIELD_CLS}>
@@ -246,7 +247,7 @@ function TransitionsSection({ step, onChange, allStepNames }: {
 
   return (
     <div className={STEP_SECTION_CLS}>
-      <h5 className={STEP_SECTION_LABEL_CLS}>Transitions</h5>
+      <Heading level={5} className={STEP_SECTION_LABEL_CLS}>Transitions</Heading>
       {transitions.map((t, idx) => (
         <div key={idx} className={STEP_TRANSITION_ROW_CLS}>
           <select

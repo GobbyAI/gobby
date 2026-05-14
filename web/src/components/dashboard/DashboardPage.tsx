@@ -21,6 +21,7 @@ import {
   dashboardToolbarControlsClass,
   dashboardToolbarUpdatedClass,
 } from './dashboardStyles'
+import { Heading } from '../shared/Heading'
 
 function formatTime(date: Date | null): string {
   if (!date) return ''
@@ -39,7 +40,7 @@ export function DashboardPage() {
     <main className={dashboardPageClass}>
       <div className={dashboardToolbarClass}>
         <div className="flex items-center gap-3">
-          <h1 className="m-0 text-lg font-semibold text-foreground">Dashboard</h1>
+          <Heading level={1} className="m-0 text-lg font-semibold text-foreground">Dashboard</Heading>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between md:justify-end">
           <div className={dashboardToolbarControlsClass}>

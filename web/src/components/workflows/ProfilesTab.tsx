@@ -28,6 +28,7 @@ import {
   WORKFLOWS_TOGGLE_TRACK_CLS,
   WORKFLOWS_TOGGLE_TRACK_ON_CLS,
 } from "./workflows-styles";
+import { Heading } from '../shared/Heading'
 
 type SourceFilter = "installed" | "project" | "templates" | "deleted";
 type ProfileSource = "installed" | "project";
@@ -381,7 +382,7 @@ function ProfileEditor({
   return (
     <aside className={`${WORKFLOWS_CARD_CLS} overflow-y-auto`}>
       <div className={WORKFLOWS_CARD_HEADER_CLS}>
-        <h2 className={WORKFLOWS_CARD_NAME_CLS}>{creating ? "New Profile" : draft.name}</h2>
+        <Heading level={2} className={WORKFLOWS_CARD_NAME_CLS}>{creating ? "New Profile" : draft.name}</Heading>
       </div>
       {error && <div className="mb-2 text-sm text-[var(--color-error)]">{error}</div>}
       <label>

@@ -5,6 +5,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { McpToolDetail } from './McpToolDetail'
 import { McpAddServerModal, McpImportModal } from './McpServerForm'
 import { cn } from '../../lib/utils'
+import { Heading } from '../shared/Heading'
 
 const TRANSPORTS = ['internal', 'http', 'stdio', 'websocket', 'sse'] as const
 
@@ -208,7 +209,7 @@ export function McpPage() {
       {/* Toolbar */}
       <div className={TOOLBAR_CLS}>
         <div className={TOOLBAR_LEFT_CLS}>
-          <h1 className={TOOLBAR_TITLE_CLS}>MCP Servers</h1>
+          <Heading level={1} className={TOOLBAR_TITLE_CLS}>MCP Servers</Heading>
         </div>
         <div className={TOOLBAR_RIGHT_CLS}>
           <input

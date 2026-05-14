@@ -1,5 +1,6 @@
 import { useState, useCallback, type FormEvent } from 'react'
 import { GobbyLogo } from '../shared/GobbyLogo'
+import { Heading } from '../shared/Heading'
 
 interface LoginPageProps {
   onLogin: (username: string, password: string, rememberMe: boolean) => Promise<string | null>
@@ -26,7 +27,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       <form onSubmit={handleSubmit} style={styles.card}>
         <div style={styles.logoRow}>
           <GobbyLogo label="Gobby" size={36} />
-          <h1 style={styles.title}>Gobby</h1>
+          <Heading level={1} style={styles.title}>Gobby</Heading>
         </div>
         <p style={styles.subtitle}>Sign in to continue</p>
 

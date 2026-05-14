@@ -19,6 +19,7 @@ import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 import type { SessionsFilters } from "./sessionsFilters";
+import { Heading } from '../shared/Heading'
 
 export type ActivityTab =
   | "sessions"
@@ -461,7 +462,7 @@ export function ActivityPanel({
     return (
       <div className="activity-panel-mobile-overlay">
         <aside className="activity-panel" aria-labelledby="activity-panel-title">
-          <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
+          <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
           <div className="activity-panel-tabs">
             <ActivityDropdown
               tabs={TABS}
@@ -524,7 +525,7 @@ export function ActivityPanel({
           flexShrink: 1,
         }}
       >
-        <h1 id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</h1>
+        <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
         <div className="activity-panel-tabs">
           <ActivityDropdown
             tabs={TABS}

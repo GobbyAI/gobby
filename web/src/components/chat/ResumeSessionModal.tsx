@@ -4,6 +4,7 @@ import type { GobbySession } from "../../types/sessions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { getSessionTitleText } from "../../lib/sessionTitle";
 import { getSourceColorVar, SOURCE_LABELS } from "../shared/sourceTheme";
+import { Heading } from '../shared/Heading'
 
 interface ResumeSessionModalProps {
   isOpen: boolean;
@@ -88,9 +89,9 @@ export function ResumeSessionModal({
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-2xl h-[70vh] p-0 overflow-hidden flex flex-col">
         <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)" }}>
-          <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>
+          <Heading level={2} style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>
             Resume Session
-          </h2>
+          </Heading>
           <p style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted)" }}>
             Pick a session to resume in web chat with full conversation context.
           </p>

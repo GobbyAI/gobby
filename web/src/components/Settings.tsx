@@ -1,6 +1,7 @@
 import type { Settings, Theme } from '../hooks/useSettings'
 import type { ChatMode } from '../types/chat'
 import { CHAT_MODES } from '../types/chat'
+import { Heading } from './shared/Heading'
 
 interface SettingsProps {
   isOpen: boolean
@@ -30,7 +31,7 @@ export function Settings({
       <div className="settings-overlay" onClick={onClose} />
       <div className="settings-panel">
         <div className="settings-header">
-          <h2>Settings</h2>
+          <Heading level={2}>Settings</Heading>
           <button
             type="button"
             className="close-button"

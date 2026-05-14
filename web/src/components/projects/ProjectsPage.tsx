@@ -10,6 +10,7 @@ import { PullRequestsView } from "../source-control/PullRequestsView";
 import { IssuesView } from "../source-control/IssuesView";
 import { CICDView } from "../source-control/CICDView";
 import { FilesTab } from "../activity/FilesTab";
+import { Heading } from '../shared/Heading'
 
 const PAGE_CLS = "flex flex-1 flex-col overflow-hidden";
 const PAGE_HEADER_CLS = "shrink-0 px-6 max-md:px-3";
@@ -92,7 +93,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
 
   return (
     <main className={PAGE_CLS}>
-      <h1 className="sr-only">{headingText}</h1>
+      <Heading level={1} className="sr-only">{headingText}</Heading>
       <div className={PAGE_HEADER_CLS}>
         <TabBar
           tabs={TABS}

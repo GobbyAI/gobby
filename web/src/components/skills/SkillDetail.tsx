@@ -4,6 +4,7 @@ import { MemoizedMarkdown } from '../shared/MemoizedMarkdown'
 import { SkillScanPanel } from './SkillScanPanel'
 import { cn } from '../../lib/utils'
 import { SOURCE_BADGE_CLS, SOURCE_BADGE_BG } from './styles'
+import { Heading } from '../shared/Heading'
 
 const DETAIL_CLS =
   'fixed bottom-0 right-0 top-12 z-50 flex w-[480px] max-w-[90vw] flex-col overflow-y-auto border-l border-[var(--border)] bg-[var(--bg-primary)] [box-shadow:-4px_0_12px_oklch(0%_0_0_/_0.1)] max-md:w-screen max-md:max-w-none max-md:border-l-0 max-md:shadow-none'
@@ -65,7 +66,7 @@ export function SkillDetail({ skill, onClose, onEdit, onExport, onScan }: SkillD
   return (
     <aside className={DETAIL_CLS} aria-labelledby="skill-detail-title">
       <div className={HEADER_CLS}>
-        <h2 id="skill-detail-title" className={TITLE_CLS}>{skill.name}</h2>
+        <Heading level={2} id="skill-detail-title" className={TITLE_CLS}>{skill.name}</Heading>
         <button
           type="button"
           className={CLOSE_CLS}

@@ -57,6 +57,7 @@ import {
   WORKFLOWS_MODAL_OVERLAY_CLS,
   WORKFLOWS_MODAL_SUBMIT_CLS,
 } from './workflows-styles'
+import { Heading } from '../shared/Heading'
 
 export function AgentsTab({
   searchText,
@@ -554,9 +555,9 @@ function DuplicateAgentDialog({
           if (trimmed) onSave()
         }}
       >
-        <h2 id="duplicate-agent-title" className={WORKFLOWS_MODAL_HEADING_CLS}>
+        <Heading level={2} id="duplicate-agent-title" className={WORKFLOWS_MODAL_HEADING_CLS}>
           Duplicate Agent
-        </h2>
+        </Heading>
         <div className={WORKFLOWS_MODAL_FIELD_CLS}>
           <label className={WORKFLOWS_MODAL_FIELD_LABEL_CLS} htmlFor="duplicate-agent-name">
             New name

@@ -1,5 +1,6 @@
 import React from 'react';
 import { A2UIComponentProps, resolveBoundValue } from '../types';
+import { Heading } from '../../shared/Heading'
 
 export const A2UIText: React.FC<A2UIComponentProps> = ({ def, dataModel }) => {
   const text = resolveBoundValue(def.text, dataModel);
@@ -9,11 +10,11 @@ export const A2UIText: React.FC<A2UIComponentProps> = ({ def, dataModel }) => {
 
   switch (style) {
     case 'title1':
-      return <h1 className="text-xl font-bold">{text}</h1>;
+      return <Heading level={1} className="text-xl font-bold">{text}</Heading>;
     case 'title2':
-      return <h2 className="text-lg font-semibold">{text}</h2>;
+      return <Heading level={2} className="text-lg font-semibold">{text}</Heading>;
     case 'title3':
-      return <h3 className="font-medium text-foreground/90">{text}</h3>;
+      return <Heading level={3} className="font-medium text-foreground/90">{text}</Heading>;
     case 'body':
     default:
       return <p className="text-sm text-foreground">{text}</p>;

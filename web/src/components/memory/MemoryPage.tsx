@@ -10,6 +10,7 @@ import { MemoryDetail } from './MemoryDetail'
 import { IS_MOBILE, IS_IOS, WEBGL_CAP } from '../../utils/platform'
 import { cn } from '../../lib/utils'
 import { inputFocusCls } from '../shared/focusStyles'
+import { Heading } from '../shared/Heading'
 
 const DEFAULT_KNOWLEDGE_GRAPH_LIMIT = IS_IOS ? 150 : IS_MOBILE ? 250 : 500
 const GRAPH_LIMIT_MIN = 50
@@ -274,7 +275,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
       )}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="m-0 text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)]">Memory</h1>
+          <Heading level={1} className="m-0 text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)]">Memory</Heading>
         </div>
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
           <div className="flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">

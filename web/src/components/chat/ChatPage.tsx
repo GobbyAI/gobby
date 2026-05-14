@@ -35,6 +35,7 @@ import {
   type ProviderModelEntry,
 } from "../../lib/providerModels";
 import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
+import { Heading } from '../shared/Heading'
 
 const VALID_ARTIFACT_TYPES = new Set<string>([
   "code",
@@ -752,7 +753,7 @@ export function ChatPage({
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
-      <h1 className="sr-only">Chat</h1>
+      <Heading level={1} className="sr-only">Chat</Heading>
       {ConfirmDialogElement}
       {/* Main chat column */}
       <div className="chat-column flex flex-col flex-1 min-w-[320px]">

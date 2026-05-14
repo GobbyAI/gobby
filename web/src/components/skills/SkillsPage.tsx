@@ -32,6 +32,7 @@ import {
   WORKFLOWS_CONTENT_CLS,
   WORKFLOWS_LOADING_CLS,
 } from '../workflows/workflows-styles'
+import { Heading } from '../shared/Heading'
 
 const ERROR_TOAST_CLS =
   'fixed right-5 top-[60px] z-[1000] cursor-pointer appearance-none rounded-md border-0 bg-[var(--color-error)] px-4 py-2 text-left text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fadeIn_0.2s_ease]'
@@ -274,7 +275,7 @@ export function SkillsPage() {
 
       <div className={WORKFLOWS_TOOLBAR_CLS}>
         <div className={WORKFLOWS_TOOLBAR_LEFT_CLS}>
-          <h1 className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Skills</h1>
+          <Heading level={1} className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Skills</Heading>
         </div>
         <div className={WORKFLOWS_TOOLBAR_RIGHT_CLS}>
           <div className={cn(VIEW_TOGGLE_CLS, activeTab === 'installed' && 'mr-2')}>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { PullRequest } from '../../hooks/useSourceControl'
 import { StatusBadge } from './StatusBadge'
 import { pullRequestLabelStyle } from './githubLabelStyles'
+import { Heading } from '../shared/Heading'
 
 interface Props {
   prNumber: number
@@ -40,9 +41,9 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
   return (
     <div className="sc-detail-panel">
       <div className="sc-detail-panel__header">
-        <h3 className="sc-detail-panel__title">
+        <Heading level={3} className="sc-detail-panel__title">
           #{prNumber} {summary?.title || ''}
-        </h3>
+        </Heading>
         <button className="sc-detail-panel__close" onClick={onClose} aria-label="Close">
           &times;
         </button>
@@ -94,7 +95,7 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
 
           {body && (
             <div className="sc-pr-detail__description">
-              <h4 className="sc-detail-panel__subtitle">Description</h4>
+              <Heading level={4} className="sc-detail-panel__subtitle">Description</Heading>
               <pre className="sc-pr-detail__body">{body}</pre>
             </div>
           )}

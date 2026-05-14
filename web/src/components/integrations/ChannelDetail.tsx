@@ -12,6 +12,7 @@ import {
   FORM_CHANGE_BTN_CLS,
   FORM_CANCEL_CLS,
 } from './styles'
+import { Heading } from '../shared/Heading'
 
 const WEBHOOK_TYPES: ChannelType[] = ['slack', 'telegram', 'discord', 'teams', 'sms']
 
@@ -137,7 +138,7 @@ export function ChannelDetail({
 
         {/* Status */}
         <div className={SECTION_CLS}>
-          <h4 className={SECTION_TITLE_CLS}>Status</h4>
+          <Heading level={4} className={SECTION_TITLE_CLS}>Status</Heading>
           {statusLoading ? (
             <span className={LOADING_CLS}>Loading...</span>
           ) : status ? (
@@ -184,7 +185,7 @@ export function ChannelDetail({
         {/* Webhook URL */}
         {webhookUrl && (
           <div className={SECTION_CLS}>
-            <h4 className={SECTION_TITLE_CLS}>Webhook URL</h4>
+            <Heading level={4} className={SECTION_TITLE_CLS}>Webhook URL</Heading>
             <div className={WEBHOOK_CLS}>
               <code className={WEBHOOK_URL_CLS}>{webhookUrl}</code>
               <button
@@ -199,7 +200,7 @@ export function ChannelDetail({
 
         {/* Configuration */}
         <div className={SECTION_CLS}>
-          <h4 className={SECTION_TITLE_CLS}>Configuration</h4>
+          <Heading level={4} className={SECTION_TITLE_CLS}>Configuration</Heading>
           <div className={GRID_CLS}>
             {Object.entries(channel.config_json).map(([key, value]) => (
               <div key={key} className={CONFIG_ROW_CLS}>
@@ -219,7 +220,7 @@ export function ChannelDetail({
 
         {/* Metadata */}
         <div className={SECTION_CLS}>
-          <h4 className={SECTION_TITLE_CLS}>Metadata</h4>
+          <Heading level={4} className={SECTION_TITLE_CLS}>Metadata</Heading>
           <div className={GRID_CLS}>
             <span className={LABEL_CLS}>Created</span>
             <span>{formatDate(channel.created_at)}</span>

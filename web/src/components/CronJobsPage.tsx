@@ -5,6 +5,7 @@ import { SidebarPanel } from './shared/SidebarPanel'
 import { cn } from '../lib/utils'
 import { RunHistoryTable } from './cron/RunHistoryTable'
 import { formatRelativeTime } from './cron/formatters'
+import { Heading } from './shared/Heading'
 
 type ScheduleType = CronJob['schedule_type']
 type ActionType = CronJob['action_type']
@@ -461,14 +462,14 @@ function JobDetail({
       </div>
 
       <div className={CONFIG_SECTION_CLS}>
-        <h4 className={CONFIG_HEADING_CLS}>Action Config</h4>
+        <Heading level={4} className={CONFIG_HEADING_CLS}>Action Config</Heading>
         <pre className={CONFIG_PRE_CLS}>
           {JSON.stringify(job.action_config, null, 2)}
         </pre>
       </div>
 
       <div className={RUNS_SECTION_CLS}>
-        <h4 className={RUNS_HEADING_CLS}>Recent Runs</h4>
+        <Heading level={4} className={RUNS_HEADING_CLS}>Recent Runs</Heading>
         <RunHistoryTable
           runs={runs}
           isLoading={isRunsLoading}
@@ -614,7 +615,7 @@ export function CronJobsPage({ projectId, onNavigateToPipelineExecution }: CronJ
       )}
 
       <div className={TOOLBAR_CLS}>
-        <h1 className={TOOLBAR_TITLE_CLS}>Cron Jobs</h1>
+        <Heading level={1} className={TOOLBAR_TITLE_CLS}>Cron Jobs</Heading>
         <input
           className={TOOLBAR_SEARCH_CLS}
           type="text"
@@ -659,7 +660,7 @@ export function CronJobsPage({ projectId, onNavigateToPipelineExecution }: CronJ
         {jobs.length === 0 && !isLoading && (
           <div className={EMPTY_CLS}>
             <CronIcon size={48} />
-            <h3 className={EMPTY_TITLE_CLS}>No cron jobs</h3>
+            <Heading level={3} className={EMPTY_TITLE_CLS}>No cron jobs</Heading>
             <p className={EMPTY_TEXT_CLS}>Create your first scheduled job to get started.</p>
             <button
               type="button"

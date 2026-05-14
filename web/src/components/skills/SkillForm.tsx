@@ -3,6 +3,7 @@ import type { GobbySkill } from '../../hooks/useSkills'
 import { MemoizedMarkdown } from '../shared/MemoizedMarkdown'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
+import { Heading } from '../shared/Heading'
 
 const OVERLAY_CLS =
   'fixed inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)] [animation:fadeIn_0.15s_ease]'
@@ -97,7 +98,7 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
     <div className={OVERLAY_CLS} onClick={onCancel}>
       <div ref={dialogRef} className={MODAL_CLS} role="dialog" aria-modal="true" aria-labelledby="skill-form-title" tabIndex={-1} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
-          <h2 id="skill-form-title" className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h2>
+          <Heading level={2} id="skill-form-title" className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</Heading>
           <button
             type="button"
             className={CLOSE_CLS}

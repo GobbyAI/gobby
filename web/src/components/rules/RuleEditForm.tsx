@@ -5,6 +5,7 @@ import { ExpressionBuilder } from "./ExpressionBuilder";
 import { useMcp, type McpToolSchema } from "../../hooks/useMcp";
 import type { RuleFormData } from "./ruleFormData";
 import { cn } from "../../lib/utils";
+import { Heading } from '../shared/Heading'
 
 const RULE_EVENTS = [
   "before_tool",
@@ -300,7 +301,7 @@ export function RuleEditForm({
 
           {/* Condition */}
           <div className={SECTION_CLS}>
-            <h4 className={SECTION_TITLE_CLS}>Condition</h4>
+            <Heading level={4} className={SECTION_TITLE_CLS}>Condition</Heading>
             <div className={FIELD_CLS}>
               <span className={LABEL_CLS}>When (expression)</span>
               <ExpressionBuilder
@@ -312,7 +313,7 @@ export function RuleEditForm({
 
           {/* Effect */}
           <div className={SECTION_CLS}>
-            <h4 className={SECTION_TITLE_CLS}>Effect</h4>
+            <Heading level={4} className={SECTION_TITLE_CLS}>Effect</Heading>
             <label className={FIELD_CLS}>
               <span className={LABEL_CLS}>Type</span>
               <select
@@ -332,7 +333,7 @@ export function RuleEditForm({
 
           {/* Tags */}
           <div className={SECTION_CLS}>
-            <h4 className={SECTION_TITLE_CLS}>Tags</h4>
+            <Heading level={4} className={SECTION_TITLE_CLS}>Tags</Heading>
             <div className={CHIPS_WRAP_CLS}>
               {form.tags.map((tag) => (
                 <span key={tag} className={CHIP_CLS}>
@@ -383,7 +384,7 @@ export function RuleEditForm({
 
           {/* Description */}
           <div className={SECTION_CLS}>
-            <h4 className={SECTION_TITLE_CLS}>Description</h4>
+            <Heading level={4} className={SECTION_TITLE_CLS}>Description</Heading>
             <textarea
               className={TEXTAREA_CLS}
               value={form.description}
@@ -419,27 +420,27 @@ function ReadOnlyView({ form }: { form: RuleFormData }) {
       </div>
       {form.description && (
         <div className={SECTION_CLS}>
-          <h4 className={SECTION_TITLE_CLS}>Description</h4>
+          <Heading level={4} className={SECTION_TITLE_CLS}>Description</Heading>
           <span className={READONLY_VALUE_CLS}>{form.description}</span>
         </div>
       )}
       {form.when && (
         <div className={SECTION_CLS}>
-          <h4 className={SECTION_TITLE_CLS}>Condition</h4>
+          <Heading level={4} className={SECTION_TITLE_CLS}>Condition</Heading>
           <code className={cn(READONLY_VALUE_CLS, MONO_CLS)}>
             {form.when}
           </code>
         </div>
       )}
       <div className={SECTION_CLS}>
-        <h4 className={SECTION_TITLE_CLS}>Effect</h4>
+        <Heading level={4} className={SECTION_TITLE_CLS}>Effect</Heading>
         <pre className={READONLY_PRE_CLS}>
           {JSON.stringify(form.effect, null, 2)}
         </pre>
       </div>
       {form.tags.length > 0 && (
         <div className={SECTION_CLS}>
-          <h4 className={SECTION_TITLE_CLS}>Tags</h4>
+          <Heading level={4} className={SECTION_TITLE_CLS}>Tags</Heading>
           <div className={CHIPS_WRAP_CLS}>
             {form.tags.map((tag) => (
               <span key={tag} className={CHIP_CLS}>

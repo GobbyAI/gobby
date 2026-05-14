@@ -18,6 +18,7 @@ import {
 } from './execution-utils'
 import { formatTime, formatDuration, formatJson } from './executionFormatters'
 import { WORKFLOWS_CONTENT_CLS, WORKFLOWS_LOADING_CLS } from './workflows-styles'
+import { Heading } from '../shared/Heading'
 
 const PAGINATION_FOOTER_CLS =
   'flex items-center justify-between px-3 py-2.5 mt-2 border-t border-border text-base text-[var(--text-secondary)]'
@@ -306,7 +307,7 @@ export function PipelineExecutionsView({
                     {/* Outputs */}
                     {execution.status === 'completed' && execution.outputs_json && (
                       <div className={OUTPUTS_CLS}>
-                        <h4 className={OUTPUTS_HEADING_CLS}>Outputs</h4>
+                        <Heading level={4} className={OUTPUTS_HEADING_CLS}>Outputs</Heading>
                         <pre className={OUTPUTS_PRE_CLS}>{formatJson(execution.outputs_json)}</pre>
                       </div>
                     )}
