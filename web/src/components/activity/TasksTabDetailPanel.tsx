@@ -112,80 +112,94 @@ export function TasksTabDetailPanel({
   const escalationReason = task.escalation_reason?.trim() || null;
   const preEscalationStatus = task.pre_escalation_status?.trim() || null;
 
+  const hasRefRows =
+    Boolean(parentTask) ||
+    Boolean(task.path_cache) ||
+    Boolean(validationStatus) ||
+    Boolean(prUrl && prLabel) ||
+    Boolean(task.closed_commit_sha) ||
+    Boolean(task.closed_reason) ||
+    Boolean(task.closed_in_session_id);
+
   return (
     <div className="activity-task-detail-card">
       <div className="activity-task-detail-meta">
-        <TaskDetailMetaRow
-          label="Claimed by"
-          value={ownerLabel}
-          mono={ownerMono}
-          title="Agent or session currently holding this task's claim"
-        />
-        {task.assigned_agent && (
+        <div className="activity-task-detail-meta-stats">
           <TaskDetailMetaRow
-            label="Agent"
-            value={task.assigned_agent}
-            mono
-            title="Agent role assigned to drive this task"
+            label="Claimed by"
+            value={ownerLabel}
+            mono={ownerMono}
+            title="Agent or session currently holding this task's claim"
           />
-        )}
-        <TaskDetailMetaRow label="State" value={stateLabel} />
-        {taskState.current_stage && (
-          <TaskDetailMetaRow
-            label="Stage"
-            value={taskState.current_stage.display_name}
-            title="Current manifest stage"
-          />
-        )}
-        <TaskDetailMetaRow label="Created" value={formatTaskDetailDate(task.created_at)} />
-        <TaskDetailMetaRow label="Updated" value={formatTaskDetailDate(task.updated_at)} />
-        <TaskDetailMetaRow label="Category" value={categoryLabel} />
-        {parentTask && (
-          <TaskDetailParentRow
-            parent={parentTask}
-            onSelect={onSelectTask}
-          />
-        )}
-        {task.path_cache && <TaskDetailMetaRow label="Path" value={task.path_cache} mono />}
-        {validationStatus && (
-          <TaskDetailValidationRow
-            status={validationStatus}
-            failCount={validationFailCount}
-          />
-        )}
-        {prUrl && prLabel && (
-          <TaskDetailMetaRow
-            label="PR"
-            value={prLabel}
-            mono
-            href={prUrl}
-            title="Open PR on GitHub"
-          />
-        )}
-        {task.closed_at && (
-          <TaskDetailMetaRow
-            label="Closed"
-            value={formatTaskDetailDate(task.closed_at)}
-          />
-        )}
-        {task.closed_commit_sha && (
-          <TaskDetailMetaRow
-            label="Closing commit"
-            value={task.closed_commit_sha.slice(0, 7)}
-            mono
-            title={task.closed_commit_sha}
-          />
-        )}
-        {task.closed_reason && (
-          <TaskDetailMetaRow label="Close reason" value={task.closed_reason} />
-        )}
-        {task.closed_in_session_id && (
-          <TaskDetailMetaRow
-            label="Closed in"
-            value={task.closed_in_session_id}
-            mono
-            title="Session that closed this task"
-          />
+          {task.assigned_agent && (
+            <TaskDetailMetaRow
+              label="Agent"
+              value={task.assigned_agent}
+              mono
+              title="Agent role assigned to drive this task"
+            />
+          )}
+          <TaskDetailMetaRow label="State" value={stateLabel} />
+          {taskState.current_stage && (
+            <TaskDetailMetaRow
+              label="Stage"
+              value={taskState.current_stage.display_name}
+              title="Current manifest stage"
+            />
+          )}
+          <TaskDetailMetaRow label="Created" value={formatTaskDetailDate(task.created_at)} />
+          <TaskDetailMetaRow label="Updated" value={formatTaskDetailDate(task.updated_at)} />
+          <TaskDetailMetaRow label="Category" value={categoryLabel} />
+          {task.closed_at && (
+            <TaskDetailMetaRow
+              label="Closed"
+              value={formatTaskDetailDate(task.closed_at)}
+            />
+          )}
+        </div>
+        {hasRefRows && (
+          <div className="activity-task-detail-meta-refs">
+            {parentTask && (
+              <TaskDetailParentRow parent={parentTask} onSelect={onSelectTask} />
+            )}
+            {task.path_cache && (
+              <TaskDetailMetaRow label="Path" value={task.path_cache} mono />
+            )}
+            {validationStatus && (
+              <TaskDetailValidationRow
+                status={validationStatus}
+                failCount={validationFailCount}
+              />
+            )}
+            {prUrl && prLabel && (
+              <TaskDetailMetaRow
+                label="PR"
+                value={prLabel}
+                mono
+                href={prUrl}
+                title="Open PR on GitHub"
+              />
+            )}
+            {task.closed_commit_sha && (
+              <TaskDetailMetaRow
+                label="Closing commit"
+                value={task.closed_commit_sha.slice(0, 7)}
+                mono
+                title={task.closed_commit_sha}
+              />
+            )}
+            {task.closed_reason && (
+              <TaskDetailMetaRow label="Close reason" value={task.closed_reason} />
+            )}
+            {task.closed_in_session_id && (
+              <TaskDetailMetaRow
+                label="Closed in"
+                value={task.closed_in_session_id}
+                mono
+                title="Session that closed this task"
+              />
+            )}
+          </div>
         )}
       </div>
 
