@@ -37,6 +37,14 @@ _TITLE_ORCHESTRATION_BOILERPLATE_RE = re.compile(
     r"^a previous agent produced the plan below\b",
     re.IGNORECASE,
 )
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"^\[?\s*(?:"
+    r"\d+\s*-\s*\d+\s+word\s+session\s+title(?:\s+reflecting\s+current\s+work)?|"
+    r"accurate\s+summary\s+of\s+the\s+full\s+turn\s+with\s+user\s+request\s*\+\s*"
+    r"agent\s+response"
+    r")\s*\]?$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -405,7 +413,14 @@ def _normalize_title_candidate(value: Any) -> str | None:
         return None
     title = value.strip().strip('"').strip("'")
     title = _truncate_title(title)
+    if _is_template_placeholder(title):
+        return None
     return title or None
+
+
+def _is_template_placeholder(value: str) -> bool:
+    """Return True for prompt-template placeholders echoed by the LLM."""
+    return bool(_TEMPLATE_PLACEHOLDER_RE.fullmatch(value.strip()))
 
 
 async def bootstrap_session_title(
@@ -545,6 +560,13 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
             response_text,
             exchange_count,
         )
+    turn_markdown = turn_markdown.strip()
+    if _is_template_placeholder(turn_markdown):
+        _raise_turn_record_contract_error(
+            "placeholder turn_markdown",
+            response_text,
+            exchange_count,
+        )
 
     title_candidate = _normalize_title_candidate(data.get("title_candidate"))
     if title_candidate is None:
@@ -554,7 +576,7 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
             exchange_count,
         )
 
-    return _TurnRecord(turn_markdown=turn_markdown.strip(), title_candidate=title_candidate)
+    return _TurnRecord(turn_markdown=turn_markdown, title_candidate=title_candidate)
 
 
 def _raise_turn_record_contract_error(

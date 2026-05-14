@@ -515,6 +515,68 @@ class TestBuildTurnAndDigest:
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_placeholder_title_candidate_returns_error_without_persistence(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Template-placeholder title candidates fail without persisting state."""
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text = AsyncMock(
+            return_value=_turn_record_json(
+                turn_markdown="User asked why a session title regressed.",
+                title_candidate="[3-5 word session title]",
+            )
+        )
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Why did the title become a placeholder?",
+            llm_service=mock_llm_service,
+        )
+
+        assert result is not None
+        assert "title_candidate" in result["error"]
+        mock_session_manager.update_last_turn_markdown.assert_not_called()
+        mock_session_manager.update_digest_markdown.assert_not_called()
+        mock_session_manager.update_title.assert_not_called()
+        mock_session_manager.update_last_digest_input_hash.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_placeholder_turn_markdown_returns_error_without_persistence(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Template-placeholder turn records fail without persisting state."""
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text = AsyncMock(
+            return_value=_turn_record_json(
+                turn_markdown="[accurate summary of the full turn with user request + agent response]",
+                title_candidate="Investigate Session Titles",
+            )
+        )
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Why did the title become a placeholder?",
+            llm_service=mock_llm_service,
+        )
+
+        assert result is not None
+        assert "placeholder turn_markdown" in result["error"]
+        mock_session_manager.update_last_turn_markdown.assert_not_called()
+        mock_session_manager.update_digest_markdown.assert_not_called()
+        mock_session_manager.update_title.assert_not_called()
+        mock_session_manager.update_last_digest_input_hash.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_skips_rename_when_title_is_unchanged(
         self,
         mock_memory_manager,
