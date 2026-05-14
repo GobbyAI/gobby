@@ -8,7 +8,7 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 T = TypeVar("T")
 
@@ -65,7 +65,7 @@ class DatabaseExecutor:
 
         call = functools.partial(self._execute, func, *args, **kwargs)
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._executor, call)
+        return cast(T, await loop.run_in_executor(self._executor, call))
 
     def _execute(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         with self._lock:
