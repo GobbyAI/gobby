@@ -727,14 +727,14 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
 function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: boolean; allCompleted: boolean; hasInFlight: boolean }) {
   if (hasInFlight) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent animate-spin">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" className="text-accent animate-spin" aria-label="In flight" role="img">
         <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
       </svg>
     )
   }
   if (hasErrors) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-destructive-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" className="text-destructive-foreground" aria-label="Errors" role="img">
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
@@ -742,7 +742,7 @@ function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: 
   }
   if (allCompleted) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground" aria-label="Completed" role="img">
         <polyline points="20 6 9 17 4 12" />
       </svg>
     )
@@ -760,14 +760,9 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }) {
   const serverName = group.tool_calls[0]?.server_name
-  const accentClass = group.hasErrors
-    ? 'border-destructive-foreground/40'
-    : group.hasInFlight
-      ? 'border-accent/40'
-      : 'border-border'
 
   return (
-    <div className={cn('border-l my-1', accentClass)}>
+    <div className="border-l border-border my-1">
       <div
         className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
         onClick={onToggle}
