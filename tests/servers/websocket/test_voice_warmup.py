@@ -12,6 +12,7 @@ import pytest
 
 from gobby.config.voice import VoiceConfig
 from gobby.servers.websocket.voice import VoiceMixin
+from gobby.voice.tts import TTSProviderStatus
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -23,6 +24,12 @@ class DummyVoiceMixin(VoiceMixin):
         self.daemon_config = SimpleNamespace(voice=voice_config)
         self._init_voice()
         self._handle_chat_message = AsyncMock()
+
+    async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> bool:
+        return True
+
+    async def _ensure_tts_deps(self, voice_config: VoiceConfig) -> bool:
+        return True
 
 
 class TestVoiceWarmup:
@@ -61,6 +68,78 @@ class TestVoiceWarmup:
         assert status["voice_loading"] is False
         assert mixin._voice_warmup_task is None
         assert mixin.start_voice_warmup() is False
+
+    @pytest.mark.asyncio
+    async def test_tts_warmup_waits_for_deps_before_provider_lookup(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+        order: list[str] = []
+
+        async def ensure_deps(_voice_config: VoiceConfig) -> bool:
+            order.append("deps")
+            return True
+
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock()
+
+        def get_tts() -> MagicMock:
+            order.append("provider")
+            return mock_tts
+
+        mixin._ensure_tts_deps = AsyncMock(side_effect=ensure_deps)
+        mixin._get_tts = MagicMock(side_effect=get_tts)
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+
+        assert mixin.start_voice_warmup(want_stt=False, want_tts=True) is True
+        assert mixin._voice_warmup_task is not None
+        await mixin._voice_warmup_task
+
+        assert order == ["deps", "provider"]
+        assert mixin._tts_deps_checked is True
+        mock_tts.warmup.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stt_warmup_waits_for_deps_before_model_lookup(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=False, stt_enabled=True))
+        order: list[str] = []
+
+        async def ensure_deps(_voice_config: VoiceConfig) -> bool:
+            order.append("deps")
+            return True
+
+        mock_stt = MagicMock()
+        mock_stt.is_available = True
+        mock_stt.warmup = AsyncMock()
+
+        def get_stt() -> MagicMock:
+            order.append("stt")
+            return mock_stt
+
+        mixin._ensure_stt_deps = AsyncMock(side_effect=ensure_deps)
+        mixin._get_stt = MagicMock(side_effect=get_stt)
+        mixin._get_stt_availability = MagicMock(return_value=(True, ""))
+
+        assert mixin.start_voice_warmup(want_stt=True, want_tts=False) is True
+        assert mixin._voice_warmup_task is not None
+        await mixin._voice_warmup_task
+
+        assert order == ["deps", "stt"]
+        assert mixin._stt_deps_checked is True
+        mock_stt.warmup.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_tts_warmup_records_dependency_failure_without_provider_lookup(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+        mixin._ensure_tts_deps = AsyncMock(return_value=False)
+        mixin._get_tts = MagicMock()
+        mixin._get_tts_availability = MagicMock(return_value=(False, "chatterbox missing"))
+
+        assert mixin.start_voice_warmup(want_stt=False, want_tts=True) is True
+        assert mixin._voice_warmup_task is not None
+        await mixin._voice_warmup_task
+
+        mixin._get_tts.assert_not_called()
+        assert mixin._tts_warmup_status == "error"
+        assert mixin._tts_warmup_error == "chatterbox missing"
 
     @pytest.mark.asyncio
     async def test_voice_prepare_logs_warmup_trigger_only_once(
@@ -260,6 +339,22 @@ class TestVoiceWarmup:
         assert global_status["voice_ready"] is False
         assert global_status["voice_loading"] is True
         assert global_status["tts_warmup_error"] == "reference audio invalid"
+
+    def test_status_reports_loaded_tts_provider_details(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+        provider = MagicMock()
+        provider.get_status.return_value = TTSProviderStatus(
+            provider="chatterbox",
+            available=True,
+            details={"tts_runtime_primed": True},
+        )
+        mixin._tts_provider = provider
+        mixin._tts_warmup_status = "ready"
+
+        status = mixin.get_voice_status(want_stt=False, want_tts=True)
+
+        provider.get_status.assert_called_once()
+        assert status["tts_runtime_primed"] is True
 
     @pytest.mark.asyncio
     async def test_start_voice_warmup_records_failures(self) -> None:
