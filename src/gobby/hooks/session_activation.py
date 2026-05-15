@@ -86,8 +86,8 @@ def _purge_expired_active_rule_names_cache(now: float) -> None:
         _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
 
 
-def _evict_active_rule_names_cache_to_limit() -> None:
-    excess_count = len(_ACTIVE_RULE_NAMES_CACHE) - _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES
+def _evict_active_rule_names_cache_to_limit(*, incoming: int = 0) -> None:
+    excess_count = len(_ACTIVE_RULE_NAMES_CACHE) + incoming - _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES
     if excess_count <= 0:
         return
     oldest = sorted(
@@ -321,8 +321,9 @@ def _resolve_active_rule_names(
     active_rules = resolve_rules_for_agent(agent, rules)
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
         _purge_expired_active_rule_names_cache(now)
+        incoming = 0 if cache_key in _ACTIVE_RULE_NAMES_CACHE else 1
+        _evict_active_rule_names_cache_to_limit(incoming=incoming)
         _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, set(active_rules))
-        _evict_active_rule_names_cache_to_limit()
     return active_rules
 
 

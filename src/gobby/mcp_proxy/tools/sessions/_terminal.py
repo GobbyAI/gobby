@@ -244,8 +244,26 @@ async def _compact_live_web_chat_fallback(
         if not session_id or session_id in seen:
             continue
         seen.add(session_id)
-        if web_chat_session_registry.find_session(session_id)[1] is not None:
+        try:
+            live_session = web_chat_session_registry.find_session(session_id)[1]
+        except Exception:
+            logger.debug(
+                "Failed to look up live web_chat session %s for compaction fallback",
+                session_id,
+                exc_info=True,
+            )
+            continue
+        if live_session is None:
+            continue
+        try:
             return await web_chat_session_registry.compact_session(session_id)
+        except Exception:
+            logger.warning(
+                "Failed to compact live web_chat session %s via fallback",
+                session_id,
+                exc_info=True,
+            )
+            return None
     return None
 
 

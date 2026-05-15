@@ -66,8 +66,18 @@ def _parse_npm_build_timeout(raw_value: str | None) -> int:
     try:
         parsed = int(raw_value)
     except ValueError:
+        logger.warning(
+            "Invalid GOBBY_NPM_BUILD_TIMEOUT=%r; using default 600 seconds",
+            raw_value,
+        )
         return 600
-    return parsed if parsed > 0 else 600
+    if parsed <= 0:
+        logger.warning(
+            "Non-positive GOBBY_NPM_BUILD_TIMEOUT=%r; using default 600 seconds",
+            raw_value,
+        )
+        return 600
+    return parsed
 
 
 def _init_npm_build_timeout_seconds() -> int:

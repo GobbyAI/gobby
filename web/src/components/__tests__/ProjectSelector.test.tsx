@@ -60,7 +60,6 @@ describe('ProjectSelector', () => {
     const demoOption = within(listbox).getByRole('option', { name: 'demo' })
 
     expect(input).toHaveAttribute('aria-controls', listbox.id)
-    expect(input).toHaveAttribute('aria-owns', listbox.id)
     expect(input).toHaveAttribute('aria-activedescendant', gobbyOption.id)
 
     fireEvent.keyDown(input, { key: 'ArrowDown' })

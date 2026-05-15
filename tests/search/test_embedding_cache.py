@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _clean_cache():
-    """Ensure each test starts with a clean cache."""
+    """Ensure cached embeddings are cleared before and after each client test."""
     clear_cache()
     yield
     clear_cache()
@@ -81,7 +81,7 @@ async def test_cache_hit_avoids_api_call() -> None:
 
 @pytest.mark.asyncio
 async def test_openai_client_closed_after_success() -> None:
-    """The embeddings client should be closed after a successful fetch."""
+    """Client cleanup should run after a successful embedding fetch."""
     mock_client = _make_mock_client()
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
@@ -94,7 +94,7 @@ async def test_openai_client_closed_after_success() -> None:
 
 @pytest.mark.asyncio
 async def test_openai_client_closed_after_failure() -> None:
-    """The embeddings client should be closed when an unexpected fetch error propagates."""
+    """Client cleanup should run when an unexpected fetch error propagates."""
     mock_client = AsyncMock()
     mock_client.embeddings.create.side_effect = ValueError("boom")
 

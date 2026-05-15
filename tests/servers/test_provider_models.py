@@ -19,6 +19,7 @@ pytestmark = pytest.mark.unit
 class TestProviderModelCatalog:
     @pytest.mark.asyncio
     async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:
+        """Claude probes should preserve the user alias and record canonical IDs."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -54,6 +55,7 @@ class TestProviderModelCatalog:
     async def test_discover_claude_models_keeps_successful_alias_probes(
         self, temp_dir: Path
     ) -> None:
+        """Claude discovery should keep successful aliases when one probe fails."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -78,6 +80,7 @@ class TestProviderModelCatalog:
 
     @pytest.mark.asyncio
     async def test_refresh_falls_back_to_cached_models_per_provider(self, temp_dir: Path) -> None:
+        """Refresh should use cached models for only the provider that fails."""
         cache_path = temp_dir / "provider-model-catalog.json"
         catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
         catalog._providers = {
@@ -123,6 +126,7 @@ class TestProviderModelCatalog:
         assert payload["providers"]["codex"]["models"][0]["context_length"] == 200_000
 
     def test_load_cache_preserves_and_enriches_context_lengths(self, temp_dir: Path) -> None:
+        """Cache loading should preserve known lengths and fill missing defaults."""
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(
             json.dumps(
@@ -157,6 +161,7 @@ class TestProviderModelCatalog:
         assert gemini["context_length"] == 123_456
 
     def test_load_cache_accepts_version_none(self, temp_dir: Path) -> None:
+        """Cache loading should accept legacy payloads with null version."""
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(
             json.dumps(
@@ -187,6 +192,7 @@ class TestProviderModelCatalog:
     def test_get_context_window_matches_aliases_suffixes_and_droid_core(
         self, temp_dir: Path
     ) -> None:
+        """Context lookup should match aliases, dated IDs, and Droid core fallbacks."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -235,6 +241,7 @@ class TestProviderModelCatalog:
     def test_configured_models_precede_live_snapshot_and_keep_metadata(
         self, temp_dir: Path
     ) -> None:
+        """Configured models should sort first while retaining live metadata."""
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
                 codex=LLMProviderConfig(models="gpt-5.5,gpt-5.4"),
@@ -268,6 +275,7 @@ class TestProviderModelCatalog:
 
     @pytest.mark.asyncio
     async def test_refresh_marks_provider_failed_without_prior_cache(self, temp_dir: Path) -> None:
+        """Providers without cache should be marked failed when discovery fails."""
         cache_path = temp_dir / "provider-model-catalog.json"
         catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
 
@@ -289,6 +297,7 @@ class TestProviderModelCatalog:
     async def test_discover_acp_models_marks_client_as_model_discovery(
         self, temp_dir: Path
     ) -> None:
+        """ACP discovery clients should run from the trusted model-discovery cwd."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -350,6 +359,7 @@ class TestProviderModelCatalog:
     async def test_discover_acp_models_removes_created_cwd_when_trust_fails(
         self, temp_dir: Path
     ) -> None:
+        """A newly created discovery cwd should be removed when trust fails."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -376,6 +386,7 @@ class TestProviderModelCatalog:
     async def test_discover_acp_models_logs_cleanup_failure_and_reraises_auth_error(
         self, temp_dir: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """Cleanup failures should be logged while preserving the auth error."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -406,6 +417,7 @@ class TestProviderModelCatalog:
     async def test_discover_acp_models_preserves_existing_cwd_when_trust_fails(
         self, temp_dir: Path
     ) -> None:
+        """Existing discovery cwd directories should survive trust failures."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -430,6 +442,7 @@ class TestProviderModelCatalog:
         client_cls.assert_not_called()
 
     def test_load_cache_ignores_unsupported_version(self, temp_dir: Path) -> None:
+        """Unsupported cache versions should be ignored instead of loaded."""
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(
             json.dumps({"version": 99, "providers": {"codex": {"models": [{"value": "gpt-5.4"}]}}}),
@@ -444,6 +457,7 @@ class TestProviderModelCatalog:
     async def test_discover_qwen_models_merges_acp_and_configured_models(
         self, temp_dir: Path
     ) -> None:
+        """Qwen discovery should merge ACP models with configured settings models."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -484,6 +498,7 @@ class TestProviderModelCatalog:
     def test_normalize_qwen_model_labels_only_disambiguates_duplicate_base_ids(
         self, temp_dir: Path
     ) -> None:
+        """Qwen labels should add provider suffixes only for duplicate base IDs."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -506,6 +521,7 @@ class TestProviderModelCatalog:
     async def test_discover_qwen_models_can_fall_back_to_settings_catalog(
         self, temp_dir: Path
     ) -> None:
+        """Qwen discovery should fall back to configured settings when ACP fails."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -530,6 +546,7 @@ class TestProviderModelCatalog:
 
     @pytest.mark.asyncio
     async def test_discover_droid_models_returns_static_catalog(self, temp_dir: Path) -> None:
+        """Droid provider discovery should return the bundled static model catalog."""
         catalog = ProviderModelCatalog(
             config=None, cache_path=temp_dir / "provider-model-catalog.json"
         )
@@ -573,6 +590,7 @@ class TestProviderModelCatalog:
             assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
 
     def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
+        """Qwen settings should merge global providers with project overrides."""
         global_settings = temp_dir / ".qwen" / "settings.json"
         global_settings.parent.mkdir(parents=True)
         global_settings.write_text(

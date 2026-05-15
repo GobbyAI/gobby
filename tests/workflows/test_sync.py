@@ -15,6 +15,8 @@ import yaml
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline.renderer import StepRenderer
 
 pytestmark = pytest.mark.unit
 
@@ -239,24 +241,28 @@ class TestSyncBundledPipelines:
 
     @pytest.mark.integration
     def test_expand_task_fails_run_before_validation(self) -> None:
-        """Fail failed runs before validation and gate validation to completed runs.
-
-        The expand-task pipeline must fail on wait_run status first, only run
-        validate_expansion_run when wait_run completed, and keep both steps wired
-        to the expected MCP tools.
-        """
+        """Evaluate expand-task conditions with the runtime step renderer."""
         path = Path("src/gobby/install/shared/workflows/pipelines/expand-task.yaml")
         assert path.is_file(), f"Missing bundled pipeline: {path}"
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        step_ids = [step["id"] for step in data["steps"]]
+        pipeline = PipelineDefinition(**yaml.safe_load(path.read_text(encoding="utf-8")))
+        renderer = StepRenderer(strict_conditions=True)
+        fail_run = pipeline.get_step("fail_run")
+        validate_run = pipeline.get_step("validate_run")
+        assert fail_run is not None
+        assert validate_run is not None
+        assert fail_run.mcp is not None
+        assert validate_run.mcp is not None
+        assert fail_run.mcp.tool == "fail_pipeline"
+        assert validate_run.mcp.tool == "validate_expansion_run"
 
-        assert step_ids.index("fail_run") < step_ids.index("validate_run")
-        fail_run = next(step for step in data["steps"] if step["id"] == "fail_run")
-        assert fail_run["condition"] == "${{ steps.wait_run.output.status != 'completed' }}"
-        assert fail_run["mcp"]["tool"] == "fail_pipeline"
-        validate_run = next(step for step in data["steps"] if step["id"] == "validate_run")
-        assert validate_run["condition"] == "${{ steps.wait_run.output.status == 'completed' }}"
-        assert validate_run["mcp"]["tool"] == "validate_expansion_run"
+        for wait_status in ("failed", "timeout", "cancelled"):
+            context = {"steps": {"wait_run": {"output": {"status": wait_status}}}}
+            assert renderer.should_run_step(fail_run, context) is True
+            assert renderer.should_run_step(validate_run, context) is False
+
+        completed_context = {"steps": {"wait_run": {"output": {"status": "completed"}}}}
+        assert renderer.should_run_step(fail_run, completed_context) is False
+        assert renderer.should_run_step(validate_run, completed_context) is True
 
     def test_missing_path_returns_error(self, db: LocalDatabase) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines

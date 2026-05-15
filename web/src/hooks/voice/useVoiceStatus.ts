@@ -7,9 +7,8 @@ const VOICE_PREPARE_RETRY_MS = 30_000
 const VOICE_PREPARE_CACHE_MAX_ENTRIES = 128
 // Shared across hook instances because chat remounts, reconnects, and
 // conversation switches can recreate the hook while the same WebSocket target is
-// still warming. The cache is only a send throttle: races may duplicate one
-// prepare if two mounts run in the same tick, and stale entries expire by retry
-// window before oldest-entry eviction enforces the bounded size.
+// still warming. This only throttles prepare sends: same-tick races may
+// duplicate one prepare, TTL expiry allows retry, and LRU pruning bounds growth.
 const voicePrepareSentAt = new Map<string, number>()
 
 function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnabled: boolean) {

@@ -147,11 +147,12 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
   const activeStatuses = taskStats
     ? TASK_STATUS_ORDER.filter(s => (taskStats[s] || 0) > 0)
     : []
+  const currentYear = new Date().getFullYear()
   const lastActivityLabel = project.last_activity_at
     ? (() => {
         const dt = new Date(project.last_activity_at)
         const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }
-        if (dt.getFullYear() !== new Date().getFullYear()) {
+        if (dt.getFullYear() !== currentYear) {
           options.year = 'numeric'
         }
         return dt.toLocaleDateString(undefined, options)

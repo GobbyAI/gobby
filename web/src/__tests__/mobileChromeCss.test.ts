@@ -1,10 +1,25 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import postcss, { type Root, type Rule } from 'postcss'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-const cwd = process.cwd()
+function isWebPackageRoot(path: string): boolean {
+  return existsSync(join(path, 'package.json')) && existsSync(join(path, 'src/main.tsx'))
+}
+
+function resolveWebPackageRoot(): string {
+  const current = process.cwd()
+  if (isWebPackageRoot(current)) return current
+
+  const fallback = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  if (isWebPackageRoot(fallback)) return fallback
+
+  throw new Error(`Unable to resolve web package root from cwd=${current}`)
+}
+
+const cwd = resolveWebPackageRoot()
 
 interface CssParent {
   type: string
@@ -13,7 +28,6 @@ interface CssParent {
   parent?: CssParent
 }
 
-// These source-level contract tests use process.cwd() as the web package root.
 function readSource(rel: string): string {
   return readFileSync(join(cwd, rel), 'utf8')
 }

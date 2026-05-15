@@ -283,7 +283,6 @@ export function ProjectSelector({
                 role="combobox"
                 aria-expanded={showProjectSearch}
                 aria-controls={listboxId}
-                aria-owns={listboxId}
                 aria-activedescendant={activeOptionId}
                 aria-autocomplete="list"
                 autoFocus

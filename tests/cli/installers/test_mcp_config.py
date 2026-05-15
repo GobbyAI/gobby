@@ -7,6 +7,7 @@ as well as install_default_mcp_servers.
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -824,3 +825,90 @@ class TestInstallDefaultMCPServers:
             result = install_default_mcp_servers()
         assert result["success"] is True
         assert len(result["servers_added"]) > 0
+
+    def test_secret_store_operational_error_skips_optional_args(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mcp_path = tmp_path / ".gobby" / ".mcp.json"
+
+        with (
+            caplog.at_level("WARNING", logger="gobby.cli.installers.mcp_config"),
+            patch(
+                "gobby.cli.installers.mcp_config.Path.expanduser",
+                return_value=mcp_path,
+            ),
+            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
+            patch(
+                "gobby.storage.secrets.SecretStore",
+                side_effect=sqlite3.OperationalError("database is locked"),
+            ),
+        ):
+            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
+            result = install_default_mcp_servers()
+
+        assert result["success"] is True
+        assert "Failed to initialize secret store for optional MCP args" in caplog.text
+        config = json.loads(mcp_path.read_text())
+        context7 = next(server for server in config["servers"] if server["name"] == "context7")
+        assert context7["args"] == ["-y", "@upstash/context7-mcp"]
+
+    def test_secret_store_unexpected_init_error_reraises(self, tmp_path: Path) -> None:
+        mcp_path = tmp_path / ".gobby" / ".mcp.json"
+
+        with (
+            patch(
+                "gobby.cli.installers.mcp_config.Path.expanduser",
+                return_value=mcp_path,
+            ),
+            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.secrets.SecretStore", side_effect=TypeError("bad init")),
+        ):
+            with pytest.raises(TypeError, match="bad init"):
+                install_default_mcp_servers()
+
+    def test_optional_secret_read_sqlite_error_skips_extra_args(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mcp_path = tmp_path / ".gobby" / ".mcp.json"
+        mock_secret_store = MagicMock()
+        mock_secret_store.exists.side_effect = sqlite3.DatabaseError("read failed")
+
+        with (
+            caplog.at_level("WARNING", logger="gobby.cli.installers.mcp_config"),
+            patch(
+                "gobby.cli.installers.mcp_config.Path.expanduser",
+                return_value=mcp_path,
+            ),
+            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
+            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
+        ):
+            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
+            result = install_default_mcp_servers()
+
+        assert result["success"] is True
+        assert "Failed to read optional MCP secret context7_api_key" in caplog.text
+        config = json.loads(mcp_path.read_text())
+        context7 = next(server for server in config["servers"] if server["name"] == "context7")
+        assert context7["args"] == ["-y", "@upstash/context7-mcp"]
+
+    def test_optional_secret_read_unexpected_error_reraises(self, tmp_path: Path) -> None:
+        mcp_path = tmp_path / ".gobby" / ".mcp.json"
+        mock_secret_store = MagicMock()
+        mock_secret_store.exists.side_effect = TypeError("bad read")
+
+        with (
+            patch(
+                "gobby.cli.installers.mcp_config.Path.expanduser",
+                return_value=mcp_path,
+            ),
+            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
+        ):
+            with pytest.raises(TypeError, match="bad read"):
+                install_default_mcp_servers()

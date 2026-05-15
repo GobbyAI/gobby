@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 import zipfile
 from pathlib import Path
@@ -41,6 +42,7 @@ def _write_wheel(path: Path, members: list[str]) -> None:
 
 
 def test_stage_ui_copies_dist_to_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stage existing web/dist assets into package data for wheel builds."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     # Symlink __init__.py from the real module so we exercise the actual code.
@@ -69,6 +71,7 @@ def test_stage_ui_copies_dist_to_package(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_stage_ui_skip_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """GOBBY_SKIP_UI_BUILD should bypass npm and preserve staged assets."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -93,6 +96,7 @@ def test_stage_ui_skip_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 def test_stage_ui_reuses_pre_staged_when_no_web(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Source distributions without web/ should reuse pre-staged UI assets."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -114,6 +118,7 @@ def test_stage_ui_reuses_pre_staged_when_no_web(
 def test_stage_ui_runs_npm_commands_with_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """UI staging should pass the configured timeout to both npm commands."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -149,22 +154,25 @@ def test_stage_ui_runs_npm_commands_with_timeout(
 
 
 @pytest.mark.parametrize(
-    ("env_value", "expected_timeout"),
+    ("env_value", "expected_timeout", "expected_warning"),
     [
-        ("30", 30),
-        ("", 600),
-        ("0", 600),
-        ("-1", 600),
-        ("invalid", 600),
-        (None, 600),
+        ("30", 30, None),
+        ("", 600, "Invalid GOBBY_NPM_BUILD_TIMEOUT=''"),
+        ("0", 600, "Non-positive GOBBY_NPM_BUILD_TIMEOUT='0'"),
+        ("-1", 600, "Non-positive GOBBY_NPM_BUILD_TIMEOUT='-1'"),
+        ("invalid", 600, "Invalid GOBBY_NPM_BUILD_TIMEOUT='invalid'"),
+        (None, 600, None),
     ],
 )
 def test_npm_timeout_env_parses_at_import(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     env_value: str | None,
     expected_timeout: int,
+    expected_warning: str | None,
 ) -> None:
+    """GOBBY_NPM_BUILD_TIMEOUT should parse once at import and warn on fallback."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -175,14 +183,21 @@ def test_npm_timeout_env_parses_at_import(
     else:
         monkeypatch.setenv("GOBBY_NPM_BUILD_TIMEOUT", env_value)
 
-    backend = _load_backend(repo_root)
+    with caplog.at_level(logging.WARNING, logger="build_backend"):
+        backend = _load_backend(repo_root)
 
     assert backend._NPM_BUILD_TIMEOUT_SECONDS == expected_timeout
+    if expected_warning is None:
+        assert "GOBBY_NPM_BUILD_TIMEOUT" not in caplog.text
+    else:
+        assert expected_warning in caplog.text
+        assert "using default 600 seconds" in caplog.text
 
 
 def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """npm command timeouts should include command, cwd, and timeout context."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -229,6 +244,7 @@ def test_stage_ui_npm_failure_raises_output_context(
     failed_command: list[str],
     expected_command: str,
 ) -> None:
+    """npm command failures should surface return code and captured output."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -273,6 +289,7 @@ def test_stage_ui_npm_failure_raises_output_context(
 def test_build_wheel_accepts_wheel_with_ui_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Wheels containing the staged UI index should be accepted."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
@@ -300,6 +317,7 @@ def test_build_wheel_accepts_wheel_with_ui_index(
 def test_build_wheel_rejects_wheel_missing_ui_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Wheels missing the staged UI index should fail the release guard."""
     repo_root = tmp_path
     (repo_root / "build_backend").mkdir()
     real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"

@@ -252,7 +252,7 @@ async def generate_embeddings(
     filled_results: list[list[float]] = []
     for result in results:
         if result is None:
-            raise RuntimeError("Embedding cache fill left a missing result")
+            raise EmbeddingGenerationError("Embedding cache fill left a missing result")
         filled_results.append(result)
     return filled_results
 
@@ -405,7 +405,7 @@ def _validate_embeddings_dim(
         if actual_dim == expected_dim:
             continue
 
-        raise RuntimeError(
+        raise EmbeddingGenerationError(
             "Embedding dimension mismatch: "
             f"model={model}, api_base={api_base}, expected_dim={expected_dim}, "
             f"index={index}, actual_dim={actual_dim}"

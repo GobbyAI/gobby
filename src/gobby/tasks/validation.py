@@ -692,15 +692,7 @@ class TaskValidator:
         # Build test strategy section if provided
         category_section = ""
         if category:
-            category_section = f"Test Strategy: {category}\n"
-            if category.lower() == "manual":
-                category_section += (
-                    "NOTE: This task uses MANUAL testing. Do NOT require automated test files. "
-                    "Validation should focus on whether the implementation is correct, "
-                    "not whether automated tests exist.\n\n"
-                )
-            else:
-                category_section += "\n"
+            category_section = f"Test Strategy: {category}\n\n"
 
         # Build prompt using PromptLoader
         prompt_path = self.config.prompt_path or "validation/validate"

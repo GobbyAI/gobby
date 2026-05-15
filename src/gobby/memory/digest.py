@@ -50,7 +50,7 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
 @dataclass(frozen=True)
 class _TurnRecord:
     turn_markdown: str
-    title_candidate: str | None
+    title_candidate: str
 
 
 class SessionTitlePolicy(Protocol):
@@ -582,6 +582,12 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
         )
 
     title_candidate = _normalize_title_candidate(raw_title_candidate)
+    if not title_candidate:
+        _raise_turn_record_contract_error(
+            "empty normalized title_candidate",
+            response_text,
+            exchange_count,
+        )
 
     return _TurnRecord(turn_markdown=turn_markdown, title_candidate=title_candidate)
 

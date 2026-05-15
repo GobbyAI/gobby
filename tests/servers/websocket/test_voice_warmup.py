@@ -131,6 +131,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_tts_warmup_records_dependency_failure_without_provider_lookup(self) -> None:
+        """TTS dependency failure should skip provider lookup and record the error."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
         mixin._ensure_tts_deps = AsyncMock(return_value=False)
         mixin._get_tts = MagicMock()
@@ -183,6 +184,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_voice_mode_enable_starts_tts_warmup_only(self) -> None:
+        """Voice-mode enable should warm TTS without warming STT."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 
         mock_stt = MagicMock()
@@ -216,6 +218,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_voice_prepare_can_arm_tts_before_toggle_frame(self) -> None:
+        """Voice prepare should arm TTS before the toggle frame arrives."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
 
         mock_tts = MagicMock()
@@ -239,6 +242,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_voice_prepare_stt_only_does_not_warm_tts(self) -> None:
+        """STT-only prepare should leave TTS idle."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 
         mock_stt = MagicMock()
@@ -277,6 +281,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_voice_prepare_tts_only_does_not_warm_stt(self) -> None:
+        """TTS-only prepare should leave STT idle."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 
         mock_stt = MagicMock()
@@ -306,6 +311,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_voice_prepare_without_targets_preserves_config_warmup(self) -> None:
+        """Prepare without explicit targets should use configured warmup targets."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 
         mock_stt = MagicMock()
@@ -328,6 +334,7 @@ class TestVoiceWarmup:
         mock_tts.warmup.assert_awaited_once()
 
     def test_scoped_status_ignores_unrequested_tts_state(self) -> None:
+        """Scoped STT status should ignore unrequested TTS loading state."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
         mixin._stt_warmup_status = "ready"
         mixin._tts_warmup_status = "loading"
@@ -345,6 +352,7 @@ class TestVoiceWarmup:
         assert global_status["tts_warmup_error"] == "reference audio invalid"
 
     def test_status_reports_loaded_tts_provider_details(self) -> None:
+        """Status should include details from an already loaded TTS provider."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
         provider = MagicMock()
         provider.get_status.return_value = TTSProviderStatus(
@@ -362,6 +370,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_start_voice_warmup_records_failures(self) -> None:
+        """Missing warmup providers should record unavailable status details."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
         mixin._get_tts = MagicMock(return_value=None)
         mixin._get_tts_availability = MagicMock(return_value=(False, "chatterbox missing"))
@@ -381,6 +390,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_start_voice_warmup_records_provider_warmup_failure(self) -> None:
+        """Provider warmup exceptions should be exposed in voice status."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
 
         mock_tts = MagicMock()
@@ -398,6 +408,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_cleanup_voice_unloads_models_and_cancels_tasks(self) -> None:
+        """Voice cleanup should unload providers and cancel background tasks."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 
         mixin._stt_warmup_status = "ready"
@@ -429,6 +440,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_check_voice_idle_cancels_inflight_warmup(self) -> None:
+        """Idle checks should cancel an in-flight warmup task."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
         mixin._voice_warmup_task = asyncio.create_task(wait_forever())
 
@@ -438,6 +450,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_voice_audio_forwards_project_id_to_chat_message(self) -> None:
+        """Voice audio should forward project_id into the chat message payload."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
         stt = MagicMock()
         stt.transcribe = AsyncMock(return_value="hello from voice")
@@ -467,6 +480,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_voice_audio_without_project_id_preserves_chat_fallback(self) -> None:
+        """Voice audio without project_id should keep the chat fallback payload unchanged."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
         stt = MagicMock()
         stt.transcribe = AsyncMock(return_value="hello from voice")
