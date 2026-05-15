@@ -588,7 +588,7 @@ export function ChatInput({
 
   return (
     <div
-      className={`border-t border-border bg-background px-4 py-3${isDragOver ? ' ring-2 ring-accent ring-inset bg-accent/5' : ''}`}
+      className={`chat-input-footer border-t border-border bg-background py-3${isDragOver ? ' ring-2 ring-accent ring-inset bg-accent/5' : ''}`}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('application/x-gobby-file')) {
           e.preventDefault()

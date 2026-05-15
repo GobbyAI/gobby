@@ -74,7 +74,7 @@ export function ChatInputVoiceControls({
   }
 
   return (
-    <div className="chat-input-voice-controls">
+    <>
       {showTtsControl && (
         <Button
           size="icon"
@@ -133,6 +133,6 @@ export function ChatInputVoiceControls({
           )}
         </div>
       )}
-    </div>
+    </>
   )
 }

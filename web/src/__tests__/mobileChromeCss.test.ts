@@ -71,6 +71,17 @@ function hasAnyMediaAncestor(rule: Rule): boolean {
   return false
 }
 
+function hasContainerAncestor(rule: Rule, container: string): boolean {
+  let parent = rule.parent as CssParent | undefined
+  while (parent) {
+    if (parent.type === 'atrule' && parent.name === 'container') {
+      if (parent.params === container) return true
+    }
+    parent = parent.parent
+  }
+  return false
+}
+
 function findRule(root: Root, selector: string, media?: string): Rule {
   let found: Rule | undefined
   root.walkRules(selector, rule => {
@@ -82,6 +93,16 @@ function findRule(root: Root, selector: string, media?: string): Rule {
   return found as Rule
 }
 
+function findContainerRule(root: Root, selector: string, container: string): Rule {
+  let found: Rule | undefined
+  root.walkRules(selector, rule => {
+    if (found) return
+    if (hasContainerAncestor(rule, container)) found = rule
+  })
+  expect(found, `Expected CSS rule ${selector} in @container ${container}`).toBeDefined()
+  return found as Rule
+}
+
 function expectDeclarations(
   root: Root,
   selector: string,
@@ -89,6 +110,33 @@ function expectDeclarations(
   media?: string,
 ): void {
   const rule = findRule(root, selector, media)
+  const declarations = new Map<string, string>()
+  rule.walkDecls(declaration => {
+    declarations.set(declaration.prop, declaration.value)
+  })
+
+  for (const [property, value] of Object.entries(expected)) {
+    expect(declarations.get(property)).toBe(value)
+  }
+}
+
+function expectNoDeclaration(root: Root, selector: string, property: string, media?: string): void {
+  const rule = findRule(root, selector, media)
+  const declarations = new Set<string>()
+  rule.walkDecls(declaration => {
+    declarations.add(declaration.prop)
+  })
+
+  expect(declarations.has(property)).toBe(false)
+}
+
+function expectContainerDeclarations(
+  root: Root,
+  selector: string,
+  container: string,
+  expected: Record<string, string>,
+): void {
+  const rule = findContainerRule(root, selector, container)
   const declarations = new Map<string, string>()
   rule.walkDecls(declaration => {
     declarations.set(declaration.prop, declaration.value)
@@ -177,6 +225,64 @@ describe('mobile chrome CSS', () => {
     )
     expectDeclarations(activityCss, '.activity-panel-toolbar-segmented', {
       'font-size': 'var(--text-sm)',
+    })
+  })
+
+  it('keeps the minimum-width chat status bar to one row', () => {
+    const inputCss = parseCss('src/components/chat/styles/input.css')
+    const narrowChatColumn = 'chat-column (max-width: 360px)'
+
+    expectContainerDeclarations(inputCss, '.agent-status-bar__summary', narrowChatColumn, {
+      'flex-wrap': 'nowrap',
+    })
+    expectContainerDeclarations(inputCss, '.chat-session-status', narrowChatColumn, {
+      'flex-wrap': 'nowrap',
+    })
+    expectContainerDeclarations(inputCss, '.chat-session-status__state', narrowChatColumn, {
+      display: 'none',
+    })
+  })
+
+  it('right-aligns command and status bar action slots', () => {
+    const layoutCss = parseCss('src/components/chat/styles/layout.css')
+    const inputCss = parseCss('src/components/chat/styles/input.css')
+
+    expectDeclarations(layoutCss, '.command-bar', {
+      padding: '0 0.75rem',
+    })
+    expectDeclarations(inputCss, '.agent-status-bar', {
+      padding: '0 0.75rem',
+    })
+  })
+
+  it('keeps the minimum-width chat input toolbar controls to one row', () => {
+    const inputCss = parseCss('src/components/chat/styles/input.css')
+    const chatInputSource = readSource('src/components/chat/ChatInput.tsx')
+    const narrowChatColumn = 'chat-column (max-width: 360px)'
+
+    expect(chatInputSource).toContain('chat-input-footer border-t border-border bg-background py-3')
+    expect(chatInputSource).not.toContain(
+      'chat-input-footer border-t border-border bg-background px-4 py-3',
+    )
+    expectDeclarations(inputCss, '.chat-input-footer', {
+      'padding-inline': '1rem',
+    })
+    expectNoDeclaration(inputCss, '.chat-input-toolbar', 'padding-right')
+    expectContainerDeclarations(inputCss, '.chat-input-toolbar__left', narrowChatColumn, {
+      gap: '0.125rem',
+      'flex-wrap': 'nowrap',
+    })
+    expectDeclarations(inputCss, '.chat-input-voice-mic', {
+      gap: '0.125rem',
+    })
+    expectContainerDeclarations(
+      inputCss,
+      '.chat-input-toolbar__left .segmented-control__option',
+      narrowChatColumn,
+      { 'padding-inline': '0.375rem' },
+    )
+    expectContainerDeclarations(inputCss, '.chat-input-footer', narrowChatColumn, {
+      'padding-inline': '0.75rem',
     })
   })
 })

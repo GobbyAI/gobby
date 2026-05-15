@@ -341,6 +341,10 @@ export function ActivityPanel({
     PANEL_MIN_WIDTH,
     viewportWidth - CHAT_MIN_WIDTH - LAYOUT_BUFFER,
   );
+  const effectivePanelWidth = Math.min(
+    Math.max(panelWidth, PANEL_MIN_WIDTH),
+    effectivePanelMaxWidth,
+  );
   useEffect(() => {
     if (!showMobileTabMenu) {
       return;
@@ -511,7 +515,7 @@ export function ActivityPanel({
     <>
       <ResizeHandle
         onResize={onWidthChange}
-        panelWidth={panelWidth}
+        panelWidth={effectivePanelWidth}
         minWidth={PANEL_MIN_WIDTH}
         maxWidth={effectivePanelMaxWidth}
       />
@@ -519,7 +523,7 @@ export function ActivityPanel({
         className="activity-panel"
         aria-labelledby="activity-panel-title"
         style={{
-          width: panelWidth,
+          width: effectivePanelWidth,
           minWidth: PANEL_MIN_WIDTH,
           maxWidth: `calc(100vw - ${CHAT_MIN_WIDTH + LAYOUT_BUFFER}px)`,
           flexShrink: 1,
