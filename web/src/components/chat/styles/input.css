@@ -817,6 +817,7 @@
 }
 
 .chat-input-voice-mic {
+  gap: 0.125rem;
   flex-shrink: 0;
 }
 
