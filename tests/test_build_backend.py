@@ -148,8 +148,8 @@ def test_stage_ui_runs_npm_commands_with_timeout(
     backend._stage_ui()
 
     assert calls == [
-        SubprocessCall(["npm", "ci"], web, True, True, True, 600),
-        SubprocessCall(["npm", "run", "build"], web, True, True, True, 600),
+        SubprocessCall(["npm", "ci"], web, False, True, True, 600),
+        SubprocessCall(["npm", "run", "build"], web, False, True, True, 600),
     ]
 
 
@@ -266,12 +266,7 @@ def test_stage_ui_npm_failure_raises_output_context(
         timeout: int,
     ) -> SimpleNamespace:
         if command == failed_command:
-            raise backend.subprocess.CalledProcessError(
-                returncode=17,
-                cmd=command,
-                output="out text",
-                stderr="err text",
-            )
+            return SimpleNamespace(returncode=17, stdout="out text", stderr="err text")
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)

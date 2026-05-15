@@ -9,18 +9,30 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypeVar, cast
+from typing import Any, Protocol, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.maintenance import _run_maintenance, _update_symbol_summaries
 from gobby.code_index.models import IndexedProject
 
 pytestmark = pytest.mark.unit
 
 T = TypeVar("T")
+
+
+class _MaintenanceConfig(Protocol):
+    qdrant_collection_prefix: str
+
+
+class _MaintenanceContext(Protocol):
+    storage: Any
+    graph: Any
+    vector_store: Any | None
+    config: _MaintenanceConfig
+
+    async def run_db(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T: ...
 
 
 @pytest.mark.asyncio
@@ -55,7 +67,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         run_db_calls.append(func_name)
         return func(*args, **kwargs)
 
-    context = SimpleNamespace(
+    context: _MaintenanceContext = SimpleNamespace(
         storage=storage,
         graph=graph,
         vector_store=vector_store,
@@ -67,7 +79,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec") as create_proc,
     ):
-        await _run_maintenance(cast(CodeIndexContext, context))
+        await _run_maintenance(context)
 
     storage.delete_project_index.assert_called_once_with("proj-missing")
     graph.clear_project.assert_awaited_once_with("proj-missing")
@@ -94,13 +106,16 @@ async def test_summary_updates_are_concurrency_limited() -> None:
             with lock:
                 active -= 1
 
-    context = SimpleNamespace(
+    context: _MaintenanceContext = SimpleNamespace(
         storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
+        graph=None,
+        vector_store=None,
+        config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
         run_db=asyncio.to_thread,
     )
     results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
 
-    await _update_symbol_summaries(cast(CodeIndexContext, context), results)
+    await _update_symbol_summaries(context, results)
 
     assert max_active <= 4
 
@@ -118,14 +133,17 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
     async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         return func(*args, **kwargs)
 
-    context = SimpleNamespace(
+    context: _MaintenanceContext = SimpleNamespace(
         storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
+        graph=None,
+        vector_store=None,
+        config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
         run_db=run_db,
     )
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
         await _update_symbol_summaries(
-            cast(CodeIndexContext, context),
+            context,
             {"sym-ok": "ok", "sym-bad": "bad", "sym-later": "later"},
         )
 

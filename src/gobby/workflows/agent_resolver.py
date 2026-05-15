@@ -53,7 +53,7 @@ def resolve_agent(
             data["name"] = row.name
         body = AgentDefinitionBody(**data)
     except (json.JSONDecodeError, ValidationError) as e:
-        logger.debug(f"Failed to parse agent definition for {name}: {e}")
+        logger.warning("Failed to parse agent definition for %s: %s", name, e, exc_info=True)
         return None
 
     # Resolve 'inherit' provider — normalize source to canonical provider name

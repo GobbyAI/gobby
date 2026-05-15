@@ -20,6 +20,11 @@ since `0.4.3`.
   preserving unsupported-CLI no-op behavior (#14671).
 - Replace raw dashboard metric chart-series indexes with named series mapping
   and normalize heading levels before rendering heading tags (#14671).
+- Document automated expansion leaf categories as `code`, `config`, `docs`,
+  `planning`, `refactor`, `research`, and `test`; generated `manual` leaves are
+  rejected and should move to direct/manual task creation when human gates are
+  required. This aligns `stage_manifest.py` and the
+  `expansion-agent-selection/SKILL.md` guidance with build validation.
 
 ### Fixed
 

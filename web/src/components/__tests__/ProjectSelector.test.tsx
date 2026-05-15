@@ -48,7 +48,7 @@ describe('ProjectSelector', () => {
     expect(onProjectChange).toHaveBeenCalledWith('personal')
   })
 
-  it('links project search combobox ARIA to the highlighted option', () => {
+  it('links project search combobox ARIA to the highlighted option', async () => {
     const { onProjectChange } = renderSelector()
     const group = screen.getByRole('radiogroup', { name: 'Project scope' })
 
@@ -69,6 +69,7 @@ describe('ProjectSelector', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onProjectChange).toHaveBeenCalledWith('project-demo')
+    await waitFor(() => expect(within(group).getByRole('radio', { name: 'gobby' })).toHaveFocus())
   })
 
   it('toggles the compact selector from keyboard and restores focus on Escape', async () => {

@@ -41,6 +41,8 @@ const REPLIES_CLS = 'mt-1'
 
 const COMPOSE_CLS = 'mt-1 flex items-end gap-1.5'
 const INPUT_WRAPPER_CLS = 'relative flex-1'
+// Comment inputs share the app-wide focus-visible outline so keyboard focus is
+// obvious without adding a persistent ring during mouse editing.
 const TEXTAREA_CLS =
   `block min-h-9 w-full resize-y rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-primary)] ${inputFocusCls}`
 const SEND_BTN_CLS =

@@ -14,7 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 def _infer_embedding_provider_from_url(api_base: str) -> str:
-    """Infer the compatible local provider path for a custom OpenAI-style endpoint."""
+    """Infer provider compatibility from a custom OpenAI-style endpoint URL.
+
+    Ports ``11434`` and ``1234`` map to Ollama and LM Studio. Every other
+    parseable or malformed URL falls back to a generic OpenAI-compatible
+    endpoint.
+    """
     try:
         port = urlparse(api_base).port
     except Exception:
@@ -27,6 +32,22 @@ def _infer_embedding_provider_from_url(api_base: str) -> str:
     return "openai-compatible"
 
 
+def _record_embedding_install_result(
+    results: dict[str, dict[str, Any]],
+    result: object,
+) -> bool:
+    """Store an embedding installer result and return whether its shape is valid."""
+    if isinstance(result, dict):
+        results["embedding"] = result
+        return True
+    error = f"Embedding installer returned invalid result shape: {type(result).__name__}"
+    results["embedding"] = {"success": False, "error": error}
+    logger.warning(error)
+    click.echo(f"Failed: {error}", err=True)
+    click.echo("")
+    return False
+
+
 def _select_embedding_provider(
     *,
     installer: Callable[..., dict[str, Any]],
@@ -35,7 +56,13 @@ def _select_embedding_provider(
     api_base_override: str | None,
     provider_override: str | None,
 ) -> tuple[str, bool]:
-    """Select an embedding provider and handle skip-only paths."""
+    """Choose the provider and whether installer work should continue.
+
+    Explicit provider or URL overrides win. Non-interactive runs pick the first
+    detected local provider; when no local provider is available, the installer
+    is still called with ``provider="none"`` so the disabled embedding config is
+    persisted and validated in ``results["embedding"]``.
+    """
     from ._detectors import _is_lmstudio_available, _is_ollama_available
 
     lmstudio_ok = _is_lmstudio_available()
@@ -73,11 +100,15 @@ def _select_embedding_provider(
             provider = "ollama"
         else:
             click.echo("No local embedding provider detected - skipping (no_interactive mode)")
-            results["embedding"] = {"success": True, "provider": "none", "skipped": True}
             try:
-                installer(provider="none")
+                result = installer(provider="none")
+                _record_embedding_install_result(results, result)
             except Exception as e:
                 logger.warning(f"Failed to persist 'none' embedding config: {e}")
+                results["embedding"] = {
+                    "success": False,
+                    "error": f"Failed to persist 'none' embedding config: {e}",
+                }
             return "none", False
         click.echo(f"Auto-selected: {provider}")
         return provider, True
@@ -109,7 +140,12 @@ def _get_openai_key(
     no_interactive: bool,
     results: dict[str, dict[str, Any]],
 ) -> str | None:
-    """Return an OpenAI API key or update results for the skip path."""
+    """Load or prompt for an OpenAI API key used by cloud embeddings.
+
+    Expected import, OS, and SQLite failures are logged and fall through to the
+    prompt/skip path. Programming and configuration errors propagate. In
+    non-interactive mode a missing key records a failed embedding result.
+    """
     openai_api_key: str | None = None
     try:
         from gobby.storage.database import LocalDatabase
@@ -121,7 +157,7 @@ def _get_openai_key(
                 existing = secrets.get("openai_api_key")
                 openai_api_key = existing
                 click.echo("Using existing OpenAI API key from secrets")
-    except (ImportError, OSError, RuntimeError, ValueError, sqlite3.Error) as e:
+    except (ImportError, OSError, sqlite3.Error) as e:
         logger.warning("Failed to read existing openai_api_key: %s", e, exc_info=True)
 
     if openai_api_key:
@@ -159,7 +195,13 @@ def _prompt_customization(
     dim_override: int | None,
     provider_override: str | None,
 ) -> tuple[str | None, str | None, int | None]:
-    """Prompt for optional embedding endpoint/model overrides."""
+    """Collect optional endpoint, model, and dimension overrides.
+
+    Non-interactive runs, CLI-supplied overrides, and ``provider="none"`` skip
+    prompting. Interactive customization leaves blank fields as provider
+    defaults, parses positive integer dimensions, and leaves invalid dimensions
+    unset so the installer can probe them.
+    """
     cli_overrides_supplied = (
         api_base_override is not None
         or model_override is not None
@@ -299,14 +341,8 @@ def _run_embedding_install(
         click.echo("")
         return provider
 
-    if not isinstance(result, dict):
-        error = f"Embedding installer returned invalid result shape: {type(result).__name__}"
-        results["embedding"] = {"success": False, "error": error}
-        click.echo(f"Failed: {error}", err=True)
-        click.echo("")
+    if not _record_embedding_install_result(results, result):
         return provider
-
-    results["embedding"] = result
 
     if result.get("success"):
         if result.get("skipped"):

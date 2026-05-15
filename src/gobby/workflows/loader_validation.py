@@ -128,6 +128,12 @@ def _check_refs(
 
 
 def _completed_status_conditions(condition: Any) -> set[tuple[str, str, str]]:
+    """Return completed-status comparisons from a pipeline step condition.
+
+    The tuple contains ``(step_id, output_field, operator)`` for expressions like
+    ``steps.review.output.status == 'completed'``. Non-string conditions have no
+    comparable completed-status checks.
+    """
     if not isinstance(condition, str):
         return set()
     return {
@@ -137,11 +143,17 @@ def _completed_status_conditions(condition: Any) -> set[tuple[str, str, str]]:
 
 
 def _is_fail_pipeline_step(step: dict[str, Any]) -> bool:
+    """Return True when a step invokes the internal ``fail_pipeline`` MCP tool."""
     mcp = step.get("mcp")
     return isinstance(mcp, dict) and mcp.get("tool") == "fail_pipeline"
 
 
 def _validate_fail_pipeline_completion_order(steps: list[dict[str, Any]]) -> None:
+    """Reject fail branches placed after a matching completed success branch.
+
+    A fail step that checks ``!= 'completed'`` for the same step output after a
+    prior ``== 'completed'`` check is unreachable in the intended branch order.
+    """
     completed_checks: set[tuple[str, str]] = set()
     for step in steps:
         checks = _completed_status_conditions(step.get("condition"))

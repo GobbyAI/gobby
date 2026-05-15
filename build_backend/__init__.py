@@ -99,24 +99,32 @@ def _run_npm_command(command: list[str]) -> None:
         result = subprocess.run(  # nosec B603 B607
             command,
             cwd=_WEB_SRC,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             timeout=_NPM_BUILD_TIMEOUT_SECONDS,
         )
+        if result.returncode != 0:
+            logger.error(
+                "Failed %s in %s with return code %s\nstdout:\n%s\nstderr:\n%s",
+                command_text,
+                _WEB_SRC,
+                result.returncode,
+                result.stdout or "",
+                result.stderr or "",
+            )
+            raise RuntimeError(
+                f"Failed running {command_text!r} in {_WEB_SRC} "
+                f"(return code {result.returncode})\n"
+                f"stdout:\n{result.stdout or ''}\n"
+                f"stderr:\n{result.stderr or ''}"
+            )
         logger.info(
             "Completed %s in %s with return code %s",
             command_text,
             _WEB_SRC,
             result.returncode,
         )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"Failed running {command_text!r} in {_WEB_SRC} "
-            f"(return code {exc.returncode})\n"
-            f"stdout:\n{exc.stdout or ''}\n"
-            f"stderr:\n{exc.stderr or ''}"
-        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             f"Timed out running {command_text!r} in {_WEB_SRC} "

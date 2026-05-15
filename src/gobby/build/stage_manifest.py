@@ -148,8 +148,6 @@ def _leaf_primary_stage(task: Task) -> str:
     category = task.category or ""
     stage_name = LEAF_PRIMARY_STAGE_BY_CATEGORY.get(category)
     if stage_name is None:
-        if category == "manual":
-            raise ValueError("manual leaf tasks are not automatable")
         allowed = ", ".join(sorted(AUTOMATED_LEAF_CATEGORIES))
         raise ValueError(f"category {category} cannot be automated; expected one of: {allowed}")
     return stage_name

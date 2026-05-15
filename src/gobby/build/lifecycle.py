@@ -201,8 +201,6 @@ async def _build_leaf(
     services: object | None,
 ) -> BuildResult:
     if task.category not in AUTOMATED_LEAF_CATEGORIES:
-        if task.category == "manual":
-            raise ValueError("manual leaf tasks are not automatable")
         allowed = ", ".join(sorted(AUTOMATED_LEAF_CATEGORIES))
         raise ValueError(
             f"category {task.category} cannot be automated; expected one of: {allowed}"

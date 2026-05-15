@@ -1067,7 +1067,7 @@ async def test_build_leaf_rejects_non_automated_category(
         task_type="task",
     )
 
-    with pytest.raises(ValueError, match="manual leaf tasks are not automatable"):
+    with pytest.raises(ValueError, match="category manual cannot be automated"):
         await _build(
             f"#{leaf.seq_num}",
             _options(isolation="none"),

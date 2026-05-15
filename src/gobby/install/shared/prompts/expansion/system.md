@@ -62,7 +62,7 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 
 1. Use stable task IDs and phase IDs.
 2. Every task must belong to a phase.
-3. Use categories from: `code`, `config`, `docs`, `research`, `planning`, `manual`, `refactor`.
+3. Use automated expansion categories from: `code`, `config`, `docs`, `planning`, `refactor`, `research`, `test`.
    `planning` is only valid for intermediate or parent tasks; it must never be emitted as a leaf.
 4. Keep tasks atomic and implementation-focused.
 5. Put only real dependencies in `dependencies`.

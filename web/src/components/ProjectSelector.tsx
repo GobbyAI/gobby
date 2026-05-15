@@ -7,6 +7,7 @@ import { inputFocusCls } from "./shared/focusStyles";
 
 type ProjectMode = "personal" | "project";
 type PickerMode = "search" | "compact";
+type PickerRestoreFocus = false | "compact" | "search";
 
 /** Width of the project picker in pixels (matches Tailwind w-48). */
 const PICKER_WIDTH = 192;
@@ -58,6 +59,7 @@ export function ProjectSelector({
   );
   const triggerRef = useRef<HTMLDivElement>(null);
   const compactTriggerRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const compactListboxRef = useRef<HTMLDivElement>(null);
   const [pickerPos, setPickerPos] = useState<{ top: number; left: number } | null>(null);
@@ -75,12 +77,24 @@ export function ProjectSelector({
       ? `${listboxId}-option-${boundedActiveOptionIndex}`
       : undefined;
 
-  const closePicker = useCallback((restoreCompactFocus = false) => {
+  const closePicker = useCallback((restoreFocus: PickerRestoreFocus = false) => {
+    const searchInput = searchInputRef.current;
     setPickerMode(null);
     setProjectSearch("");
     setActiveOptionIndex(0);
-    if (restoreCompactFocus) {
+    if (restoreFocus === "compact") {
       requestAnimationFrame(() => compactTriggerRef.current?.focus());
+    }
+    if (restoreFocus === "search") {
+      requestAnimationFrame(() => {
+        if (searchInput?.isConnected) {
+          searchInput.focus();
+          return;
+        }
+        triggerRef.current
+          ?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
+          ?.focus();
+      });
     }
   }, []);
 
@@ -149,9 +163,12 @@ export function ProjectSelector({
     }
   };
 
-  const handleProjectSelect = (projectId: string) => {
+  const handleProjectSelect = (
+    projectId: string,
+    restoreFocus: PickerRestoreFocus = showCompactMenu ? "compact" : false,
+  ) => {
     onProjectChange(projectId);
-    closePicker(showCompactMenu);
+    closePicker(restoreFocus);
   };
 
   const toggleCompactMenu = () => {
@@ -182,7 +199,7 @@ export function ProjectSelector({
       return;
     }
     if (e.key === "Enter" && pickerOptions[boundedActiveOptionIndex]) {
-      handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id);
+      handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id, "search");
     }
   };
 
@@ -194,14 +211,14 @@ export function ProjectSelector({
     }
     if (e.key === "Escape" && showCompactMenu) {
       e.preventDefault();
-      closePicker(true);
+      closePicker("compact");
     }
   };
 
   const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      closePicker(showCompactMenu);
+      closePicker(showCompactMenu ? "compact" : false);
       return;
     }
     if (!showCompactMenu) {
@@ -275,6 +292,7 @@ export function ProjectSelector({
           >
             {showProjectSearch && (
               <input
+                ref={searchInputRef}
                 className={`w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground ${inputFocusCls}`}
                 placeholder="Search"
                 value={projectSearch}

@@ -337,7 +337,7 @@ class TestProbeEmbeddingDim:
             _probe_embedding_dim(model="m", api_base="http://localhost:1234/v1")
 
     @pytest.mark.asyncio
-    async def test_running_event_loop_returns_none_without_creating_probe(self) -> None:
+    async def test__probe_embedding_dim_returns_none_when_event_loop_running(self) -> None:
         mock_generate = AsyncMock()
 
         with patch("gobby.search.embeddings.generate_embedding", mock_generate):
@@ -663,6 +663,8 @@ class TestHealthCheck:
         from gobby.cli.installers.embedding import _health_check_embedding
 
         def close_probe(coro: object) -> bool:
+            # asyncio.run is mocked, so close the created coroutine to avoid an
+            # unawaited-coroutine warning while still exercising the sync path.
             coro.close()
             return True
 
