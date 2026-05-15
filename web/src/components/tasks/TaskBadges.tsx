@@ -82,7 +82,7 @@ export function StatusDot({ status, task }: { status?: string; task?: TaskStateL
     : TASK_STATE_LABELS[displayState]
   return (
     <ActivityRowStatusDot
-      kind={TASK_STATE_KIND[displayState] ?? "disabled"}
+      kind={TASK_STATE_KIND[displayState]}
       label={`Status: ${label}`}
       title={label}
     />

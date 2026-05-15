@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { pruneTimeBoundLru } from '../../lib/timeBoundLru'
 import { parseVoiceStatus, type RawVoiceStatus } from '../voiceStatus'
 
 const VOICE_PREPARE_RETRY_MS = 30_000
 const VOICE_PREPARE_CACHE_MAX_ENTRIES = 128
-// Shared across hook instances so remount/reconnect loops do not repeatedly
-// warm the same conversation and target set.
+// Shared across hook instances because chat remounts, reconnects, and
+// conversation switches can recreate the hook while the same WebSocket target is
+// still warming. The cache is only a send throttle: races may duplicate one
+// prepare if two mounts run in the same tick, and stale entries expire by retry
+// window before oldest-entry eviction enforces the bounded size.
 const voicePrepareSentAt = new Map<string, number>()
 
 function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnabled: boolean) {
@@ -13,24 +17,10 @@ function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnab
 }
 
 function pruneVoicePrepareSentAt(now: number) {
-  for (const [key, sentAt] of voicePrepareSentAt) {
-    if (now - sentAt >= VOICE_PREPARE_RETRY_MS) {
-      voicePrepareSentAt.delete(key)
-    }
-  }
-
-  while (voicePrepareSentAt.size > VOICE_PREPARE_CACHE_MAX_ENTRIES) {
-    let oldestKey: string | undefined
-    let oldestSentAt = Number.POSITIVE_INFINITY
-    for (const [key, sentAt] of voicePrepareSentAt) {
-      if (sentAt < oldestSentAt) {
-        oldestKey = key
-        oldestSentAt = sentAt
-      }
-    }
-    if (oldestKey === undefined) return
-    voicePrepareSentAt.delete(oldestKey)
-  }
+  pruneTimeBoundLru(voicePrepareSentAt, now, {
+    maxEntries: VOICE_PREPARE_CACHE_MAX_ENTRIES,
+    ttlMs: VOICE_PREPARE_RETRY_MS,
+  })
 }
 
 export function resetVoicePrepareCacheForTests(): void {

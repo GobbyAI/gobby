@@ -510,7 +510,7 @@ function MetaKVRow({
           {children}
         </a>
       ) : (
-        <span className={valueCls}>{children}</span>
+        <div className={valueCls}>{children}</div>
       )}
     </div>
   );

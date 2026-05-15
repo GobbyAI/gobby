@@ -29,14 +29,14 @@ interface ActivityRowStatusDotProps {
 // Each kind anchors to a distinct OKLCH lightness band so grayscale viewers
 // can rank states by L alone:
 //   warning (L≈78) > success (L≈72) > info (L≈70) > paused (L≈68)
-//   > error (L≈65) > disabled (L≈62) > stopped (L≈60)
+//   > error (L≈65) > disabled (L≈62) > inactive/stopped (L≈60)
 const KIND_TOKEN: Record<StatusKind, string> = {
   success: "var(--color-success-foreground)",
   info: "var(--color-info)",
   warning: "var(--color-warning-foreground)",
   error: "var(--color-error)",
   paused: "var(--text-secondary)",
-  stopped: "var(--color-stopped)",
+  stopped: "var(--color-inactive)",
   disabled: "var(--text-muted)",
 };
 
@@ -70,7 +70,7 @@ function ActivityRowStatusDotImpl({
       data-kind={kind}
       aria-label={label}
       role={label ? "img" : undefined}
-      aria-hidden={label ? undefined : true}
+      aria-hidden={!label}
       title={title}
     >
       <Icon size={12} strokeWidth={2.25} aria-hidden focusable={false} />

@@ -82,6 +82,14 @@ Implement the first behavior.
 
 
 def _write_plan_with_manual_manifest_category(path: Path) -> Path:
+    """Write a plan whose manifest uses the unsupported manual leaf category.
+
+    Args:
+        path: Destination Markdown file.
+
+    Returns:
+        The written plan path.
+    """
     path.write_text(
         """> **Plan ID:** manual-manifest
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useId, useRef } from 'react'
 import type { Channel, ChannelType } from '../../hooks/useIntegrations'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { PlatformIcon } from './IntegrationsPage'
@@ -89,6 +89,7 @@ interface ChannelFormProps {
 export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: ChannelFormProps) {
   const typeSelectRef = useRef<HTMLDivElement>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  const typeValueId = useId()
   const [selectedType, setSelectedType] = useState<ChannelType | null>(
     mode === 'edit' ? (channel?.channel_type ?? null) : (presetType ?? null)
   )
@@ -248,8 +249,8 @@ export function ChannelForm({ mode, channel, presetType, onSubmit, onClose }: Ch
           {/* Type display (edit mode) */}
           {mode === 'edit' && selectedType && (
             <div className={FORM_FIELD_CLS}>
-              <span className={FORM_LABEL_CLS}>Type</span>
-              <div className={FORM_STATIC_CLS}>{CHANNEL_DISPLAY_NAMES[selectedType]}</div>
+              <label className={FORM_LABEL_CLS} htmlFor={typeValueId}>Type</label>
+              <div id={typeValueId} className={FORM_STATIC_CLS}>{CHANNEL_DISPLAY_NAMES[selectedType]}</div>
             </div>
           )}
 

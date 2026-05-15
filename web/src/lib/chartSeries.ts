@@ -12,8 +12,15 @@ export const chartSeries: readonly ChartSeriesEntry[] = [
   { stroke: 'var(--chart-series-6)', dash: '1 3' },
 ] as const
 
-export function chartSeriesAt(index: number): ChartSeriesEntry {
-  return chartSeries[index % chartSeries.length]
+export function chartSeriesAt(
+  index: number,
+  series: readonly ChartSeriesEntry[] = chartSeries,
+): ChartSeriesEntry {
+  if (series.length === 0) {
+    throw new Error('chartSeriesAt requires at least one series entry')
+  }
+  const normalizedIndex = ((index % series.length) + series.length) % series.length
+  return series[normalizedIndex]
 }
 
 export const CHART_SERIES_MEMORY = chartSeriesAt(0)

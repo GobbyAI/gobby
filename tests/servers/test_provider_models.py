@@ -371,6 +371,33 @@ class TestProviderModelCatalog:
         assert not expected_cwd.exists()
         client_cls.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_preserves_existing_cwd_when_trust_fails(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        client_cls = MagicMock()
+        client_cls.cli_name = "gemini"
+        gobby_home = temp_dir / "gobby-home"
+        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
+        expected_cwd.mkdir(parents=True)
+
+        with (
+            patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
+                new=AsyncMock(side_effect=PermissionError("not trusted")),
+            ),
+        ):
+            with pytest.raises(PermissionError, match="not trusted"):
+                await catalog._discover_acp_models(client_cls=client_cls)
+
+        assert expected_cwd.exists()
+        client_cls.assert_not_called()
+
     def test_load_cache_ignores_unsupported_version(self, temp_dir: Path) -> None:
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(

@@ -73,6 +73,7 @@ or shape.
 | `--color-destructive-foreground` | `oklch(72% 0.20 350)` | `oklch(52% 0.22 350)` | Destructive text/icons |
 | `--color-error` | `oklch(72% 0.20 350)` | `oklch(52% 0.22 350)` | Error text |
 | `--color-error-soft` | `oklch(72% 0.20 350 / 0.12)` | `oklch(52% 0.22 350 / 0.10)` | Soft error backgrounds |
+| `--color-inactive` | `oklch(60% 0.04 30)` | `oklch(45% 0.06 30)` | Stopped, closed, dormant states |
 | `--color-success` | `oklch(25% 0.05 125)` | `oklch(95% 0.04 125)` | Success backgrounds |
 | `--color-success-foreground` | `oklch(82% 0.10 125)` | `oklch(48% 0.10 125)` | Success text/icons |
 | `--color-success-soft` | `oklch(82% 0.10 125 / 0.12)` | `oklch(48% 0.10 125 / 0.10)` | Soft success backgrounds |

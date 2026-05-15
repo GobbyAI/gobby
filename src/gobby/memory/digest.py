@@ -50,7 +50,7 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
 @dataclass(frozen=True)
 class _TurnRecord:
     turn_markdown: str
-    title_candidate: str
+    title_candidate: str | None
 
 
 async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
@@ -569,12 +569,6 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
         )
 
     title_candidate = _normalize_title_candidate(data.get("title_candidate"))
-    if title_candidate is None:
-        _raise_turn_record_contract_error(
-            "missing or empty title_candidate",
-            response_text,
-            exchange_count,
-        )
 
     return _TurnRecord(turn_markdown=turn_markdown, title_candidate=title_candidate)
 
@@ -778,7 +772,7 @@ async def build_turn_and_digest(
 
         digest_title: str | None = None
         title_changed = False
-        if _should_update_digest_title(session):
+        if turn_record.title_candidate and _should_update_digest_title(session):
             existing_title = str(getattr(session, "title", "") or "").strip()
             existing_title_source = str(getattr(session, "title_source", "") or "").strip().lower()
             digest_title = turn_record.title_candidate
@@ -791,7 +785,7 @@ async def build_turn_and_digest(
             if updated_session is None:
                 raise RuntimeError("failed to update session title")
 
-        # 6. Persist digest state only after contract validation and title update succeed.
+        # 6. Persist digest state only after contract validation and any title update succeed.
         session_manager.update_last_turn_markdown(session_id, last_turn)
         session_manager.update_digest_markdown(session_id, updated_digest)
         session_manager.update_last_digest_input_hash(session_id, input_hash)

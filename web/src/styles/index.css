@@ -65,7 +65,7 @@
   --color-error-soft: oklch(72% 0.20 350 / 0.12);
   --text-on-error: oklch(15% 0 0);
 
-  --color-stopped: oklch(60% 0.04 30);
+  --color-inactive: oklch(60% 0.04 30);
 
   --color-success: oklch(25% 0.05 125);
   --color-success-foreground: oklch(82% 0.10 125);
@@ -76,8 +76,9 @@
   --color-review-bg: oklch(28% 0.08 200);
   --color-review-soft: oklch(72% 0.14 200 / 0.12);
 
-  /* Chart series tokens — see lib/chartSeries.ts for the paired dash patterns.
-     Lightness descends across the series so grayscale order is stable. */
+  /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
+     Dark theme lightness descends for stable grayscale order. Use these for
+     line/area strokes only with their paired dash pattern, never as hue-only fills. */
   --chart-series-1: var(--accent);
   --chart-series-2: var(--color-info);
   --chart-series-3: var(--color-warning-foreground);
@@ -277,7 +278,7 @@
   --color-error-soft: oklch(52% 0.22 350 / 0.10);
   --text-on-error: oklch(99% 0 0);
 
-  --color-stopped: oklch(45% 0.06 30);
+  --color-inactive: oklch(45% 0.06 30);
 
   --color-success: oklch(95% 0.04 125);
   --color-success-foreground: oklch(48% 0.10 125);
@@ -288,8 +289,9 @@
   --color-review-bg: oklch(94% 0.05 200);
   --color-review-soft: oklch(48% 0.16 200 / 0.10);
 
-  /* Chart series tokens — light theme variants. Lightness lowered to clear
-     WCAG 2.2 AA against --bg-primary; dash patterns live in lib/chartSeries.ts. */
+  /* Chart series tokens pair with lib/chartSeries.ts dash patterns.
+     Light theme values are lowered for WCAG 2.2 AA and stable grayscale order.
+     Use these for line/area strokes only with their paired dash pattern. */
   --chart-series-1: var(--accent);
   --chart-series-2: var(--color-info);
   --chart-series-3: var(--color-warning-foreground);

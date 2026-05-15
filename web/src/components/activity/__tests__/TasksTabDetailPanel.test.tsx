@@ -202,4 +202,12 @@ describe("TasksTabDetailPanel — impeccable redesign (#14686)", () => {
     const rows = container.querySelectorAll(".activity-task-detail-kv-row");
     expect(rows.length).toBeGreaterThanOrEqual(4);
   });
+
+  it("wraps non-link metadata values in divs for block-safe content", () => {
+    const { getByText } = render(<TasksTabDetailPanel task={makeTask()} />);
+    const row = getByText("State").closest(".activity-task-detail-kv-row");
+    const value = row?.querySelector(".activity-task-detail-kv-row__value");
+
+    expect(value?.tagName).toBe("DIV");
+  });
 });

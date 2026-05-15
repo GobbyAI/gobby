@@ -357,8 +357,8 @@
 }
 
 .activity-task-detail-hero__stage--active { color: var(--accent); }
-.activity-task-detail-hero__stage--blocked,
-.activity-task-detail-hero__stage--closed { color: var(--color-stopped); }
+.activity-task-detail-hero__stage--blocked { color: var(--color-error); }
+.activity-task-detail-hero__stage--closed { color: var(--color-inactive); }
 .activity-task-detail-hero__stage--escalated { color: var(--color-error); }
 
 .activity-task-detail-hero__agent {

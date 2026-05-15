@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
     "lint": "eslint --report-unused-disable-directives --max-warnings 0",
-    "lint:tokens": "! rg -n 'var\\(--[a-z-]+,\\s*#[0-9a-fA-F]+\\)' src/",
+    "lint:tokens": "node scripts/lint-tokens.mjs",
     "postinstall": "node scripts/copy-vad-assets.cjs",
     "setup": "tsx src/setup/cli.tsx",
     "build:setup": "node scripts/build-setup.mjs",

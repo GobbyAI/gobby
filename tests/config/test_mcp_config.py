@@ -518,7 +518,7 @@ class TestMCPConfigManagerListServers:
 class TestMigrateLegacyMcpConfig:
     """Tests for migrate_legacy_mcp_config helper."""
 
-    def test_renames_legacy_when_new_missing(self, tmp_path) -> None:
+    def test_renames_legacy_when_new_missing(self, tmp_path: Path) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
         legacy.write_text('{"servers": []}')
@@ -529,14 +529,14 @@ class TestMigrateLegacyMcpConfig:
         assert new.read_text() == '{"servers": []}'
         assert (new.stat().st_mode & 0o777) == 0o600
 
-    def test_no_op_when_legacy_missing(self, tmp_path) -> None:
+    def test_no_op_when_legacy_missing(self, tmp_path: Path) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
 
         assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
         assert not new.exists()
 
-    def test_no_op_when_both_exist(self, tmp_path) -> None:
+    def test_no_op_when_both_exist(self, tmp_path: Path) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
         legacy.write_text("legacy")
@@ -547,7 +547,7 @@ class TestMigrateLegacyMcpConfig:
         assert legacy.read_text() == "legacy"
         assert new.read_text() == "new"
 
-    def test_creates_parent_directory(self, tmp_path) -> None:
+    def test_creates_parent_directory(self, tmp_path: Path) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "nested" / "mcp-servers.json"
         legacy.write_text('{"servers": []}')
@@ -557,7 +557,7 @@ class TestMigrateLegacyMcpConfig:
         assert new.parent.exists()
         assert new.read_text() == '{"servers": []}'
 
-    def test_migrated_corrupted_legacy_json_raises_on_readback(self, tmp_path) -> None:
+    def test_migrated_corrupted_legacy_json_raises_on_readback(self, tmp_path: Path) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
         legacy.write_text("not valid json {")
@@ -569,7 +569,7 @@ class TestMigrateLegacyMcpConfig:
         with pytest.raises(ValueError, match="Invalid JSON"):
             manager._read_config()
 
-    def test_replace_failure_falls_back_to_copy_and_unlink(self, tmp_path) -> None:
+    def test_replace_failure_falls_back_to_copy_and_unlink(self, tmp_path: Path) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
         legacy.write_text('{"servers": []}')
@@ -581,7 +581,9 @@ class TestMigrateLegacyMcpConfig:
         assert new.read_text() == '{"servers": []}'
         assert (new.stat().st_mode & 0o777) == 0o600
 
-    def test_fallback_failure_returns_false_and_leaves_legacy(self, tmp_path, caplog) -> None:
+    def test_fallback_failure_returns_false_and_leaves_legacy(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"
         legacy.write_text('{"servers": []}')
@@ -598,8 +600,27 @@ class TestMigrateLegacyMcpConfig:
         assert "Failed to move legacy MCP config" in caplog.text
         assert "Failed to copy legacy MCP config" in caplog.text
 
+    def test_copy_fallback_replace_failure_returns_false_and_cleans_temp(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text('{"servers": []}')
+
+        caplog.set_level("WARNING", logger="gobby.config.mcp")
+        with (
+            patch.object(Path, "replace", side_effect=OSError("cross-device link")),
+            patch("gobby.config.mcp.os.replace", side_effect=OSError("atomic replace failed")),
+        ):
+            assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
+
+        assert legacy.read_text() == '{"servers": []}'
+        assert not new.exists()
+        assert not list(tmp_path.glob(".mcp-servers.json.*.tmp"))
+        assert "Failed to copy legacy MCP config" in caplog.text
+
     def test_successful_copy_with_unlink_failure_returns_true_and_leaves_both_files(
-        self, tmp_path, caplog
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         legacy = tmp_path / ".mcp.json"
         new = tmp_path / "mcp-servers.json"

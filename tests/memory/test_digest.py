@@ -25,16 +25,14 @@ pytestmark = pytest.mark.unit
 
 def _turn_record_json(
     turn_markdown: str = "User asked to fix a bug. Agent found the root cause.",
-    title_candidate: str = "Fix Auth Bug",
+    title_candidate: str | None = "Fix Auth Bug",
 ) -> str:
     import json
 
-    return json.dumps(
-        {
-            "turn_markdown": turn_markdown,
-            "title_candidate": title_candidate,
-        }
-    )
+    payload = {"turn_markdown": turn_markdown}
+    if title_candidate is not None:
+        payload["title_candidate"] = title_candidate
+    return json.dumps(payload)
 
 
 class TestMemorySyncImportDirect:
@@ -489,13 +487,13 @@ class TestBuildTurnAndDigest:
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_missing_title_candidate_returns_error_without_persistence(
+    async def test_missing_title_candidate_persists_digest_without_title_update(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """Missing title_candidate fails the same contract before persistence."""
+        """Missing title_candidate records the digest but skips title updates."""
         provider = mock_llm_service.get_default_provider.return_value
         provider.generate_text = AsyncMock(return_value='{"turn_markdown":"Did the work"}')
 
@@ -508,20 +506,24 @@ class TestBuildTurnAndDigest:
         )
 
         assert result is not None
-        assert "title_candidate" in result["error"]
-        mock_session_manager.update_last_turn_markdown.assert_not_called()
-        mock_session_manager.update_digest_markdown.assert_not_called()
+        assert "error" not in result
+        assert "title" not in result
+        mock_session_manager.update_last_turn_markdown.assert_called_once_with(
+            "session-123",
+            "Did the work",
+        )
+        mock_session_manager.update_digest_markdown.assert_called_once()
         mock_session_manager.update_title.assert_not_called()
-        mock_session_manager.update_last_digest_input_hash.assert_not_called()
+        mock_session_manager.update_last_digest_input_hash.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_placeholder_title_candidate_returns_error_without_persistence(
+    async def test_placeholder_title_candidate_persists_digest_without_title_update(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """Template-placeholder title candidates fail without persisting state."""
+        """Template-placeholder title candidates are ignored for title updates."""
         provider = mock_llm_service.get_default_provider.return_value
         provider.generate_text = AsyncMock(
             return_value=_turn_record_json(
@@ -539,11 +541,15 @@ class TestBuildTurnAndDigest:
         )
 
         assert result is not None
-        assert "title_candidate" in result["error"]
-        mock_session_manager.update_last_turn_markdown.assert_not_called()
-        mock_session_manager.update_digest_markdown.assert_not_called()
+        assert "error" not in result
+        assert "title" not in result
+        mock_session_manager.update_last_turn_markdown.assert_called_once_with(
+            "session-123",
+            "User asked why a session title regressed.",
+        )
+        mock_session_manager.update_digest_markdown.assert_called_once()
         mock_session_manager.update_title.assert_not_called()
-        mock_session_manager.update_last_digest_input_hash.assert_not_called()
+        mock_session_manager.update_last_digest_input_hash.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_placeholder_turn_markdown_returns_error_without_persistence(

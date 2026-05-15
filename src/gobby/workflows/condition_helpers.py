@@ -8,11 +8,21 @@ so they can be called from rule ``when`` conditions, e.g.:
 
 import logging
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Protocol
+from uuid import UUID
 
 from gobby.tasks.state_semantics import projected_task_state
 
 logger = logging.getLogger(__name__)
+
+TaskIdRef = str | int | UUID
+TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
+
+
+class TaskProvider(Protocol):
+    db: Any
+
+    def get_task(self, task_id: str) -> Any: ...
 
 
 def is_task_complete(task: Any) -> bool:
@@ -23,7 +33,7 @@ def is_task_complete(task: Any) -> bool:
     return projected_task_state(task) == "closed"
 
 
-def task_needs_human_review(task_manager: Any, task_id: str | int | None) -> bool:
+def task_needs_human_review(task_manager: TaskProvider | None, task_id: TaskIdRef | None) -> bool:
     """Check if a task has been escalated for human review.
 
     Returns True when escalation metadata projects to escalated.
@@ -55,7 +65,7 @@ def _normalize_task_id(task_id: Any) -> str:
     return str(task_id)
 
 
-def _get_task(task_manager: Any, task_id: str) -> Any | None:
+def _get_task(task_manager: TaskProvider, task_id: str) -> Any | None:
     try:
         return task_manager.get_task(task_id)
     except ValueError:
@@ -78,7 +88,7 @@ def _get_task(task_manager: Any, task_id: str) -> Any | None:
         return None
 
 
-def task_tree_complete(task_manager: Any, task_id: str | int | list[str | int] | None) -> bool:
+def task_tree_complete(task_manager: TaskProvider | None, task_id: TaskIdInput) -> bool:
     """Check if a task tree is complete (all work is done).
 
     A task tree is complete when either:
@@ -96,7 +106,7 @@ def task_tree_complete(task_manager: Any, task_id: str | int | list[str | int] |
         logger.warning("task_tree_complete: No task_manager available")
         return False
 
-    if isinstance(task_id, str | int):
+    if isinstance(task_id, str | int | UUID):
         task_ids = [_normalize_task_id(task_id)]
     elif isinstance(task_id, list):
         task_ids = [_normalize_task_id(t) for t in task_id]
@@ -111,7 +121,9 @@ def task_tree_complete(task_manager: Any, task_id: str | int | list[str | int] |
     return True
 
 
-def task_state_in(task_manager: Any, task_id: str | int | None, *states: str) -> bool:
+def task_state_in(
+    task_manager: TaskProvider | None, task_id: TaskIdRef | None, *states: str
+) -> bool:
     """Check whether the task's projected stage-native state is in the provided set."""
     if not task_id or not states:
         return False
@@ -128,19 +140,32 @@ def task_state_in(task_manager: Any, task_id: str | int | None, *states: str) ->
     return projected_task_state(task) in normalized_states
 
 
-def _normalize_task_ids(task_id_or_ids: Any) -> list[str] | None:
+def _normalize_task_ids(task_id_or_ids: TaskIdInput) -> list[str] | None:
     """Normalize a single task ref or iterable of refs to string refs."""
     if task_id_or_ids is None:
         return []
-    if isinstance(task_id_or_ids, str | int):
+    if isinstance(task_id_or_ids, str | int | UUID):
         return [_normalize_task_id(task_id_or_ids)]
+    if isinstance(task_id_or_ids, bytes | bytearray):
+        logger.warning(f"task_type_in: Unexpected task_id type: {type(task_id_or_ids)}")
+        return None
     if isinstance(task_id_or_ids, Iterable):
-        return [_normalize_task_id(item) for item in task_id_or_ids if item is not None]
+        task_ids: list[str] = []
+        for item in task_id_or_ids:
+            if item is None:
+                continue
+            if isinstance(item, bytes | bytearray):
+                logger.warning(f"task_type_in: Unexpected task_id item type: {type(item)}")
+                return None
+            task_ids.append(_normalize_task_id(item))
+        return task_ids
     logger.warning(f"task_type_in: Unexpected task_id type: {type(task_id_or_ids)}")
     return None
 
 
-def task_type_in(task_manager: Any, task_id_or_ids: Any, *types: str) -> bool:
+def task_type_in(
+    task_manager: TaskProvider | None, task_id_or_ids: TaskIdInput, *types: str
+) -> bool:
     """Check whether any referenced task has a task_type in the provided set.
 
     Accepts UUIDs, ``#N`` refs, integer seq refs, and iterables containing any

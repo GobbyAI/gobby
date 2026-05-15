@@ -221,10 +221,16 @@ def _model_discovery_cwd_path(provider: str) -> Path:
     return _gobby_home() / _MODEL_DISCOVERY_CWD_NAME / provider_dir
 
 
-async def _model_discovery_cwd(provider: str) -> Path:
+async def _model_discovery_cwd(provider: str) -> tuple[Path, bool]:
     cwd = _model_discovery_cwd_path(provider)
-    await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=True)
-    return cwd.resolve()
+    created = False
+    try:
+        await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=False)
+        created = True
+    except FileExistsError:
+        if not await asyncio.to_thread(cwd.is_dir):
+            raise
+    return cwd.resolve(), created
 
 
 def _short_error(exc: BaseException) -> str:
@@ -757,9 +763,7 @@ class ProviderModelCatalog:
         if not shutil.which(client_cls.cli_name):
             raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-        cwd_path = _model_discovery_cwd_path(client_cls.cli_name)
-        created_cwd = not cwd_path.exists()
-        cwd = await _model_discovery_cwd(client_cls.cli_name)
+        cwd, created_cwd = await _model_discovery_cwd(client_cls.cli_name)
         try:
             await authorize_model_discovery_trust(client_cls.cli_name, cwd)
         except Exception:

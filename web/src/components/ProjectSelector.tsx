@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, useId } from "react";
 import { createPortal } from "react-dom";
 import type { ProjectOption } from "../types/chat";
 import { cn } from "../lib/utils";
@@ -46,6 +46,7 @@ export function ProjectSelector({
   );
   const [pickerMode, setPickerMode] = useState<PickerMode | null>(null);
   const [projectSearch, setProjectSearch] = useState("");
+  const [activeOptionIndex, setActiveOptionIndex] = useState(0);
   const filtered = useMemo(
     () =>
       projectSearch
@@ -56,11 +57,31 @@ export function ProjectSelector({
     [nonPersonalProjects, projectSearch],
   );
   const triggerRef = useRef<HTMLDivElement>(null);
+  const compactTriggerRef = useRef<HTMLButtonElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const [pickerPos, setPickerPos] = useState<{ top: number; left: number } | null>(null);
   const showProjectSearch = pickerMode === "search";
   const showCompactMenu = pickerMode === "compact";
   const pickerOptions = showCompactMenu ? compactOptions : filtered;
+  const boundedActiveOptionIndex =
+    pickerOptions.length === 0
+      ? 0
+      : Math.min(activeOptionIndex, pickerOptions.length - 1);
+  const pickerIdBase = useId();
+  const listboxId = `${pickerIdBase}-project-options`;
+  const activeOptionId =
+    showProjectSearch && pickerOptions[boundedActiveOptionIndex]
+      ? `${listboxId}-option-${boundedActiveOptionIndex}`
+      : undefined;
+
+  const closePicker = useCallback((restoreCompactFocus = false) => {
+    setPickerMode(null);
+    setProjectSearch("");
+    setActiveOptionIndex(0);
+    if (restoreCompactFocus) {
+      requestAnimationFrame(() => compactTriggerRef.current?.focus());
+    }
+  }, []);
 
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return;
@@ -95,8 +116,7 @@ export function ProjectSelector({
         pickerRef.current?.contains(target)
       )
         return;
-      setPickerMode(null);
-      setProjectSearch("");
+      closePicker();
     };
     const handleScrollOrResize = () => updatePosition();
     document.addEventListener("mousedown", handleClick);
@@ -107,25 +127,76 @@ export function ProjectSelector({
       window.removeEventListener("scroll", handleScrollOrResize, true);
       window.removeEventListener("resize", handleScrollOrResize);
     };
-  }, [pickerMode, updatePosition]);
+  }, [closePicker, pickerMode, updatePosition]);
 
   const handleModeChange = (next: ProjectMode) => {
     if (next === "personal") {
       if (personalProject) onProjectChange(personalProject.id);
-      setPickerMode(null);
+      closePicker();
       return;
     }
     if (nonPersonalProjects.length === 1) {
       onProjectChange(nonPersonalProjects[0].id);
     } else {
+      setActiveOptionIndex(0);
       setPickerMode((prev) => (prev === "search" ? null : "search"));
     }
   };
 
   const handleProjectSelect = (projectId: string) => {
     onProjectChange(projectId);
-    setPickerMode(null);
-    setProjectSearch("");
+    closePicker();
+  };
+
+  const toggleCompactMenu = () => {
+    setActiveOptionIndex(0);
+    setPickerMode((prev) => (prev === "compact" ? null : "compact"));
+  };
+
+  const handleProjectSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setProjectSearch(e.target.value);
+    setActiveOptionIndex(0);
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      closePicker();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveOptionIndex((prev) =>
+        pickerOptions.length === 0 ? 0 : Math.min(prev + 1, pickerOptions.length - 1),
+      );
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveOptionIndex((prev) => Math.max(prev - 1, 0));
+      return;
+    }
+    if (e.key === "Enter" && pickerOptions[boundedActiveOptionIndex]) {
+      handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id);
+    }
+  };
+
+  const handleCompactTriggerKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleCompactMenu();
+      return;
+    }
+    if (e.key === "Escape" && showCompactMenu) {
+      e.preventDefault();
+      closePicker(true);
+    }
+  };
+
+  const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closePicker(showCompactMenu);
+    }
   };
 
   const isOptionSelected = (project: ProjectOption) =>
@@ -149,15 +220,16 @@ export function ProjectSelector({
       </div>
       <div className="project-selector-compact-wrap">
         <button
+          ref={compactTriggerRef}
           type="button"
           className="project-selector-compact-trigger"
-          onClick={() =>
-            setPickerMode((prev) => (prev === "compact" ? null : "compact"))
-          }
+          onClick={toggleCompactMenu}
+          onKeyDown={handleCompactTriggerKeyDown}
           disabled={disabled}
           aria-label={`Project scope: ${selectedLabel}`}
           aria-haspopup="listbox"
           aria-expanded={showCompactMenu}
+          aria-controls={showCompactMenu ? listboxId : undefined}
         >
           <span className="project-selector-compact-label">{selectedLabel}</span>
         </button>
@@ -173,43 +245,40 @@ export function ProjectSelector({
               left: pickerPos.left,
               ...(dropDirection === "up" ? { transform: "translateY(-100%) translateY(-4px)" } : {}),
             }}
-            role="listbox"
-            aria-label={showCompactMenu ? "Project scope options" : "Project search results"}
+            onKeyDown={handlePickerKeyDown}
           >
             {showProjectSearch && (
               <input
                 className={`w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground ${inputFocusCls}`}
                 placeholder="Search"
                 value={projectSearch}
-                onChange={(e) => setProjectSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setPickerMode(null);
-                    setProjectSearch("");
-                  }
-                  if (e.key === "Enter" && filtered.length > 0) {
-                    handleProjectSelect(filtered[0].id);
-                  }
-                }}
+                onChange={handleProjectSearchChange}
+                onKeyDown={handleSearchKeyDown}
                 role="combobox"
-                aria-expanded={true}
-                aria-controls="project-search-results"
+                aria-expanded={showProjectSearch}
+                aria-controls={listboxId}
+                aria-owns={listboxId}
+                aria-activedescendant={activeOptionId}
                 aria-autocomplete="list"
                 autoFocus
               />
             )}
             <div
-              id="project-search-results"
+              id={listboxId}
               className="max-h-32 overflow-y-auto"
+              role="listbox"
+              aria-label={showCompactMenu ? "Project scope options" : "Project search results"}
             >
-              {pickerOptions.map((p) => (
+              {pickerOptions.map((p, index) => (
                 <button
                   key={p.id}
+                  id={`${listboxId}-option-${index}`}
                   role="option"
                   aria-selected={isOptionSelected(p)}
                   className={cn(
                     "w-full text-left px-2 py-1 text-xs hover:bg-muted",
                     isOptionSelected(p) && "bg-accent/20 text-accent",
+                    showProjectSearch && index === boundedActiveOptionIndex && "bg-muted",
                   )}
                   onClick={() => handleProjectSelect(p.id)}
                 >
