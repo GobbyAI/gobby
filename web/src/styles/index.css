@@ -216,6 +216,10 @@
      bars above their desktop siblings. Do not redeclare on inner scopes
      (.activity-panel etc.); the inheritance from :root is load-bearing. */
   --activity-panel-bar-height: 2.75rem;
+
+  /* Status-bar action controls keep desktop visual height on touch devices;
+     the bar supplies the 44px row, the button should not fill it. */
+  --status-bar-control-height: 1.75rem;
 }
 
 @media (pointer: coarse) {

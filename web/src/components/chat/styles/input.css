@@ -771,6 +771,10 @@
   flex-shrink: 0;
 }
 
+.agent-status-bar__actions .btn-sm {
+  min-height: var(--status-bar-control-height);
+}
+
 .chat-session-status {
   display: flex;
   align-items: center;

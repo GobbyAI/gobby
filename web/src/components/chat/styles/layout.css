@@ -250,6 +250,7 @@
    off the right edge of the command bar. */
 .command-bar-btn {
   flex-shrink: 0;
+  min-height: var(--status-bar-control-height);
 }
 
 .command-bar-session {

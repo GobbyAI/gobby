@@ -44,7 +44,7 @@
   align-items: center;
   gap: 0.5rem;
   min-height: var(--activity-panel-bar-height);
-  padding: 0 0.5rem;
+  padding: 0 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
@@ -297,6 +297,11 @@
   flex-shrink: 0;
 }
 
+.activity-panel-close-slot .btn-sm,
+.activity-panel-status-bar__actions .btn-sm {
+  min-height: var(--status-bar-control-height);
+}
+
 /* ============================================
    Activity Panel — shared search input
    Single authoring site for list-panel search.
@@ -387,6 +392,10 @@
    only pins option padding so labels stay centered when the row is dense. */
 .activity-panel-toolbar-segmented > .segmented-control__option {
   padding-block: 0;
+}
+
+.activity-filter-button {
+  margin-left: auto;
 }
 
 .activity-panel-status-bar {
