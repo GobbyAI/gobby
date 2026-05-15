@@ -895,7 +895,6 @@
   min-height: 1.5rem;
   padding: 0 0.75rem;
   background: var(--bg-primary);
-  border-top: 1px solid var(--border);
   font-size: var(--text-xs);
   line-height: 1;
   color: var(--text-muted);
