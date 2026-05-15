@@ -194,7 +194,7 @@ def task_type_in(
             logger.debug("task_type_in: Task '%s' not found", task_id)
             continue
         task_type = getattr(task, "task_type", None)
-        if isinstance(task_type, str) and task_type.lower() in normalized_types:
+        if isinstance(task_type, str) and task_type.strip().lower() in normalized_types:
             return True
     return False
 

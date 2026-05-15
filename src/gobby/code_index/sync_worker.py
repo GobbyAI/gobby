@@ -149,7 +149,12 @@ async def _sync_pass(
                 if did_sync:
                     synced_count += 1
             except Exception as e:
-                logger.warning(f"Sync worker: failed to sync {file.file_path}: {e}")
+                logger.error(
+                    "Sync worker: failed to sync %s: %s",
+                    file.file_path,
+                    e,
+                    exc_info=True,
+                )
 
         if synced_count > 0:
             logger.info(
@@ -199,7 +204,12 @@ async def _sync_file(
                 await _run_db(run_db, storage.mark_vectors_synced, current.id)
                 did_work = True
             except Exception as e:
-                logger.warning(f"Sync worker: vector sync failed for {current.file_path}: {e}")
+                logger.error(
+                    "Sync worker: vector sync failed for %s: %s",
+                    current.file_path,
+                    e,
+                    exc_info=True,
+                )
 
     # Graph sync
     if not current.graph_synced and config.graph_enabled:
@@ -216,7 +226,12 @@ async def _sync_file(
                 await _run_db(run_db, storage.mark_graph_synced, current.id)
                 did_work = True
             except Exception as e:
-                logger.warning(f"Sync worker: graph sync failed for {current.file_path}: {e}")
+                logger.error(
+                    "Sync worker: graph sync failed for %s: %s",
+                    current.file_path,
+                    e,
+                    exc_info=True,
+                )
 
     return did_work
 

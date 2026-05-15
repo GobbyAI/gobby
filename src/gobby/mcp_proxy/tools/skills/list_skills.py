@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
@@ -88,14 +88,17 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 limit_value: int,
                 offset_value: int = 0,
             ) -> list[Skill]:
-                return await ctx.run_sqlite(
-                    ctx.storage.list_skills,
-                    project_id=ctx.project_id,
-                    category=category,
-                    enabled=enabled,
-                    limit=limit_value,
-                    offset=offset_value,
-                    include_global=True,
+                return cast(
+                    list[Skill],
+                    await ctx.run_sqlite(
+                        ctx.storage.list_skills,
+                        project_id=ctx.project_id,
+                        category=category,
+                        enabled=enabled,
+                        limit=limit_value,
+                        offset=offset_value,
+                        include_global=True,
+                    ),
                 )
 
             skills: list[Skill] = []

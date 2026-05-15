@@ -176,6 +176,33 @@ export function ProjectSelector({
     setPickerMode((prev) => (prev === "compact" ? null : "compact"));
   };
 
+  const handleArrowNavigation = (
+    e: React.KeyboardEvent<HTMLInputElement | HTMLDivElement>,
+    onSelect: () => void,
+    options: { preventEnterDefault?: boolean } = {},
+  ) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveOptionIndex((prev) =>
+        pickerOptions.length === 0 ? 0 : Math.min(prev + 1, pickerOptions.length - 1),
+      );
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveOptionIndex((prev) => Math.max(prev - 1, 0));
+      return true;
+    }
+    if (e.key === "Enter" && pickerOptions[boundedActiveOptionIndex]) {
+      if (options.preventEnterDefault) {
+        e.preventDefault();
+      }
+      onSelect();
+      return true;
+    }
+    return false;
+  };
+
   const handleProjectSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setProjectSearch(e.target.value);
     setActiveOptionIndex(0);
@@ -186,21 +213,9 @@ export function ProjectSelector({
       closePicker();
       return;
     }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveOptionIndex((prev) =>
-        pickerOptions.length === 0 ? 0 : Math.min(prev + 1, pickerOptions.length - 1),
-      );
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveOptionIndex((prev) => Math.max(prev - 1, 0));
-      return;
-    }
-    if (e.key === "Enter" && pickerOptions[boundedActiveOptionIndex]) {
-      handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id, "search");
-    }
+    handleArrowNavigation(e, () =>
+      handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id, "search"),
+    );
   };
 
   const handleCompactTriggerKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -224,22 +239,9 @@ export function ProjectSelector({
     if (!showCompactMenu) {
       return;
     }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveOptionIndex((prev) =>
-        pickerOptions.length === 0 ? 0 : Math.min(prev + 1, pickerOptions.length - 1),
-      );
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveOptionIndex((prev) => Math.max(prev - 1, 0));
-      return;
-    }
-    if (e.key === "Enter" && pickerOptions[boundedActiveOptionIndex]) {
-      e.preventDefault();
-      handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id);
-    }
+    handleArrowNavigation(e, () => handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id), {
+      preventEnterDefault: true,
+    });
   };
 
   const isOptionSelected = (project: ProjectOption) =>
@@ -321,6 +323,7 @@ export function ProjectSelector({
                   id={`${listboxId}-option-${index}`}
                   role="option"
                   aria-selected={isOptionSelected(p)}
+                  tabIndex={-1}
                   className={cn(
                     "w-full text-left px-2 py-1 text-xs hover:bg-muted",
                     isOptionSelected(p) && "bg-accent/20 text-accent",

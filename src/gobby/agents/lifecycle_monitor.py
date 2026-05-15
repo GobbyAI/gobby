@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.agent_health import AgentHealthMonitor
@@ -221,9 +221,7 @@ class AgentLifecycleMonitor:
 
                 if iteration > 0 and iteration % 10 == 0:
                     try:
-                        cleaned = await self._run_sqlite(
-                            self._agent_run_manager.cleanup_stale_runs
-                        )
+                        cleaned = await self._run_sqlite(self._agent_run_manager.cleanup_stale_runs)
                         if cleaned:
                             logger.info(f"Cleaned up {cleaned} stale agent runs")
                     except Exception as e:
@@ -315,7 +313,7 @@ class AgentLifecycleMonitor:
             try:
                 wt = await self._run_sqlite(self._worktree_storage.get, run.worktree_id)
                 if wt and wt.worktree_path:
-                    return wt.worktree_path
+                    return cast(str, wt.worktree_path)
             except Exception:
                 logger.debug(
                     f"Failed to resolve worktree {run.worktree_id} for run {run.id}", exc_info=True
@@ -325,7 +323,7 @@ class AgentLifecycleMonitor:
             try:
                 clone = await self._run_sqlite(self._clone_storage.get, run.clone_id)
                 if clone and clone.clone_path:
-                    return clone.clone_path
+                    return cast(str, clone.clone_path)
             except Exception:
                 logger.debug(
                     f"Failed to resolve clone {run.clone_id} for run {run.id}", exc_info=True

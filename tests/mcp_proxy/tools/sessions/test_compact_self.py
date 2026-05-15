@@ -479,8 +479,10 @@ class TestCompactSelfWebChatPath:
             call("Continue where you last left off."),
         ]
 
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_active_web_chat_session_queues_post_turn_compaction(self) -> None:
+        """Active web chat turns queue compaction instead of interrupting the live turn."""
         session = MagicMock()
         session.session_type = "web_chat"
         session.source = "claude"

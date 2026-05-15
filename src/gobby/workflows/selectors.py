@@ -53,14 +53,27 @@ def resolve_rules_for_agent(
 
     active = set(explicit)
     for rule in all_rules:
-        if _rule_excluded_by_agent(agent, rule):
+        definition_json = _rule_definition_json(rule)
+        excluded = _rule_excluded_by_agent(agent, rule, definition_json=definition_json)
+        if excluded:
             active.discard(rule.name)
-        elif rule_matches_agent(agent, rule):
+        elif rule_matches_agent(
+            agent,
+            rule,
+            definition_json=definition_json,
+            excluded=excluded,
+        ):
             active.add(rule.name)
     return active
 
 
-def rule_matches_agent(agent: AgentDefinitionBody, rule: WorkflowDefinitionRow) -> bool:
+def rule_matches_agent(
+    agent: AgentDefinitionBody,
+    rule: WorkflowDefinitionRow,
+    *,
+    definition_json: dict[str, Any] | None = None,
+    excluded: bool | None = None,
+) -> bool:
     """Return whether a single rule row is active for an agent definition."""
     explicit = set(agent.workflows.rules)
     selectors = agent.workflows.rule_selectors
@@ -68,30 +81,46 @@ def rule_matches_agent(agent: AgentDefinitionBody, rule: WorkflowDefinitionRow) 
     if selectors is None:
         return rule.name in explicit
 
-    if _rule_excluded_by_agent(agent, rule):
+    rule_definition_json = (
+        _rule_definition_json(rule) if definition_json is None else definition_json
+    )
+
+    if excluded is None:
+        excluded = _rule_excluded_by_agent(
+            agent,
+            rule,
+            definition_json=rule_definition_json,
+        )
+    if excluded:
         return False
 
     if rule.name in explicit:
         return True
 
-    definition_json = _rule_definition_json(rule)
     for inc in selectors.include:
         dim, val = parse_selector(inc)
-        if _match_rule(dim, val, rule, definition_json):
+        if _match_rule(dim, val, rule, rule_definition_json):
             return True
 
     return False
 
 
-def _rule_excluded_by_agent(agent: AgentDefinitionBody, rule: WorkflowDefinitionRow) -> bool:
+def _rule_excluded_by_agent(
+    agent: AgentDefinitionBody,
+    rule: WorkflowDefinitionRow,
+    *,
+    definition_json: dict[str, Any] | None = None,
+) -> bool:
     selectors = agent.workflows.rule_selectors
     if selectors is None:
         return False
 
-    definition_json = _rule_definition_json(rule)
+    rule_definition_json = (
+        _rule_definition_json(rule) if definition_json is None else definition_json
+    )
     for exc in selectors.exclude:
         dim, val = parse_selector(exc)
-        if _match_rule(dim, val, rule, definition_json):
+        if _match_rule(dim, val, rule, rule_definition_json):
             return True
     return False
 

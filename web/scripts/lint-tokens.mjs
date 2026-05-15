@@ -4,6 +4,7 @@ import path from 'node:path'
 const root = path.resolve('src')
 const violationPattern = /var\(--[a-z-]+,\s*#[0-9a-fA-F]+\)/g
 const ignoredDirs = new Set(['node_modules', 'dist', 'coverage'])
+export const tokenLintExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.css'])
 const violations = []
 
 async function walk(dir) {
@@ -15,7 +16,7 @@ async function walk(dir) {
       }
       continue
     }
-    if (entry.isFile()) {
+    if (entry.isFile() && tokenLintExtensions.has(path.extname(entry.name))) {
       await checkFile(path.join(dir, entry.name))
     }
   }

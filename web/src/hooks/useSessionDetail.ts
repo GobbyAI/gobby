@@ -252,14 +252,41 @@ export function useSessionDetail(sessionId: string | null) {
         setMessages(chatResult.mapped)
         setTotalMessages(chatResult.totalCount)
 
-        const pollId = window.setInterval(async () => {
-          if (!isCurrent() || messageSourceRef.current !== 'chat') return
-          const nextChatResult = await fetchChatSessionMessages(activeSessionId)
-          if (!isCurrent() || messageSourceRef.current !== 'chat' || !nextChatResult.ok) return
-          setMessages(nextChatResult.mapped)
-          setTotalMessages(nextChatResult.totalCount)
+        let cancelled = false
+        let pollTimeoutId: number | null = null
+        const pollChatMessages = async () => {
+          if (cancelled || !isCurrent() || messageSourceRef.current !== 'chat') return
+          try {
+            const nextChatResult = await fetchChatSessionMessages(activeSessionId)
+            if (
+              cancelled ||
+              !isCurrent() ||
+              messageSourceRef.current !== 'chat' ||
+              !nextChatResult.ok
+            ) {
+              return
+            }
+            setMessages(nextChatResult.mapped)
+            setTotalMessages(nextChatResult.totalCount)
+          } catch (error) {
+            console.warn('Failed to poll web chat messages:', error)
+          } finally {
+            if (!cancelled && isCurrent() && messageSourceRef.current === 'chat') {
+              pollTimeoutId = window.setTimeout(() => {
+                void pollChatMessages()
+              }, CHAT_MESSAGES_POLL_MS)
+            }
+          }
+        }
+        pollTimeoutId = window.setTimeout(() => {
+          void pollChatMessages()
         }, CHAT_MESSAGES_POLL_MS)
-        detailPollCleanupRef.current = () => window.clearInterval(pollId)
+        detailPollCleanupRef.current = () => {
+          cancelled = true
+          if (pollTimeoutId !== null) {
+            window.clearTimeout(pollTimeoutId)
+          }
+        }
         return
       }
 

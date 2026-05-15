@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
@@ -171,11 +171,14 @@ class AgentCleanupHandler:
         expired = await self._run_sqlite(self._agent_run_manager.expire_sessions_for_terminal_runs)
         if expired:
             logger.info("Expired %s session(s) for terminal agent runs", expired)
-        return expired
+        return cast(int, expired)
 
     async def cleanup_stale_pending_runs(self) -> int:
         """Clean up agent runs stuck in pending status after daemon restart."""
-        return await self._run_sqlite(self._agent_run_manager.cleanup_stale_pending_runs)
+        return cast(
+            int,
+            await self._run_sqlite(self._agent_run_manager.cleanup_stale_pending_runs),
+        )
 
     async def cleanup_agent(
         self,

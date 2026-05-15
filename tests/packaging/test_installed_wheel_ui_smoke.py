@@ -49,6 +49,7 @@ def _bind_high_port_socket(attempts: int = 100) -> socket.socket:
     for _ in range(attempts):
         port = 49152 + secrets.randbelow(65535 - 49152)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", port))
             sock.listen(1)

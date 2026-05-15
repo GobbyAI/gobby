@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from gobby.workflows import selectors as selectors_module
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.selectors import (
     _match_rule,
@@ -380,6 +381,35 @@ def test_rule_matches_agent_applies_explicit_include_and_selector_exclude() -> N
     assert rule_matches_agent(agent, explicit) is True
     assert rule_matches_agent(agent, selected) is True
     assert rule_matches_agent(agent, excluded) is False
+
+
+def test_resolve_rules_for_agent_reuses_parsed_rule_definition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rule resolution parses each rule JSON payload once."""
+    agent = MagicMock()
+    agent.workflows.rules = []
+    agent.workflows.rule_selectors = MagicMock()
+    agent.workflows.rule_selectors.include = ["group:core"]
+    agent.workflows.rule_selectors.exclude = ["group:never"]
+
+    rule = MagicMock()
+    rule.name = "group-rule"
+    rule.tags = []
+    rule.definition_json = '{"group": "core"}'
+
+    parse_count = 0
+    original_parser = selectors_module._rule_definition_json
+
+    def counted_parser(rule_row):
+        nonlocal parse_count
+        parse_count += 1
+        return original_parser(rule_row)
+
+    monkeypatch.setattr(selectors_module, "_rule_definition_json", counted_parser)
+
+    assert resolve_rules_for_agent(agent, [rule]) == {"group-rule"}
+    assert parse_count == 1
 
 
 def test_resolve_variables_with_exclude() -> None:

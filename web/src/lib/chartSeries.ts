@@ -26,7 +26,7 @@ export function chartSeriesAt(
 export const CHART_SERIES_MEMORY = chartSeriesAt(0)
 export const CHART_SERIES_HTTP_LATENCY = chartSeriesAt(1)
 export const CHART_SERIES_CPU = chartSeriesAt(2)
-// Index 3 is reserved for adjacent/paired latency series so MCP stays visually separate.
+export const CHART_SERIES_PAIRED_LATENCY = chartSeriesAt(3)
 export const CHART_SERIES_MCP_LATENCY = chartSeriesAt(4)
 
 export const metricChartSeries = {

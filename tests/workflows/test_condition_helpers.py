@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -313,3 +314,11 @@ class TestTaskTypeIn:
         task = _task(manager, sample_project, task_type="task")
 
         assert task_type_in(manager, task.id, "epic") is False
+
+    def test_matches_persisted_task_type_with_surrounding_whitespace(self) -> None:
+        manager = SimpleNamespace(
+            db=None,
+            get_task=lambda _task_id: SimpleNamespace(task_type=" Epic "),
+        )
+
+        assert task_type_in(manager, "task-id", "epic") is True

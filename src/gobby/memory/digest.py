@@ -584,7 +584,7 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
     title_candidate = _normalize_title_candidate(raw_title_candidate)
     if not title_candidate:
         _raise_turn_record_contract_error(
-            "empty normalized title_candidate",
+            f"empty normalized title_candidate (raw_title_candidate={raw_title_candidate!r})",
             response_text,
             exchange_count,
         )

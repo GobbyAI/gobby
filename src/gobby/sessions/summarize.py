@@ -182,7 +182,9 @@ async def generate_session_summaries(
     if is_summary_markdown_valid(full_markdown):
         await _run_sqlite(
             sqlite_runner,
-            session_manager.update_summary, session_id, summary_markdown=full_markdown
+            session_manager.update_summary,
+            session_id,
+            summary_markdown=full_markdown,
         )
 
     # Set handoff_ready status

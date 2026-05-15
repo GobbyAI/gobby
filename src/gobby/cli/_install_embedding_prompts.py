@@ -22,7 +22,7 @@ def _infer_embedding_provider_from_url(api_base: str) -> str:
     """
     try:
         port = urlparse(api_base).port
-    except Exception:
+    except (TypeError, ValueError):
         port = None
     if port is not None:
         if port == 11434:
@@ -103,8 +103,17 @@ def _select_embedding_provider(
             try:
                 result = installer(provider="none")
                 _record_embedding_install_result(results, result)
-            except Exception as e:
-                logger.warning(f"Failed to persist 'none' embedding config: {e}")
+            except (OSError, RuntimeError, ValueError, sqlite3.Error) as e:
+                logger.warning(
+                    "Failed to persist 'none' embedding config: %s",
+                    e,
+                    extra={
+                        "provider": "none",
+                        "action": "persist_embedding_config",
+                        "error_type": type(e).__name__,
+                    },
+                    exc_info=True,
+                )
                 results["embedding"] = {
                     "success": False,
                     "error": f"Failed to persist 'none' embedding config: {e}",

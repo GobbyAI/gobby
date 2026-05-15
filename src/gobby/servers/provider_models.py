@@ -766,17 +766,20 @@ class ProviderModelCatalog:
         cwd, created_cwd = await _model_discovery_cwd(client_cls.cli_name)
         try:
             await authorize_model_discovery_trust(client_cls.cli_name, cwd)
-        except Exception:
+        except Exception as auth_exc:
             if created_cwd:
                 try:
                     await asyncio.to_thread(shutil.rmtree, cwd)
-                except Exception:
-                    logger.warning(
-                        "Failed to remove %s model-discovery cwd after authorization failure: %s",
+                except Exception as cleanup_exc:
+                    logger.error(
+                        "Failed to remove %s model-discovery cwd %s after authorization "
+                        "failure: %s",
                         client_cls.cli_name,
                         cwd,
+                        cleanup_exc,
                         exc_info=True,
                     )
+                    raise cleanup_exc from auth_exc
             raise
         client = client_cls(
             cwd=os.fspath(cwd),

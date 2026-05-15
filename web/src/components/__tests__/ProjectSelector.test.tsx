@@ -43,6 +43,10 @@ describe('ProjectSelector', () => {
       'aria-selected',
       'true',
     )
+    expect(within(listbox).getByRole('option', { name: 'gobby' })).toHaveAttribute(
+      'tabindex',
+      '-1',
+    )
 
     fireEvent.click(within(listbox).getByRole('option', { name: 'Personal' }))
     expect(onProjectChange).toHaveBeenCalledWith('personal')

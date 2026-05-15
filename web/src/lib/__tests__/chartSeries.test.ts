@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { CHART_SERIES_MCP_LATENCY, chartSeries, chartSeriesAt } from '../chartSeries'
+import {
+  CHART_SERIES_MCP_LATENCY,
+  CHART_SERIES_PAIRED_LATENCY,
+  chartSeries,
+  chartSeriesAt,
+} from '../chartSeries'
 
 describe('chartSeriesAt', () => {
   it('returns positive indexes directly', () => {
@@ -10,6 +15,10 @@ describe('chartSeriesAt', () => {
 
   it('uses the fifth series for MCP latency', () => {
     expect(CHART_SERIES_MCP_LATENCY).toEqual(chartSeries[4])
+  })
+
+  it('uses the reserved fourth series for paired latency', () => {
+    expect(CHART_SERIES_PAIRED_LATENCY).toEqual(chartSeries[3])
   })
 
   it('wraps indexes at the series boundary', () => {
