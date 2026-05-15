@@ -809,6 +809,17 @@
   color: var(--accent);
 }
 
+.chat-input-agent-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0;
+}
+
 .chat-input-voice-mic {
   display: inline-flex;
   align-items: center;
@@ -881,6 +892,14 @@
 }
 
 @container chat-column (max-width: 360px) {
+  .command-bar {
+    padding-inline: 0.75rem 0.5rem;
+  }
+
+  .agent-status-bar {
+    padding-inline: 0.75rem 0.5rem;
+  }
+
   .agent-status-bar__summary {
     flex-wrap: nowrap;
   }
@@ -895,7 +914,7 @@
   }
 
   .chat-input-footer {
-    padding-inline: 0.75rem;
+    padding-inline: 0.75rem 0.5rem;
   }
 
   .chat-session-status {

@@ -52,7 +52,7 @@ export function SegmentedControl<T extends string>({
   }
 
   const sizeText = size === 'md' ? 'text-base' : 'text-xs'
-  const sizePad = size === 'md' ? 'px-3' : 'px-2'
+  const sizePad = size === 'md' ? 'segmented-control__option--md' : 'segmented-control__option--sm'
   const heightVar = controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'
 
   return (

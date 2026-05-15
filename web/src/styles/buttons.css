@@ -160,6 +160,14 @@
   min-height: 2.5rem;
 }
 
+.segmented-control__option--sm {
+  padding-inline: 0.5rem;
+}
+
+.segmented-control__option--md {
+  padding-inline: 0.75rem;
+}
+
 @media (pointer: coarse) {
   .btn-icon,
   .btn-icon.btn-xs,

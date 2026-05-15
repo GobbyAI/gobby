@@ -159,6 +159,7 @@ describe('mobile chrome CSS', () => {
 
   it('keeps the top app chrome compact on mobile touch viewports', () => {
     const appSource = readSource('src/App.tsx')
+    const buttonCss = parseCss('src/styles/buttons.css')
     const shellCss = parseCss('src/styles/app-shell.css')
 
     expect(appSource).toContain('className="app-header"')
@@ -190,6 +191,12 @@ describe('mobile chrome CSS', () => {
       width: '2.25rem',
       'min-height': '2.25rem',
       'border-color': 'transparent',
+    })
+    expectDeclarations(buttonCss, '.segmented-control__option--sm', {
+      'padding-inline': '0.5rem',
+    })
+    expectDeclarations(buttonCss, '.segmented-control__option--md', {
+      'padding-inline': '0.75rem',
     })
     expectDeclarations(shellCss, '.app-header-actions', {
       '--control-row-height': 'var(--status-bar-control-height)',
@@ -253,17 +260,29 @@ describe('mobile chrome CSS', () => {
     expectDeclarations(inputCss, '.agent-status-bar', {
       padding: '0 0.75rem',
     })
+    expectContainerDeclarations(inputCss, '.command-bar', 'chat-column (max-width: 360px)', {
+      'padding-inline': '0.75rem 0.5rem',
+    })
+    expectContainerDeclarations(inputCss, '.agent-status-bar', 'chat-column (max-width: 360px)', {
+      'padding-inline': '0.75rem 0.5rem',
+    })
   })
 
   it('keeps the minimum-width chat input toolbar controls to one row', () => {
     const inputCss = parseCss('src/components/chat/styles/input.css')
     const chatInputSource = readSource('src/components/chat/ChatInput.tsx')
+    const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
+    const agentIndicatorSource = readSource('src/components/chat/ActiveAgentIndicator.tsx')
     const narrowChatColumn = 'chat-column (max-width: 360px)'
 
     expect(chatInputSource).toContain('chat-input-footer border-t border-border bg-background py-3')
     expect(chatInputSource).not.toContain(
       'chat-input-footer border-t border-border bg-background px-4 py-3',
     )
+    expect(segmentedControlSource).not.toContain("'px-2'")
+    expect(segmentedControlSource).not.toContain("'px-3'")
+    expect(agentIndicatorSource).toContain('chat-input-agent-button rounded')
+    expect(agentIndicatorSource).not.toContain('chat-input-agent-button p-1.5')
     expectDeclarations(inputCss, '.chat-input-footer', {
       'padding-inline': '1rem',
     })
@@ -275,6 +294,12 @@ describe('mobile chrome CSS', () => {
     expectDeclarations(inputCss, '.chat-input-voice-mic', {
       gap: '0.125rem',
     })
+    expectDeclarations(inputCss, '.chat-input-agent-button', {
+      display: 'inline-flex',
+      width: '2.25rem',
+      height: '2.25rem',
+      padding: '0',
+    })
     expectContainerDeclarations(
       inputCss,
       '.chat-input-toolbar__left .segmented-control__option',
@@ -282,7 +307,7 @@ describe('mobile chrome CSS', () => {
       { 'padding-inline': '0.375rem' },
     )
     expectContainerDeclarations(inputCss, '.chat-input-footer', narrowChatColumn, {
-      'padding-inline': '0.75rem',
+      'padding-inline': '0.75rem 0.5rem',
     })
   })
 })
