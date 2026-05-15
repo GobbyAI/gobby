@@ -91,12 +91,12 @@ def migrate_legacy_mcp_config(
             legacy.unlink()
         except OSError as unlink_exc:
             logger.warning(
-                "Copied legacy MCP config %s -> %s but failed to remove legacy file: %s",
+                "Copied legacy MCP config %s -> %s but failed to remove legacy file: %s. "
+                "Using the copied config; remove the legacy file manually after verifying it.",
                 legacy,
                 new,
                 unlink_exc,
             )
-            return False
 
     try:
         new.chmod(0o600)

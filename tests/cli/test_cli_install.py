@@ -210,6 +210,9 @@ class TestInstallCommand:
         assert "--hooks" in result.output
         assert "--all" in result.output
         assert "--embedding-provider" in result.output
+        assert "LM Studio-compatible defaults" in result.output
+        assert "openai-compatible uses generic OpenAI-" in result.output
+        assert "compatible embedding APIs" in result.output
 
     @pytest.mark.parametrize("embedding_dim", ["0", "-1"])
     def test_install_rejects_non_positive_embedding_dim(

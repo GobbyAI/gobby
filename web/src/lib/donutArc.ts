@@ -19,6 +19,11 @@ function assertValidSegmentValue(value: number, index: number): void {
   }
 }
 
+/**
+ * Render an SVG arc path from polar angles. Sweeps are clamped into 0..360
+ * degrees, and a full or epsilon-close full circle is split into two arc
+ * commands because SVG cannot represent it as one closed arc.
+ */
 export function describeArcPath(
   cx: number,
   cy: number,
@@ -47,6 +52,10 @@ export function describeArcPath(
   return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`
 }
 
+/**
+ * Convert non-negative segment values into clockwise donut arcs. Invalid,
+ * negative, NaN, and infinite values throw; a zero total returns no arcs.
+ */
 export function donutArcs<T extends DonutSegmentInput>(
   segments: T[],
   cx: number,

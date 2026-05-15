@@ -1,7 +1,7 @@
 import { memo } from "react";
 import {
   AlertTriangle,
-  CheckCircle,
+  CircleCheckBig,
   CircleDot,
   Minus,
   Octagon,
@@ -43,7 +43,7 @@ const KIND_TOKEN: Record<StatusKind, string> = {
 // One lucide icon per kind. Each glyph is shape-unique so the indicator
 // stays identifiable even with the dot recolored to gray.
 const KIND_ICON: Record<StatusKind, LucideIcon> = {
-  success: CheckCircle,
+  success: CircleCheckBig,
   info: CircleDot,
   warning: AlertTriangle,
   error: XCircle,

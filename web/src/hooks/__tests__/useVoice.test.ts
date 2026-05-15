@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useVoice } from '../useVoice'
 import { parseVoiceStatus } from '../voiceStatus'
-import { useVoiceStatus } from '../voice/useVoiceStatus'
+import {
+  resetVoicePrepareCacheForTests,
+  seedVoicePrepareCacheForTests,
+  useVoiceStatus,
+  voicePrepareCacheKeysForTests,
+} from '../voice/useVoiceStatus'
 
 const voiceMocks = vi.hoisted(() => ({
   mockMicVADNew: vi.fn(),
@@ -150,6 +155,7 @@ describe('useVoice', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    resetVoicePrepareCacheForTests()
     lastVADConfig = null
     lastWorkletNode = null
     startedSources = []
@@ -280,6 +286,48 @@ describe('useVoice', () => {
       expect(fetchMock.mock.calls.length).toBeGreaterThan(fetchCallsBeforeRemount)
     })
     expect(voicePreparePayloads()).toHaveLength(1)
+  })
+
+  it('prunes warmup cache by oldest send timestamp', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(20_000)
+    seedVoicePrepareCacheForTests([
+      ['conv-refreshed:true:true', 10_000],
+      ...Array.from({ length: 127 }, (_, index) => [
+        `conv-filler-${index}:true:true`,
+        index,
+      ] as const),
+    ])
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        enabled: true,
+        stt_enabled: true,
+        tts_enabled: true,
+        stt_available: true,
+        tts_available: true,
+        voice_ready: false,
+        voice_loading: false,
+      }),
+    })) as any
+
+    renderHook(() => useVoiceStatus({
+      wsRef: wsRef as any,
+      conversationId: 'conv-extra',
+      socketConnected: true,
+      sttEnabled: true,
+      ttsEnabled: true,
+    }))
+
+    await waitFor(() => {
+      expect(voicePreparePayloads()).toHaveLength(1)
+    })
+
+    const cacheKeys = voicePrepareCacheKeysForTests()
+    expect(cacheKeys).toContain('conv-refreshed:true:true')
+    expect(cacheKeys).toContain('conv-extra:true:true')
+    expect(cacheKeys).not.toContain('conv-filler-0:true:true')
+    expect(cacheKeys).toHaveLength(128)
+    nowSpy.mockRestore()
   })
 
   it('sends voice_prepare immediately when requested voice targets change', async () => {

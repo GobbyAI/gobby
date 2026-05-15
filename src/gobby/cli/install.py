@@ -160,7 +160,11 @@ __all__ = [
     "embedding_provider",
     type=click.Choice(["lmstudio", "ollama", "openai-compatible"]),
     default=None,
-    help="Compatibility mode for a custom embedding URL.",
+    help=(
+        "Compatibility mode for --embedding-url: lmstudio uses LM Studio-compatible "
+        "defaults, ollama uses Ollama-compatible defaults, openai-compatible uses "
+        "generic OpenAI-compatible embedding APIs."
+    ),
 )
 @click.option(
     "--embedding-model",

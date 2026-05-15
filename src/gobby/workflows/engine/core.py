@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
 
 from opentelemetry.trace import Status, StatusCode
+from pydantic import ValidationError
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -928,6 +929,9 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
             if isinstance(data, dict):
                 data.setdefault("name", row.name)
             return AgentDefinitionBody.model_validate(data)
-        except Exception as exc:
-            logger.debug("Failed to parse active agent definition %s: %s", agent_type, exc)
+        except json.JSONDecodeError as exc:
+            logger.debug("Failed to decode active agent definition %s: %s", agent_type, exc)
+            return None
+        except ValidationError as exc:
+            logger.debug("Failed to validate active agent definition %s: %s", agent_type, exc)
             return None

@@ -40,12 +40,21 @@ const CHAT_MESSAGES_POLL_MS = 2000
 const SESSION_METADATA_UNAVAILABLE_MESSAGE =
   'Session metadata is unavailable. It may have expired or been deleted.'
 
+async function sessionMetadataFetchError(response: Response): Promise<Error> {
+  const body = await response.text().catch(() => '')
+  const detail = body.trim() ? `: ${body.trim()}` : ''
+  return new Error(`Session metadata fetch failed (${response.status} ${response.statusText})${detail}`)
+}
+
 async function fetchSessionMetadata(sessionId: string): Promise<GobbySession | null> {
   const baseUrl = getBaseUrl()
   const sessionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
   if (!sessionRes.ok) {
     console.warn(`Session fetch returned ${sessionRes.status}`)
-    return null
+    if (sessionRes.status === 404) {
+      return null
+    }
+    throw await sessionMetadataFetchError(sessionRes)
   }
   const data = await sessionRes.json()
   return (data.session || null) as GobbySession | null
@@ -361,7 +370,7 @@ export function useSessionDetail(sessionId: string | null) {
       setSession(null)
       setMessages([])
       setTranscriptStatus(null)
-      setSessionError(null)
+      setSessionError(SESSION_METADATA_UNAVAILABLE_MESSAGE)
       setTotalMessages(0)
       messageSourceRef.current = null
       return

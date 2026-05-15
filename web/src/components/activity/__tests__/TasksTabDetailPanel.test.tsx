@@ -131,6 +131,17 @@ describe("TasksTabDetailPanel — impeccable redesign (#14686)", () => {
     expect(agent?.textContent).toMatch(/(just now|ago)/);
   });
 
+  it("uses the mono hero class only for owner session ids", () => {
+    const task = makeTask({
+      agent_name: null,
+      claimed_by_session_id: "session-123",
+    });
+    const { container } = render(<TasksTabDetailPanel task={task} />);
+
+    const owner = container.querySelector(".activity-task-detail-hero__agent-name");
+    expect(owner?.className).toContain("activity-task-detail-hero__agent-name--mono");
+  });
+
   it("renders 'Unassigned' in the hero when no agent or owner session exists", () => {
     const task = makeTask({ agent_name: null });
     const { container } = render(<TasksTabDetailPanel task={task} />);

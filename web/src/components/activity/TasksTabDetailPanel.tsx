@@ -184,7 +184,7 @@ export function TasksTabDetailPanel({
               <span>Driven by</span>
               <span
                 className={`activity-task-detail-hero__agent-name${
-                  ownerMono ? "" : ""
+                  ownerMono ? " activity-task-detail-hero__agent-name--mono" : ""
                 }`}
               >
                 {ownerLabel}

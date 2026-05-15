@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -43,6 +44,8 @@ _AGENT_KEYS = (
     "is_spawned_agent",
 )
 _AGENT_RUN_ROW_KEYS = ("id", "workflow_name", "agent_name", "prompt")
+_ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS = 5.0
+_ACTIVE_RULE_NAMES_CACHE: dict[tuple[str, str | None], tuple[float, set[str]]] = {}
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,11 @@ class _AgentRunRecovery:
     workflow_name: str | None
     agent_name: str | None
     prompt: str | None
+
+
+def clear_active_rule_names_cache() -> None:
+    """Clear cached active-rule selector resolution."""
+    _ACTIVE_RULE_NAMES_CACHE.clear()
 
 
 def reconcile_session_activation(
@@ -253,6 +261,15 @@ def _resolve_active_rule_names(
     from gobby.workflows.definitions import AgentDefinitionBody
     from gobby.workflows.selectors import resolve_rules_for_agent
 
+    cache_key = (agent_name, project_id)
+    now = time.monotonic()
+    cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
+    if cached is not None:
+        cached_at, active_rules = cached
+        if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
+            return set(active_rules)
+        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
+
     manager = LocalWorkflowDefinitionManager(db)
     row = manager.get_by_name(agent_name, project_id=project_id)
     if row is None or row.workflow_type != "agent" or not row.definition_json:
@@ -268,7 +285,9 @@ def _resolve_active_rule_names(
         return None
 
     rules = manager.list_all(project_id=project_id, workflow_type="rule", enabled=True)
-    return resolve_rules_for_agent(agent, rules)
+    active_rules = resolve_rules_for_agent(agent, rules)
+    _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, set(active_rules))
+    return active_rules
 
 
 def _baseline_updates(

@@ -381,6 +381,45 @@ class TestRunEmbeddingInstallOverrides:
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
+    def test_provider_override_skips_customize_prompt(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "provider": "lmstudio",
+                "model": "text-embedding-nomic-embed-text-v1.5@f16",
+                "dim": 768,
+                "api_base": "http://localhost:1234/v1",
+                "health_check": True,
+            }
+        )
+        runner = CliRunner()
+
+        @click.command()
+        def cmd() -> None:
+            results: dict = {}
+            _run_embedding_install(
+                installer,
+                results,
+                no_interactive=False,
+                provider_override="lmstudio",
+            )
+
+        result = runner.invoke(cmd, input="")
+
+        assert result.exit_code == 0
+        assert "Customize endpoint URL" not in result.output
+        installer.assert_called_once_with(
+            provider="lmstudio",
+            openai_api_key=None,
+            model_override=None,
+            api_base_override=None,
+            dim_override=None,
+        )
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
     def test_interactive_customize_collects_overrides(
         self, mock_lms: MagicMock, mock_ollama: MagicMock
     ) -> None:

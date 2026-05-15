@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import secrets
-import shutil
 import socket
 import subprocess
 import sys
@@ -172,4 +171,3 @@ def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
                 process.wait(timeout=15)
 
     assert "gobby" in body.lower()
-    shutil.rmtree(venv)

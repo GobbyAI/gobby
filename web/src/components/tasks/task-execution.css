@@ -373,6 +373,9 @@
 
 .activity-task-detail-hero__agent-name {
   color: var(--text-secondary);
+}
+
+.activity-task-detail-hero__agent-name--mono {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
 }
 

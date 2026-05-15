@@ -598,7 +598,7 @@ class TestMigrateLegacyMcpConfig:
         assert "Failed to move legacy MCP config" in caplog.text
         assert "Failed to copy legacy MCP config" in caplog.text
 
-    def test_successful_copy_with_unlink_failure_returns_false_and_leaves_both_files(
+    def test_successful_copy_with_unlink_failure_returns_true_and_leaves_both_files(
         self, tmp_path, caplog
     ) -> None:
         legacy = tmp_path / ".mcp.json"
@@ -611,9 +611,10 @@ class TestMigrateLegacyMcpConfig:
             patch.object(Path, "replace", side_effect=OSError("cross-device link")),
             patch.object(Path, "unlink", side_effect=OSError("unlink failed")),
         ):
-            assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is False
+            assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is True
 
         assert legacy.read_text() == migrated_content
         assert new.read_text() == migrated_content
         assert "failed to remove legacy file" in caplog.text
+        assert "Using the copied config" in caplog.text
         assert "unlink failed" in caplog.text

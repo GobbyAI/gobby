@@ -4,6 +4,8 @@ import { parseVoiceStatus, type RawVoiceStatus } from '../voiceStatus'
 
 const VOICE_PREPARE_RETRY_MS = 30_000
 const VOICE_PREPARE_CACHE_MAX_ENTRIES = 128
+// Shared across hook instances so remount/reconnect loops do not repeatedly
+// warm the same conversation and target set.
 const voicePrepareSentAt = new Map<string, number>()
 
 function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnabled: boolean) {
@@ -18,10 +20,32 @@ function pruneVoicePrepareSentAt(now: number) {
   }
 
   while (voicePrepareSentAt.size > VOICE_PREPARE_CACHE_MAX_ENTRIES) {
-    const oldestKey = voicePrepareSentAt.keys().next().value
+    let oldestKey: string | undefined
+    let oldestSentAt = Number.POSITIVE_INFINITY
+    for (const [key, sentAt] of voicePrepareSentAt) {
+      if (sentAt < oldestSentAt) {
+        oldestKey = key
+        oldestSentAt = sentAt
+      }
+    }
     if (oldestKey === undefined) return
     voicePrepareSentAt.delete(oldestKey)
   }
+}
+
+export function resetVoicePrepareCacheForTests(): void {
+  voicePrepareSentAt.clear()
+}
+
+export function seedVoicePrepareCacheForTests(entries: Array<readonly [string, number]>): void {
+  voicePrepareSentAt.clear()
+  for (const [key, sentAt] of entries) {
+    voicePrepareSentAt.set(key, sentAt)
+  }
+}
+
+export function voicePrepareCacheKeysForTests(): string[] {
+  return Array.from(voicePrepareSentAt.keys())
 }
 
 interface VoiceStatusOptions {
@@ -131,7 +155,6 @@ export function useVoiceStatus({
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
-    voicePrepareSentAt.delete(warmupKey)
     voicePrepareSentAt.set(warmupKey, now)
     pruneVoicePrepareSentAt(now)
     setVoiceLoading(true)

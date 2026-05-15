@@ -147,30 +147,29 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
   const activeStatuses = taskStats
     ? TASK_STATUS_ORDER.filter(s => (taskStats[s] || 0) > 0)
     : []
+  const lastActivityLabel = project.last_activity_at
+    ? new Date(project.last_activity_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : '—'
 
   return (
     <div className={SUMMARY_CLS}>
       <div className={GRID_CLS}>
-        <div className={STATS_ROW_CLS}>
-          <div className={STAT_CLS}>
+        <div className={STATS_ROW_CLS} role="group" aria-label="Project summary statistics">
+          <div className={STAT_CLS} role="group" aria-label={`Sessions: ${project.session_count}`}>
             <span className={STAT_LABEL_CLS}>Sessions</span>
             <span className={STAT_VALUE_CLS}>{project.session_count}</span>
           </div>
-          <div className={STAT_CLS}>
+          <div className={STAT_CLS} role="group" aria-label={`Open tasks: ${project.open_task_count}`}>
             <span className={STAT_LABEL_CLS}>Open Tasks</span>
             <span className={STAT_VALUE_CLS}>{project.open_task_count}</span>
           </div>
-          <div className={STAT_CLS}>
+          <div className={STAT_CLS} role="group" aria-label={`Total tasks: ${taskTotal}`}>
             <span className={STAT_LABEL_CLS}>Total Tasks</span>
             <span className={STAT_VALUE_CLS}>{taskTotal}</span>
           </div>
-          <div className={STAT_CLS}>
+          <div className={STAT_CLS} role="group" aria-label={`Last activity: ${lastActivityLabel}`}>
             <span className={STAT_LABEL_CLS}>Last Activity</span>
-            <span className={STAT_VALUE_CLS}>
-              {project.last_activity_at
-                ? new Date(project.last_activity_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-                : '—'}
-            </span>
+            <span className={STAT_VALUE_CLS}>{lastActivityLabel}</span>
           </div>
         </div>
 
