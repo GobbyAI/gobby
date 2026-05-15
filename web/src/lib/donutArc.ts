@@ -7,7 +7,7 @@ export interface DonutArcRender<T extends DonutSegmentInput> {
   pathD: string
 }
 
-const FULL_CIRCLE_EPSILON_DEG = 0.000001
+export const DEFAULT_FULL_CIRCLE_EPSILON_DEG = 0.000001
 
 function clampSweepDeg(sweep: number): number {
   return Math.min(Math.max(sweep, 0), 360)
@@ -30,6 +30,7 @@ export function describeArcPath(
   r: number,
   startAngleDeg: number,
   endAngleDeg: number,
+  fullCircleEpsilonDeg = DEFAULT_FULL_CIRCLE_EPSILON_DEG,
 ): string {
   const polar = (angleDeg: number) => {
     const rad = ((angleDeg - 90) * Math.PI) / 180
@@ -37,7 +38,7 @@ export function describeArcPath(
   }
   const sweep = clampSweepDeg(endAngleDeg - startAngleDeg)
   // SVG arcs cannot represent a closed full circle as one segment.
-  if (360 - sweep <= FULL_CIRCLE_EPSILON_DEG) {
+  if (360 - sweep <= fullCircleEpsilonDeg) {
     const start = polar(startAngleDeg)
     const mid = polar(startAngleDeg + 180)
     return [
@@ -61,6 +62,7 @@ export function donutArcs<T extends DonutSegmentInput>(
   cx: number,
   cy: number,
   r: number,
+  fullCircleEpsilonDeg = DEFAULT_FULL_CIRCLE_EPSILON_DEG,
 ): DonutArcRender<T>[] {
   if (segments.length === 0) return []
 
@@ -75,6 +77,9 @@ export function donutArcs<T extends DonutSegmentInput>(
     const startDeg = cursorDeg
     const endDeg = cursorDeg + sweep
     cursorDeg = endDeg
-    return { segment, pathD: describeArcPath(cx, cy, r, startDeg, endDeg) }
+    return {
+      segment,
+      pathD: describeArcPath(cx, cy, r, startDeg, endDeg, fullCircleEpsilonDeg),
+    }
   })
 }

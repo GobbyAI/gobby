@@ -246,6 +246,7 @@ class TestSyncBundledPipelines:
         to the expected MCP tools.
         """
         path = Path("src/gobby/install/shared/workflows/pipelines/expand-task.yaml")
+        assert path.is_file(), f"Missing bundled pipeline: {path}"
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         step_ids = [step["id"] for step in data["steps"]]
 

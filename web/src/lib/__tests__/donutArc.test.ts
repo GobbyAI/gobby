@@ -12,6 +12,12 @@ describe('describeArcPath', () => {
     expect(arcCommandCount(pathD)).toBe(2)
   })
 
+  it('uses an explicit looser full-circle epsilon', () => {
+    const pathD = describeArcPath(0, 0, 10, 0, 359, 2)
+
+    expect(arcCommandCount(pathD)).toBe(2)
+  })
+
   it('clamps negative sweeps to a zero-length arc', () => {
     const pathD = describeArcPath(0, 0, 10, 0, -90)
     const arc = pathD.match(
@@ -39,6 +45,12 @@ describe('donutArcs', () => {
 
   it('renders a single segment as a full circle', () => {
     const [arc] = donutArcs([{ value: 5 }], 0, 0, 10)
+
+    expect(arcCommandCount(arc.pathD)).toBe(2)
+  })
+
+  it('passes an explicit full-circle epsilon through to each arc', () => {
+    const [arc] = donutArcs([{ value: 359 }, { value: 1 }], 0, 0, 10, 2)
 
     expect(arcCommandCount(arc.pathD)).toBe(2)
   })

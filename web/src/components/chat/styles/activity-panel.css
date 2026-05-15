@@ -334,8 +334,7 @@
    Activity Panel — shared leading status dot
    Single authoring site for the status indicator that appears at the left
    of list rows in Tasks, Sessions, Pipelines, Cron, and Traces. The span
-   wraps a lucide-react icon (CheckCircle / CircleDot / AlertTriangle /
-   XCircle / Minus) — shape carries state alongside colour so the dot
+   wraps a local SVG glyph; shape carries state alongside colour so the dot
    reads in grayscale for deutan viewers.
    ============================================ */
 .activity-row-status-dot {

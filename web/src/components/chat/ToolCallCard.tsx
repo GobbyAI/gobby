@@ -760,9 +760,16 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }) {
   const serverName = group.tool_calls[0]?.server_name
+  const groupBorderClass = group.hasErrors
+    ? 'border-destructive-foreground/50'
+    : group.hasInFlight
+      ? 'border-accent/50'
+      : group.allCompleted
+        ? 'border-success-foreground/40'
+        : 'border-border'
 
   return (
-    <div className="border-l border-border my-1">
+    <div className={cn('border-l my-1', groupBorderClass)}>
       <div
         className="flex items-center gap-2 pl-3 pr-2 py-1 text-sm cursor-pointer hover:bg-muted/30 transition-colors"
         onClick={onToggle}

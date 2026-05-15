@@ -65,12 +65,15 @@ def _allocate_high_port() -> int:
 
 def _allocate_distinct_high_ports() -> tuple[int, int]:
     attempts = 100
+    http_port = _allocate_high_port()
     for _ in range(attempts):
-        http_port = _allocate_high_port()
         ws_port = _allocate_high_port()
         if http_port != ws_port:
             return http_port, ws_port
-    raise RuntimeError(f"could not allocate distinct smoke-test ports after {attempts} attempts")
+    raise RuntimeError(
+        f"could not allocate a WebSocket smoke-test port distinct from HTTP port "
+        f"{http_port} after {attempts} attempts"
+    )
 
 
 def _write_config(config_path: Path, db_path: Path, http_port: int, ws_port: int) -> None:

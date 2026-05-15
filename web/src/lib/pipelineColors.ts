@@ -63,9 +63,11 @@ export function getStepTypeColorVar(stepType: string): string {
     : "var(--text-muted)";
 }
 
-/** Collapse the typed pipeline status palette onto the 5-kind taxonomy
- *  consumed by ActivityRowStatusDot. The dot pairs this with `pulse` for
- *  live states; "running" stays distinguishable via the pulse animation. */
+/** Collapse the typed pipeline status palette onto the status-dot taxonomy.
+ *  Running uses the info kind and pulse animation; completed/success resolve
+ *  to success. Pending and cancelled are disabled because they do not require
+ *  attention, while timeout, waiting_approval, and interrupted use warning
+ *  because they need operator awareness but are not execution failures. */
 const EXEC_STATUS_KINDS: Record<string, StatusKind> = {
   running: "info",
   pending: "disabled",

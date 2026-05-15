@@ -306,7 +306,10 @@ class TestModelDiscoveryTrust:
 
         assert result.success is True
         assert result.skipped is True
-        assert result.reason == f"Unsupported CLI for model discovery trust: {cli}"
+        assert (
+            result.reason
+            == f"Unsupported CLI for model discovery trust: {cli}; supported CLIs: gemini, qwen"
+        )
         assert not result.entries
         assert not result.files_written
         assert not (tmp_path / ".claude").exists()

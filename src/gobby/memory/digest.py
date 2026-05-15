@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Protocol
 
 from gobby.utils.json_helpers import extract_json_object
 
@@ -51,6 +51,11 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
 class _TurnRecord:
     turn_markdown: str
     title_candidate: str | None
+
+
+class SessionTitlePolicy(Protocol):
+    title: str | None
+    title_source: str | None
 
 
 async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
@@ -392,10 +397,10 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
     return candidate[0].upper() + candidate[1:]
 
 
-def _should_update_digest_title(session: Any) -> bool:
+def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
     """Return whether digest-owned title generation may update this session title."""
-    existing_title = str(getattr(session, "title", "") or "").strip()
-    raw_source = getattr(session, "title_source", None)
+    existing_title = str(session.title or "").strip()
+    raw_source = session.title_source
     title_source = str(raw_source or "").strip().lower()
 
     if title_source == "manual":
@@ -568,7 +573,15 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
             exchange_count,
         )
 
-    title_candidate = _normalize_title_candidate(data.get("title_candidate"))
+    raw_title_candidate = data.get("title_candidate")
+    if not isinstance(raw_title_candidate, str) or not raw_title_candidate.strip():
+        _raise_turn_record_contract_error(
+            "missing or invalid title_candidate",
+            response_text,
+            exchange_count,
+        )
+
+    title_candidate = _normalize_title_candidate(raw_title_candidate)
 
     return _TurnRecord(turn_markdown=turn_markdown, title_candidate=title_candidate)
 

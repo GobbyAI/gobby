@@ -147,6 +147,21 @@ class TestSessionManagerMetadata:
         assert updated is None
         assert calls == []
 
+    def test_update_digest_markdown_missing_session_does_not_notify_listener(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        """Missing digest updates return None and do not notify session listeners."""
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        updated = session_manager.update_digest_markdown("missing-session", "## Digest")
+
+        assert updated is None
+        assert calls == []
+
     def test_update_title_listener_failure_does_not_break_update(
         self,
         session_manager: SessionManager,

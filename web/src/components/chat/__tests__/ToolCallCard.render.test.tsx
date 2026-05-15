@@ -35,7 +35,7 @@ describe('ToolCallCard rendering', () => {
   })
 
   it('renders 3+ same-tool runs through the quieter ToolCallGroupHeader (canonical Bash name)', () => {
-    renderWithProviders(
+    const { container } = renderWithProviders(
       <ToolCallCards
         toolCalls={[
           makeCall({
@@ -62,8 +62,40 @@ describe('ToolCallCard rendering', () => {
     // also showing "Bash" gives 4 occurrences total.
     expect(screen.getAllByText('Bash')).toHaveLength(4)
     expect(screen.getByText('×3')).toBeInTheDocument()
+    expect(screen.getByText('×3').closest('.border-l')).toHaveClass(
+      'border-success-foreground/40',
+    )
     // No "N tool calls" outer wrapper text — the ToolChainGroup wrapper is gone.
     expect(screen.queryByText(/^\d+ tool calls?$/)).toBeNull()
+    expect(container.querySelector('.border-l')).toBeTruthy()
+  })
+
+  it('marks grouped error and in-flight tool runs with stateful left borders', () => {
+    const { rerender } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({ id: 'tool-1', tool_name: 'exec_command', status: 'completed' }),
+          makeCall({ id: 'tool-2', tool_name: 'exec_command', status: 'error' }),
+          makeCall({ id: 'tool-3', tool_name: 'exec_command', status: 'completed' }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('×3').closest('.border-l')).toHaveClass(
+      'border-destructive-foreground/50',
+    )
+
+    rerender(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({ id: 'tool-1', tool_name: 'exec_command', status: 'completed' }),
+          makeCall({ id: 'tool-2', tool_name: 'exec_command', status: 'calling' }),
+          makeCall({ id: 'tool-3', tool_name: 'exec_command', status: 'completed' }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('×3').closest('.border-l')).toHaveClass('border-accent/50')
   })
 
   it('renders 2 same-tool calls flat with no grouping wrapper (threshold is 3)', () => {

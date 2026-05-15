@@ -70,9 +70,11 @@ def _parse_npm_build_timeout(raw_value: str | None) -> int:
     return parsed if parsed > 0 else 600
 
 
-_NPM_BUILD_TIMEOUT_SECONDS: int = _parse_npm_build_timeout(
-    os.environ.get("GOBBY_NPM_BUILD_TIMEOUT")
-)
+def _init_npm_build_timeout_seconds() -> int:
+    return _parse_npm_build_timeout(os.environ.get("GOBBY_NPM_BUILD_TIMEOUT"))
+
+
+_NPM_BUILD_TIMEOUT_SECONDS: int = _init_npm_build_timeout_seconds()
 
 
 def _run_npm_command(command: list[str]) -> None:

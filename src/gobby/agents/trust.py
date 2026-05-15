@@ -153,7 +153,10 @@ async def authorize_model_discovery_trust(cli: str, directory: PathValue) -> Tru
     if cli not in _GEMINI_COMPATIBLE_CLIS:
         result = TrustSeedResult(cli=cli, paths=_trust_path_strings(directory))
         result.skipped = True
-        result.reason = f"Unsupported CLI for model discovery trust: {cli}"
+        supported = ", ".join(sorted(_GEMINI_COMPATIBLE_CLIS))
+        result.reason = (
+            f"Unsupported CLI for model discovery trust: {cli}; supported CLIs: {supported}"
+        )
         return result
 
     lock = _MODEL_DISCOVERY_TRUST_LOCKS.get(cli)

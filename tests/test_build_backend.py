@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import importlib
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NamedTuple
 
 import pytest
 
 pytestmark = pytest.mark.unit
+
+
+class SubprocessCall(NamedTuple):
+    command: list[str]
+    cwd: Path
+    check: bool
+    capture_output: bool
+    text: bool
+    timeout: int
 
 
 def _load_backend(repo_root: Path) -> object:
@@ -115,7 +124,7 @@ def test_stage_ui_runs_npm_commands_with_timeout(
 
     backend = _load_backend(repo_root)
     monkeypatch.setattr(backend.shutil, "which", lambda name: "/usr/bin/npm")
-    calls: list[tuple[list[str], Path, bool, bool, bool, int]] = []
+    calls: list[SubprocessCall] = []
 
     def fake_run(
         command: list[str],
@@ -126,7 +135,7 @@ def test_stage_ui_runs_npm_commands_with_timeout(
         text: bool,
         timeout: int,
     ) -> SimpleNamespace:
-        calls.append((command, cwd, check, capture_output, text, timeout))
+        calls.append(SubprocessCall(command, cwd, check, capture_output, text, timeout))
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
@@ -134,8 +143,8 @@ def test_stage_ui_runs_npm_commands_with_timeout(
     backend._stage_ui()
 
     assert calls == [
-        (["npm", "ci"], web, True, True, True, 600),
-        (["npm", "run", "build"], web, True, True, True, 600),
+        SubprocessCall(["npm", "ci"], web, True, True, True, 600),
+        SubprocessCall(["npm", "run", "build"], web, True, True, True, 600),
     ]
 
 
@@ -143,6 +152,7 @@ def test_stage_ui_runs_npm_commands_with_timeout(
     ("env_value", "expected_timeout"),
     [
         ("30", 30),
+        ("", 600),
         ("0", 600),
         ("-1", 600),
         ("invalid", 600),
@@ -240,7 +250,7 @@ def test_stage_ui_npm_failure_raises_output_context(
         timeout: int,
     ) -> SimpleNamespace:
         if command == failed_command:
-            raise subprocess.CalledProcessError(
+            raise backend.subprocess.CalledProcessError(
                 returncode=17,
                 cmd=command,
                 output="out text",

@@ -7,8 +7,8 @@ describe('chartSeriesAt', () => {
     expect(chartSeriesAt(3)).toEqual(chartSeries[3])
   })
 
-  it('uses the fourth series for MCP latency', () => {
-    expect(CHART_SERIES_MCP_LATENCY).toEqual(chartSeries[3])
+  it('uses the fifth series for MCP latency', () => {
+    expect(CHART_SERIES_MCP_LATENCY).toEqual(chartSeries[4])
   })
 
   it('wraps indexes at the series boundary', () => {

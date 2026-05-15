@@ -24,4 +24,17 @@ describe('pruneTimeBoundLru', () => {
 
     expect(entries.size).toBe(0)
   })
+
+  it('removes the oldest excess entries when enforcing capacity', () => {
+    const entries = new Map<string, number>([
+      ['newer', 40],
+      ['oldest', 10],
+      ['newest', 50],
+      ['second-oldest', 20],
+    ])
+
+    pruneTimeBoundLru(entries, 60, { maxEntries: 2, ttlMs: 100 })
+
+    expect(Array.from(entries.keys())).toEqual(['newer', 'newest'])
+  })
 })

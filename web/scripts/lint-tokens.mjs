@@ -22,7 +22,19 @@ async function walk(dir) {
 }
 
 async function checkFile(filePath) {
-  const text = await readFile(filePath, 'utf8')
+  let text
+  try {
+    text = await readFile(filePath, 'utf8')
+  } catch (error) {
+    violations.push({
+      filePath,
+      line: 0,
+      column: 0,
+      text: `failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+    })
+    return
+  }
+
   const lines = text.split(/\r?\n/)
   for (const [lineIndex, line] of lines.entries()) {
     violationPattern.lastIndex = 0
