@@ -31,6 +31,15 @@ describe('mobile chrome CSS', () => {
     expect(appSource).toContain('className="app-health-badge')
 
     expect(shellSource).toMatch(
+      /@media \(max-width:\s*430px\)\s*{[\s\S]*\.app-header-actions \.project-selector-segmented-wrap\s*{[^}]*display:\s*none/,
+    )
+    expect(shellSource).toMatch(
+      /@media \(max-width:\s*430px\)\s*{[\s\S]*\.project-selector-compact-wrap\s*{[^}]*display:\s*inline-flex/,
+    )
+    expect(shellSource).toMatch(
+      /\.project-selector-compact-trigger\s*{[^}]*background:\s*var\(--accent-tint\)[^}]*color:\s*var\(--accent\)/,
+    )
+    expect(shellSource).toMatch(
       /\.app-menu-button\s*{[^}]*width:\s*2\.25rem[^}]*min-height:\s*2\.25rem[^}]*border-color:\s*transparent/,
     )
     expect(shellSource).toMatch(

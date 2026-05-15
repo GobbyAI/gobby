@@ -55,6 +55,51 @@
   line-height: 1;
 }
 
+.project-selector {
+  position: relative;
+  min-width: 0;
+}
+
+.project-selector-compact-wrap {
+  display: none;
+  align-items: stretch;
+  width: 100%;
+  height: var(--control-row-height);
+  min-height: var(--control-row-height);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.project-selector-compact-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0 0.55rem;
+  border: 0;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  transition:
+    background 0.1s,
+    color 0.1s;
+}
+
+.project-selector-compact-trigger:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.project-selector-compact-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-header-actions [role="radiogroup"] {
   overflow: hidden;
   font-size: var(--text-base);
@@ -90,5 +135,19 @@
   .app-health-badge {
     gap: 0.375rem;
     padding-inline: 0.625rem;
+  }
+}
+
+@media (max-width: 430px) {
+  .app-header-actions .project-selector {
+    width: 6.25rem;
+  }
+
+  .app-header-actions .project-selector-segmented-wrap {
+    display: none;
+  }
+
+  .project-selector-compact-wrap {
+    display: inline-flex;
   }
 }
