@@ -205,6 +205,64 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
 
 
 @pytest.mark.asyncio
+async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path: Path) -> None:
+    """A stale pending row should not overwrite current sync state or marker IDs."""
+    project_id = "proj-1"
+    file_path = "src/app.py"
+    source_file = tmp_path / file_path
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_text("def greet(name: str) -> str:\n    return name\n")
+
+    stale_file = IndexedFile(
+        id="stale-file-id",
+        project_id=project_id,
+        file_path=file_path,
+        language="python",
+        content_hash="old",
+        vectors_synced=0,
+        graph_synced=0,
+    )
+    current_file = IndexedFile(
+        id="current-file-id",
+        project_id=project_id,
+        file_path=file_path,
+        language="python",
+        content_hash="new",
+        vectors_synced=1,
+        graph_synced=0,
+    )
+    storage = MagicMock()
+    storage.get_file.return_value = current_file
+    storage.mark_graph_sync_attempted.return_value = None
+    storage.mark_graph_synced.return_value = None
+    storage.get_imports_for_file.return_value = []
+    storage.get_calls_for_file.return_value = []
+    storage.get_symbols_for_file.return_value = []
+    vector_store = RecoveringVectorStore()
+    graph = SimpleNamespace(available=True, sync_file=AsyncMock())
+    run_db = RecordingRunDb()
+
+    did_sync = await _sync_file(
+        storage=storage,
+        vector_store=vector_store,
+        graph=graph,
+        config=CodeIndexConfig(embedding_enabled=True, graph_enabled=True),
+        embed_model=FakeEmbedModel(),
+        project_id=project_id,
+        root=tmp_path,
+        file=stale_file,
+        embedding_dim=4,
+        run_db=run_db,
+    )
+
+    assert did_sync is True
+    assert vector_store.calls == []
+    storage.mark_vectors_synced.assert_not_called()
+    storage.mark_graph_sync_attempted.assert_called_once_with("current-file-id")
+    storage.mark_graph_synced.assert_called_once_with("current-file-id")
+
+
+@pytest.mark.asyncio
 async def test_sync_graph_routes_relation_reads_through_run_db() -> None:
     """Graph relation reads use the injected DB runner before Neo4j writes."""
     storage = MagicMock()

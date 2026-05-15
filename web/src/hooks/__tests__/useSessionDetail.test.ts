@@ -234,13 +234,14 @@ describe('useSessionDetail', () => {
       }
 
       if (url.includes('/api/sessions/sess-cli/messages?limit=10000&offset=0')) {
+        const content = sessionFetchCount === 1 ? 'Initial output' : 'Updated output'
         return new Response(
           JSON.stringify({
             messages: [
               {
                 id: 'sess-msg-1',
                 role: 'assistant',
-                content: 'Initial output',
+                content,
                 timestamp: '2026-04-09T00:00:00Z',
               },
             ],
@@ -274,6 +275,7 @@ describe('useSessionDetail', () => {
     await waitFor(() => {
       expect(result.current.session?.digest_markdown).toBe('## Updated digest')
       expect(result.current.session?.status).toBe('expired')
+      expect(result.current.messages[0].content).toBe('Updated output')
     })
   })
 
@@ -440,6 +442,8 @@ describe('useSessionDetail', () => {
       expect(result.current.session?.id).toBe('sess-cli')
       expect(result.current.messages).toHaveLength(1)
     })
+    act(() => result.current.clearSessionError())
+    expect(result.current.sessionError).toBeNull()
     expect(warnSpy).toHaveBeenCalledWith('Session fetch returned 500')
     expect(String(errorSpy.mock.calls[0]?.[1])).toContain('database unavailable')
   })

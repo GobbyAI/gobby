@@ -45,7 +45,7 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
       "title": "Add API endpoints",
       "description": "REST endpoints for user management",
       "depends_on": [1],
-      "category": "test",
+      "category": "code",
       "affected_files": ["src/api/users.py", "src/api/sessions.py"],
       "parallel_group": "api-endpoints",
       "validation_criteria": "Integration tests for all endpoints pass"

@@ -308,7 +308,7 @@ def _resolve_active_rule_names(
         if isinstance(data, dict):
             data.setdefault("name", row.name)
         agent = AgentDefinitionBody.model_validate(data)
-    except (json.JSONDecodeError, ValidationError) as exc:
+    except (json.JSONDecodeError, TypeError, KeyError, ValidationError) as exc:
         logger.debug(
             "Failed to refresh active rules for agent %s: %s",
             agent_name,
@@ -567,7 +567,7 @@ def _ensure_step_workflow_from_definition(
         return False
     try:
         definition = json.loads(row.definition_json)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         return False
     steps = definition.get("steps") or []
     first = steps[0] if steps else {}

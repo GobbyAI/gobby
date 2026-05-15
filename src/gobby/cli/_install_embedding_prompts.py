@@ -17,12 +17,13 @@ def _infer_embedding_provider_from_url(api_base: str) -> str:
     """Infer the compatible local provider path for a custom OpenAI-style endpoint."""
     try:
         port = urlparse(api_base).port
-    except ValueError:
+    except Exception:
         port = None
-    if port == 11434:
-        return "ollama"
-    if port == 1234:
-        return "lmstudio"
+    if port is not None:
+        if port == 11434:
+            return "ollama"
+        if port == 1234:
+            return "lmstudio"
     return "openai-compatible"
 
 

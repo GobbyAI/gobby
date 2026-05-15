@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { GobbyMemory } from '../../hooks/useMemory'
 import { inputFocusCls } from '../shared/focusStyles'
 import { Heading } from '../shared/Heading'
@@ -30,6 +30,7 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
   const [tags, setTags] = useState<string[]>(memory?.tags ?? [])
   const [tagInput, setTagInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const tagsLabelId = useId()
 
   const isEdit = memory !== null
 
@@ -145,8 +146,8 @@ export function MemoryForm({ memory, onSave, onCancel }: MemoryFormProps) {
           </div>
         </div>
 
-        <div className={FIELD_WRAP_CLS} role="group" aria-label="Tags">
-          <span className={FIELD_LABEL_CLS}>Tags</span>
+        <div className={FIELD_WRAP_CLS} role="group" aria-labelledby={tagsLabelId}>
+          <span id={tagsLabelId} className={FIELD_LABEL_CLS}>Tags</span>
           <div className="flex min-h-[2rem] flex-wrap items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-1.5">
             {tags.map((tag) => (
               <span

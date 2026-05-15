@@ -11,6 +11,7 @@ const headingVariantClass: Record<HeadingVariant, string> = {
 }
 
 function normalizeHeadingLevel(level: number): HeadingLevel {
+  // Fractional levels intentionally round toward zero before clamping.
   const finiteLevel = Number.isFinite(level) ? Math.trunc(level) : 1
   return Math.max(1, Math.min(finiteLevel, 6)) as HeadingLevel
 }

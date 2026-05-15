@@ -4,6 +4,7 @@ import { CHART_SERIES_MCP_LATENCY, chartSeries, chartSeriesAt } from '../chartSe
 describe('chartSeriesAt', () => {
   it('returns positive indexes directly', () => {
     expect(chartSeriesAt(0)).toEqual(chartSeries[0])
+    expect(chartSeriesAt(1)).toEqual(chartSeries[1])
     expect(chartSeriesAt(3)).toEqual(chartSeries[3])
   })
 
@@ -17,6 +18,13 @@ describe('chartSeriesAt', () => {
 
   it('wraps larger positive indexes with modulo arithmetic', () => {
     expect(chartSeriesAt(chartSeries.length + 2)).toEqual(chartSeries[2])
+  })
+
+  it('wraps single-entry series for any index', () => {
+    const single = [chartSeriesAt(1)]
+    expect(chartSeriesAt(0, single)).toEqual(chartSeries[1])
+    expect(chartSeriesAt(1, single)).toEqual(chartSeries[1])
+    expect(chartSeriesAt(-1, single)).toEqual(chartSeries[1])
   })
 
   it('wraps negative indexes back into the series', () => {

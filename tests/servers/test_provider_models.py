@@ -399,7 +399,7 @@ class TestProviderModelCatalog:
             with pytest.raises(PermissionError, match="not trusted"):
                 await catalog._discover_acp_models(client_cls=client_cls)
 
-        assert "Failed to remove model-discovery cwd" in caplog.text
+        assert "Failed to remove gemini model-discovery cwd" in caplog.text
         client_cls.assert_not_called()
 
     @pytest.mark.asyncio

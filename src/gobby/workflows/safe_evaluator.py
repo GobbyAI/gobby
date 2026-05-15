@@ -391,7 +391,7 @@ def _assistant_response_text(context: dict[str, Any]) -> str:
         return cached
 
     event = context.get("event")
-    data = getattr(event, "data", None)
+    data = _event_field(event, "data", {})
     if not isinstance(data, dict):
         data = {}
 
@@ -412,9 +412,20 @@ def _assistant_response_text(context: dict[str, Any]) -> str:
     return text
 
 
-def _tool_payload_failed(payload: Any, depth: int = 0) -> bool:
+def _event_field(event: Any, field: str, default: Any) -> Any:
+    if event is None:
+        return default
+    if isinstance(event, dict):
+        return event.get(field, default)
+    try:
+        return getattr(event, field)
+    except Exception:
+        return default
+
+
+def _tool_payload_failed(payload: Any, max_depth: int = MAX_PAYLOAD_DEPTH) -> bool:
     """Return True when a normalized tool payload carries failure metadata."""
-    if depth >= MAX_PAYLOAD_DEPTH:
+    if max_depth <= 0:
         return False
 
     if isinstance(payload, str):
@@ -422,10 +433,10 @@ def _tool_payload_failed(payload: Any, depth: int = 0) -> bool:
             decoded = json.loads(payload)
         except json.JSONDecodeError:
             return False
-        return _tool_payload_failed(decoded, depth + 1)
+        return _tool_payload_failed(decoded, max_depth - 1)
 
     if isinstance(payload, list | tuple):
-        return any(_tool_payload_failed(item, depth + 1) for item in payload)
+        return any(_tool_payload_failed(item, max_depth - 1) for item in payload)
 
     if not isinstance(payload, dict):
         return False
@@ -443,7 +454,7 @@ def _tool_payload_failed(payload: Any, depth: int = 0) -> bool:
 
     result = payload.get("result")
     if isinstance(result, dict | list | tuple | str):
-        return _tool_payload_failed(result, depth + 1)
+        return _tool_payload_failed(result, max_depth - 1)
 
     return False
 
@@ -575,11 +586,11 @@ def build_condition_helpers(
     def _tool_call_succeeded() -> bool:
         """Check whether the current normalized after-tool event succeeded."""
         event = ctx.get("event")
-        data = getattr(event, "data", None)
+        data = _event_field(event, "data", None)
         if not isinstance(data, dict):
             return False
 
-        metadata = getattr(event, "metadata", {})
+        metadata = _event_field(event, "metadata", {})
         if isinstance(metadata, dict) and metadata.get("is_failure"):
             return False
 

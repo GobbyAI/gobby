@@ -176,14 +176,14 @@ async def _sync_file(
         return False
 
     # Validate: file still exists on disk
-    full_path = root / file.file_path
+    full_path = root / current.file_path
     if not full_path.exists():
         return False
 
     did_work = False
 
     # Vector sync
-    if not file.vectors_synced and config.embedding_enabled:
+    if not current.vectors_synced and config.embedding_enabled:
         if vector_store is not None and embed_model is not None:
             try:
                 await _sync_vectors(
@@ -192,31 +192,31 @@ async def _sync_file(
                     embed_model=embed_model,
                     config=config,
                     project_id=project_id,
-                    file=file,
+                    file=current,
                     embedding_dim=embedding_dim,
                     run_db=run_db,
                 )
-                await _run_db(run_db, storage.mark_vectors_synced, file.id)
+                await _run_db(run_db, storage.mark_vectors_synced, current.id)
                 did_work = True
             except Exception as e:
-                logger.warning(f"Sync worker: vector sync failed for {file.file_path}: {e}")
+                logger.warning(f"Sync worker: vector sync failed for {current.file_path}: {e}")
 
     # Graph sync
-    if not file.graph_synced and config.graph_enabled:
+    if not current.graph_synced and config.graph_enabled:
         if graph is not None and graph.available:
             try:
-                await _run_db(run_db, storage.mark_graph_sync_attempted, file.id)
+                await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
                 await _sync_graph(
                     storage=storage,
                     graph=graph,
                     project_id=project_id,
-                    file=file,
+                    file=current,
                     run_db=run_db,
                 )
-                await _run_db(run_db, storage.mark_graph_synced, file.id)
+                await _run_db(run_db, storage.mark_graph_synced, current.id)
                 did_work = True
             except Exception as e:
-                logger.warning(f"Sync worker: graph sync failed for {file.file_path}: {e}")
+                logger.warning(f"Sync worker: graph sync failed for {current.file_path}: {e}")
 
     return did_work
 

@@ -772,7 +772,8 @@ class ProviderModelCatalog:
                     await asyncio.to_thread(shutil.rmtree, cwd)
                 except Exception:
                     logger.warning(
-                        "Failed to remove model-discovery cwd after authorization failure: %s",
+                        "Failed to remove %s model-discovery cwd after authorization failure: %s",
+                        client_cls.cli_name,
                         cwd,
                         exc_info=True,
                     )

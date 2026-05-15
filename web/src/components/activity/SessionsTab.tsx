@@ -464,6 +464,7 @@ export const SessionsTab = memo(function SessionsTab({
   const {
     session: selectedSessionDetail,
     sessionError,
+    clearSessionError,
     messages,
     isLoading: isLoadingDetail,
     transcriptStatus,
@@ -847,9 +848,18 @@ export const SessionsTab = memo(function SessionsTab({
           {sessionError && (
             <div
               role="alert"
-              className="border-b border-border px-3 py-2 text-sm text-[var(--color-error)]"
+              className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm text-[var(--color-error)]"
             >
-              {sessionError}
+              <span className="min-w-0 flex-1">{sessionError}</span>
+              <button
+                type="button"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)]"
+                onClick={clearSessionError}
+                aria-label="Dismiss session error"
+                title="Dismiss"
+              >
+                &times;
+              </button>
             </div>
           )}
 

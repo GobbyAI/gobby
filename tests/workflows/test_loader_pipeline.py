@@ -594,6 +594,55 @@ class TestValidatePipelineReferences:
             _validate_pipeline_references(data)
         assert "step3" in str(exc_info.value)
 
+    def test_rejects_fail_pipeline_after_matching_completed_check(self) -> None:
+        data = {
+            "name": "bad-validation-order",
+            "type": "pipeline",
+            "steps": [
+                {
+                    "id": "completed-path",
+                    "condition": "${{ steps.wait_run.output.status == 'completed' }}",
+                    "exec": "echo ok",
+                },
+                {
+                    "id": "fail-run",
+                    "condition": "${{ steps.wait_run.output.status != 'completed' }}",
+                    "mcp": {
+                        "server": "gobby-workflows",
+                        "tool": "fail_pipeline",
+                        "arguments": {"message": "run failed"},
+                    },
+                },
+            ],
+        }
+
+        with pytest.raises(ValueError, match="fail-run"):
+            _validate_pipeline_references(data)
+
+    def test_allows_fail_pipeline_before_matching_completed_check(self) -> None:
+        data = {
+            "name": "valid-validation-order",
+            "type": "pipeline",
+            "steps": [
+                {
+                    "id": "fail-run",
+                    "condition": "${{ steps.wait_run.output.status != 'completed' }}",
+                    "mcp": {
+                        "server": "gobby-workflows",
+                        "tool": "fail_pipeline",
+                        "arguments": {"message": "run failed"},
+                    },
+                },
+                {
+                    "id": "completed-path",
+                    "condition": "${{ steps.wait_run.output.status == 'completed' }}",
+                    "exec": "echo ok",
+                },
+            ],
+        }
+
+        assert _validate_pipeline_references(data) is None
+
 
 class TestLoadWorkflowPipelineIntegration:
     """Tests for load_workflow() auto-detecting and handling pipelines."""

@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from ._install_embedding_prompts import (
-    _infer_embedding_provider_from_url as _infer_embedding_provider_from_url,
+    _infer_embedding_provider_from_url,
+    _run_embedding_install,
 )
-from ._install_embedding_prompts import (
-    _run_embedding_install as _run_embedding_install,
-)
+
+__all__ = ("_infer_embedding_provider_from_url", "_run_embedding_install")
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase

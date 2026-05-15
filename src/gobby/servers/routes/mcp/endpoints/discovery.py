@@ -183,8 +183,7 @@ async def list_all_mcp_tools(
                     if config.enabled:
                         if _external_server_is_unhealthy(server.mcp_manager, config.name):
                             cached_tools = _cached_tool_briefs(config)
-                            if cached_tools:
-                                tools_by_server[config.name] = _response_tool_briefs(cached_tools)
+                            tools_by_server[config.name] = _response_tool_briefs(cached_tools)
                             continue
 
                         try:

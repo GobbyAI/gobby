@@ -17,6 +17,8 @@ import type { SessionMessage } from "../../../hooks/useSessionDetail";
 
 type SessionDetailMock = {
   session: GobbySession | null;
+  sessionError?: string | null;
+  clearSessionError?: () => void;
   messages: SessionMessage[];
   isLoading: boolean;
   transcriptStatus: { content_state: string } | null;
@@ -26,6 +28,8 @@ const mockUseSessionDetail = vi.fn<
   (sessionId?: string | null) => SessionDetailMock
 >(() => ({
   session: null,
+  sessionError: null,
+  clearSessionError: vi.fn(),
   messages: [],
   isLoading: false,
   transcriptStatus: null,
@@ -271,6 +275,8 @@ describe("SessionsTab", () => {
     mockUseSessionDetail.mockReset();
     mockUseSessionDetail.mockReturnValue({
       session: PAUSED_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
       messages: [
         {
           id: "msg-1",
@@ -950,5 +956,31 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
     });
+  });
+
+  it("lets users dismiss selected session detail errors", async () => {
+    const clearSessionError = vi.fn();
+    mockUseSessionDetail.mockReturnValue({
+      session: PAUSED_SESSION,
+      sessionError: "Failed to load session detail",
+      clearSessionError,
+      messages: [],
+      isLoading: false,
+      transcriptStatus: null,
+    });
+
+    render(<SessionsTab sessions={[PAUSED_SESSION]} focusSessionId="paused-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Failed to load session detail",
+      );
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss session error" }),
+    );
+
+    expect(clearSessionError).toHaveBeenCalledTimes(1);
   });
 });

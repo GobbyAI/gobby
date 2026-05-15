@@ -654,7 +654,7 @@ async def _synthesize_title(
             llm_timeout,
         )
 
-    title_str = _normalize_title_candidate(str(title))
+    title_str = _normalize_title_candidate(title)
     if title_str:
         updated_session = session_manager.update_title(
             session_id,

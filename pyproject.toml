@@ -111,7 +111,10 @@ override-dependencies = [
 ]
 
 [build-system]
-requires = ["setuptools>=64.0", "wheel"]
+requires = [
+    "setuptools>=64.0", # Provides PEP 660 editable-install hooks.
+    "wheel",
+]
 build-backend = "build_backend"
 backend-path = ["."]
 

@@ -20,13 +20,12 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests._timing import drain_asyncio_tasks
 
-pytestmark = pytest.mark.unit
-
 
 async def _done_stream():
     yield DoneEvent(tool_calls_count=0)
 
 
+@pytest.mark.unit
 class TestWebChatSessionRegistry:
     def test_lookup_by_conversation_id_and_db_session_id(self) -> None:
         registry = WebChatSessionRegistry()
@@ -174,6 +173,7 @@ def _web_chat_session(
 
 
 class TestWebChatLifecycle:
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_fire_lifecycle_adds_web_chat_session_type_metadata(self) -> None:
         """Firing lifecycle for a web chat session adds session_type "web_chat" metadata."""

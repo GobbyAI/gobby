@@ -293,6 +293,32 @@ class TestToolCallSucceeded:
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
+    def test_handles_dict_event_shape(self) -> None:
+        ctx: dict[str, Any] = {
+            "variables": {},
+            "event": {"data": {"tool_output": {"success": True}}, "metadata": {}},
+        }
+        ev = _build_evaluator(ctx)
+
+        assert ev.evaluate("tool_call_succeeded()") is True
+
+    def test_handles_missing_or_malformed_event_safely(self) -> None:
+        class BrokenEvent:
+            @property
+            def data(self) -> dict[str, Any]:
+                raise RuntimeError("bad event")
+
+        assert (
+            _build_evaluator({"variables": {}, "event": None}).evaluate("tool_call_succeeded()")
+            is False
+        )
+        assert (
+            _build_evaluator({"variables": {}, "event": BrokenEvent()}).evaluate(
+                "tool_call_succeeded()"
+            )
+            is False
+        )
+
     def test_rejects_nested_mcp_error_result(self) -> None:
         ev = self._eval({"tool_output": {"success": True, "result": {"error": "nested"}}})
 

@@ -142,7 +142,7 @@ def task_state_in(
     return projected_task_state(task) in normalized_states
 
 
-def _normalize_task_ids(task_id_or_ids: TaskIdInput) -> list[str] | None:
+def _normalize_task_ids(task_id_or_ids: TaskIdInput, caller_name: str) -> list[str] | None:
     """Normalize a single task ref or iterable of refs to string refs."""
     if task_id_or_ids is None:
         return []
@@ -152,7 +152,7 @@ def _normalize_task_ids(task_id_or_ids: TaskIdInput) -> list[str] | None:
         try:
             return [_normalize_task_id(task_id_or_ids)]
         except ValueError:
-            logger.warning("task_type_in: Invalid UUID bytes task_id")
+            logger.warning("%s: Invalid UUID bytes task_id", caller_name)
             return None
     if isinstance(task_id_or_ids, Iterable):
         task_ids: list[str] = []
@@ -163,12 +163,12 @@ def _normalize_task_ids(task_id_or_ids: TaskIdInput) -> list[str] | None:
                 try:
                     task_ids.append(_normalize_task_id(item))
                 except ValueError:
-                    logger.warning("task_type_in: Invalid UUID bytes task_id item")
+                    logger.warning("%s: Invalid UUID bytes task_id item", caller_name)
                     return None
                 continue
             task_ids.append(_normalize_task_id(item))
         return task_ids
-    logger.warning(f"task_type_in: Unexpected task_id type: {type(task_id_or_ids)}")
+    logger.warning("%s: Unexpected task_id type: %s", caller_name, type(task_id_or_ids))
     return None
 
 
@@ -189,7 +189,7 @@ def task_type_in(
     if not normalized_types:
         return False
 
-    task_ids = _normalize_task_ids(task_id_or_ids)
+    task_ids = _normalize_task_ids(task_id_or_ids, "task_type_in")
     if task_ids is None:
         return False
 

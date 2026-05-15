@@ -151,7 +151,7 @@ export function ProjectSelector({
 
   const handleProjectSelect = (projectId: string) => {
     onProjectChange(projectId);
-    closePicker();
+    closePicker(showCompactMenu);
   };
 
   const toggleCompactMenu = () => {

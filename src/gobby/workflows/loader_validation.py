@@ -6,6 +6,11 @@ Extracted from loader.py as part of Strangler Fig decomposition (Wave 2).
 import re
 from typing import Any
 
+_COMPLETED_STATUS_CONDITION_RE = re.compile(
+    r"\bsteps\.([a-zA-Z_][a-zA-Z0-9_]*)\.output\.([a-zA-Z_][a-zA-Z0-9_.]*)\s*"
+    r"(==|!=)\s*['\"]completed['\"]"
+)
+
 
 def _validate_pipeline_references(data: dict[str, Any]) -> None:
     """
@@ -50,6 +55,8 @@ def _validate_pipeline_references(data: dict[str, Any]) -> None:
         if "exec" in step and step["exec"]:
             refs = _extract_step_refs(step["exec"])
             _check_refs(refs, valid_refs, step_ids, step_id, "exec")
+
+    _validate_fail_pipeline_completion_order(steps)
 
     # Validate references in pipeline outputs (can reference any step)
     all_step_ids = set(step_ids)
@@ -118,3 +125,38 @@ def _check_refs(
                     f"Step '{current_step}' {field_name} references unknown step '{ref}'. "
                     f"Valid steps: {sorted(all_step_ids)}"
                 )
+
+
+def _completed_status_conditions(condition: Any) -> set[tuple[str, str, str]]:
+    if not isinstance(condition, str):
+        return set()
+    return {
+        (step_id, output_field, operator)
+        for step_id, output_field, operator in _COMPLETED_STATUS_CONDITION_RE.findall(condition)
+    }
+
+
+def _is_fail_pipeline_step(step: dict[str, Any]) -> bool:
+    mcp = step.get("mcp")
+    return isinstance(mcp, dict) and mcp.get("tool") == "fail_pipeline"
+
+
+def _validate_fail_pipeline_completion_order(steps: list[dict[str, Any]]) -> None:
+    completed_checks: set[tuple[str, str]] = set()
+    for step in steps:
+        checks = _completed_status_conditions(step.get("condition"))
+        if _is_fail_pipeline_step(step):
+            for step_id, output_field, operator in checks:
+                if operator == "!=" and (step_id, output_field) in completed_checks:
+                    current_step = step.get("id", "<unknown>")
+                    raise ValueError(
+                        f"fail_pipeline step '{current_step}' checks "
+                        f"steps.{step_id}.output.{output_field} != 'completed' after a "
+                        "matching completed check. Place fail_pipeline before the completed path."
+                    )
+
+        completed_checks.update(
+            (step_id, output_field)
+            for step_id, output_field, operator in checks
+            if operator == "=="
+        )

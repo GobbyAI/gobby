@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import tempfile
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -35,7 +36,9 @@ logger = logging.getLogger(__name__)
 
 _CLAUDE_COMPATIBLE_CLIS = frozenset({"claude"})
 _GEMINI_COMPATIBLE_CLIS = frozenset({"gemini", "qwen"})
-_MODEL_DISCOVERY_TRUST_LOCKS: dict[str, asyncio.Lock] = {}
+_MODEL_DISCOVERY_TRUST_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 type PathValue = str | os.PathLike[str]

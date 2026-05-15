@@ -168,7 +168,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.mcp_manager.has_server.return_value = True
         config = MagicMock()
         config.enabled = True
-        config.tools = ({"name": "cached_tool", "description": "Cached tool description"},)
+        config.tools = [{"name": "cached_tool", "description": "Cached tool description"}]
         mock_server.mcp_manager._configs = {"ext-server": config}
         mock_server.mcp_manager.health = {
             "ext-server": MCPConnectionHealth(
@@ -322,7 +322,7 @@ class TestMCPDiscoveryRoutes:
     def test_list_tools_external_server_unhealthy_empty_cache_all(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
-        """Unhealthy external servers with no cached tools are skipped without reconnecting."""
+        """Unhealthy external servers with no cached tools return empty without reconnecting."""
         ext_config = MagicMock()
         ext_config.name = "empty-cache-server"
         ext_config.enabled = True
@@ -343,7 +343,7 @@ class TestMCPDiscoveryRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert "empty-cache-server" not in data["tools"]
+        assert data["tools"]["empty-cache-server"] == []
         mock_server.mcp_manager.ensure_connected.assert_not_awaited()
 
     def test_list_tools_external_disabled_skipped(
