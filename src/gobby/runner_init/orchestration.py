@@ -135,6 +135,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             tmux_config=runner.config.tmux if hasattr(runner.config, "tmux") else None,
             checkpoint_storage=LocalCheckpointManager(runner.database),
             worktree_storage=runner.worktree_storage,
+            run_db=runner.db_executor.run,
         )
     except Exception as e:
         logger.warning(f"Failed to initialize AgentLifecycleMonitor: {e}")

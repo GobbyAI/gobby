@@ -59,7 +59,9 @@ def start_periodic_tasks(
     )
     runner._expired_isolation_task = asyncio.create_task(
         loops["cleanup_expired_isolation_loop"](
-            runner.database, lambda: runner._shutdown_requested
+            runner.database,
+            lambda: runner._shutdown_requested,
+            run_db=runner.db_executor.run,
         ),
         name="expired-isolation-cleanup",
     )

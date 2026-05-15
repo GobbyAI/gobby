@@ -203,6 +203,7 @@ class HTTPServer:
             communications_manager=services.communications_manager,
             web_chat_session_registry=services.web_chat_session_registry,
             code_index=services.code_indexer,
+            run_db=services.run_db,
         )
         registry_count = len(self._internal_manager)
         logger.debug(f"Internal registries initialized: {registry_count} registries")

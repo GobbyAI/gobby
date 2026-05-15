@@ -4,9 +4,9 @@ import asyncio
 import json
 import logging
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.utils.datetime import parse_stored_datetime
@@ -32,6 +32,7 @@ class IdleCheckHandler:
         idle_detector: IdleDetector,
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._get_session_manager = get_session_manager
@@ -39,13 +40,19 @@ class IdleCheckHandler:
         self._idle_detector = idle_detector
         self._cleanup_handler = cleanup_handler
         self._tmux_config = tmux_config
+        self._run_db = run_db
+
+    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
         if not self._tmux_config.idle_check_enabled:
             return 0
 
-        runs = await asyncio.to_thread(self._get_active_terminal_runs)
+        runs = await self._run_sqlite(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -70,7 +77,7 @@ class IdleCheckHandler:
 
     async def _handle_idle_check(self, run: AgentRun) -> int:
         """Handle idle check for a single agent."""
-        latest_run = await asyncio.to_thread(self._agent_run_manager.get, run.id)
+        latest_run = await self._run_sqlite(self._agent_run_manager.get, run.id)
         if latest_run is None or latest_run.status not in ("pending", "running"):
             self._idle_detector.reset_idle(run.id)
             return 0
@@ -88,7 +95,7 @@ class IdleCheckHandler:
         session_manager = self._get_session_manager()
 
         if session_id and session_manager:
-            session = await asyncio.to_thread(session_manager.get, session_id)
+            session = await self._run_sqlite(session_manager.get, session_id)
             if session and session.updated_at:
                 try:
                     last_update = parse_stored_datetime(session.updated_at)
@@ -198,7 +205,7 @@ class IdleCheckHandler:
             return
 
         try:
-            session = await asyncio.to_thread(session_manager.get, session_id)
+            session = await self._run_sqlite(session_manager.get, session_id)
         except Exception as exc:
             logger.warning(
                 "Failed to load session %s for Codex idle diagnostics on run %s: %s",

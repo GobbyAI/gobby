@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 from typing import Any
@@ -28,7 +27,7 @@ class _SkillIndexer:
 
     def __init__(self, ctx: SkillsContext) -> None:
         self._ctx = ctx
-        self._dirty = False
+        self._dirty = True
         self._lock = threading.Lock()
 
     def build(self) -> None:
@@ -61,7 +60,6 @@ def _setup_indexing(ctx: SkillsContext) -> _SkillIndexer:
     Returns the indexer so the search tool can call ensure_fresh().
     """
     indexer = _SkillIndexer(ctx)
-    indexer.build()
     ctx.notifier.add_listener(indexer.mark_dirty)
     return indexer
 
@@ -111,12 +109,15 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 try:
                     from gobby.workflows.state_manager import SessionVariableManager
 
-                    resolved_id = ctx.session_manager.resolve_session_reference(
-                        session_id, project_id=ctx.project_id
-                    )
-                    sv_mgr = SessionVariableManager(ctx.db)
-                    sv = sv_mgr.get_variables(resolved_id)
-                    active_names = sv.get("_active_skill_names") if sv else None
+                    def _get_active_names() -> Any:
+                        resolved_id = ctx.session_manager.resolve_session_reference(
+                            session_id, project_id=ctx.project_id
+                        )
+                        sv_mgr = SessionVariableManager(ctx.db)
+                        sv = sv_mgr.get_variables(resolved_id)
+                        return sv.get("_active_skill_names") if sv else None
+
+                    active_names = await ctx.run_sqlite(_get_active_names)
                 except Exception as sv_err:
                     logger.warning(
                         f"Failed to resolve session variables for {session_id}: {sv_err}"
@@ -133,7 +134,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 )
 
             # Ensure index is fresh before searching (run in thread to avoid blocking event loop)
-            await asyncio.to_thread(indexer.ensure_fresh)
+            await ctx.run_sqlite(indexer.ensure_fresh)
 
             # Over-fetch when we'll post-filter internal skills, so top_k survives the trim.
             search_top_k = top_k * 3 if not include_internal else top_k
@@ -150,7 +151,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             # Batch-fetch skills to avoid N+1 queries
             skill_ids = [r.skill_id for r in results]
-            skills_by_id = {s.id: s for s in ctx.storage.get_skills_by_ids(skill_ids)}
+            skills_by_id = {
+                s.id: s for s in await ctx.run_sqlite(ctx.storage.get_skills_by_ids, skill_ids)
+            }
 
             if not include_internal:
                 # Keep a result when its skill is unknown (best-effort) OR not

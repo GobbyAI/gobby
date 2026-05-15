@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.skills.hubs.manager import HubManager
 from gobby.skills.loader import SkillLoader
@@ -29,3 +31,9 @@ class SkillsContext:
     loader: SkillLoader
     project_id: str | None
     hub_manager: HubManager | None
+    run_db: Callable[..., Awaitable[Any]] | None = None
+
+    async def run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self.run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self.run_db(func, *args, **kwargs)

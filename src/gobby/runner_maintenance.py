@@ -29,6 +29,17 @@ _JITTER_RANDOM = SystemRandom()
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 
 
+async def _run_db(
+    runner: Callable[..., Awaitable[Any]] | None,
+    func: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    if runner is None:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    return await runner(func, *args, **kwargs)
+
+
 async def _sleep_until_next_bin_freshness_cycle(
     duration: float,
     *,
@@ -362,6 +373,7 @@ async def cleanup_expired_isolation_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
     interval_hours: int = 1,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Reap expired worktrees and clones whose cleanup_after window has passed.
 
@@ -383,7 +395,7 @@ async def cleanup_expired_isolation_loop(
             await asyncio.sleep(interval_seconds)
 
             # Reap expired worktrees
-            expired_worktrees = await asyncio.to_thread(worktree_storage.find_expired)
+            expired_worktrees = await _run_db(run_db, worktree_storage.find_expired)
             for wt in expired_worktrees:
                 try:
                     path = wt.worktree_path
@@ -408,7 +420,7 @@ async def cleanup_expired_isolation_loop(
                             ["git", "branch", "-D", wt.branch_name],
                         )
                     # Remove DB record
-                    await asyncio.to_thread(worktree_storage.delete, wt.id)
+                    await _run_db(run_db, worktree_storage.delete, wt.id)
                     logger.info(
                         f"Expired worktree cleanup: deleted {wt.id} "
                         f"(branch={wt.branch_name}, path={path})"
@@ -420,13 +432,13 @@ async def cleanup_expired_isolation_loop(
                     )
 
             # Reap expired clones
-            expired_clones = await asyncio.to_thread(clone_storage.find_expired)
+            expired_clones = await _run_db(run_db, clone_storage.find_expired)
             for clone in expired_clones:
                 try:
                     path = clone.clone_path
                     if await asyncio.to_thread(os.path.exists, path):
                         await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
-                    await asyncio.to_thread(clone_storage.delete, clone.id)
+                    await _run_db(run_db, clone_storage.delete, clone.id)
                     logger.info(
                         f"Expired clone cleanup: deleted {clone.id} "
                         f"(branch={clone.branch_name}, path={path})"
@@ -437,10 +449,10 @@ async def cleanup_expired_isolation_loop(
                         exc_info=True,
                     )
 
-            await asyncio.to_thread(
-                _cleanup_missing_isolation_records,
+            await _cleanup_missing_isolation_records_async(
                 worktree_storage,
                 clone_storage,
+                run_db=run_db,
             )
 
         except asyncio.CancelledError:
@@ -460,6 +472,55 @@ def _cleanup_missing_isolation_records(
         "worktrees": _delete_missing_worktree_records(worktree_storage, limit=limit),
         "clones": _delete_missing_clone_records(clone_storage, limit=limit),
     }
+    if counts["worktrees"] or counts["clones"]:
+        logger.info(
+            "Missing isolation cleanup: removed %s worktree records and %s clone records",
+            counts["worktrees"],
+            counts["clones"],
+        )
+    return counts
+
+
+async def _cleanup_missing_isolation_records_async(
+    worktree_storage: Any,
+    clone_storage: Any,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None,
+    limit: int = _ISOLATION_CLEANUP_SCAN_LIMIT,
+) -> dict[str, int]:
+    """Async missing-record cleanup that keeps path checks off the DB executor."""
+    worktrees = await _run_db(run_db, worktree_storage.list_worktrees, limit=limit)
+    clones = await _run_db(run_db, clone_storage.list_clones, limit=limit)
+
+    removed_worktrees = 0
+    for worktree in worktrees:
+        path = worktree.worktree_path
+        if path and await asyncio.to_thread(os.path.isdir, path):
+            continue
+        if await _run_db(run_db, worktree_storage.delete, worktree.id):
+            removed_worktrees += 1
+            logger.info(
+                "Removed missing worktree record %s (branch=%s, path=%s)",
+                worktree.id,
+                worktree.branch_name,
+                path,
+            )
+
+    removed_clones = 0
+    for clone in clones:
+        path = clone.clone_path
+        if path and await asyncio.to_thread(os.path.isdir, path):
+            continue
+        if await _run_db(run_db, clone_storage.delete, clone.id):
+            removed_clones += 1
+            logger.info(
+                "Removed missing clone record %s (branch=%s, path=%s)",
+                clone.id,
+                clone.branch_name,
+                path,
+            )
+
+    counts = {"worktrees": removed_worktrees, "clones": removed_clones}
     if counts["worktrees"] or counts["clones"]:
         logger.info(
             "Missing isolation cleanup: removed %s worktree records and %s clone records",

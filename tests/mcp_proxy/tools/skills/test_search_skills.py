@@ -1,11 +1,15 @@
 """Tests for search_skills MCP tool (TDD - written before implementation)."""
 
+import asyncio
+import time
 from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from gobby.storage.database import LocalDatabase
+from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.migrations import run_migrations
 from gobby.storage.skills import LocalSkillManager
 
@@ -105,6 +109,36 @@ class TestSearchSkillsTool:
         assert result["success"] is True
         assert result["count"] > 0
         assert len(result["results"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_repeated_search_skills_keeps_sqlite_connections_bounded(self, populated_db):
+        """Search index refresh and result hydration use the injected DB runner."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        executor = DatabaseExecutor(max_workers=2, thread_name_prefix="skills-search-db")
+        original_get_skills_by_ids = LocalSkillManager.get_skills_by_ids
+
+        def slow_get_skills_by_ids(self, *args, **kwargs):
+            time.sleep(0.02)
+            return original_get_skills_by_ids(self, *args, **kwargs)
+
+        try:
+            registry = create_skills_registry(populated_db, run_db=executor.run)
+            tool = registry.get_tool("search_skills")
+            first = await tool(query="git")
+            assert first["success"] is True
+
+            with patch.object(
+                LocalSkillManager,
+                "get_skills_by_ids",
+                new=slow_get_skills_by_ids,
+            ):
+                results = await asyncio.gather(*(tool(query="git") for _ in range(20)))
+
+            assert all(result["success"] is True for result in results)
+            assert populated_db.connection_count <= 1 + executor.max_workers
+        finally:
+            executor.shutdown(wait=True)
 
     @pytest.mark.asyncio
     async def test_search_skills_returns_scores(self, registry):

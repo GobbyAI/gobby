@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
@@ -72,6 +72,7 @@ def setup_internal_registries(
     communications_manager: Any | None = None,
     web_chat_session_registry: Any | None = None,
     code_index: Any | None = None,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -101,6 +102,7 @@ def setup_internal_registries(
         pipeline_execution_manager: Pipeline execution manager for tracking executions
         hook_manager_resolver: Lazy callable returning HookManager (or None).
             Solves timing: registries init before HookManager is created in HTTP lifespan.
+        run_db: Optional bounded executor bridge for SQLite storage calls.
 
     Returns:
         InternalRegistryManager containing all registries
@@ -418,6 +420,7 @@ def setup_internal_registries(
             embedding_api_base=_emb_cfg.api_base if _emb_cfg else None,
             embedding_api_key=_emb_cfg.api_key if _emb_cfg else None,
             embedding_dim=_emb_cfg.dim if _emb_cfg else None,
+            run_db=run_db,
         )
         manager.add_registry(skills_registry)
         logger.debug("Skills registry initialized")

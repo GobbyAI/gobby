@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +16,10 @@ from gobby.sessions.summarize import (
     _generate_full_summary,
     generate_session_summaries,
 )
+from gobby.storage.database import LocalDatabase
+from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -67,6 +73,57 @@ class TestGenerateSessionSummaries:
         result = await generate_session_summaries(session_id="s1", session_manager=sm)
         assert result["success"] is False
         assert "No session found" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_repeated_summary_persistence_keeps_sqlite_connections_bounded(
+        self,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Session get/update_summary/update_status calls use the bounded DB runner."""
+        sm = SessionManager(temp_db)
+        project = LocalProjectManager(temp_db).create(
+            name="summary-project",
+            repo_path="/tmp/summary-project",
+        )
+        session = sm.register(
+            external_id="summary-bounded-db",
+            machine_id="machine-1",
+            source="codex",
+            project_id=project.id,
+        )
+        sm.update_digest_markdown(session.id, "### Turn 1\nUse digest context.")
+        executor = DatabaseExecutor(max_workers=2, thread_name_prefix="summary-db")
+        original_get = SessionManager.get
+
+        def slow_get(self, *args, **kwargs):
+            time.sleep(0.02)
+            return original_get(self, *args, **kwargs)
+
+        try:
+            with (
+                patch.object(SessionManager, "get", new=slow_get),
+                patch("gobby.sessions.summarize._enrich_git_context"),
+                patch(
+                    "gobby.sessions.summarize._generate_full_summary",
+                    return_value=("# Summary", None),
+                ),
+            ):
+                results = await asyncio.gather(
+                    *(
+                        generate_session_summaries(
+                            session_id=session.id,
+                            session_manager=sm,
+                            db=temp_db,
+                            run_db=executor.run,
+                        )
+                        for _ in range(20)
+                    )
+                )
+
+            assert all(result["success"] is True for result in results)
+            assert temp_db.connection_count <= 1 + executor.max_workers
+        finally:
+            executor.shutdown(wait=True)
 
     @pytest.mark.asyncio
     async def test_no_transcript_path(self) -> None:
@@ -292,6 +349,60 @@ class TestGenerateSessionSummaries:
         context = provider.generate_summary.await_args.args[0]
         assert context["transcript_summary"] == "### Turn 1\nDigest is the bounded source."
         assert context["last_messages"] == "### Turn 1\nDigest is the bounded source."
+
+    @pytest.mark.asyncio
+    async def test_full_summary_enrichment_uses_run_db(self) -> None:
+        session = _make_session(
+            session_id="sess-enrich",
+            transcript_path="/tmp/transcript.jsonl",
+            digest_markdown="### Turn 1\nDigest source.",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = ""
+        session_manager = MagicMock()
+        session_manager.db = MagicMock()
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "# Enriched Summary"
+        run_db_calls = []
+
+        async def run_db(func, *args, **kwargs):
+            run_db_calls.append(func)
+            return func(*args, **kwargs)
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.sessions.summarize._get_claimed_tasks", return_value="task context") as claimed,
+            patch(
+                "gobby.sessions.summarize._get_session_memories",
+                return_value="memory context",
+            ) as memories,
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[],
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=session_manager.db,
+                session_manager=session_manager,
+                run_db=run_db,
+            )
+
+        assert full_markdown == "# Enriched Summary"
+        assert full_error is None
+        assert claimed in run_db_calls
+        assert memories in run_db_calls
+        context = provider.generate_summary.await_args.args[0]
+        assert context["claimed_tasks"] == "task context"
+        assert context["session_memories"] == "memory context"
 
     @pytest.mark.asyncio
     async def test_missing_digest_uses_bounded_transcript_fallback(self) -> None:
