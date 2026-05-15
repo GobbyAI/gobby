@@ -581,6 +581,21 @@ class TestMigrateLegacyMcpConfig:
         assert new.read_text() == '{"servers": []}'
         assert (new.stat().st_mode & 0o777) == 0o600
 
+    def test_chmod_failure_after_successful_move_returns_true(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        legacy = tmp_path / ".mcp.json"
+        new = tmp_path / "mcp-servers.json"
+        legacy.write_text('{"servers": []}')
+
+        caplog.set_level("WARNING", logger="gobby.config.mcp")
+        with patch.object(Path, "chmod", side_effect=OSError("chmod failed")):
+            assert migrate_legacy_mcp_config(new_path=new, legacy_path=legacy) is True
+
+        assert not legacy.exists()
+        assert new.read_text() == '{"servers": []}'
+        assert "failed to set permissions" in caplog.text
+
     def test_fallback_failure_returns_false_and_leaves_legacy(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

@@ -662,7 +662,11 @@ class TestHealthCheck:
     def test_returns_true_on_success(self, mock_run: MagicMock) -> None:
         from gobby.cli.installers.embedding import _health_check_embedding
 
-        mock_run.return_value = True
+        def close_probe(coro: object) -> bool:
+            coro.close()
+            return True
+
+        mock_run.side_effect = close_probe
         assert _health_check_embedding("model", "http://x/v1") is True
 
     @pytest.mark.asyncio

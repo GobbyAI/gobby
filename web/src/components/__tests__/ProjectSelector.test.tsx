@@ -87,4 +87,21 @@ describe('ProjectSelector', () => {
     expect(screen.queryByRole('listbox', { name: 'Project scope options' })).toBeNull()
     await waitFor(() => expect(trigger).toHaveFocus())
   })
+
+  it('selects from the compact selector with arrow keys and Enter', async () => {
+    const { onProjectChange } = renderSelector('personal')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project scope: Personal' }))
+
+    const listbox = screen.getByRole('listbox', { name: 'Project scope options' })
+    const gobbyOption = within(listbox).getByRole('option', { name: 'gobby' })
+    await waitFor(() => expect(listbox).toHaveFocus())
+
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' })
+    expect(listbox).toHaveAttribute('aria-activedescendant', gobbyOption.id)
+
+    fireEvent.keyDown(listbox, { key: 'Enter' })
+
+    expect(onProjectChange).toHaveBeenCalledWith('project-gobby')
+  })
 })

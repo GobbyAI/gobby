@@ -52,7 +52,7 @@ class TestPlanDraftContent:
     # --- canonical category list -------------------------------------------
 
     def test_lists_every_canonical_category(self, body: str) -> None:
-        """Must match VALID_CATEGORIES exactly — silent drift breaks expansion."""
+        """`required` covers core canonical categories; `manual` has special semantics."""
         required = {"code", "config", "docs", "refactor", "test", "research", "planning"}
         for cat in required:
             assert f"`{cat}`" in body, f"Missing canonical category: {cat}"

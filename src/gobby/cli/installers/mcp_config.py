@@ -8,6 +8,7 @@ Handles configuring/removing MCP server entries in JSON and TOML config files.
 import json
 import logging
 import re
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -731,12 +732,26 @@ def install_default_mcp_servers() -> dict[str, Any]:
                         from gobby.storage.secrets import SecretStore
 
                         secret_store = SecretStore(LocalDatabase())
-                    except (ImportError, OSError):
+                    except (ImportError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
                         secret_store_init_failed = True
-                if secret_store is not None and secret_store.exists(secret_name):
-                    secret_value = secret_store.get(secret_name)
-                    if secret_value:
-                        args.extend(extra_args + [secret_value])
+                        logger.warning(
+                            "Failed to initialize secret store for optional MCP args: %s",
+                            exc,
+                            exc_info=True,
+                        )
+                if secret_store is not None:
+                    try:
+                        if secret_store.exists(secret_name):
+                            secret_value = secret_store.get(secret_name)
+                            if secret_value:
+                                args.extend(extra_args + [secret_value])
+                    except (ImportError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+                        logger.warning(
+                            "Failed to read optional MCP secret %s: %s",
+                            secret_name,
+                            exc,
+                            exc_info=True,
+                        )
 
             existing_config["servers"].append(
                 {

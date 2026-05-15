@@ -81,7 +81,7 @@ reviews:
 
   # Ignore patterns - files to skip reviewing
   path_filters:
-    - "!docs/plans/completed/**"  # Historical plans, not active guidelines
+    - "!.gobby/plans/completed/**"  # Historical plans, not active guidelines
     - "!**/*.lock"
     - "!**/uv.lock"
     - "!**/.gobby/tasks.jsonl"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
@@ -133,8 +134,8 @@ def _run_embedding_install(
                     existing = secrets.get("openai_api_key")
                     openai_api_key = existing
                     click.echo("Using existing OpenAI API key from secrets")
-        except Exception as e:
-            logger.warning(f"Failed to read existing openai_api_key: {e}")
+        except (ImportError, OSError, RuntimeError, ValueError, sqlite3.Error) as e:
+            logger.warning("Failed to read existing openai_api_key: %s", e, exc_info=True)
 
         if not openai_api_key:
             if no_interactive:
@@ -197,12 +198,11 @@ def _run_embedding_install(
                     try:
                         parsed_dim = int(dim_input)
                     except ValueError:
+                        parsed_dim = None
+                    if parsed_dim is None or parsed_dim < 1:
                         click.echo(f"  Invalid dim '{dim_input}'; will auto-detect")
                     else:
-                        if parsed_dim <= 0:
-                            click.echo(f"  Invalid dim '{dim_input}'; will auto-detect")
-                        else:
-                            dim_override = parsed_dim
+                        dim_override = parsed_dim
             except (click.Abort, EOFError):
                 click.echo("")
                 click.echo("Skipping custom overrides - using provider defaults.")
@@ -222,21 +222,28 @@ def _run_embedding_install(
         api_base_override=api_base_override,
         dim_override=dim_override,
     )
+    if not isinstance(result, dict):
+        error = f"Embedding installer returned invalid result shape: {type(result).__name__}"
+        results["embedding"] = {"success": False, "error": error}
+        click.echo(f"Failed: {error}", err=True)
+        click.echo("")
+        return provider
+
     results["embedding"] = result
 
-    if result["success"]:
+    if result.get("success"):
         if result.get("skipped"):
             click.echo("Embeddings disabled (provider=none)")
         else:
-            click.echo(f"Embedding provider configured: {result['provider']}")
-            click.echo(f"  Model: {result['model']}")
+            click.echo(f"Embedding provider configured: {result.get('provider', provider)}")
+            click.echo(f"  Model: {result.get('model', 'unknown')}")
             if result.get("api_base"):
                 click.echo(f"  Endpoint: {result['api_base']}")
-            click.echo(f"  Dimensions: {result['dim']}")
+            click.echo(f"  Dimensions: {result.get('dim', 'unknown')}")
             if result.get("health_check"):
                 click.echo("  Health check: OK")
     else:
-        click.echo(f"Failed: {result['error']}", err=True)
+        click.echo(f"Failed: {result.get('error', 'Unknown embedding installer error')}", err=True)
     click.echo("")
 
     return provider

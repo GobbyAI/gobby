@@ -62,6 +62,8 @@ export function donutArcs<T extends DonutSegmentInput>(
   cy: number,
   r: number,
 ): DonutArcRender<T>[] {
+  if (segments.length === 0) return []
+
   segments.forEach((segment, index) => {
     assertValidSegmentValue(segment.value, index)
   })

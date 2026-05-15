@@ -44,12 +44,15 @@ export function DashboardPage() {
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between md:justify-end">
           <div className={dashboardToolbarControlsClass}>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
-              <button
-                role="switch"
-                aria-checked={showAllProjects}
-                aria-label="Show all projects"
-                onClick={() => setShowAllProjects(!showAllProjects)}
+            <button
+              type="button"
+              className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground select-none"
+              role="switch"
+              aria-checked={showAllProjects}
+              onClick={() => setShowAllProjects(!showAllProjects)}
+            >
+              <span
+                aria-hidden="true"
                 className={cn(
                   'relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-border transition-colors',
                   showAllProjects ? 'bg-accent' : 'bg-muted',
@@ -61,9 +64,9 @@ export function DashboardPage() {
                     showAllProjects ? 'translate-x-3' : 'translate-x-0',
                   )}
                 />
-              </button>
-              All Projects
-            </div>
+              </span>
+              <span>All Projects</span>
+            </button>
             <TimeRangePills value={timeRange} onChange={setTimeRange} />
           </div>
           {lastUpdated && (

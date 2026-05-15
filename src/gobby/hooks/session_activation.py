@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -45,7 +46,9 @@ _AGENT_KEYS = (
 )
 _AGENT_RUN_ROW_KEYS = ("id", "workflow_name", "agent_name", "prompt")
 _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS = 5.0
+_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES = 256
 _ACTIVE_RULE_NAMES_CACHE: dict[tuple[str, str | None], tuple[float, set[str]]] = {}
+_ACTIVE_RULE_NAMES_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -67,7 +70,8 @@ class _AgentRunRecovery:
 
 def clear_active_rule_names_cache() -> None:
     """Clear cached active-rule selector resolution."""
-    _ACTIVE_RULE_NAMES_CACHE.clear()
+    with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        _ACTIVE_RULE_NAMES_CACHE.clear()
 
 
 def reconcile_session_activation(
@@ -263,12 +267,13 @@ def _resolve_active_rule_names(
 
     cache_key = (agent_name, project_id)
     now = time.monotonic()
-    cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
-    if cached is not None:
-        cached_at, active_rules = cached
-        if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
-            return set(active_rules)
-        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
+    with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
+        if cached is not None:
+            cached_at, active_rules = cached
+            if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
+                return set(active_rules)
+            _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
 
     manager = LocalWorkflowDefinitionManager(db)
     row = manager.get_by_name(agent_name, project_id=project_id)
@@ -286,7 +291,11 @@ def _resolve_active_rule_names(
 
     rules = manager.list_all(project_id=project_id, workflow_type="rule", enabled=True)
     active_rules = resolve_rules_for_agent(agent, rules)
-    _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, set(active_rules))
+    with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, set(active_rules))
+        while len(_ACTIVE_RULE_NAMES_CACHE) > _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(_ACTIVE_RULE_NAMES_CACHE))
+            _ACTIVE_RULE_NAMES_CACHE.pop(oldest_key, None)
     return active_rules
 
 

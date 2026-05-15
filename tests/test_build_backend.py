@@ -125,8 +125,9 @@ def test_stage_ui_runs_npm_commands_with_timeout(
         capture_output: bool,
         text: bool,
         timeout: int,
-    ) -> None:
+    ) -> SimpleNamespace:
         calls.append((command, cwd, check, capture_output, text, timeout))
+        return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
 
@@ -206,7 +207,7 @@ def test_stage_ui_npm_failure_raises_output_context(
         capture_output: bool,
         text: bool,
         timeout: int,
-    ) -> None:
+    ) -> SimpleNamespace:
         if command == failed_command:
             raise subprocess.CalledProcessError(
                 returncode=17,
@@ -214,6 +215,7 @@ def test_stage_ui_npm_failure_raises_output_context(
                 output="out text",
                 stderr="err text",
             )
+        return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
 

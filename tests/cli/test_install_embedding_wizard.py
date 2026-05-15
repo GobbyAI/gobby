@@ -479,7 +479,7 @@ class TestRunEmbeddingInstallOverrides:
         assert kwargs["dim_override"] is None
         assert kwargs["model_override"] == "text-embedding-qwen3-embedding-4b"
 
-    @pytest.mark.parametrize("dim_input", ["0", "-1"])
+    @pytest.mark.parametrize("dim_input", ["0", "-1", "abc"])
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
     @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
     def test_interactive_customize_rejects_non_positive_dim(
@@ -513,3 +513,24 @@ class TestRunEmbeddingInstallOverrides:
         assert result.exit_code == 0
         assert f"Invalid dim '{dim_input}'; will auto-detect" in result.output
         assert installer.call_args.kwargs["dim_override"] is None
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=True)
+    def test_invalid_embedding_installer_result_shape_records_failure(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(return_value=["not", "a", "dict"])
+        runner = CliRunner()
+
+        @click.command()
+        def cmd() -> None:
+            results: dict = {}
+            provider = _run_embedding_install(installer, results, no_interactive=False)
+            click.echo(f"provider={provider}")
+            click.echo(f"stored={results['embedding']['success']}")
+
+        result = runner.invoke(cmd, input="1\nn\n")
+
+        assert result.exit_code == 0
+        assert "Embedding installer returned invalid result shape: list" in result.output
+        assert "stored=False" in result.output

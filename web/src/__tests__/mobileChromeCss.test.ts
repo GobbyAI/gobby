@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest'
 
 const cwd = process.cwd()
 
+// These source-level contract tests use process.cwd() as the web package root.
+// The strict regexes intentionally verify CSS import order and responsive CSS
+// contracts that jsdom computed styles cannot preserve reliably.
 function readSource(rel: string): string {
   return readFileSync(join(cwd, rel), 'utf8')
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import socket
@@ -14,6 +15,7 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.integration
+logger = logging.getLogger(__name__)
 
 
 def _require_smoke_enabled() -> None:
@@ -42,15 +44,22 @@ def _venv_python(venv: Path) -> Path:
 
 
 def _allocate_high_port() -> int:
-    for _ in range(100):
+    attempts = 100
+    last_error: OSError | None = None
+    for _ in range(attempts):
         port = 49152 + secrets.randbelow(65535 - 49152)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
                 sock.bind(("127.0.0.1", port))
-            except OSError:
+            except OSError as exc:
+                last_error = exc
+                logger.debug("Failed to bind candidate smoke-test port %s: %s", port, exc)
                 continue
             return port
-    raise RuntimeError("could not allocate a high-numbered local port")
+    raise RuntimeError(
+        f"could not allocate a high-numbered local port after {attempts} attempts; "
+        f"last error: {last_error}"
+    )
 
 
 def _write_config(config_path: Path, db_path: Path, http_port: int, ws_port: int) -> None:
@@ -112,6 +121,7 @@ def _wait_for_index(http_port: int, process: subprocess.Popen[object], log_path:
 
 
 def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
+    """Install a built wheel in an isolated venv and assert it serves packaged index.html."""
     _require_smoke_enabled()
     wheel = _resolve_wheel_path()
 

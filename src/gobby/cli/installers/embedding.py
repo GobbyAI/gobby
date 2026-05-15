@@ -400,7 +400,7 @@ def _probe_embedding_dim(
             )
             if not result:
                 raise EmbeddingGenerationError("Embedding API returned empty probe result")
-            return len(result) if result else None
+            return len(result)
         except EmbeddingGenerationError as e:
             logger.warning(f"Embedding dim probe failed: {e}")
             return None

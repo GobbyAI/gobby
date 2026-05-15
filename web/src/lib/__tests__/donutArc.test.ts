@@ -33,6 +33,10 @@ describe('describeArcPath', () => {
 })
 
 describe('donutArcs', () => {
+  it('returns no arcs for empty input', () => {
+    expect(donutArcs([], 0, 0, 10)).toEqual([])
+  })
+
   it('renders a single segment as a full circle', () => {
     const [arc] = donutArcs([{ value: 5 }], 0, 0, 10)
 

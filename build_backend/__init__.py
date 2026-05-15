@@ -64,13 +64,25 @@ _NPM_BUILD_TIMEOUT_SECONDS: int = 600
 def _run_npm_command(command: list[str]) -> None:
     command_text = " ".join(command)
     try:
-        subprocess.run(  # nosec B603 B607
+        logger.debug(
+            "Running %s in %s with timeout=%s",
+            command_text,
+            _WEB_SRC,
+            _NPM_BUILD_TIMEOUT_SECONDS,
+        )
+        result = subprocess.run(  # nosec B603 B607
             command,
             cwd=_WEB_SRC,
             check=True,
             capture_output=True,
             text=True,
             timeout=_NPM_BUILD_TIMEOUT_SECONDS,
+        )
+        logger.info(
+            "Completed %s in %s with return code %s",
+            command_text,
+            _WEB_SRC,
+            result.returncode,
         )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(

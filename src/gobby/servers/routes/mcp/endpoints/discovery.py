@@ -148,16 +148,10 @@ async def list_all_mcp_tools(
                 if server_config and not server_config.enabled:
                     tools_by_server[server_filter] = []
                 else:
-                    # This three-way AND is a health-aware cached-tool fallback: only
-                    # when server_config exists, _external_server_is_unhealthy(
-                    # server.mcp_manager, server_filter) is true, and cached_tools
-                    # is non-empty do we populate tools_by_server[server_filter] via
-                    # _response_tool_briefs(cached_tools).
-                    if (
-                        server_config
-                        and _external_server_is_unhealthy(server.mcp_manager, server_filter)
-                        and (cached_tools := _cached_tool_briefs(server_config))
+                    if server_config and _external_server_is_unhealthy(
+                        server.mcp_manager, server_filter
                     ):
+                        cached_tools = _cached_tool_briefs(server_config)
                         tools_by_server[server_filter] = _response_tool_briefs(cached_tools)
                     else:
                         try:
@@ -182,14 +176,15 @@ async def list_all_mcp_tools(
                 for registry in server._internal_manager.get_all_registries():
                     tools_by_server[registry.name] = registry.list_tools()
 
-            # External MCP servers - use ensure_connected for lazy loading
+            # External MCP servers use cached tools when unhealthy; otherwise
+            # ensure_connected provides lazy loading.
             if server.mcp_manager:
                 for config in server.mcp_manager.server_configs:
                     if config.enabled:
-                        if _external_server_is_unhealthy(server.mcp_manager, config.name) and (
-                            cached_tools := _cached_tool_briefs(config)
-                        ):
-                            tools_by_server[config.name] = _response_tool_briefs(cached_tools)
+                        if _external_server_is_unhealthy(server.mcp_manager, config.name):
+                            cached_tools = _cached_tool_briefs(config)
+                            if cached_tools:
+                                tools_by_server[config.name] = _response_tool_briefs(cached_tools)
                             continue
 
                         try:

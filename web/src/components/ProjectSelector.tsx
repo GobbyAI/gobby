@@ -59,6 +59,7 @@ export function ProjectSelector({
   const triggerRef = useRef<HTMLDivElement>(null);
   const compactTriggerRef = useRef<HTMLButtonElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const compactListboxRef = useRef<HTMLDivElement>(null);
   const [pickerPos, setPickerPos] = useState<{ top: number; left: number } | null>(null);
   const showProjectSearch = pickerMode === "search";
   const showCompactMenu = pickerMode === "compact";
@@ -70,7 +71,7 @@ export function ProjectSelector({
   const pickerIdBase = useId();
   const listboxId = `${pickerIdBase}-project-options`;
   const activeOptionId =
-    showProjectSearch && pickerOptions[boundedActiveOptionIndex]
+    pickerOptions[boundedActiveOptionIndex]
       ? `${listboxId}-option-${boundedActiveOptionIndex}`
       : undefined;
 
@@ -128,6 +129,11 @@ export function ProjectSelector({
       window.removeEventListener("resize", handleScrollOrResize);
     };
   }, [closePicker, pickerMode, updatePosition]);
+
+  useEffect(() => {
+    if (!showCompactMenu) return;
+    requestAnimationFrame(() => compactListboxRef.current?.focus());
+  }, [showCompactMenu]);
 
   const handleModeChange = (next: ProjectMode) => {
     if (next === "personal") {
@@ -196,6 +202,26 @@ export function ProjectSelector({
     if (e.key === "Escape") {
       e.preventDefault();
       closePicker(showCompactMenu);
+      return;
+    }
+    if (!showCompactMenu) {
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveOptionIndex((prev) =>
+        pickerOptions.length === 0 ? 0 : Math.min(prev + 1, pickerOptions.length - 1),
+      );
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveOptionIndex((prev) => Math.max(prev - 1, 0));
+      return;
+    }
+    if (e.key === "Enter" && pickerOptions[boundedActiveOptionIndex]) {
+      e.preventDefault();
+      handleProjectSelect(pickerOptions[boundedActiveOptionIndex].id);
     }
   };
 
@@ -264,10 +290,13 @@ export function ProjectSelector({
               />
             )}
             <div
+              ref={showCompactMenu ? compactListboxRef : undefined}
               id={listboxId}
               className="max-h-32 overflow-y-auto"
               role="listbox"
               aria-label={showCompactMenu ? "Project scope options" : "Project search results"}
+              aria-activedescendant={showCompactMenu ? activeOptionId : undefined}
+              tabIndex={showCompactMenu ? -1 : undefined}
             >
               {pickerOptions.map((p, index) => (
                 <button
@@ -278,7 +307,9 @@ export function ProjectSelector({
                   className={cn(
                     "w-full text-left px-2 py-1 text-xs hover:bg-muted",
                     isOptionSelected(p) && "bg-accent/20 text-accent",
-                    showProjectSearch && index === boundedActiveOptionIndex && "bg-muted",
+                    (showProjectSearch || showCompactMenu) &&
+                      index === boundedActiveOptionIndex &&
+                      "bg-muted",
                   )}
                   onClick={() => handleProjectSelect(p.id)}
                 >

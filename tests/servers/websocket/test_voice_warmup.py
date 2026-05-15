@@ -72,6 +72,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_tts_warmup_waits_for_deps_before_provider_lookup(self) -> None:
+        """TTS warmup waits for dependency setup before resolving and warming the provider."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
         order: list[str] = []
 
@@ -100,6 +101,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_stt_warmup_waits_for_deps_before_model_lookup(self) -> None:
+        """STT warmup waits for dependency setup before resolving and warming the model."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=False, stt_enabled=True))
         order: list[str] = []
 

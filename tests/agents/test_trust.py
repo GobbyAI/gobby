@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import threading
+import time
 import tomllib
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
@@ -11,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.agents.trust import (
+    TrustSeedResult,
     _encode_claude_project_path,
     authorize_model_discovery_trust,
     pre_approve_directory,
@@ -310,6 +314,39 @@ class TestModelDiscoveryTrust:
         assert not (tmp_path / ".droid").exists()
         assert not (tmp_path / ".gemini").exists()
         assert not (tmp_path / ".qwen").exists()
+
+    @pytest.mark.asyncio
+    async def test_same_cli_authorizations_are_serialized(self, tmp_path: Path) -> None:
+        active = 0
+        max_active = 0
+        counter_lock = threading.Lock()
+
+        def slow_seed(
+            cli: str,
+            directory: os.PathLike[str],
+            *,
+            respect_folder_trust_setting: bool,
+        ) -> TrustSeedResult:
+            nonlocal active, max_active
+            with counter_lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                time.sleep(0.02)
+                return TrustSeedResult(cli=cli, paths=[os.fspath(directory)])
+            finally:
+                with counter_lock:
+                    active -= 1
+
+        with patch("gobby.agents.trust.seed_cli_trust", side_effect=slow_seed):
+            first, second = await asyncio.gather(
+                authorize_model_discovery_trust("gemini", tmp_path / "a"),
+                authorize_model_discovery_trust("gemini", tmp_path / "b"),
+            )
+
+        assert first.success is True
+        assert second.success is True
+        assert max_active == 1
 
 
 class TestCodexNoop:

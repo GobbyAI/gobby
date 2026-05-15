@@ -130,7 +130,6 @@ def migrate_legacy_mcp_config(
             chmod_exc,
             new,
         )
-        return False
 
     logger.info("Migrated MCP config %s -> %s", legacy, new)
     return True

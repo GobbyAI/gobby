@@ -148,7 +148,14 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
     ? TASK_STATUS_ORDER.filter(s => (taskStats[s] || 0) > 0)
     : []
   const lastActivityLabel = project.last_activity_at
-    ? new Date(project.last_activity_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    ? (() => {
+        const dt = new Date(project.last_activity_at)
+        const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }
+        if (dt.getFullYear() !== new Date().getFullYear()) {
+          options.year = 'numeric'
+        }
+        return dt.toLocaleDateString(undefined, options)
+      })()
     : '—'
 
   return (
