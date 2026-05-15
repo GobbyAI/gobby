@@ -71,6 +71,7 @@ export function getStepTypeColorVar(stepType: string): string {
 const EXEC_STATUS_KINDS: Record<string, StatusKind> = {
   running: "info",
   pending: "disabled",
+  skipped: "disabled",
   completed: "success",
   success: "success",
   failed: "error",

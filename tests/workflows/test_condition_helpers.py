@@ -51,6 +51,9 @@ class TestNormalizeTaskId:
         uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         assert _normalize_task_id(uuid) == uuid
 
+    def test_invalid_uuid_bytes_fall_back_to_string(self) -> None:
+        assert _normalize_task_id(b"short") == "b'short'"
+
 
 class TestIsTaskComplete:
     def test_closed_is_complete(self, temp_db, sample_project) -> None:
@@ -111,6 +114,10 @@ class TestTaskTreeCompleteIntHandling:
         task = _task(manager, sample_project)
 
         assert task_tree_complete(manager, task.seq_num) is False
+
+
+def test_task_needs_human_review_returns_false_for_invalid_uuid_bytes(temp_db) -> None:
+    assert task_needs_human_review(_manager(temp_db), b"short") is False
 
 
 class TestTaskTreeCompleteString:

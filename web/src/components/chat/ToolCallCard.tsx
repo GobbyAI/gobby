@@ -652,21 +652,21 @@ function AskUserQuestionCard({ call, onRespond }: { call: ToolCall; onRespond?: 
 function StatusIcon({ status }: { status: string }) {
   if (status === 'calling') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent animate-spin">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent animate-spin" aria-label="In flight" role="img">
         <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
       </svg>
     )
   }
   if (status === 'completed') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground" aria-label="Completed" role="img">
         <polyline points="20 6 9 17 4 12" />
       </svg>
     )
   }
   if (status === 'error') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-destructive-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-destructive-foreground" aria-label="Errors" role="img">
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
@@ -674,7 +674,7 @@ function StatusIcon({ status }: { status: string }) {
   }
   if (status === 'pending_approval') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground" aria-label="Pending approval" role="img">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>

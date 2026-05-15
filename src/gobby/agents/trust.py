@@ -39,6 +39,7 @@ _GEMINI_COMPATIBLE_CLIS = frozenset({"gemini", "qwen"})
 _MODEL_DISCOVERY_TRUST_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
+_LOCK_DICT_LOCK = asyncio.Lock()
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 type PathValue = str | os.PathLike[str]
@@ -162,10 +163,11 @@ async def authorize_model_discovery_trust(cli: str, directory: PathValue) -> Tru
         )
         return result
 
-    lock = _MODEL_DISCOVERY_TRUST_LOCKS.get(cli)
-    if lock is None:
-        lock = asyncio.Lock()
-        _MODEL_DISCOVERY_TRUST_LOCKS[cli] = lock
+    async with _LOCK_DICT_LOCK:
+        lock = _MODEL_DISCOVERY_TRUST_LOCKS.get(cli)
+        if lock is None:
+            lock = asyncio.Lock()
+            _MODEL_DISCOVERY_TRUST_LOCKS[cli] = lock
 
     async with lock:
         return await asyncio.to_thread(

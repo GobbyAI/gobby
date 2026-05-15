@@ -20,9 +20,12 @@ function assertValidSegmentValue(value: number, index: number): void {
 }
 
 /**
- * Render an SVG arc path from polar angles. Sweeps are clamped into 0..360
- * degrees, and a full or epsilon-close full circle is split into two arc
- * commands because SVG cannot represent it as one closed arc.
+ * Render an SVG arc path from polar angles.
+ *
+ * endAngleDeg must be greater than or equal to startAngleDeg. Sweeps are
+ * clamped into 0..360 degrees by clampSweepDeg, and a full or epsilon-close
+ * full circle is split into two arc commands because SVG cannot represent it
+ * as one closed arc.
  */
 export function describeArcPath(
   cx: number,
@@ -32,6 +35,10 @@ export function describeArcPath(
   endAngleDeg: number,
   fullCircleEpsilonDeg = DEFAULT_FULL_CIRCLE_EPSILON_DEG,
 ): string {
+  if (endAngleDeg < startAngleDeg) {
+    throw new Error('describeArcPath requires endAngleDeg >= startAngleDeg')
+  }
+
   const polar = (angleDeg: number) => {
     const rad = ((angleDeg - 90) * Math.PI) / 180
     return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 
 from gobby.cli._install_prompts import (
@@ -305,6 +306,28 @@ class TestVoiceInstall:
 
 
 class TestInstallCommandSharedStores:
+    def test_embedding_provider_requires_embedding_url(self, tmp_path: Path) -> None:
+        with pytest.raises(click.UsageError, match="--embedding-provider requires --embedding-url"):
+            install_command.callback(
+                claude_flag=False,
+                gemini_flag=False,
+                codex_flag=True,
+                droid_flag=False,
+                qwen_flag=False,
+                hooks_flag=False,
+                all_flag=False,
+                no_ext_services_flag=True,
+                neo4j_password=None,
+                voice_flag=False,
+                project_flag=False,
+                embedding_url=None,
+                embedding_provider="lmstudio",
+                embedding_model=None,
+                embedding_dim=None,
+                no_interactive_flag=True,
+                working_dir=tmp_path,
+            )
+
     def test_builds_one_db_and_secret_store_and_reuses_them(self, tmp_path: Path) -> None:
         config = MagicMock()
         config.database_path = str(tmp_path / "shared.db")
@@ -349,6 +372,65 @@ class TestInstallCommandSharedStores:
         expected_path = Path(config.database_path).expanduser()
         mock_db_cls.assert_called_once_with(expected_path)
         mock_store_cls.assert_called_once_with(db)
+        assert mock_voice_install.call_args.kwargs["db"] is db
+        assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
+        assert mock_summary.call_args.kwargs["db"] is db
+        assert mock_summary.call_args.kwargs["secret_store"] is secret_store
+        db.close.assert_called_once()
+
+    def test_forwards_embedding_provider_override_and_reuses_shared_stores(
+        self, tmp_path: Path
+    ) -> None:
+        config = MagicMock()
+        config.database_path = str(tmp_path / "shared.db")
+        db = MagicMock()
+        secret_store = MagicMock()
+
+        with (
+            patch("gobby.cli.install.load_full_config_from_db", return_value=config),
+            patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
+            patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+            ),
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            patch("gobby.cli.install._run_standard_cli_install"),
+            patch(
+                "gobby.cli.install._run_embedding_install",
+                return_value="lmstudio",
+            ) as mock_embedding,
+            patch("gobby.cli.install._run_voice_install") as mock_voice_install,
+            patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
+            patch("gobby.cli.install._run_qdrant_install"),
+            patch("gobby.cli.install._run_neo4j_install"),
+        ):
+            install_command.callback(
+                claude_flag=False,
+                gemini_flag=False,
+                codex_flag=False,
+                droid_flag=False,
+                qwen_flag=False,
+                hooks_flag=False,
+                all_flag=True,
+                no_ext_services_flag=True,
+                neo4j_password=None,
+                voice_flag=False,
+                project_flag=False,
+                embedding_url="http://lan:1234/v1",
+                embedding_provider="lmstudio",
+                embedding_model=None,
+                embedding_dim=None,
+                no_interactive_flag=True,
+                working_dir=tmp_path,
+            )
+
+        expected_path = Path(config.database_path).expanduser()
+        mock_db_cls.assert_called_once_with(expected_path)
+        mock_store_cls.assert_called_once_with(db)
+        assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
+        assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
         assert mock_summary.call_args.kwargs["db"] is db

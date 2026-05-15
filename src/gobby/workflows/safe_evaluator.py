@@ -419,7 +419,13 @@ def _event_field(event: Any, field: str, default: Any) -> Any:
         return event.get(field, default)
     try:
         return getattr(event, field)
-    except Exception:
+    except (AttributeError, TypeError) as exc:
+        logger.debug(
+            "Failed to read event field %s from %r: %s",
+            field,
+            event,
+            exc,
+        )
         return default
 
 
@@ -591,7 +597,12 @@ def build_condition_helpers(
             return False
 
         metadata = _event_field(event, "metadata", {})
-        if isinstance(metadata, dict) and metadata.get("is_failure"):
+        is_failure = (
+            metadata.get("is_failure", False)
+            if isinstance(metadata, dict)
+            else getattr(metadata, "is_failure", False)
+        )
+        if is_failure:
             return False
 
         top_level = {

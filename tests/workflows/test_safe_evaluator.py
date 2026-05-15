@@ -265,7 +265,7 @@ class TestToolCallSucceeded:
     def _eval(
         self,
         data: dict[str, Any],
-        metadata: dict[str, Any] | None = None,
+        metadata: Any = None,
     ) -> SafeExpressionEvaluator:
         ctx: dict[str, Any] = {
             "variables": {},
@@ -293,6 +293,14 @@ class TestToolCallSucceeded:
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
+    def test_rejects_object_failure_metadata(self) -> None:
+        ev = self._eval(
+            {"tool_output": {"success": True}},
+            metadata=SimpleNamespace(is_failure=True),
+        )
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
     def test_handles_dict_event_shape(self) -> None:
         ctx: dict[str, Any] = {
             "variables": {},
@@ -306,7 +314,7 @@ class TestToolCallSucceeded:
         class BrokenEvent:
             @property
             def data(self) -> dict[str, Any]:
-                raise RuntimeError("bad event")
+                raise AttributeError("bad event")
 
         assert (
             _build_evaluator({"variables": {}, "event": None}).evaluate("tool_call_succeeded()")

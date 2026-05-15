@@ -15,9 +15,11 @@ function getVoicePrepareKey(conversationId: string, sttEnabled: boolean, ttsEnab
   return `${conversationId}:${sttEnabled}:${ttsEnabled}`
 }
 
-function pruneVoicePrepareSentAt(now: number) {
+function pruneVoicePrepareSentAt(now: number, reserveNewEntry = false) {
   pruneTimeBoundLru(voicePrepareSentAt, now, {
-    maxEntries: VOICE_PREPARE_CACHE_MAX_ENTRIES,
+    maxEntries: reserveNewEntry
+      ? VOICE_PREPARE_CACHE_MAX_ENTRIES - 1
+      : VOICE_PREPARE_CACHE_MAX_ENTRIES,
     ttlMs: VOICE_PREPARE_RETRY_MS,
   })
 }
@@ -137,7 +139,7 @@ export function useVoiceStatus({
 
     const warmupKey = getVoicePrepareKey(conversationId, sttEnabled, ttsEnabled)
     const now = Date.now()
-    pruneVoicePrepareSentAt(now)
+    pruneVoicePrepareSentAt(now, !voicePrepareSentAt.has(warmupKey))
     const lastSentAt = voicePrepareSentAt.get(warmupKey)
     if (lastSentAt !== undefined && now - lastSentAt < VOICE_PREPARE_RETRY_MS) return
 
@@ -145,7 +147,6 @@ export function useVoiceStatus({
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
     voicePrepareSentAt.set(warmupKey, now)
-    pruneVoicePrepareSentAt(now)
     setVoiceLoading(true)
     ws.send(JSON.stringify({
       type: 'voice_prepare',

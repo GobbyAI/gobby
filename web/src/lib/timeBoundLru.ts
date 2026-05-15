@@ -1,8 +1,13 @@
-interface TimeBoundLruOptions {
+export interface TimeBoundLruOptions {
   maxEntries: number
   ttlMs: number
 }
 
+/**
+ * Prune entries by age and LRU size. When maxEntries is <= 0, the entries Map
+ * is cleared and the function returns early, treating zero or negative storage
+ * as "keep nothing".
+ */
 export function pruneTimeBoundLru<K>(
   entries: Map<K, number>,
   now: number,

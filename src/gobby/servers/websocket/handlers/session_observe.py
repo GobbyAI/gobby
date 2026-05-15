@@ -38,7 +38,7 @@ def _as_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def normalize_optional_markdown(value: str | None) -> str | None:
+def _normalize_optional_markdown(value: str | None) -> str | None:
     """Return original markdown text unless it is missing or whitespace-only."""
     if not value or not value.strip():
         return None
@@ -166,10 +166,10 @@ def _resolve_fallback_inject_context(source_session: Any, requested_mode: str) -
     if requested_mode == "none" or not source_session:
         return None
 
-    summary_markdown = normalize_optional_markdown(
+    summary_markdown = _normalize_optional_markdown(
         _as_str(getattr(source_session, "summary_markdown", None))
     )
-    digest_markdown = normalize_optional_markdown(
+    digest_markdown = _normalize_optional_markdown(
         _as_str(getattr(source_session, "digest_markdown", None))
     )
 

@@ -595,6 +595,10 @@ class TestValidatePipelineReferences:
         assert "step3" in str(exc_info.value)
 
     def test_rejects_fail_pipeline_after_matching_completed_check(self) -> None:
+        """_validate_pipeline_references rejects fail-run after completed-path.
+
+        Step ordering matters because fail_pipeline validation treats that branch as too late.
+        """
         data = {
             "name": "bad-validation-order",
             "type": "pipeline",
@@ -620,6 +624,10 @@ class TestValidatePipelineReferences:
             _validate_pipeline_references(data)
 
     def test_allows_fail_pipeline_before_matching_completed_check(self) -> None:
+        """_validate_pipeline_references allows fail-run before completed-path.
+
+        Step ordering matters because fail_pipeline validation sees the failure branch first.
+        """
         data = {
             "name": "valid-validation-order",
             "type": "pipeline",

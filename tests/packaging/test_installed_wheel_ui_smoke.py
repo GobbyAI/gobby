@@ -44,35 +44,41 @@ def _venv_python(venv: Path) -> Path:
     return venv / "bin" / "python"
 
 
-def _allocate_high_port() -> int:
-    attempts = 100
+def _bind_high_port_socket(attempts: int = 100) -> socket.socket:
     last_error: OSError | None = None
     for _ in range(attempts):
         port = 49152 + secrets.randbelow(65535 - 49152)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", port))
-            except OSError as exc:
-                last_error = exc
-                logger.debug("Failed to bind candidate smoke-test port %s: %s", port, exc)
-                continue
-            return port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", port))
+            sock.listen(1)
+        except OSError as exc:
+            sock.close()
+            last_error = exc
+            logger.debug("Failed to bind candidate smoke-test port %s: %s", port, exc)
+            continue
+        return sock
     raise RuntimeError(
         f"could not allocate a high-numbered local port after {attempts} attempts; "
         f"last error: {last_error}"
     )
 
 
+def _allocate_high_port() -> int:
+    with _bind_high_port_socket() as sock:
+        return sock.getsockname()[1]
+
+
 def _allocate_distinct_high_ports() -> tuple[int, int]:
     attempts = 100
-    http_port = _allocate_high_port()
     for _ in range(attempts):
-        ws_port = _allocate_high_port()
-        if http_port != ws_port:
-            return http_port, ws_port
+        with _bind_high_port_socket() as http_sock, _bind_high_port_socket() as ws_sock:
+            http_port = http_sock.getsockname()[1]
+            ws_port = ws_sock.getsockname()[1]
+            if http_port != ws_port:
+                return http_port, ws_port
     raise RuntimeError(
-        f"could not allocate a WebSocket smoke-test port distinct from HTTP port "
-        f"{http_port} after {attempts} attempts"
+        f"could not allocate distinct HTTP and WebSocket smoke-test ports after {attempts} attempts"
     )
 
 

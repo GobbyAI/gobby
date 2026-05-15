@@ -219,6 +219,9 @@ def install(
     Use --claude, --gemini, --qwen, --codex, or --droid to install only to specific CLIs.
     Use --hooks to install Git hooks for verification, JSONL export, and code indexing.
     """
+    if embedding_provider and not embedding_url:
+        raise click.UsageError("--embedding-provider requires --embedding-url.")
+
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
 

@@ -63,7 +63,10 @@ def _normalize_task_id(task_id: Any) -> str:
     if isinstance(task_id, int):
         return f"#{task_id}"
     if isinstance(task_id, bytes | bytearray):
-        return str(UUID(bytes=bytes(task_id)))
+        try:
+            return str(UUID(bytes=bytes(task_id)))
+        except ValueError:
+            return str(task_id)
     return str(task_id)
 
 
@@ -149,22 +152,14 @@ def _normalize_task_ids(task_id_or_ids: TaskIdInput, caller_name: str) -> list[s
     if isinstance(task_id_or_ids, str | int | UUID):
         return [_normalize_task_id(task_id_or_ids)]
     if isinstance(task_id_or_ids, bytes | bytearray):
-        try:
-            return [_normalize_task_id(task_id_or_ids)]
-        except ValueError:
-            logger.warning("%s: Invalid UUID bytes task_id", caller_name)
-            return None
+        return [_normalize_task_id(task_id_or_ids)]
     if isinstance(task_id_or_ids, Iterable):
         task_ids: list[str] = []
         for item in task_id_or_ids:
             if item is None:
                 continue
             if isinstance(item, bytes | bytearray):
-                try:
-                    task_ids.append(_normalize_task_id(item))
-                except ValueError:
-                    logger.warning("%s: Invalid UUID bytes task_id item", caller_name)
-                    return None
+                task_ids.append(_normalize_task_id(item))
                 continue
             task_ids.append(_normalize_task_id(item))
         return task_ids

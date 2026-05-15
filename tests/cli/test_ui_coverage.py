@@ -365,7 +365,11 @@ class TestUiDev:
             assert call_args.args, "find_web_dir was called without a config argument"
             passed_config = call_args.args[0]
         assert passed_config is config
-        mock_find.assert_called_with(config, require_source=True)
+        require_source = call_args.kwargs.get("require_source")
+        if require_source is None:
+            assert len(call_args.args) > 1
+            require_source = call_args.args[1]
+        assert require_source is True
 
     @patch("gobby.cli.ui.find_web_dir", return_value=None)
     def test_dev_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:

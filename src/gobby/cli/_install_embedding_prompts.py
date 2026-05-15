@@ -282,13 +282,23 @@ def _run_embedding_install(
     elif provider == "openai":
         click.echo("Configuring OpenAI embeddings...")
 
-    result = installer(
-        provider=provider,
-        openai_api_key=openai_api_key,
-        model_override=model_override,
-        api_base_override=api_base_override,
-        dim_override=dim_override,
-    )
+    try:
+        result = installer(
+            provider=provider,
+            openai_api_key=openai_api_key,
+            model_override=model_override,
+            api_base_override=api_base_override,
+            dim_override=dim_override,
+        )
+    except Exception as exc:
+        error = f"Embedding installer failed for provider {provider}: {exc}"
+        logger.warning(error, exc_info=True)
+        result = {"success": False, "provider": provider, "error": error}
+        results["embedding"] = result
+        click.echo(f"Failed: {error}", err=True)
+        click.echo("")
+        return provider
+
     if not isinstance(result, dict):
         error = f"Embedding installer returned invalid result shape: {type(result).__name__}"
         results["embedding"] = {"success": False, "error": error}

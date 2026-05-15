@@ -78,6 +78,10 @@ def test_helpers_return_false_without_task_manager() -> None:
     assert task_state_in(None, "#42", "ready") is False
 
 
+def test_task_state_in_returns_false_for_invalid_uuid_bytes(temp_db) -> None:
+    assert task_state_in(_manager(temp_db), b"short", "ready") is False
+
+
 def test_safe_evaluator_exposes_task_state_in(temp_db, sample_project) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)

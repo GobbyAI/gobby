@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -40,7 +41,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def clear_rule_cache() -> None:
+def clear_rule_cache() -> Iterator[None]:
+    clear_active_rule_names_cache()
+    yield
     clear_active_rule_names_cache()
 
 
