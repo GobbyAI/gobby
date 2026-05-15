@@ -1,10 +1,10 @@
 """CLI session liveness monitor.
 
-Polls active sessions to detect when the owning terminal disappears. Modern
-tmux-backed terminal sessions require both the recorded CLI process and tmux
-pane to be alive; legacy pane-only sessions can still be kept alive by a live
-tmux pane. When liveness is gone the session is expired and summary generation
-is dispatched while the JSONL transcript file still exists on disk.
+Polls active sessions to detect when the owning terminal disappears. For
+tmux-backed terminal sessions, the recorded tmux pane is the authoritative
+liveness signal; parent PID checks cover non-tmux rows and tmux command
+failures. When liveness is gone the session is expired and summary generation is
+dispatched while the JSONL transcript file still exists on disk.
 
 This is the fast-path counterpart to the 24-hour stale-session expiry in
 SessionLifecycleManager, reducing the detection window from hours to
@@ -49,7 +49,7 @@ class _TerminalLivenessRecord:
 class SessionLivenessMonitor:
     """Background task that detects dead CLI sessions via terminal liveness.
 
-    When the parent process that owns a session exits (e.g. user typed
+    When the owning process for a non-tmux session exits (e.g. user typed
     ``/exit``, process crashed, terminal closed) or the recorded tmux pane is
     destroyed, this monitor:
 
@@ -145,7 +145,8 @@ class SessionLivenessMonitor:
 
         live_panes_by_socket = self._get_live_tmux_panes_by_socket(active_sessions)
 
-        # 3. Recorded PID and pane are both authoritative for modern terminal rows.
+        # 3. A live tmux pane is authoritative. Parent PIDs can change under tmux
+        # while the interactive session remains attached to the same pane.
         for record in active_sessions:
             if record.session_id in self._recently_handled:
                 continue
@@ -177,6 +178,22 @@ class SessionLivenessMonitor:
                             f"SessionLivenessMonitor: failed to touch session {record.session_id}",
                             exc_info=True,
                         )
+                    continue
+                else:
+                    if not self._is_pid_alive(record.parent_pid):
+                        logger.debug(
+                            f"Session {record.session_id} has live tmux pane "
+                            f"{record.tmux_pane} despite dead parent PID "
+                            f"{record.parent_pid} - refreshing",
+                        )
+                        try:
+                            self._session_manager.touch(record.session_id)
+                        except Exception:
+                            logger.warning(
+                                "SessionLivenessMonitor: failed to touch session "
+                                f"{record.session_id}",
+                                exc_info=True,
+                            )
                     continue
 
             if record.parent_pid is None:
