@@ -126,7 +126,11 @@ def install_embedding(
         probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=openai_api_key)
         if probed is not None:
             dim = probed
-        elif api_base_override is not None and model_override is None and provider != "openai-compatible":
+        elif (
+            api_base_override is not None
+            and model_override is None
+            and provider != "openai-compatible"
+        ):
             dim = cfg["dim"]
             logger.warning(
                 "Embedding dim probe failed for provider-default model %s at %s; "
