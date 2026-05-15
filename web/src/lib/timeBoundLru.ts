@@ -19,18 +19,15 @@ export function pruneTimeBoundLru<K>(
     return
   }
 
-  while (entries.size > maxEntries) {
-    let oldestKey: K | undefined
-    let oldestSeenAt = Number.POSITIVE_INFINITY
-    let foundOldest = false
-    for (const [key, lastSeenAt] of entries) {
-      if (!foundOldest || lastSeenAt < oldestSeenAt) {
-        oldestKey = key
-        oldestSeenAt = lastSeenAt
-        foundOldest = true
-      }
-    }
-    if (!foundOldest) return
-    entries.delete(oldestKey as K)
+  const excessCount = entries.size - maxEntries
+  if (excessCount <= 0) {
+    return
+  }
+
+  const oldestEntries = Array.from(entries.entries()).sort(
+    ([, leftLastSeenAt], [, rightLastSeenAt]) => leftLastSeenAt - rightLastSeenAt,
+  )
+  for (const [key] of oldestEntries.slice(0, excessCount)) {
+    entries.delete(key)
   }
 }

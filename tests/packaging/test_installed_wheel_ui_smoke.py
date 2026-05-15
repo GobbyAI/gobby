@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def _resolve_wheel_path() -> Path:
         wheels = sorted(Path("dist").glob("gobby-*.whl"))
         if not wheels:
             pytest.fail("GOBBY_WHEEL_PATH was not set and dist/gobby-*.whl was not found")
-        wheel = wheels[0]
+        wheel = max(wheels, key=lambda path: path.stat().st_mtime)
     if not wheel.exists():
         pytest.fail(f"Wheel does not exist: {wheel}")
     return wheel.resolve()
@@ -60,6 +61,16 @@ def _allocate_high_port() -> int:
         f"could not allocate a high-numbered local port after {attempts} attempts; "
         f"last error: {last_error}"
     )
+
+
+def _allocate_distinct_high_ports() -> tuple[int, int]:
+    attempts = 100
+    for _ in range(attempts):
+        http_port = _allocate_high_port()
+        ws_port = _allocate_high_port()
+        if http_port != ws_port:
+            return http_port, ws_port
+    raise RuntimeError(f"could not allocate distinct smoke-test ports after {attempts} attempts")
 
 
 def _write_config(config_path: Path, db_path: Path, http_port: int, ws_port: int) -> None:
@@ -114,7 +125,7 @@ def _wait_for_index(http_port: int, process: subprocess.Popen[object], log_path:
             if "<html" in body.lower():
                 return body
             last_error = f"root response did not look like HTML: {body[:200]!r}"
-        except Exception as exc:
+        except (TimeoutError, urllib.error.URLError) as exc:
             last_error = str(exc)
         time.sleep(0.5)
     pytest.fail(f"timed out waiting for {url}: {last_error}\n{log_path.read_text()}")
@@ -139,8 +150,7 @@ def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
     gobby_home.mkdir(parents=True)
     db_path = gobby_home / "gobby-hub.db"
     config_path = tmp_path / "config.yaml"
-    http_port = _allocate_high_port()
-    ws_port = _allocate_high_port()
+    http_port, ws_port = _allocate_distinct_high_ports()
     _write_config(config_path, db_path, http_port, ws_port)
 
     env = os.environ.copy()

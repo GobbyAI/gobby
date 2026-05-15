@@ -25,6 +25,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ASSISTANT_RESPONSE_SCAN_LIMIT = 8000
+MAX_PAYLOAD_DEPTH = 50
 ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS = (
     r"\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
     r"\bnot\b\s+[^.!?\n,;:]{1,120}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
@@ -411,17 +412,20 @@ def _assistant_response_text(context: dict[str, Any]) -> str:
     return text
 
 
-def _tool_payload_failed(payload: Any) -> bool:
+def _tool_payload_failed(payload: Any, depth: int = 0) -> bool:
     """Return True when a normalized tool payload carries failure metadata."""
+    if depth >= MAX_PAYLOAD_DEPTH:
+        return False
+
     if isinstance(payload, str):
         try:
             decoded = json.loads(payload)
         except json.JSONDecodeError:
             return False
-        return _tool_payload_failed(decoded)
+        return _tool_payload_failed(decoded, depth + 1)
 
     if isinstance(payload, list | tuple):
-        return any(_tool_payload_failed(item) for item in payload)
+        return any(_tool_payload_failed(item, depth + 1) for item in payload)
 
     if not isinstance(payload, dict):
         return False
@@ -439,7 +443,7 @@ def _tool_payload_failed(payload: Any) -> bool:
 
     result = payload.get("result")
     if isinstance(result, dict | list | tuple | str):
-        return _tool_payload_failed(result)
+        return _tool_payload_failed(result, depth + 1)
 
     return False
 

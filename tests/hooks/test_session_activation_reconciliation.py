@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +17,7 @@ from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_activation import (
     _ACTIVE_RULE_NAMES_CACHE,
     _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES,
+    _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS,
     MARKER_COMPLETED,
     MARKER_HASH,
     MARKER_VERSION,
@@ -365,8 +367,12 @@ def test_active_rule_names_cache_evicts_oldest_entries(
     db: LocalDatabase,
     project_id: str,
 ) -> None:
+    now = time.monotonic()
     for index in range(_ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES + 1):
-        _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (float(index), {f"rule-{index}"})
+        _ACTIVE_RULE_NAMES_CACHE[(f"agent-{index}", project_id)] = (
+            now - 1 + (index * 0.001),
+            {f"rule-{index}"},
+        )
 
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
@@ -386,6 +392,37 @@ def test_active_rule_names_cache_evicts_oldest_entries(
     assert _resolve_active_rule_names(db, "new-agent", project_id) == set()
     assert len(_ACTIVE_RULE_NAMES_CACHE) == _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES
     assert ("agent-0", project_id) not in _ACTIVE_RULE_NAMES_CACHE
+
+
+def test_active_rule_names_cache_purges_expired_entries(
+    db: LocalDatabase,
+    project_id: str,
+) -> None:
+    now = time.monotonic()
+    _ACTIVE_RULE_NAMES_CACHE[("stale-agent", project_id)] = (
+        now - _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS - 1,
+        {"stale-rule"},
+    )
+    _ACTIVE_RULE_NAMES_CACHE[("fresh-agent", project_id)] = (now, {"fresh-rule"})
+
+    manager = LocalWorkflowDefinitionManager(db)
+    manager.create(
+        name="new-agent",
+        workflow_type="agent",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "new-agent",
+                "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+            }
+        ),
+    )
+
+    from gobby.hooks.session_activation import _resolve_active_rule_names
+
+    assert _resolve_active_rule_names(db, "new-agent", project_id) == set()
+    assert ("stale-agent", project_id) not in _ACTIVE_RULE_NAMES_CACHE
+    assert ("fresh-agent", project_id) in _ACTIVE_RULE_NAMES_CACHE
 
 
 def test_spawned_step_agent_restores_workflow_variable_and_instance(

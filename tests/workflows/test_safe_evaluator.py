@@ -11,6 +11,7 @@ import pytest
 from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     ASSISTANT_RESPONSE_SCAN_LIMIT,
+    MAX_PAYLOAD_DEPTH,
     SafeExpressionEvaluator,
     build_condition_helpers,
 )
@@ -303,6 +304,22 @@ class TestToolCallSucceeded:
         )
 
         assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_rejects_nested_error_before_payload_depth_limit(self) -> None:
+        payload: dict[str, Any] = {"error": "nested"}
+        for _ in range(MAX_PAYLOAD_DEPTH - 1):
+            payload = {"result": payload}
+        ev = self._eval({"tool_output": payload})
+
+        assert ev.evaluate("tool_call_succeeded()") is False
+
+    def test_payload_depth_limit_fails_open(self) -> None:
+        payload: dict[str, Any] = {"error": "too deep"}
+        for _ in range(MAX_PAYLOAD_DEPTH):
+            payload = {"result": payload}
+        ev = self._eval({"tool_output": payload})
+
+        assert ev.evaluate("tool_call_succeeded()") is True
 
 
 # --- mcp_result_has tests ---

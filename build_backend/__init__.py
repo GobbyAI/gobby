@@ -58,7 +58,21 @@ _WEB_SRC: Path = _REPO_ROOT / "web"
 _DIST_SRC: Path = _WEB_SRC / "dist"
 _WHEEL_DEST: Path = _REPO_ROOT / "src" / "gobby" / "ui" / "web" / "dist"
 _WHEEL_UI_INDEX: str = "gobby/ui/web/dist/index.html"
-_NPM_BUILD_TIMEOUT_SECONDS: int = 600
+
+
+def _parse_npm_build_timeout(raw_value: str | None) -> int:
+    if raw_value is None:
+        return 600
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return 600
+    return parsed if parsed > 0 else 600
+
+
+_NPM_BUILD_TIMEOUT_SECONDS: int = _parse_npm_build_timeout(
+    os.environ.get("GOBBY_NPM_BUILD_TIMEOUT")
+)
 
 
 def _run_npm_command(command: list[str]) -> None:

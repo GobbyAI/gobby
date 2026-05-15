@@ -15,7 +15,7 @@ from gobby.tasks.state_semantics import projected_task_state
 
 logger = logging.getLogger(__name__)
 
-TaskIdRef = str | int | UUID
+TaskIdRef = str | int | UUID | bytes | bytearray
 TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
 
 
@@ -62,6 +62,8 @@ def _normalize_task_id(task_id: Any) -> str:
     """
     if isinstance(task_id, int):
         return f"#{task_id}"
+    if isinstance(task_id, bytes | bytearray):
+        return str(UUID(bytes=bytes(task_id)))
     return str(task_id)
 
 
@@ -147,16 +149,23 @@ def _normalize_task_ids(task_id_or_ids: TaskIdInput) -> list[str] | None:
     if isinstance(task_id_or_ids, str | int | UUID):
         return [_normalize_task_id(task_id_or_ids)]
     if isinstance(task_id_or_ids, bytes | bytearray):
-        logger.warning(f"task_type_in: Unexpected task_id type: {type(task_id_or_ids)}")
-        return None
+        try:
+            return [_normalize_task_id(task_id_or_ids)]
+        except ValueError:
+            logger.warning("task_type_in: Invalid UUID bytes task_id")
+            return None
     if isinstance(task_id_or_ids, Iterable):
         task_ids: list[str] = []
         for item in task_id_or_ids:
             if item is None:
                 continue
             if isinstance(item, bytes | bytearray):
-                logger.warning(f"task_type_in: Unexpected task_id item type: {type(item)}")
-                return None
+                try:
+                    task_ids.append(_normalize_task_id(item))
+                except ValueError:
+                    logger.warning("task_type_in: Invalid UUID bytes task_id item")
+                    return None
+                continue
             task_ids.append(_normalize_task_id(item))
         return task_ids
     logger.warning(f"task_type_in: Unexpected task_id type: {type(task_id_or_ids)}")

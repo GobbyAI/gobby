@@ -898,7 +898,7 @@ Without these renames, § 4.3's residual `rg` sweep AND § 8.3 row #4's pytest r
 **Hidden deprecation handlers (R39-F1 — implementation moved into this task from former § 8.1):** as part of the same `install.py` / `_install_prompts.py` edits, REGISTER `--neo4j-password` on `install` and `--neo4j` on `uninstall` as `click.option(... hidden=True)` whose handler immediately raises `click.UsageError` with the migration message:
 
 ```text
-Error: --neo4j / --neo4j-password has been removed in 0.4.0.
+Error: --neo4j / --neo4j-password has been removed in this release.
 
 The knowledge graph backend has been replaced with FalkorDB.
 - Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
@@ -2159,7 +2159,7 @@ The hidden Click-option handlers that implement this policy live in `src/gobby/c
 When a user passes either deprecated flag, the § 3.4 handler emits:
 
 ```text
-Error: --neo4j / --neo4j-password has been removed in 0.4.0.
+Error: --neo4j / --neo4j-password has been removed in this release.
 
 The knowledge graph backend has been replaced with FalkorDB.
 - Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)

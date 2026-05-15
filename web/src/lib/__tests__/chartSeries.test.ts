@@ -1,10 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import { chartSeries, chartSeriesAt } from '../chartSeries'
+import { CHART_SERIES_MCP_LATENCY, chartSeries, chartSeriesAt } from '../chartSeries'
 
 describe('chartSeriesAt', () => {
+  it('returns positive indexes directly', () => {
+    expect(chartSeriesAt(0)).toEqual(chartSeries[0])
+    expect(chartSeriesAt(3)).toEqual(chartSeries[3])
+  })
+
+  it('uses the fourth series for MCP latency', () => {
+    expect(CHART_SERIES_MCP_LATENCY).toEqual(chartSeries[3])
+  })
+
+  it('wraps indexes at the series boundary', () => {
+    expect(chartSeriesAt(chartSeries.length)).toEqual(chartSeries[0])
+  })
+
+  it('wraps larger positive indexes with modulo arithmetic', () => {
+    expect(chartSeriesAt(chartSeries.length + 2)).toEqual(chartSeries[2])
+  })
+
   it('wraps negative indexes back into the series', () => {
     expect(chartSeriesAt(-1)).toEqual(chartSeries[chartSeries.length - 1])
     expect(chartSeriesAt(-chartSeries.length)).toEqual(chartSeries[0])
+    expect(chartSeriesAt(-chartSeries.length - 2)).toEqual(
+      chartSeries[chartSeries.length - 2],
+    )
   })
 
   it('throws when called with an empty series', () => {

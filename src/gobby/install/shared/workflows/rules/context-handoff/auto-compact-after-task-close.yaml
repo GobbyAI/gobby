@@ -3,6 +3,8 @@ tags: [context-handoff, context, handoff, lifecycle, gobby, default]
 rules:
   auto-compact-after-task-close:
     description: "Compact or nudge context handoff after closing one task while substantial claimed work remains"
+    # after_tool is required here because the rule depends on close_task's result
+    # and tool_call_succeeded() to avoid compacting after failed close attempts.
     event: after_tool
     enabled: true
     priority: 12

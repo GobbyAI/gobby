@@ -258,6 +258,18 @@ class TestTaskTypeIn:
 
         assert task_type_in(manager, UUID(task.id), "epic") is True
 
+    def test_matches_epic_by_raw_uuid_bytes(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, UUID(task.id).bytes, "epic") is True
+
+    def test_matches_epic_by_raw_uuid_bytearray(self, temp_db, sample_project) -> None:
+        manager = _manager(temp_db)
+        task = _task(manager, sample_project, task_type="epic")
+
+        assert task_type_in(manager, bytearray(UUID(task.id).bytes), "epic") is True
+
     def test_matches_epic_by_hash_ref(self, temp_db, sample_project) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="epic")
@@ -279,6 +291,9 @@ class TestTaskTypeIn:
 
     def test_returns_false_for_bytes_ref_without_iterating_bytes(self, temp_db) -> None:
         assert task_type_in(_manager(temp_db), b"#1", "epic") is False
+
+    def test_returns_false_for_invalid_uuid_bytes_in_list(self, temp_db) -> None:
+        assert task_type_in(_manager(temp_db), [b"#1"], "epic") is False
 
     def test_returns_false_for_missing_task(self, temp_db) -> None:
         assert task_type_in(_manager(temp_db), "#999999", "epic") is False

@@ -1,3 +1,5 @@
+"""Tests for plan parser manifest handling."""
+
 from __future__ import annotations
 
 import inspect

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -369,6 +370,36 @@ class TestProviderModelCatalog:
                 await catalog._discover_acp_models(client_cls=client_cls)
 
         assert not expected_cwd.exists()
+        client_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_logs_cleanup_failure_and_reraises_auth_error(
+        self, temp_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        client_cls = MagicMock()
+        client_cls.cli_name = "gemini"
+        gobby_home = temp_dir / "gobby-home"
+
+        def fail_rmtree(_path: Path) -> None:
+            raise OSError("cleanup failed")
+
+        with (
+            caplog.at_level(logging.WARNING, logger="gobby.servers.provider_models"),
+            patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
+                new=AsyncMock(side_effect=PermissionError("not trusted")),
+            ),
+            patch("gobby.servers.provider_models.shutil.rmtree", side_effect=fail_rmtree),
+        ):
+            with pytest.raises(PermissionError, match="not trusted"):
+                await catalog._discover_acp_models(client_cls=client_cls)
+
+        assert "Failed to remove model-discovery cwd" in caplog.text
         client_cls.assert_not_called()
 
     @pytest.mark.asyncio

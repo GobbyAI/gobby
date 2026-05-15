@@ -139,6 +139,37 @@ def test_stage_ui_runs_npm_commands_with_timeout(
     ]
 
 
+@pytest.mark.parametrize(
+    ("env_value", "expected_timeout"),
+    [
+        ("30", 30),
+        ("0", 600),
+        ("-1", 600),
+        ("invalid", 600),
+        (None, 600),
+    ],
+)
+def test_npm_timeout_env_parses_at_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str | None,
+    expected_timeout: int,
+) -> None:
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+
+    if env_value is None:
+        monkeypatch.delenv("GOBBY_NPM_BUILD_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("GOBBY_NPM_BUILD_TIMEOUT", env_value)
+
+    backend = _load_backend(repo_root)
+
+    assert backend._NPM_BUILD_TIMEOUT_SECONDS == expected_timeout
+
+
 def test_stage_ui_npm_timeout_raises_contextual_runtime_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

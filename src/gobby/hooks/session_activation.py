@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
+
 from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,28 @@ def clear_active_rule_names_cache() -> None:
     """Clear cached active-rule selector resolution."""
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
         _ACTIVE_RULE_NAMES_CACHE.clear()
+
+
+def _purge_expired_active_rule_names_cache(now: float) -> None:
+    expired = [
+        cache_key
+        for cache_key, (cached_at, _) in _ACTIVE_RULE_NAMES_CACHE.items()
+        if now - cached_at >= _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS
+    ]
+    for cache_key in expired:
+        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
+
+
+def _evict_active_rule_names_cache_to_limit() -> None:
+    excess_count = len(_ACTIVE_RULE_NAMES_CACHE) - _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES
+    if excess_count <= 0:
+        return
+    oldest = sorted(
+        _ACTIVE_RULE_NAMES_CACHE.items(),
+        key=lambda item: item[1][0],
+    )
+    for cache_key, _ in oldest[:excess_count]:
+        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
 
 
 def reconcile_session_activation(
@@ -268,12 +292,11 @@ def _resolve_active_rule_names(
     cache_key = (agent_name, project_id)
     now = time.monotonic()
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        _purge_expired_active_rule_names_cache(now)
         cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
         if cached is not None:
-            cached_at, active_rules = cached
-            if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
-                return set(active_rules)
-            _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
+            _, active_rules = cached
+            return set(active_rules)
 
     manager = LocalWorkflowDefinitionManager(db)
     row = manager.get_by_name(agent_name, project_id=project_id)
@@ -285,17 +308,21 @@ def _resolve_active_rule_names(
         if isinstance(data, dict):
             data.setdefault("name", row.name)
         agent = AgentDefinitionBody.model_validate(data)
-    except Exception as exc:
-        logger.debug("Failed to refresh active rules for agent %s: %s", agent_name, exc)
+    except (json.JSONDecodeError, ValidationError) as exc:
+        logger.debug(
+            "Failed to refresh active rules for agent %s: %s",
+            agent_name,
+            exc,
+            exc_info=True,
+        )
         return None
 
     rules = manager.list_all(project_id=project_id, workflow_type="rule", enabled=True)
     active_rules = resolve_rules_for_agent(agent, rules)
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
+        _purge_expired_active_rule_names_cache(now)
         _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, set(active_rules))
-        while len(_ACTIVE_RULE_NAMES_CACHE) > _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES:
-            oldest_key = next(iter(_ACTIVE_RULE_NAMES_CACHE))
-            _ACTIVE_RULE_NAMES_CACHE.pop(oldest_key, None)
+        _evict_active_rule_names_cache_to_limit()
     return active_rules
 
 

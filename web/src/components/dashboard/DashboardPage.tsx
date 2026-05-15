@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useDashboard } from '../../hooks/useDashboard'
 import { cn } from '../../lib/utils'
 import { SystemHealthCard } from './SystemHealthCard'
@@ -32,6 +32,7 @@ export function DashboardPage() {
   const { data, isLoading, error, lastUpdated } = useDashboard()
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
   const [showAllProjects, setShowAllProjects] = useState(true)
+  const allProjectsLabelId = useId()
 
   const hours = rangeToHours(timeRange)
   const projectId = showAllProjects ? undefined : data?.project_id
@@ -49,6 +50,7 @@ export function DashboardPage() {
               className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground select-none"
               role="switch"
               aria-checked={showAllProjects}
+              aria-labelledby={allProjectsLabelId}
               onClick={() => setShowAllProjects(!showAllProjects)}
             >
               <span
@@ -65,7 +67,7 @@ export function DashboardPage() {
                   )}
                 />
               </span>
-              <span>All Projects</span>
+              <span id={allProjectsLabelId}>All Projects</span>
             </button>
             <TimeRangePills value={timeRange} onChange={setTimeRange} />
           </div>
