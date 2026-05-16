@@ -39,7 +39,7 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
     "openai-compatible": {
         "model": "text-embedding-3-small",
         "api_base": None,
-        "dim": 0,
+        "dim": 0,  # Sentinel: requires explicit dim_override or successful probe
     },
     "none": {
         "model": None,

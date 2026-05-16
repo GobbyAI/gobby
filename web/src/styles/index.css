@@ -28,7 +28,6 @@
   --text-muted: oklch(62% 0.005 125);
 
   --border: oklch(28% 0.008 125);
-  --border-soft: oklch(28% 0.008 125 / 0.55);
   --border-soft: color-mix(in srgb, oklch(28% 0.008 125) 55%, transparent);
 
   --surface-scrim: oklch(0% 0 0 / 0.7);
@@ -51,9 +50,9 @@
   --accent-soft: oklch(82% 0.20 125 / 0.18);
   --accent-tint: oklch(82% 0.20 125 / 0.10);
 
-  --color-info: oklch(72% 0.16 250);
+  --color-info: oklch(70% 0.16 250);
   --color-info-bg: oklch(28% 0.08 250);
-  --color-info-soft: oklch(72% 0.16 250 / 0.12);
+  --color-info-soft: oklch(70% 0.16 250 / 0.12);
 
   --color-warning: oklch(30% 0.08 75);
   --color-warning-foreground: oklch(78% 0.16 75);
@@ -62,15 +61,15 @@
 
   --color-destructive: oklch(28% 0.10 350);
   --color-destructive-foreground: oklch(72% 0.20 350);
-  --color-error: oklch(72% 0.20 350);
-  --color-error-soft: oklch(72% 0.20 350 / 0.12);
+  --color-error: oklch(65% 0.20 350);
+  --color-error-soft: oklch(65% 0.20 350 / 0.12);
   --text-on-error: oklch(15% 0 0);
 
   --color-inactive: oklch(60% 0.04 30);
 
   --color-success: oklch(25% 0.05 125);
-  --color-success-foreground: oklch(82% 0.10 125);
-  --color-success-soft: oklch(82% 0.10 125 / 0.12);
+  --color-success-foreground: oklch(72% 0.10 125);
+  --color-success-soft: oklch(72% 0.10 125 / 0.12);
   --text-on-success: oklch(15% 0 0);
 
   --color-review: oklch(72% 0.14 200);
@@ -131,6 +130,7 @@
   --exec-status-error: oklch(70% 0.20 350);
   --exec-status-timeout: oklch(72% 0.18 50);
   --exec-status-waiting_approval: oklch(78% 0.15 75);
+  --exec-status-skipped: oklch(78% 0.15 75);
   --exec-status-cancelled: oklch(60% 0.005 125);
   --exec-status-interrupted: oklch(70% 0.16 290);
 
@@ -243,7 +243,6 @@
   --text-muted: oklch(51% 0.005 125);
 
   --border: oklch(86% 0.008 125);
-  --border-soft: oklch(86% 0.008 125 / 0.55);
   --border-soft: color-mix(in srgb, oklch(86% 0.008 125) 55%, transparent);
 
   --surface-scrim: oklch(0% 0 0 / 0.45);
@@ -345,6 +344,7 @@
   --exec-status-error: oklch(45% 0.22 350);
   --exec-status-timeout: oklch(48% 0.20 50);
   --exec-status-waiting_approval: oklch(45% 0.18 75);
+  --exec-status-skipped: oklch(45% 0.18 75);
   --exec-status-cancelled: oklch(40% 0.005 125);
   --exec-status-interrupted: oklch(42% 0.18 290);
 

@@ -357,19 +357,7 @@ class TestUiDev:
         result = runner.invoke(ui, ["dev"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Starting dev server" in result.output
-        call_args = mock_find.call_args
-        assert call_args is not None
-        if "config" in call_args.kwargs:
-            passed_config = call_args.kwargs["config"]
-        else:
-            assert call_args.args, "find_web_dir was called without a config argument"
-            passed_config = call_args.args[0]
-        assert passed_config is config
-        require_source = call_args.kwargs.get("require_source")
-        if require_source is None:
-            assert len(call_args.args) > 1
-            require_source = call_args.args[1]
-        assert require_source is True
+        mock_find.assert_called_once_with(config, require_source=True)
 
     @patch("gobby.cli.ui.find_web_dir", return_value=None)
     def test_dev_no_web_dir(self, _find: MagicMock, runner: CliRunner) -> None:

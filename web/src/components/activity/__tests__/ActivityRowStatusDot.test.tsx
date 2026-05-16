@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import {
@@ -23,6 +26,31 @@ const TOKENS: Record<StatusKind, string> = {
   paused: 'var(--text-secondary)',
   stopped: 'var(--color-inactive)',
   disabled: 'var(--text-muted)',
+}
+
+const EXPECTED_DEFAULT_LIGHTNESS: Array<[string, number]> = [
+  ['--color-warning-foreground', 78],
+  ['--color-success-foreground', 72],
+  ['--color-info', 70],
+  ['--text-secondary', 68],
+  ['--color-error', 65],
+  ['--text-muted', 62],
+  ['--color-inactive', 60],
+]
+
+function defaultThemeTokens(): string {
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const css = readFileSync(join(testDir, '../../../styles/index.css'), 'utf8')
+  const match = css.match(/^:root\s*{([\s\S]*?)^}/m)
+  if (!match) throw new Error('Unable to find :root token block')
+  return match[1]
+}
+
+function tokenLightness(block: string, token: string): number {
+  const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = block.match(new RegExp(`${escapedToken}:\\s*oklch\\((\\d+(?:\\.\\d+)?)%`))
+  if (!match) throw new Error(`Unable to find OKLCH token ${token}`)
+  return Number(match[1])
 }
 
 // Each kind must paint a different local glyph. The class name carries the
@@ -82,6 +110,15 @@ describe('ActivityRowStatusDot — deutan-safe state rendering (#14586)', () => 
       seenTokens.add(color)
     }
     expect(seenTokens.size).toBe(KINDS.length)
+  })
+
+  it('keeps default-theme status tokens on the documented lightness ladder', () => {
+    const rootBlock = defaultThemeTokens()
+    const lightnessValues = EXPECTED_DEFAULT_LIGHTNESS.map(([token]) =>
+      tokenLightness(rootBlock, token),
+    )
+
+    expect(lightnessValues).toEqual(EXPECTED_DEFAULT_LIGHTNESS.map(([, value]) => value))
   })
 
   it('exposes the label as an accessible name with role=img', () => {

@@ -336,3 +336,37 @@ def test_build_wheel_rejects_wheel_missing_ui_index(
 
     with pytest.raises(RuntimeError, match="gobby/ui/web/dist/index.html"):
         backend.build_wheel(str(wheel_dir))
+
+
+def test_build_editable_delegates_to_setuptools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editable builds should pass through to setuptools without staging UI assets."""
+    repo_root = tmp_path
+    (repo_root / "build_backend").mkdir()
+    real_module = Path(__file__).resolve().parent.parent / "build_backend" / "__init__.py"
+    (repo_root / "build_backend" / "__init__.py").write_text(real_module.read_text())
+    wheel_dir = repo_root / "dist"
+    wheel_dir.mkdir()
+
+    backend = _load_backend(repo_root)
+
+    def fake_build_editable(
+        wheel_directory: str,
+        config_settings: dict[str, object] | None,
+        metadata_directory: str | None,
+    ) -> str:
+        assert wheel_directory == str(wheel_dir)
+        assert config_settings == {"editable": True}
+        assert metadata_directory == "meta"
+        return "gobby-0-editable.whl"
+
+    monkeypatch.setattr(
+        backend,
+        "_orig",
+        lambda: SimpleNamespace(build_editable=fake_build_editable),
+    )
+
+    assert (
+        backend.build_editable(str(wheel_dir), {"editable": True}, "meta") == "gobby-0-editable.whl"
+    )

@@ -151,10 +151,12 @@ describe('mobile chrome CSS', () => {
   it('loads the app shell stylesheet after base button styles', () => {
     const source = readSource('src/main.tsx')
     const imports = importSpecifiers(source)
+    const buttonsIndex = imports.indexOf('./styles/buttons.css')
+    const appShellIndex = imports.indexOf('./styles/app-shell.css')
 
-    expect(imports.indexOf('./styles/buttons.css')).toBeLessThan(
-      imports.indexOf('./styles/app-shell.css'),
-    )
+    expect(buttonsIndex).toBeGreaterThanOrEqual(0)
+    expect(appShellIndex).toBeGreaterThanOrEqual(0)
+    expect(buttonsIndex).toBeLessThan(appShellIndex)
   })
 
   it('keeps the top app chrome compact on mobile touch viewports', () => {

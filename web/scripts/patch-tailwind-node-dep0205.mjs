@@ -7,6 +7,8 @@ const packageRoot = join(__dirname, '..')
 const tailwindRoot = join(packageRoot, 'node_modules', '@tailwindcss', 'node')
 const packageJsonPath = join(tailwindRoot, 'package.json')
 const targetVersion = '4.3.0'
+const patchMarker = 'gobby-tailwind-node-dep0205-patch'
+const patchMarkerComment = `/* ${patchMarker} */\n`
 
 function readText(path) {
   return readFileSync(path, 'utf8')
@@ -14,13 +16,17 @@ function readText(path) {
 
 function patchFile(path, original, replacement) {
   const source = readText(path)
-  if (source.includes('registerHooks')) {
+  if (source.includes(patchMarker)) {
     return 'already-patched'
+  }
+  if (source.includes(replacement)) {
+    writeFileSync(path, `${patchMarkerComment}${source}`)
+    return 'marker-added'
   }
   if (!source.includes(original)) {
     throw new Error(`Unexpected @tailwindcss/node contents in ${path}`)
   }
-  writeFileSync(path, source.replace(original, replacement))
+  writeFileSync(path, `${patchMarkerComment}${source.replace(original, replacement)}`)
   return 'patched'
 }
 

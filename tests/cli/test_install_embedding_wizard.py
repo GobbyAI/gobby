@@ -309,6 +309,44 @@ class TestRunEmbeddingInstallNoInteractive:
         assert results["embedding"]["provider"] == "lmstudio"
         assert "boom" in results["embedding"]["error"]
 
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_installer_type_error_propagates(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock(side_effect=TypeError("programming bug"))
+
+        with pytest.raises(TypeError, match="programming bug"):
+            _run_embedding_install(
+                installer,
+                {},
+                no_interactive=True,
+                provider_override="lmstudio",
+            )
+
+    @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
+    @patch("gobby.cli._detectors._is_lmstudio_available", return_value=False)
+    def test_openai_missing_key_returns_openai_without_installing(
+        self, mock_lms: MagicMock, mock_ollama: MagicMock
+    ) -> None:
+        installer = MagicMock()
+        results: dict = {}
+
+        with patch(
+            "gobby.cli._install_embedding_prompts._get_openai_key",
+            return_value=None,
+        ) as mock_get_key:
+            provider = _run_embedding_install(
+                installer,
+                results,
+                no_interactive=True,
+                provider_override="openai",
+            )
+
+        assert provider == "openai"
+        mock_get_key.assert_called_once_with(no_interactive=True, results=results)
+        installer.assert_not_called()
+
 
 class TestRunEmbeddingInstallInteractive:
     """Test interactive menu flow."""

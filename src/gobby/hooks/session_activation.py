@@ -292,11 +292,11 @@ def _resolve_active_rule_names(
     cache_key = (agent_name, project_id)
     now = time.monotonic()
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
-        _purge_expired_active_rule_names_cache(now)
         cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
         if cached is not None:
-            _, active_rules = cached
-            return set(active_rules)
+            cached_at, active_rules = cached
+            if now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS:
+                return set(active_rules)
 
     manager = LocalWorkflowDefinitionManager(db)
     row = manager.get_by_name(agent_name, project_id=project_id)
@@ -328,6 +328,7 @@ def _resolve_active_rule_names(
 
     rules = manager.list_all(project_id=project_id, workflow_type="rule", enabled=True)
     active_rules = resolve_rules_for_agent(agent, rules)
+    now = time.monotonic()
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
         _purge_expired_active_rule_names_cache(now)
         incoming = 0 if cache_key in _ACTIVE_RULE_NAMES_CACHE else 1

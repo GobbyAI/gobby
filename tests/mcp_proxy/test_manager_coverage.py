@@ -123,6 +123,7 @@ class TestMCPClientManagerDatabaseInit:
     def test_init_with_db_manager_loads_cached_tools(self) -> None:
         """Test that cached tools are loaded from database."""
         mock_db = MagicMock()
+        long_description = "Another tool" + "x" * 200
         mock_db.list_runtime_servers.return_value = [
             MockDBServer(
                 name="server-with-tools",
@@ -133,7 +134,7 @@ class TestMCPClientManagerDatabaseInit:
         ]
         mock_db.get_cached_tools.return_value = [
             MockCachedTool("tool1", "A tool for testing"),
-            MockCachedTool("tool2", "Another tool" + "x" * 200),  # Long description
+            MockCachedTool("tool2", long_description),
         ]
 
         manager = MCPClientManager(
@@ -146,8 +147,7 @@ class TestMCPClientManagerDatabaseInit:
         assert len(config.tools) == 2
         assert config.tools[0]["name"] == "tool1"
         assert config.tools[0]["brief"] == "A tool for testing"
-        # Verify long description is truncated to 100 chars
-        assert len(config.tools[1]["brief"]) <= 100
+        assert config.tools[1]["brief"] == f"{long_description[:100]}…"
 
 
 class TestLoadToolsFromDB:

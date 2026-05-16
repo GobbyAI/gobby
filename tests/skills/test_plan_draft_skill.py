@@ -56,7 +56,7 @@ class TestPlanDraftContent:
         required = {"code", "config", "docs", "refactor", "test", "research", "planning"}
         for cat in required:
             assert f"`{cat}`" in body, f"Missing canonical category: {cat}"
-        assert "manual" in body
+        assert "`manual`" in body
         assert "outside expansion manifests" in body
 
     def test_refactor_category_documented(self, body: str) -> None:

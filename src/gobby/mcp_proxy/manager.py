@@ -51,6 +51,14 @@ __all__ = [
 logger = logging.getLogger("gobby.mcp.manager")
 
 
+def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}…"
+
+
 class MCPClientManager:
     """
     Manages multiple MCP client connections with shared authentication.
@@ -168,7 +176,7 @@ class MCPClientManager:
             return [
                 {
                     "name": tool.name,
-                    "brief": (tool.description or "")[:100],  # Truncate to brief
+                    "brief": _truncate_tool_brief(tool.description),
                 }
                 for tool in tools
             ]
@@ -801,7 +809,8 @@ class MCPClientManager:
         try:
             self.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
             config.tools = [
-                {"name": t["name"], "brief": (t.get("description", "") or "")[:100]} for t in tools
+                {"name": t["name"], "brief": _truncate_tool_brief(t.get("description"))}
+                for t in tools
             ]
         except Exception as e:
             logger.debug(f"Failed to cache tools for {server_name}: {e}")

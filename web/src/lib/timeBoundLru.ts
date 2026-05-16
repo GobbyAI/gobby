@@ -29,22 +29,9 @@ export function pruneTimeBoundLru<K>(
     return
   }
 
-  const oldestEntries: Array<[K, number]> = []
-  for (const [key, lastSeenAt] of entries) {
-    const insertAt = oldestEntries.findIndex(
-      ([, selectedLastSeenAt]) => lastSeenAt < selectedLastSeenAt,
-    )
-    if (insertAt === -1) {
-      if (oldestEntries.length < excessCount) {
-        oldestEntries.push([key, lastSeenAt])
-      }
-      continue
-    }
-    oldestEntries.splice(insertAt, 0, [key, lastSeenAt])
-    if (oldestEntries.length > excessCount) {
-      oldestEntries.pop()
-    }
-  }
+  const oldestEntries = Array.from(entries.entries())
+    .sort(([, leftLastSeenAt], [, rightLastSeenAt]) => leftLastSeenAt - rightLastSeenAt)
+    .slice(0, excessCount)
 
   for (const [key] of oldestEntries) {
     entries.delete(key)

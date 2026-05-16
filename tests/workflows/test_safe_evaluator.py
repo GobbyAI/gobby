@@ -347,13 +347,17 @@ class TestToolCallSucceeded:
 
         assert ev.evaluate("tool_call_succeeded()") is False
 
-    def test_payload_depth_limit_fails_open(self) -> None:
+    def test_payload_depth_limit_fails_open(self, caplog: pytest.LogCaptureFixture) -> None:
         payload: dict[str, Any] = {"error": "too deep"}
         for _ in range(MAX_PAYLOAD_DEPTH):
             payload = {"result": payload}
         ev = self._eval({"tool_output": payload})
 
-        assert ev.evaluate("tool_call_succeeded()") is True
+        with caplog.at_level("WARNING", logger="gobby.workflows.safe_evaluator"):
+            assert ev.evaluate("tool_call_succeeded()") is True
+
+        assert f"MAX_PAYLOAD_DEPTH={MAX_PAYLOAD_DEPTH}" in caplog.text
+        assert "too deep" in caplog.text
 
 
 # --- mcp_result_has tests ---

@@ -17,7 +17,27 @@ from ._install_embedding_prompts import (
     _run_embedding_install,
 )
 
-__all__ = ("_infer_embedding_provider_from_url", "_run_embedding_install")
+__all__ = (
+    "_API_KEY_PROMPTS",
+    "_echo_install_details",
+    "_echo_install_summary",
+    "_echo_migration_notice",
+    "_echo_uninstall_details",
+    "_echo_uninstall_summary",
+    "_ensure_db_and_secrets",
+    "_infer_embedding_provider_from_url",
+    "_prompt_api_keys",
+    "_prompt_hub_api_keys",
+    "_run_codex_uninstall",
+    "_run_embedding_install",
+    "_run_git_hooks_install",
+    "_run_neo4j_install",
+    "_run_neo4j_uninstall",
+    "_run_qdrant_install",
+    "_run_standard_cli_install",
+    "_run_standard_cli_uninstall",
+    "_run_voice_install",
+)
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase

@@ -11,6 +11,7 @@ import json
 import logging
 import operator
 import re
+import reprlib
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -429,9 +430,21 @@ def _event_field(event: Any, field: str, default: Any) -> Any:
         return default
 
 
+def _payload_snippet(payload: Any, *, max_chars: int = 200) -> str:
+    text = " ".join(reprlib.repr(payload).split())
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}…"
+
+
 def _tool_payload_failed(payload: Any, max_depth: int = MAX_PAYLOAD_DEPTH) -> bool:
     """Return True when a normalized tool payload carries failure metadata."""
     if max_depth <= 0:
+        logger.warning(
+            "Tool payload failure scan reached MAX_PAYLOAD_DEPTH=%s; failing open. payload=%s",
+            MAX_PAYLOAD_DEPTH,
+            _payload_snippet(payload),
+        )
         return False
 
     if isinstance(payload, str):

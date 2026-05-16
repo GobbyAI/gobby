@@ -84,6 +84,8 @@ def _init_npm_build_timeout_seconds() -> int:
     return _parse_npm_build_timeout(os.environ.get("GOBBY_NPM_BUILD_TIMEOUT"))
 
 
+# Initialized through _parse_npm_build_timeout: default 600s, with invalid or
+# non-positive GOBBY_NPM_BUILD_TIMEOUT values falling back to that default.
 _NPM_BUILD_TIMEOUT_SECONDS: int = _init_npm_build_timeout_seconds()
 
 

@@ -58,7 +58,7 @@ const BADGE_STATUS_CLS: Record<string, string> = {
   failed: "bg-[var(--color-error-soft)] text-[var(--color-error)]",
   waiting_approval:
     "bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]",
-  skipped: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]",
+  skipped: "bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]",
   success:
     "bg-[var(--color-success-soft)] text-[var(--color-success-foreground)]",
   error: "bg-[var(--color-error-soft)] text-[var(--color-error)]",
@@ -131,7 +131,7 @@ const STEP_DOT_STATUS_CLS: Record<string, string> = {
   error: "bg-[var(--color-error)]",
   running: "bg-[var(--color-info)] animate-pulse",
   waiting_approval: "bg-[var(--color-warning-foreground)]",
-  skipped: "bg-[var(--text-muted)]",
+  skipped: "bg-[var(--color-warning-foreground)]",
 };
 
 export type StepLayout = "card" | "timeline";

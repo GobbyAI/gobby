@@ -35,20 +35,23 @@ class HealthAwareMCPManager(Protocol):
 
 
 class CachedToolDict(TypedDict, total=False):
-    name: object
-    brief: object
-    description: object
+    name: str | None
+    brief: str | None
+    description: str | None
+    inputSchema: Mapping[str, Any]
 
 
 class CachedToolObject(Protocol):
-    name: object
+    name: str | None
+    brief: str | None
+    description: str | None
 
 
 class CachedToolsConfig(Protocol):
     @property
     def tools(
         self,
-    ) -> ABCSequence[CachedToolDict | Mapping[str, object] | CachedToolObject] | None: ...
+    ) -> ABCSequence[CachedToolDict | Mapping[str, Any] | CachedToolObject] | None: ...
 
 
 class ToolBrief(TypedDict):
@@ -58,6 +61,14 @@ class ToolBrief(TypedDict):
 
 def _object_attr(value: object, attr: str) -> object | None:
     return getattr(value, attr, None)
+
+
+def _truncate_tool_brief(text: str | None, *, max_chars: int = 100) -> str:
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}…"
 
 
 def _external_server_is_unhealthy(mcp_manager: HealthAwareMCPManager, server_name: str) -> bool:
@@ -83,7 +94,7 @@ def _cached_tool_briefs(config: CachedToolsConfig) -> list[ToolBrief]:
             name = _object_attr(tool, "name")
             brief = _object_attr(tool, "brief") or _object_attr(tool, "description") or ""
         if name:
-            tools.append({"name": str(name), "brief": str(brief)[:100]})
+            tools.append({"name": str(name), "brief": _truncate_tool_brief(str(brief))})
     return tools
 
 
@@ -95,7 +106,7 @@ def _tool_briefs_from_list_tools_result(tools_result: ListToolsResult) -> list[T
         tools_list.append(
             {
                 "name": tool.name,
-                "brief": desc[:100],
+                "brief": _truncate_tool_brief(desc),
             }
         )
     return tools_list

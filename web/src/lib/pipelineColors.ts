@@ -52,6 +52,7 @@ export const EXEC_STATUS_COLORS: Record<string, PipelineColorPair> = {
   error: { dark: "oklch(70% 0.20 350)", light: "oklch(45% 0.22 350)" },
   timeout: { dark: "oklch(72% 0.18 50)", light: "oklch(48% 0.20 50)" },
   waiting_approval: { dark: "oklch(78% 0.15 75)", light: "oklch(45% 0.18 75)" },
+  skipped: { dark: "oklch(78% 0.15 75)", light: "oklch(45% 0.18 75)" },
   cancelled: { dark: "oklch(60% 0.005 125)", light: "oklch(40% 0.005 125)" },
   interrupted: { dark: "oklch(70% 0.16 290)", light: "oklch(42% 0.18 290)" },
 };
@@ -66,12 +67,12 @@ export function getStepTypeColorVar(stepType: string): string {
 /** Collapse the typed pipeline status palette onto the status-dot taxonomy.
  *  Running uses the info kind and pulse animation; completed/success resolve
  *  to success. Pending and cancelled are disabled because they do not require
- *  attention, while timeout, waiting_approval, and interrupted use warning
+ *  attention, while skipped, timeout, waiting_approval, and interrupted use warning
  *  because they need operator awareness but are not execution failures. */
 const EXEC_STATUS_KINDS: Record<string, StatusKind> = {
   running: "info",
   pending: "disabled",
-  skipped: "disabled",
+  skipped: "warning",
   completed: "success",
   success: "success",
   failed: "error",

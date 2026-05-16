@@ -831,6 +831,7 @@ class TestInstallDefaultMCPServers:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """Expected SQLite failures should skip optional secret-backed MCP args."""
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
 
         with (
@@ -856,6 +857,7 @@ class TestInstallDefaultMCPServers:
         assert context7["args"] == ["-y", "@upstash/context7-mcp"]
 
     def test_secret_store_unexpected_init_error_reraises(self, tmp_path: Path) -> None:
+        """Unexpected secret-store init errors should still surface."""
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
 
         with (
@@ -874,6 +876,7 @@ class TestInstallDefaultMCPServers:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """Expected SQLite read failures should omit optional extra args."""
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
         mock_secret_store = MagicMock()
         mock_secret_store.exists.side_effect = sqlite3.DatabaseError("read failed")
@@ -898,6 +901,7 @@ class TestInstallDefaultMCPServers:
         assert context7["args"] == ["-y", "@upstash/context7-mcp"]
 
     def test_optional_secret_read_unexpected_error_reraises(self, tmp_path: Path) -> None:
+        """Unexpected optional-secret read errors should still surface."""
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
         mock_secret_store = MagicMock()
         mock_secret_store.exists.side_effect = TypeError("bad read")

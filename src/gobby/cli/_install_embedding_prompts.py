@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import subprocess
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
@@ -11,6 +12,14 @@ from urllib.parse import urlparse
 import click
 
 logger = logging.getLogger(__name__)
+
+_EMBEDDING_INSTALLER_EXCEPTIONS = (
+    OSError,
+    RuntimeError,
+    ValueError,
+    sqlite3.Error,
+    subprocess.SubprocessError,
+)
 
 
 def _infer_embedding_provider_from_url(api_base: str) -> str:
@@ -314,7 +323,7 @@ def _run_embedding_install(
     if provider == "openai":
         openai_api_key = _get_openai_key(no_interactive=no_interactive, results=results)
         if not openai_api_key:
-            return "none"
+            return provider
 
     api_base_override, model_override, dim_override = _prompt_customization(
         no_interactive=no_interactive,
@@ -341,9 +350,17 @@ def _run_embedding_install(
             api_base_override=api_base_override,
             dim_override=dim_override,
         )
-    except Exception as exc:
+    except _EMBEDDING_INSTALLER_EXCEPTIONS as exc:
         error = f"Embedding installer failed for provider {provider}: {exc}"
-        logger.warning(error, exc_info=True)
+        logger.warning(
+            error,
+            extra={
+                "provider": provider,
+                "action": "install_embedding",
+                "error_type": type(exc).__name__,
+            },
+            exc_info=True,
+        )
         result = {"success": False, "provider": provider, "error": error}
         results["embedding"] = result
         click.echo(f"Failed: {error}", err=True)
